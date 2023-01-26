@@ -1,0 +1,26 @@
+
+
+name: action-publish
+
+on:
+    workflow_dispatch:
+    push:
+        branches:
+            - master
+
+jobs:
+    linux:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v2
+            - name: Dependencies
+              run: sudo apt install gcc-11 g++-11 build-essential cmake curl libmpfr-dev libmpc-dev libgmp-dev e2fsprogs ninja-build qemu-system-gui qemu-system-x86 qemu-utils ccache rsync unzip texinfo
+            - name: Build toolchain
+              run: Meta/serenity.sh rebuild-toolchain
+            - name: Build Serenity
+              run: Meta/serenity.sh image i686
+            - uses: actions/upload-artifact@v2
+              with:
+                    name: build
+                    path: ./Build/i686/_disk_image
