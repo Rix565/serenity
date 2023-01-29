@@ -1,5 +1,3 @@
-
-
 name: action-publish
 
 on:
@@ -19,8 +17,8 @@ jobs:
             - name: Build toolchain
               run: Meta/serenity.sh rebuild-toolchain
             - name: Build Serenity
-              run: Meta/serenity.sh image i686
+              run: Meta/serenity.sh image x86_64
             - uses: actions/upload-artifact@v2
               with:
                     name: build
-                    path: ./Build/i686/_disk_image
+                    path: ./Build/x86_64/_disk_image
