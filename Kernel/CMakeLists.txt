@@ -17,12 +17,14 @@ set(KERNEL_HEAP_SOURCES
 
 set(KERNEL_SOURCES
     AddressSanitizer.cpp
+    Arch/PageFault.cpp
     Bus/PCI/Controller/HostController.cpp
     Bus/PCI/Controller/MemoryBackedHostBridge.cpp
     Bus/PCI/Controller/VolumeManagementDevice.cpp
     Bus/PCI/Access.cpp
     Bus/PCI/API.cpp
     Bus/PCI/Device.cpp
+    Bus/PCI/DeviceIdentifier.cpp
     Bus/USB/UHCI/UHCIController.cpp
     Bus/USB/UHCI/UHCIRootHub.cpp
     Bus/USB/USBConfiguration.cpp
@@ -130,15 +132,8 @@ set(KERNEL_SOURCES
     FileSystem/Plan9FS/Inode.cpp
     FileSystem/Plan9FS/Message.cpp
     FileSystem/ProcFS/ComponentRegistry.cpp
-    FileSystem/ProcFS/DirectoryInode.cpp
     FileSystem/ProcFS/FileSystem.cpp
-    FileSystem/ProcFS/GlobalInode.cpp
     FileSystem/ProcFS/Inode.cpp
-    FileSystem/ProcFS/LinkInode.cpp
-    FileSystem/ProcFS/ProcessAssociatedInode.cpp
-    FileSystem/ProcFS/ProcessDirectoryInode.cpp
-    FileSystem/ProcFS/ProcessPropertyInode.cpp
-    FileSystem/ProcFS/ProcessSubDirectoryInode.cpp
     FileSystem/SysFS/Component.cpp
     FileSystem/SysFS/DirectoryInode.cpp
     FileSystem/SysFS/FileSystem.cpp
@@ -149,6 +144,7 @@ set(KERNEL_SOURCES
     FileSystem/SysFS/Subsystems/Bus/PCI/BusDirectory.cpp
     FileSystem/SysFS/Subsystems/Bus/PCI/DeviceAttribute.cpp
     FileSystem/SysFS/Subsystems/Bus/PCI/DeviceDirectory.cpp
+    FileSystem/SysFS/Subsystems/Bus/PCI/DeviceExpansionROM.cpp
     FileSystem/SysFS/Subsystems/Bus/USB/BusDirectory.cpp
     FileSystem/SysFS/Subsystems/Bus/USB/DeviceInformation.cpp
     FileSystem/SysFS/Subsystems/Bus/Directory.cpp
@@ -219,7 +215,6 @@ set(KERNEL_SOURCES
     Memory/AnonymousVMObject.cpp
     Memory/InodeVMObject.cpp
     Memory/MemoryManager.cpp
-    Memory/PageDirectory.cpp
     Memory/PhysicalPage.cpp
     Memory/PhysicalRegion.cpp
     Memory/PhysicalZone.cpp
@@ -259,6 +254,7 @@ set(KERNEL_SOURCES
     Scheduler.cpp
     ScopedCritical.cpp
     StdLib.cpp
+    Syscall.cpp
     Syscalls/anon_create.cpp
     Syscalls/alarm.cpp
     Syscalls/beep.cpp
@@ -270,10 +266,12 @@ set(KERNEL_SOURCES
     Syscalls/disown.cpp
     Syscalls/dup2.cpp
     Syscalls/emuctl.cpp
+    Syscalls/execve.cpp
     Syscalls/exit.cpp
     Syscalls/faccessat.cpp
     Syscalls/fallocate.cpp
     Syscalls/fcntl.cpp
+    Syscalls/fork.cpp
     Syscalls/fsync.cpp
     Syscalls/ftruncate.cpp
     Syscalls/futex.cpp
@@ -290,6 +288,7 @@ set(KERNEL_SOURCES
     Syscalls/lseek.cpp
     Syscalls/mkdir.cpp
     Syscalls/mknod.cpp
+    Syscalls/mmap.cpp
     Syscalls/mount.cpp
     Syscalls/open.cpp
     Syscalls/perf_event.cpp
@@ -299,6 +298,7 @@ set(KERNEL_SOURCES
     Syscalls/prctl.cpp
     Syscalls/process.cpp
     Syscalls/profiling.cpp
+    Syscalls/ptrace.cpp
     Syscalls/purge.cpp
     Syscalls/read.cpp
     Syscalls/readlink.cpp
@@ -310,6 +310,7 @@ set(KERNEL_SOURCES
     Syscalls/sendfd.cpp
     Syscalls/setpgid.cpp
     Syscalls/setuid.cpp
+    Syscalls/sigaction.cpp
     Syscalls/socket.cpp
     Syscalls/stat.cpp
     Syscalls/statvfs.cpp
@@ -395,12 +396,6 @@ if ("${SERENITY_ARCH}" STREQUAL "x86_64")
         Interrupts/SpuriousInterruptHandler.cpp
         kprintf.cpp
         Panic.cpp
-        Syscall.cpp
-        Syscalls/execve.cpp
-        Syscalls/fork.cpp
-        Syscalls/mmap.cpp
-        Syscalls/ptrace.cpp
-        Syscalls/sigaction.cpp
     )
 
     set(KERNEL_SOURCES

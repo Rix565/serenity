@@ -355,7 +355,7 @@ void BrowserWindow::build_menus()
     }
 
     settings_menu.add_separator();
-    auto open_settings_action = GUI::Action::create("Browser &Settings", Gfx::Bitmap::try_load_from_file("/res/icons/16x16/settings.png"sv).release_value_but_fixme_should_propagate_errors(),
+    auto open_settings_action = GUI::Action::create("Browser &Settings", Gfx::Bitmap::load_from_file("/res/icons/16x16/settings.png"sv).release_value_but_fixme_should_propagate_errors(),
         [this](auto&) {
             GUI::Process::spawn_or_show_error(this, "/bin/BrowserSettings"sv);
         });
@@ -506,8 +506,8 @@ ErrorOr<void> BrowserWindow::load_search_engines(GUI::Menu& settings_menu)
                 if (!json_item.is_object())
                     continue;
                 auto search_engine = json_item.as_object();
-                auto name = search_engine.get_deprecated("title"sv).to_deprecated_string();
-                auto url_format = search_engine.get_deprecated("url_format"sv).to_deprecated_string();
+                auto name = search_engine.get_deprecated_string("title"sv).value();
+                auto url_format = search_engine.get_deprecated_string("url_format"sv).value();
 
                 auto action = GUI::Action::create_checkable(
                     name, [&, url_format](auto&) {

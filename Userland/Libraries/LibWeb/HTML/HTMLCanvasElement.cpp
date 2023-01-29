@@ -25,10 +25,12 @@ HTMLCanvasElement::HTMLCanvasElement(DOM::Document& document, DOM::QualifiedName
 
 HTMLCanvasElement::~HTMLCanvasElement() = default;
 
-void HTMLCanvasElement::initialize(JS::Realm& realm)
+JS::ThrowCompletionOr<void> HTMLCanvasElement::initialize(JS::Realm& realm)
 {
-    Base::initialize(realm);
+    MUST_OR_THROW_OOM(Base::initialize(realm));
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLCanvasElementPrototype>(realm, "HTMLCanvasElement"));
+
+    return {};
 }
 
 void HTMLCanvasElement::visit_edges(Cell::Visitor& visitor)
@@ -167,7 +169,7 @@ bool HTMLCanvasElement::create_bitmap(size_t minimum_width, size_t minimum_heigh
         return false;
     }
     if (!m_bitmap || m_bitmap->size() != size) {
-        auto bitmap_or_error = Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRA8888, size);
+        auto bitmap_or_error = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, size);
         if (bitmap_or_error.is_error())
             return false;
         m_bitmap = bitmap_or_error.release_value_but_fixme_should_propagate_errors();

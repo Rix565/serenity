@@ -45,8 +45,8 @@ static ErrorOr<void> fill_mounts(Vector<MountInfo>& output)
     TRY(json.as_array().try_for_each([&output](JsonValue const& value) -> ErrorOr<void> {
         auto& filesystem_object = value.as_object();
         MountInfo mount_info;
-        mount_info.mount_point = filesystem_object.get_deprecated("mount_point"sv).to_deprecated_string();
-        mount_info.source = filesystem_object.get_deprecated("source"sv).as_string_or("none"sv);
+        mount_info.mount_point = filesystem_object.get_deprecated_string("mount_point"sv).value_or({});
+        mount_info.source = filesystem_object.get_deprecated_string("source"sv).value_or("none");
         TRY(output.try_append(mount_info));
         return {};
     }));
@@ -146,7 +146,7 @@ static DeprecatedString get_absolute_path_to_selected_node(SpaceAnalyzer::TreeMa
         TreeNode const* node = treemapwidget.path_node(k);
         path_builder.append(node->name());
     }
-    return path_builder.build();
+    return path_builder.to_deprecated_string();
 }
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
@@ -189,7 +189,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     help_menu.add_action(GUI::CommonActions::make_command_palette_action(window));
     help_menu.add_action(GUI::CommonActions::make_about_action(APP_NAME, app_icon, window));
 
-    auto open_icon = TRY(Gfx::Bitmap::try_load_from_file("/res/icons/16x16/open.png"sv));
+    auto open_icon = TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/open.png"sv));
     // Configure the nodes context menu.
     auto open_folder_action = GUI::Action::create("Open Folder", { Mod_Ctrl, Key_O }, open_icon, [&](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme(get_absolute_path_to_selected_node(treemapwidget)));
@@ -199,7 +199,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         Desktop::Launcher::open(URL::create_with_file_scheme(path.dirname(), path.basename()));
     });
 
-    auto copy_icon = TRY(Gfx::Bitmap::try_load_from_file("/res/icons/16x16/edit-copy.png"sv));
+    auto copy_icon = TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/edit-copy.png"sv));
     auto copy_path_action = GUI::Action::create("Copy Path to Clipboard", { Mod_Ctrl, Key_C }, copy_icon, [&](auto&) {
         GUI::Clipboard::the().set_plain_text(get_absolute_path_to_selected_node(treemapwidget));
     });

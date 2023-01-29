@@ -3762,7 +3762,7 @@ Completion TemplateLiteral::execute(Interpreter& interpreter) const
     }
 
     // 7. Return the string-concatenation of head, middle, and tail.
-    return Value { PrimitiveString::create(vm, string_builder.build()) };
+    return Value { PrimitiveString::create(vm, string_builder.to_deprecated_string()) };
 }
 
 void TaggedTemplateLiteral::dump(int indent) const
@@ -4962,9 +4962,9 @@ ModuleRequest::ModuleRequest(DeprecatedFlyString module_specifier_, Vector<Asser
     });
 }
 
-DeprecatedString const& SourceRange::filename() const
+DeprecatedString SourceRange::filename() const
 {
-    return code->filename();
+    return code->filename().to_deprecated_string();
 }
 
 NonnullRefPtr<CallExpression> CallExpression::create(SourceRange source_range, NonnullRefPtr<Expression> callee, Span<Argument const> arguments)

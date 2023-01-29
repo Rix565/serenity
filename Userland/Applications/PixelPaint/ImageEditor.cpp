@@ -134,6 +134,16 @@ void ImageEditor::update_modified()
         on_modified_change(is_modified());
 }
 
+Gfx::IntRect ImageEditor::subtract_rulers_from_rect(Gfx::IntRect const& rect) const
+{
+    Gfx::IntRect clipped_rect {};
+    clipped_rect.set_top(max(rect.y(), m_ruler_thickness + 1));
+    clipped_rect.set_left(max(rect.x(), m_ruler_thickness + 1));
+    clipped_rect.set_bottom(rect.bottom());
+    clipped_rect.set_right(rect.right());
+    return clipped_rect;
+}
+
 void ImageEditor::paint_event(GUI::PaintEvent& event)
 {
     GUI::Frame::paint_event(event);
@@ -282,11 +292,7 @@ void ImageEditor::second_paint_event(GUI::PaintEvent& event)
 {
     if (m_active_tool) {
         if (m_show_rulers) {
-            auto clipped_event = GUI::PaintEvent(Gfx::IntRect { event.rect().x() + m_ruler_thickness,
-                                                     event.rect().y() + m_ruler_thickness,
-                                                     event.rect().width() - m_ruler_thickness,
-                                                     event.rect().height() - m_ruler_thickness },
-                event.window_size());
+            auto clipped_event = GUI::PaintEvent(subtract_rulers_from_rect(event.rect()), event.window_size());
             m_active_tool->on_second_paint(m_active_layer, clipped_event);
         } else {
             m_active_tool->on_second_paint(m_active_layer, event);
@@ -511,11 +517,11 @@ ErrorOr<void> ImageEditor::add_new_layer_from_selection()
     // save offsets of selection so we know where to place the new layer
     auto selection_offset = current_layer_selection.bounding_rect().location();
 
-    auto selection_bitmap = active_layer()->try_copy_bitmap(current_layer_selection);
+    auto selection_bitmap = active_layer()->copy_bitmap(current_layer_selection);
     if (selection_bitmap.is_null())
         return Error::from_string_literal("Unable to create bitmap from selection.");
 
-    auto layer_or_error = PixelPaint::Layer::try_create_with_bitmap(image(), selection_bitmap.release_nonnull(), "New Layer"sv);
+    auto layer_or_error = PixelPaint::Layer::create_with_bitmap(image(), selection_bitmap.release_nonnull(), "New Layer"sv);
     if (layer_or_error.is_error())
         return Error::from_string_literal("Unable to create layer from selection.");
 

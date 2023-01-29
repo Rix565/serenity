@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -27,14 +27,14 @@
 namespace JS::Temporal {
 
 // 12 Temporal.Calendar Objects, https://tc39.es/proposal-temporal/#sec-temporal-calendar-objects
-Calendar::Calendar(DeprecatedString identifier, Object& prototype)
+Calendar::Calendar(String identifier, Object& prototype)
     : Object(ConstructWithPrototypeTag::Tag, prototype)
     , m_identifier(move(identifier))
 {
 }
 
 // 12.1.1 IsBuiltinCalendar ( id ), https://tc39.es/proposal-temporal/#sec-temporal-isbuiltincalendar
-bool is_builtin_calendar(DeprecatedString const& identifier)
+bool is_builtin_calendar(StringView identifier)
 {
     // 1. Let calendars be AvailableCalendars().
     auto calendars = available_calendars();
@@ -65,7 +65,7 @@ Span<StringView const> available_calendars()
 }
 
 // 12.2.1 CreateTemporalCalendar ( identifier [ , newTarget ] ), https://tc39.es/proposal-temporal/#sec-temporal-createtemporalcalendar
-ThrowCompletionOr<Calendar*> create_temporal_calendar(VM& vm, DeprecatedString const& identifier, FunctionObject const* new_target)
+ThrowCompletionOr<Calendar*> create_temporal_calendar(VM& vm, String const& identifier, FunctionObject const* new_target)
 {
     auto& realm = *vm.current_realm();
 
@@ -78,32 +78,32 @@ ThrowCompletionOr<Calendar*> create_temporal_calendar(VM& vm, DeprecatedString c
 
     // 3. Let object be ? OrdinaryCreateFromConstructor(newTarget, "%Temporal.Calendar.prototype%", « [[InitializedTemporalCalendar]], [[Identifier]] »).
     // 4. Set object.[[Identifier]] to the ASCII-lowercase of identifier.
-    auto object = TRY(ordinary_create_from_constructor<Calendar>(vm, *new_target, &Intrinsics::temporal_calendar_prototype, identifier.to_lowercase()));
+    auto object = TRY(ordinary_create_from_constructor<Calendar>(vm, *new_target, &Intrinsics::temporal_calendar_prototype, TRY_OR_THROW_OOM(vm, identifier.to_lowercase())));
 
     // 5. Return object.
     return object.ptr();
 }
 
 // 12.2.2 GetBuiltinCalendar ( id ), https://tc39.es/proposal-temporal/#sec-temporal-getbuiltincalendar
-ThrowCompletionOr<Calendar*> get_builtin_calendar(VM& vm, DeprecatedString const& identifier)
+ThrowCompletionOr<Calendar*> get_builtin_calendar(VM& vm, String const& identifier)
 {
     // 1. If IsBuiltinCalendar(id) is false, throw a RangeError exception.
     if (!is_builtin_calendar(identifier))
         return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidCalendarIdentifier, identifier);
 
     // 2. Return ! CreateTemporalCalendar(id).
-    return MUST(create_temporal_calendar(vm, identifier));
+    return MUST_OR_THROW_OOM(create_temporal_calendar(vm, identifier));
 }
 
 // 12.2.3 GetISO8601Calendar ( ), https://tc39.es/proposal-temporal/#sec-temporal-getiso8601calendar
 Calendar* get_iso8601_calendar(VM& vm)
 {
     // 1. Return ! GetBuiltinCalendar("iso8601").
-    return MUST(get_builtin_calendar(vm, "iso8601"));
+    return MUST(get_builtin_calendar(vm, String::from_utf8("iso8601"sv).release_value_but_fixme_should_propagate_errors()));
 }
 
 // 12.2.4 CalendarFields ( calendar, fieldNames ), https://tc39.es/proposal-temporal/#sec-temporal-calendarfields
-ThrowCompletionOr<Vector<DeprecatedString>> calendar_fields(VM& vm, Object& calendar, Vector<StringView> const& field_names)
+ThrowCompletionOr<Vector<String>> calendar_fields(VM& vm, Object& calendar, Vector<StringView> const& field_names)
 {
     auto& realm = *vm.current_realm();
 
@@ -112,9 +112,10 @@ ThrowCompletionOr<Vector<DeprecatedString>> calendar_fields(VM& vm, Object& cale
 
     // 2. If fields is undefined, return fieldNames.
     if (!fields) {
-        Vector<DeprecatedString> result;
+        Vector<String> result;
+        TRY_OR_THROW_OOM(vm, result.try_ensure_capacity(field_names.size()));
         for (auto& value : field_names)
-            result.append(value);
+            result.unchecked_append(TRY_OR_THROW_OOM(vm, String::from_utf8(value)));
         return result;
     }
 
@@ -124,9 +125,10 @@ ThrowCompletionOr<Vector<DeprecatedString>> calendar_fields(VM& vm, Object& cale
     // 4. Return ? IterableToListOfType(fieldsArray, « String »).
     auto list = TRY(iterable_to_list_of_type(vm, fields_array, { OptionType::String }));
 
-    Vector<DeprecatedString> result;
+    Vector<String> result;
+    TRY_OR_THROW_OOM(vm, result.try_ensure_capacity(list.size()));
     for (auto& value : list)
-        result.append(TRY(value.as_string().deprecated_string()));
+        result.unchecked_append(TRY(value.as_string().utf8_string()));
     return result;
 }
 
@@ -228,7 +230,7 @@ ThrowCompletionOr<double> calendar_month(VM& vm, Object& calendar, Object& date_
 }
 
 // 12.2.10 CalendarMonthCode ( calendar, dateLike ), https://tc39.es/proposal-temporal/#sec-temporal-calendarmonthcode
-ThrowCompletionOr<DeprecatedString> calendar_month_code(VM& vm, Object& calendar, Object& date_like)
+ThrowCompletionOr<String> calendar_month_code(VM& vm, Object& calendar, Object& date_like)
 {
     // 1. Let result be ? Invoke(calendar, "monthCode", « dateLike »).
     auto result = TRY(Value(&calendar).invoke(vm, vm.names.monthCode, &date_like));
@@ -238,7 +240,7 @@ ThrowCompletionOr<DeprecatedString> calendar_month_code(VM& vm, Object& calendar
         return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidCalendarFunctionResult, vm.names.monthCode.as_string(), vm.names.undefined.as_string());
 
     // 3. Return ? ToString(result).
-    return result.to_deprecated_string(vm);
+    return result.to_string(vm);
 }
 
 // 12.2.11 CalendarDay ( calendar, dateLike ), https://tc39.es/proposal-temporal/#sec-temporal-calendarday
@@ -387,7 +389,7 @@ ThrowCompletionOr<Value> calendar_era(VM& vm, Object& calendar, Object& date_lik
 
     // 3. If result is not undefined, set result to ? ToString(result).
     if (!result.is_undefined())
-        result = PrimitiveString::create(vm, TRY(result.to_deprecated_string(vm)));
+        result = PrimitiveString::create(vm, TRY(result.to_string(vm)));
 
     // 4. Return result.
     return result;
@@ -461,7 +463,7 @@ ThrowCompletionOr<Object*> to_temporal_calendar(VM& vm, Value temporal_calendar_
     }
 
     // 2. Let identifier be ? ToString(temporalCalendarLike).
-    auto identifier = TRY(temporal_calendar_like.to_deprecated_string(vm));
+    auto identifier = TRY(temporal_calendar_like.to_string(vm));
 
     // 3. Set identifier to ? ParseTemporalCalendarString(identifier).
     identifier = TRY(parse_temporal_calendar_string(vm, identifier));
@@ -471,7 +473,7 @@ ThrowCompletionOr<Object*> to_temporal_calendar(VM& vm, Value temporal_calendar_
         return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidCalendarIdentifier, identifier);
 
     // 5. Return ! CreateTemporalCalendar(identifier).
-    return MUST(create_temporal_calendar(vm, identifier));
+    return MUST_OR_THROW_OOM(create_temporal_calendar(vm, identifier));
 }
 
 // 12.2.22 ToTemporalCalendarWithISODefault ( temporalCalendarLike ), https://tc39.es/proposal-temporal/#sec-temporal-totemporalcalendarwithisodefault
@@ -563,40 +565,40 @@ ThrowCompletionOr<PlainMonthDay*> calendar_month_day_from_fields(VM& vm, Object&
 }
 
 // 12.2.27 MaybeFormatCalendarAnnotation ( calendarObject, showCalendar ), https://tc39.es/proposal-temporal/#sec-temporal-maybeformatcalendarannotation
-ThrowCompletionOr<DeprecatedString> maybe_format_calendar_annotation(VM& vm, Object const* calendar_object, StringView show_calendar)
+ThrowCompletionOr<String> maybe_format_calendar_annotation(VM& vm, Object const* calendar_object, StringView show_calendar)
 {
     // 1. If showCalendar is "never", return the empty String.
     if (show_calendar == "never"sv)
-        return DeprecatedString::empty();
+        return String {};
 
     // 2. Assert: Type(calendarObject) is Object.
     VERIFY(calendar_object);
 
     // 3. Let calendarID be ? ToString(calendarObject).
-    auto calendar_id = TRY(Value(calendar_object).to_deprecated_string(vm));
+    auto calendar_id = TRY(Value(calendar_object).to_string(vm));
 
     // 4. Return FormatCalendarAnnotation(calendarID, showCalendar).
-    return format_calendar_annotation(calendar_id, show_calendar);
+    return format_calendar_annotation(vm, calendar_id, show_calendar);
 }
 
 // 12.2.28 FormatCalendarAnnotation ( id, showCalendar ), https://tc39.es/proposal-temporal/#sec-temporal-formatcalendarannotation
-DeprecatedString format_calendar_annotation(StringView id, StringView show_calendar)
+ThrowCompletionOr<String> format_calendar_annotation(VM& vm, StringView id, StringView show_calendar)
 {
     VERIFY(show_calendar == "auto"sv || show_calendar == "always"sv || show_calendar == "never"sv || show_calendar == "critical"sv);
 
     // 1. If showCalendar is "never", return the empty String.
     if (show_calendar == "never"sv)
-        return DeprecatedString::empty();
+        return String {};
 
     // 2. If showCalendar is "auto" and id is "iso8601", return the empty String.
     if (show_calendar == "auto"sv && id == "iso8601"sv)
-        return DeprecatedString::empty();
+        return String {};
 
     // 3. If showCalendar is "critical", let flag be "!"; else, let flag be the empty String.
     auto flag = show_calendar == "critical"sv ? "!"sv : ""sv;
 
     // 4. Return the string-concatenation of "[", flag, "u-ca=", id, and "]".
-    return DeprecatedString::formatted("[{}u-ca={}]", flag, id);
+    return TRY_OR_THROW_OOM(vm, String::formatted("[{}u-ca={}]", flag, id));
 }
 
 // 12.2.29 CalendarEquals ( one, two ), https://tc39.es/proposal-temporal/#sec-temporal-calendarequals
@@ -607,10 +609,10 @@ ThrowCompletionOr<bool> calendar_equals(VM& vm, Object& one, Object& two)
         return true;
 
     // 2. Let calendarOne be ? ToString(one).
-    auto calendar_one = TRY(Value(&one).to_deprecated_string(vm));
+    auto calendar_one = TRY(Value(&one).to_string(vm));
 
     // 3. Let calendarTwo be ? ToString(two).
-    auto calendar_two = TRY(Value(&two).to_deprecated_string(vm));
+    auto calendar_two = TRY(Value(&two).to_string(vm));
 
     // 4. If calendarOne is calendarTwo, return true.
     if (calendar_one == calendar_two)
@@ -628,10 +630,10 @@ ThrowCompletionOr<Object*> consolidate_calendars(VM& vm, Object& one, Object& tw
         return &two;
 
     // 2. Let calendarOne be ? ToString(one).
-    auto calendar_one = TRY(Value(&one).to_deprecated_string(vm));
+    auto calendar_one = TRY(Value(&one).to_string(vm));
 
     // 3. Let calendarTwo be ? ToString(two).
-    auto calendar_two = TRY(Value(&two).to_deprecated_string(vm));
+    auto calendar_two = TRY(Value(&two).to_string(vm));
 
     // 4. If calendarOne is calendarTwo, return two.
     if (calendar_one == calendar_two)
@@ -746,11 +748,11 @@ YearWeekRecord to_iso_week_of_year(i32 year, u8 month, u8 day)
 }
 
 // 12.2.33 ISOMonthCode ( month ), https://tc39.es/proposal-temporal/#sec-temporal-isomonthcode
-DeprecatedString iso_month_code(u8 month)
+ThrowCompletionOr<String> iso_month_code(VM& vm, u8 month)
 {
     // 1. Let numberPart be ToZeroPaddedDecimalString(month, 2).
     // 2. Return the string-concatenation of "M" and numberPart.
-    return DeprecatedString::formatted("M{:02}", month);
+    return TRY_OR_THROW_OOM(vm, String::formatted("M{:02}", month));
 }
 
 // 12.2.34 ResolveISOMonth ( fields ), https://tc39.es/proposal-temporal/#sec-temporal-resolveisomonth
@@ -802,7 +804,7 @@ ThrowCompletionOr<double> resolve_iso_month(VM& vm, Object const& fields)
     auto month_code_number = MUST(Value(PrimitiveString::create(vm, move(month_code_digits))).to_integer_or_infinity(vm));
 
     // 12. Assert: SameValue(monthCode, ISOMonthCode(monthCodeNumber)) is true.
-    VERIFY(month_code_string == iso_month_code(month_code_number));
+    VERIFY(month_code_string.view() == TRY(iso_month_code(vm, month_code_number)));
 
     // 13. If month is not undefined and SameValue(month, monthCodeNumber) is false, throw a RangeError exception.
     if (!month.is_undefined() && month.as_double() != month_code_number)
@@ -818,7 +820,12 @@ ThrowCompletionOr<ISODateRecord> iso_date_from_fields(VM& vm, Object const& fiel
     // 1. Assert: Type(fields) is Object.
 
     // 2. Set fields to ? PrepareTemporalFields(fields, « "day", "month", "monthCode", "year" », « "year", "day" »).
-    auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields, { "day", "month", "monthCode", "year" }, Vector<StringView> { "year"sv, "day"sv }));
+    auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields,
+        { String::from_utf8_short_string("day"sv),
+            TRY_OR_THROW_OOM(vm, String::from_utf8("month"sv)),
+            TRY_OR_THROW_OOM(vm, String::from_utf8("monthCode"sv)),
+            TRY_OR_THROW_OOM(vm, String::from_utf8("year"sv)) },
+        Vector<StringView> { "year"sv, "day"sv }));
 
     // 3. Let overflow be ? ToTemporalOverflow(options).
     auto overflow = TRY(to_temporal_overflow(vm, &options));
@@ -848,7 +855,11 @@ ThrowCompletionOr<ISOYearMonth> iso_year_month_from_fields(VM& vm, Object const&
     // 1. Assert: Type(fields) is Object.
 
     // 2. Set fields to ? PrepareTemporalFields(fields, « "month", "monthCode", "year" », « "year" »).
-    auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields, { "month"sv, "monthCode"sv, "year"sv }, Vector<StringView> { "year"sv }));
+    auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields,
+        { TRY_OR_THROW_OOM(vm, String::from_utf8("month"sv)),
+            TRY_OR_THROW_OOM(vm, String::from_utf8("monthCode"sv)),
+            TRY_OR_THROW_OOM(vm, String::from_utf8("year"sv)) },
+        Vector<StringView> { "year"sv }));
 
     // 3. Let overflow be ? ToTemporalOverflow(options).
     auto overflow = TRY(to_temporal_overflow(vm, &options));
@@ -875,7 +886,12 @@ ThrowCompletionOr<ISOMonthDay> iso_month_day_from_fields(VM& vm, Object const& f
     // 1. Assert: Type(fields) is Object.
 
     // 2. Set fields to ? PrepareTemporalFields(fields, « "day", "month", "monthCode", "year" », « "day" »).
-    auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields, { "day"sv, "month"sv, "monthCode"sv, "year"sv }, Vector<StringView> { "day"sv }));
+    auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields,
+        { String::from_utf8_short_string("day"sv),
+            TRY_OR_THROW_OOM(vm, String::from_utf8("month"sv)),
+            TRY_OR_THROW_OOM(vm, String::from_utf8("monthCode"sv)),
+            TRY_OR_THROW_OOM(vm, String::from_utf8("year"sv)) },
+        Vector<StringView> { "day"sv }));
 
     // 3. Let overflow be ? ToTemporalOverflow(options).
     auto overflow = TRY(to_temporal_overflow(vm, &options));

@@ -180,7 +180,7 @@ ErrorOr<Kern> Kern::from_slice(ReadonlyBytes slice)
         return Error::from_string_literal("Kern table does not contain any subtables");
 
     // Read all subtable offsets
-    auto subtable_offsets = TRY(FixedArray<size_t>::try_create(number_of_subtables));
+    auto subtable_offsets = TRY(FixedArray<size_t>::create(number_of_subtables));
     size_t offset = sizeof(Header);
     for (size_t i = 0; i < number_of_subtables; ++i) {
         if (slice.size() < offset + sizeof(SubtableHeader))
@@ -517,6 +517,9 @@ ErrorOr<NonnullRefPtr<Font>> Font::try_load_from_offset(ReadonlyBytes buffer, u3
         if (!platform.has_value())
             return Error::from_string_literal("Invalid Platform ID");
 
+        /* NOTE: The encoding records are sorted first by platform ID, then by encoding ID.
+           This means that the Windows platform will take precedence over Macintosh, which is
+           usually what we want here. */
         if (platform.value() == Cmap::Subtable::Platform::Windows) {
             if (subtable.encoding_id() == (u16)Cmap::Subtable::WindowsEncoding::UnicodeFullRepertoire) {
                 cmap.set_active_index(i);
@@ -528,7 +531,6 @@ ErrorOr<NonnullRefPtr<Font>> Font::try_load_from_offset(ReadonlyBytes buffer, u3
             }
         } else if (platform.value() == Cmap::Subtable::Platform::Macintosh) {
             cmap.set_active_index(i);
-            break;
         }
     }
 

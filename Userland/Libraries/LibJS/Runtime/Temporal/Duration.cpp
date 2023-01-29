@@ -143,7 +143,7 @@ ThrowCompletionOr<DurationRecord> to_temporal_duration_record(VM& vm, Value temp
     // 1. If Type(temporalDurationLike) is not Object, then
     if (!temporal_duration_like.is_object()) {
         // a. Let string be ? ToString(temporalDurationLike).
-        auto string = TRY(temporal_duration_like.to_deprecated_string(vm));
+        auto string = TRY(temporal_duration_like.to_string(vm));
 
         // b. Return ? ParseTemporalDurationString(string).
         return parse_temporal_duration_string(vm, string);
@@ -481,7 +481,7 @@ Crypto::SignedBigInteger total_duration_nanoseconds(double days, double hours, d
 }
 
 // 7.5.18 BalanceDuration ( days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds, largestUnit [ , relativeTo ] ), https://tc39.es/proposal-temporal/#sec-temporal-balanceduration
-ThrowCompletionOr<TimeDurationRecord> balance_duration(VM& vm, double days, double hours, double minutes, double seconds, double milliseconds, double microseconds, Crypto::SignedBigInteger const& nanoseconds, DeprecatedString const& largest_unit, Object* relative_to)
+ThrowCompletionOr<TimeDurationRecord> balance_duration(VM& vm, double days, double hours, double minutes, double seconds, double milliseconds, double microseconds, Crypto::SignedBigInteger const& nanoseconds, StringView largest_unit, Object* relative_to)
 {
     // 1. If relativeTo is not present, set relativeTo to undefined.
 
@@ -627,7 +627,7 @@ ThrowCompletionOr<TimeDurationRecord> balance_duration(VM& vm, double days, doub
 }
 
 // 7.5.19 UnbalanceDurationRelative ( years, months, weeks, days, largestUnit, relativeTo ), https://tc39.es/proposal-temporal/#sec-temporal-unbalancedurationrelative
-ThrowCompletionOr<DateDurationRecord> unbalance_duration_relative(VM& vm, double years, double months, double weeks, double days, DeprecatedString const& largest_unit, Value relative_to)
+ThrowCompletionOr<DateDurationRecord> unbalance_duration_relative(VM& vm, double years, double months, double weeks, double days, StringView largest_unit, Value relative_to)
 {
     auto& realm = *vm.current_realm();
 
@@ -816,7 +816,7 @@ ThrowCompletionOr<DateDurationRecord> unbalance_duration_relative(VM& vm, double
 }
 
 // 7.5.20 BalanceDurationRelative ( years, months, weeks, days, largestUnit, relativeTo ), https://tc39.es/proposal-temporal/#sec-temporal-balancedurationrelative
-ThrowCompletionOr<DateDurationRecord> balance_duration_relative(VM& vm, double years, double months, double weeks, double days, DeprecatedString const& largest_unit, Value relative_to_value)
+ThrowCompletionOr<DateDurationRecord> balance_duration_relative(VM& vm, double years, double months, double weeks, double days, StringView largest_unit, Value relative_to_value)
 {
     auto& realm = *vm.current_realm();
 
@@ -1655,7 +1655,7 @@ ThrowCompletionOr<DurationRecord> adjust_rounded_duration_days(VM& vm, double ye
 }
 
 // 7.5.27 TemporalDurationToString ( years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds, precision ), https://tc39.es/proposal-temporal/#sec-temporal-temporaldurationtostring
-DeprecatedString temporal_duration_to_string(double years, double months, double weeks, double days, double hours, double minutes, double seconds, double milliseconds, double microseconds, double nanoseconds, Variant<StringView, u8> const& precision)
+ThrowCompletionOr<String> temporal_duration_to_string(VM& vm, double years, double months, double weeks, double days, double hours, double minutes, double seconds, double milliseconds, double microseconds, double nanoseconds, Variant<StringView, u8> const& precision)
 {
     if (precision.has<StringView>())
         VERIFY(precision.get<StringView>() == "auto"sv);
@@ -1736,24 +1736,23 @@ DeprecatedString temporal_duration_to_string(double years, double months, double
 
         // b. Let decimalPart be ToZeroPaddedDecimalString(fraction, 9).
         // NOTE: padding with zeros leads to weird results when applied to a double. Not sure if that's a bug in AK/Format.h or if I'm doing this wrong.
-        auto decimal_part = DeprecatedString::formatted("{:09}", (u64)fraction);
+        auto decimal_part_string = TRY_OR_THROW_OOM(vm, String::formatted("{:09}", (u64)fraction));
+        StringView decimal_part;
 
         // c. If precision is "auto", then
         if (precision.has<StringView>() && precision.get<StringView>() == "auto"sv) {
             // i. Set decimalPart to the longest possible substring of decimalPart starting at position 0 and not ending with the code unit 0x0030 (DIGIT ZERO).
-            // NOTE: trim() would keep the left-most 0.
-            while (decimal_part.ends_with('0'))
-                decimal_part = decimal_part.substring(0, decimal_part.length() - 1);
+            decimal_part = decimal_part_string.bytes_as_string_view().trim("0"sv, TrimMode::Right);
         }
         // d. Else if precision = 0, then
         else if (precision.get<u8>() == 0) {
             // i. Set decimalPart to "".
-            decimal_part = DeprecatedString::empty();
+            decimal_part = ""sv;
         }
         // e. Else,
         else {
             // i. Set decimalPart to the substring of decimalPart from 0 to precision.
-            decimal_part = decimal_part.substring(0, precision.get<u8>());
+            decimal_part = decimal_part_string.bytes_as_string_view().substring_view(0, precision.get<u8>());
         }
 
         // f. Let secondsPart be abs(seconds) formatted as a decimal number.
@@ -1789,7 +1788,7 @@ DeprecatedString temporal_duration_to_string(double years, double months, double
     }
 
     // 20. Return result.
-    return result.to_deprecated_string();
+    return TRY_OR_THROW_OOM(vm, result.to_string());
 }
 
 // 7.5.28 AddDurationToOrSubtractDurationFromDuration ( operation, duration, other, options ), https://tc39.es/proposal-temporal/#sec-temporal-adddurationtoorsubtractdurationfromduration

@@ -42,7 +42,7 @@ protected:
     void setup_interrupts();
     void setup_link();
 
-    E1000NetworkAdapter(PCI::Address, u8 irq,
+    E1000NetworkAdapter(PCI::DeviceIdentifier const&, u8 irq,
         NonnullOwnPtr<IOWindow> registers_io_window, NonnullOwnPtr<Memory::Region> rx_buffer_region,
         NonnullOwnPtr<Memory::Region> tx_buffer_region, NonnullOwnPtr<Memory::Region> rx_descriptors_region,
         NonnullOwnPtr<Memory::Region> tx_descriptors_region, NonnullOwnPtr<KString>);
@@ -72,9 +72,6 @@ protected:
     virtual void detect_eeprom();
     virtual u32 read_eeprom(u8 address);
     void read_mac_address();
-
-    void write_command(u16 address, u32);
-    u32 read_command(u16 address);
 
     void initialize_rx_descriptors();
     void initialize_tx_descriptors();

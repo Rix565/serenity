@@ -790,7 +790,7 @@ static ErrorOr<void> decode_dds(DDSLoadingContext& context)
         dbgln_if(DDS_DEBUG, "There are {} bytes remaining, we need {} for mipmap level {} of the image", stream.remaining(), needed_bytes, mipmap_level);
         VERIFY(stream.remaining() >= needed_bytes);
 
-        context.bitmap = TRY(Bitmap::try_create(BitmapFormat::BGRA8888, { width, height }));
+        context.bitmap = TRY(Bitmap::create(BitmapFormat::BGRA8888, { width, height }));
 
         decode_bitmap(stream, context, format, width, height);
     }
@@ -1022,6 +1022,11 @@ ErrorOr<ImageFrameDescriptor> DDSImageDecoderPlugin::frame(size_t index)
 
     VERIFY(m_context->bitmap);
     return ImageFrameDescriptor { m_context->bitmap, 0 };
+}
+
+ErrorOr<Optional<ReadonlyBytes>> DDSImageDecoderPlugin::icc_data()
+{
+    return OptionalNone {};
 }
 
 }

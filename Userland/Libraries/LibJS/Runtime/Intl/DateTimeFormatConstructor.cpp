@@ -23,9 +23,9 @@ DateTimeFormatConstructor::DateTimeFormatConstructor(Realm& realm)
 {
 }
 
-void DateTimeFormatConstructor::initialize(Realm& realm)
+ThrowCompletionOr<void> DateTimeFormatConstructor::initialize(Realm& realm)
 {
-    NativeFunction::initialize(realm);
+    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
 
     auto& vm = this->vm();
 
@@ -36,6 +36,8 @@ void DateTimeFormatConstructor::initialize(Realm& realm)
     define_native_function(realm, vm.names.supportedLocalesOf, supported_locales_of, 1, attr);
 
     define_direct_property(vm.names.length, Value(0), Attribute::Configurable);
+
+    return {};
 }
 
 // 11.1.1 Intl.DateTimeFormat ( [ locales [ , options ] ] ), https://tc39.es/ecma402/#sec-intl.datetimeformat
@@ -166,11 +168,11 @@ ThrowCompletionOr<DateTimeFormat*> initialize_date_time_format(VM& vm, DateTimeF
 
     // 23. Let dataLocaleData be localeData.[[<dataLocale>]].
     // 24. Let hcDefault be dataLocaleData.[[hourCycle]].
-    auto default_hour_cycle = ::Locale::get_default_regional_hour_cycle(data_locale);
+    auto default_hour_cycle = TRY_OR_THROW_OOM(vm, ::Locale::get_default_regional_hour_cycle(data_locale));
 
     // Non-standard, default_hour_cycle will be empty if Unicode data generation is disabled.
     if (!default_hour_cycle.has_value()) {
-        date_time_format.set_time_zone(default_time_zone());
+        date_time_format.set_time_zone(TRY_OR_THROW_OOM(vm, String::from_utf8(default_time_zone())));
         return &date_time_format;
     }
 
@@ -214,17 +216,17 @@ ThrowCompletionOr<DateTimeFormat*> initialize_date_time_format(VM& vm, DateTimeF
 
     // 29. Let timeZone be ? Get(options, "timeZone").
     auto time_zone_value = TRY(options->get(vm.names.timeZone));
-    DeprecatedString time_zone;
+    String time_zone;
 
     // 30. If timeZone is undefined, then
     if (time_zone_value.is_undefined()) {
         // a. Set timeZone to DefaultTimeZone().
-        time_zone = default_time_zone();
+        time_zone = TRY_OR_THROW_OOM(vm, String::from_utf8(default_time_zone()));
     }
     // 31. Else,
     else {
         // a. Set timeZone to ? ToString(timeZone).
-        time_zone = TRY(time_zone_value.to_deprecated_string(vm));
+        time_zone = TRY(time_zone_value.to_string(vm));
 
         // b. If IsAvailableTimeZoneName(timeZone) is false, then
         if (!Temporal::is_available_time_zone_name(time_zone)) {
@@ -233,7 +235,7 @@ ThrowCompletionOr<DateTimeFormat*> initialize_date_time_format(VM& vm, DateTimeF
         }
 
         // c. Set timeZone to ! CanonicalizeTimeZoneName(timeZone).
-        time_zone = Temporal::canonicalize_time_zone_name(time_zone);
+        time_zone = MUST_OR_THROW_OOM(Temporal::canonicalize_time_zone_name(vm, time_zone));
     }
 
     // 32. Set dateTimeFormat.[[TimeZone]] to timeZone.
@@ -317,12 +319,12 @@ ThrowCompletionOr<DateTimeFormat*> initialize_date_time_format(VM& vm, DateTimeF
 
         // b. Let styles be dataLocaleData.[[styles]].[[<resolvedCalendar>]].
         // c. Let bestFormat be DateTimeStyleFormat(dateStyle, timeStyle, styles).
-        best_format = date_time_style_format(data_locale, date_time_format);
+        best_format = MUST_OR_THROW_OOM(date_time_style_format(vm, data_locale, date_time_format));
     }
     // 43. Else,
     else {
         // a. Let formats be dataLocaleData.[[formats]].[[<resolvedCalendar>]].
-        auto formats = ::Locale::get_calendar_available_formats(data_locale, date_time_format.calendar());
+        auto formats = TRY_OR_THROW_OOM(vm, ::Locale::get_calendar_available_formats(data_locale, date_time_format.calendar()));
 
         // b. If matcher is "basic", then
         if (TRY(matcher.as_string().utf8_string_view()) == "basic"sv) {
@@ -347,7 +349,7 @@ ThrowCompletionOr<DateTimeFormat*> initialize_date_time_format(VM& vm, DateTimeF
         }
     });
 
-    DeprecatedString pattern;
+    String pattern;
     Vector<::Locale::CalendarRangePattern> range_patterns;
 
     // 45. If dateTimeFormat.[[Hour]] is undefined, then
@@ -368,7 +370,7 @@ ThrowCompletionOr<DateTimeFormat*> initialize_date_time_format(VM& vm, DateTimeF
         }
 
         // b. Let rangePatterns be bestFormat.[[rangePatterns12]].
-        range_patterns = ::Locale::get_calendar_range12_formats(data_locale, date_time_format.calendar(), best_format->skeleton);
+        range_patterns = TRY_OR_THROW_OOM(vm, ::Locale::get_calendar_range12_formats(data_locale, date_time_format.calendar(), best_format->skeleton));
     }
     // 47. Else,
     else {
@@ -376,7 +378,7 @@ ThrowCompletionOr<DateTimeFormat*> initialize_date_time_format(VM& vm, DateTimeF
         pattern = move(best_format->pattern);
 
         // b. Let rangePatterns be bestFormat.[[rangePatterns]].
-        range_patterns = ::Locale::get_calendar_range_formats(data_locale, date_time_format.calendar(), best_format->skeleton);
+        range_patterns = TRY_OR_THROW_OOM(vm, ::Locale::get_calendar_range_formats(data_locale, date_time_format.calendar(), best_format->skeleton));
     }
 
     // 48. Set dateTimeFormat.[[Pattern]] to pattern.

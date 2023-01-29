@@ -106,7 +106,7 @@ public:
     {
         StringBuilder builder;
         builder.join(separator, collection, fmtstr);
-        return builder.build();
+        return builder.to_deprecated_string();
     }
 
     [[nodiscard]] bool matches(StringView mask, CaseSensitivity = CaseSensitivity::CaseInsensitive) const;
@@ -128,6 +128,8 @@ public:
     [[nodiscard]] DeprecatedString invert_case() const;
 
     [[nodiscard]] bool is_whitespace() const { return StringUtils::is_whitespace(*this); }
+
+    [[nodiscard]] DeprecatedStringCodePointIterator code_points() const;
 
     [[nodiscard]] DeprecatedString trim(StringView characters, TrimMode mode = TrimMode::Both) const
     {
@@ -215,12 +217,10 @@ public:
     bool operator==(DeprecatedFlyString const&) const;
 
     bool operator<(DeprecatedString const&) const;
-    bool operator<(char const*) const;
     bool operator>=(DeprecatedString const& other) const { return !(*this < other); }
     bool operator>=(char const* other) const { return !(*this < other); }
 
     bool operator>(DeprecatedString const&) const;
-    bool operator>(char const*) const;
     bool operator<=(DeprecatedString const& other) const { return !(*this > other); }
     bool operator<=(char const* other) const { return !(*this > other); }
 
