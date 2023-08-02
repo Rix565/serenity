@@ -32,17 +32,25 @@ public:
 
     static RefPtr<BitmapFont> load_from_file(DeprecatedString const& path);
     static ErrorOr<NonnullRefPtr<BitmapFont>> try_load_from_file(DeprecatedString const& path);
+    static ErrorOr<NonnullRefPtr<BitmapFont>> try_load_from_mapped_file(RefPtr<Core::MappedFile> const&);
+
     ErrorOr<void> write_to_file(DeprecatedString const& path);
+    ErrorOr<void> write_to_file(NonnullOwnPtr<Core::File> file);
 
     ~BitmapFont();
 
     u8* rows() { return m_rows; }
     u8* widths() { return m_glyph_widths; }
 
+    virtual float point_size() const override { return m_presentation_size; }
+
     u8 presentation_size() const override { return m_presentation_size; }
     void set_presentation_size(u8 size) { m_presentation_size = size; }
 
     virtual float pixel_size() const override { return m_glyph_height; }
+    virtual int pixel_size_rounded_up() const override { return m_glyph_height; }
+
+    u16 width() const override { return FontWidth::Normal; }
 
     u16 weight() const override { return m_weight; }
     void set_weight(u16 weight) { m_weight = weight; }
@@ -59,14 +67,11 @@ public:
     bool contains_glyph(u32 code_point) const override;
     bool contains_raw_glyph(u32 code_point) const { return m_glyph_widths[code_point] > 0; }
 
-    virtual float glyph_or_emoji_width(u32 code_point) const override
-    {
-        if (m_fixed_width)
-            return m_glyph_width;
-        return glyph_or_emoji_width_for_variable_width_font(code_point);
-    }
+    virtual float glyph_or_emoji_width(Utf8CodePointIterator&) const override;
+    virtual float glyph_or_emoji_width(Utf32CodePointIterator&) const override;
+
     float glyphs_horizontal_kerning(u32, u32) const override { return 0.f; }
-    u8 glyph_height() const override { return m_glyph_height; }
+    u8 glyph_height() const { return m_glyph_height; }
     int x_height() const override { return m_x_height; }
     virtual float preferred_line_height() const override { return glyph_height() + m_line_gap; }
 
@@ -94,6 +99,8 @@ public:
     virtual float width(StringView) const override;
     virtual float width(Utf8View const&) const override;
     virtual float width(Utf32View const&) const override;
+
+    virtual int width_rounded_up(StringView) const override;
 
     DeprecatedString name() const override { return m_name; }
     void set_name(DeprecatedString name) { m_name = move(name); }
@@ -123,6 +130,8 @@ public:
     DeprecatedString qualified_name() const override;
     DeprecatedString human_readable_name() const override { return DeprecatedString::formatted("{} {} {}", family(), variant(), presentation_size()); }
 
+    virtual RefPtr<Font> with_size(float point_size) const override;
+
 private:
     BitmapFont(DeprecatedString name, DeprecatedString family, u8* rows, u8* widths, bool is_fixed_width,
         u8 glyph_width, u8 glyph_height, u8 glyph_spacing, u16 range_mask_size, u8* range_mask,
@@ -133,8 +142,9 @@ private:
     template<typename T>
     int unicode_view_width(T const& view) const;
 
-    void update_x_height() { m_x_height = m_baseline - m_mean_line; };
-    int glyph_or_emoji_width_for_variable_width_font(u32 code_point) const;
+    void update_x_height() { m_x_height = m_baseline - m_mean_line; }
+
+    virtual bool has_color_bitmaps() const override { return false; }
 
     DeprecatedString m_name;
     DeprecatedString m_family;

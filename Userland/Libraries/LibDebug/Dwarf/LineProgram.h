@@ -7,8 +7,8 @@
 #pragma once
 
 #include <AK/DeprecatedFlyString.h>
+#include <AK/NonnullOwnPtr.h>
 #include <AK/Vector.h>
-#include <LibCore/Stream.h>
 #include <LibDebug/Dwarf/DwarfTypes.h>
 
 namespace Debug::Dwarf {
@@ -66,15 +66,15 @@ struct [[gnu::packed]] LineProgramUnitHeader32 {
     u8 line_range() const { return (common.version <= 4) ? v4.line_range : v5.line_range; }
     u8 opcode_base() const { return (common.version <= 4) ? v4.opcode_base : v5.opcode_base; }
 
-    static ErrorOr<LineProgramUnitHeader32> read_from_stream(Core::Stream::Stream& stream)
+    static ErrorOr<LineProgramUnitHeader32> read_from_stream(Stream& stream)
     {
         LineProgramUnitHeader32 header;
-        TRY(stream.read_entire_buffer(Bytes { &header.common, sizeof(header.common) }));
+        TRY(stream.read_until_filled(Bytes { &header.common, sizeof(header.common) }));
         if (header.common.version <= 4)
-            TRY(stream.read_entire_buffer(Bytes { &header.v4, sizeof(header.v4) }));
+            TRY(stream.read_until_filled(Bytes { &header.v4, sizeof(header.v4) }));
         else
-            TRY(stream.read_entire_buffer(Bytes { &header.v5, sizeof(header.v5) }));
-        TRY(stream.read_entire_buffer(Bytes { &header.std_opcode_lengths, min(sizeof(header.std_opcode_lengths), (header.opcode_base() - 1) * sizeof(header.std_opcode_lengths[0])) }));
+            TRY(stream.read_until_filled(Bytes { &header.v5, sizeof(header.v5) }));
+        TRY(stream.read_until_filled(Bytes { &header.std_opcode_lengths, min(sizeof(header.std_opcode_lengths), (header.opcode_base() - 1) * sizeof(header.std_opcode_lengths[0])) }));
         return header;
     }
 };
@@ -109,7 +109,7 @@ class LineProgram {
     AK_MAKE_NONMOVABLE(LineProgram);
 
 public:
-    explicit LineProgram(DwarfInfo& dwarf_info, Core::Stream::SeekableStream& stream);
+    static ErrorOr<NonnullOwnPtr<LineProgram>> create(DwarfInfo& dwarf_info, SeekableStream& stream);
 
     struct LineInfo {
         FlatPtr address { 0 };
@@ -134,6 +134,8 @@ public:
     bool looks_like_embedded_resource() const;
 
 private:
+    LineProgram(DwarfInfo& dwarf_info, SeekableStream& stream, size_t unit_offset);
+
     ErrorOr<void> parse_unit_header();
     ErrorOr<void> parse_source_directories();
     ErrorOr<void> parse_source_files();
@@ -174,7 +176,7 @@ private:
     static constexpr u16 MAX_DWARF_VERSION = 5;
 
     DwarfInfo& m_dwarf_info;
-    Core::Stream::SeekableStream& m_stream;
+    SeekableStream& m_stream;
 
     size_t m_unit_offset { 0 };
     LineProgramUnitHeader32 m_unit_header {};
@@ -188,6 +190,7 @@ private:
     bool m_is_statement { false };
     bool m_basic_block { false };
     bool m_prologue_end { false };
+    bool m_epilogue_begin { false };
 
     Vector<LineInfo> m_lines;
 };

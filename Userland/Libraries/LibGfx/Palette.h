@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2022, Filiph Sandström <filiph.sandstrom@filfatstudios.com>
  *
@@ -59,7 +59,7 @@ private:
 class Palette {
 
 public:
-    explicit Palette(PaletteImpl const&);
+    explicit Palette(NonnullRefPtr<PaletteImpl>);
     ~Palette() = default;
 
     Color accent() const { return color(ColorRole::Accent); }
@@ -117,6 +117,8 @@ public:
     Color ruler_inactive_text() const { return color(ColorRole::RulerInactiveText); }
     Color text_cursor() const { return color(ColorRole::TextCursor); }
     Color focus_outline() const { return color(ColorRole::FocusOutline); }
+    Color tray() const { return color(ColorRole::Tray); }
+    Color tray_text() const { return color(ColorRole::TrayText); }
 
     Color link() const { return color(ColorRole::Link); }
     Color active_link() const { return color(ColorRole::ActiveLink); }
@@ -179,6 +181,7 @@ public:
     DeprecatedString menu_shadow_path() const { return path(PathRole::MenuShadow); }
     DeprecatedString taskbar_shadow_path() const { return path(PathRole::TaskbarShadow); }
     DeprecatedString tooltip_shadow_path() const { return path(PathRole::TooltipShadow); }
+    DeprecatedString color_scheme_path() const { return path(PathRole::ColorScheme); }
 
     Color color(ColorRole role) const { return m_impl->color(role); }
     Gfx::TextAlignment alignment(AlignmentRole role) const { return m_impl->alignment(role); }

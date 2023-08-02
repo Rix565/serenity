@@ -39,16 +39,16 @@ private:
     virtual void visit_edges(Visitor&) override;
 
     // 5.4 Properties of Temporal.PlainDateTime Instances, https://tc39.es/proposal-temporal/#sec-properties-of-temporal-plaindatetime-instances
-    i32 m_iso_year { 0 };        // [[ISOYear]]
-    u8 m_iso_month { 0 };        // [[ISOMonth]]
-    u8 m_iso_day { 0 };          // [[ISODay]]
-    u8 m_iso_hour { 0 };         // [[ISOHour]]
-    u8 m_iso_minute { 0 };       // [[ISOMinute]]
-    u8 m_iso_second { 0 };       // [[ISOSecond]]
-    u16 m_iso_millisecond { 0 }; // [[ISOMillisecond]]
-    u16 m_iso_microsecond { 0 }; // [[ISOMicrosecond]]
-    u16 m_iso_nanosecond { 0 };  // [[ISONanosecond]]
-    Object& m_calendar;          // [[Calendar]]
+    i32 m_iso_year { 0 };            // [[ISOYear]]
+    u8 m_iso_month { 0 };            // [[ISOMonth]]
+    u8 m_iso_day { 0 };              // [[ISODay]]
+    u8 m_iso_hour { 0 };             // [[ISOHour]]
+    u8 m_iso_minute { 0 };           // [[ISOMinute]]
+    u8 m_iso_second { 0 };           // [[ISOSecond]]
+    u16 m_iso_millisecond { 0 };     // [[ISOMillisecond]]
+    u16 m_iso_microsecond { 0 };     // [[ISOMicrosecond]]
+    u16 m_iso_nanosecond { 0 };      // [[ISONanosecond]]
+    NonnullGCPtr<Object> m_calendar; // [[Calendar]]
 };
 
 // Used by AddDateTime to temporarily hold values
@@ -65,7 +65,7 @@ struct TemporalPlainDateTime {
 };
 
 bool iso_date_time_within_limits(i32 year, u8 month, u8 day, u8 hour, u8 minute, u8 second, u16 millisecond, u16 microsecond, u16 nanosecond);
-ThrowCompletionOr<ISODateTime> interpret_temporal_date_time_fields(VM&, Object& calendar, Object& fields, Object const& options);
+ThrowCompletionOr<ISODateTime> interpret_temporal_date_time_fields(VM&, Object& calendar, Object& fields, Object const* options);
 ThrowCompletionOr<PlainDateTime*> to_temporal_date_time(VM&, Value item, Object const* options = nullptr);
 ISODateTime balance_iso_date_time(i32 year, u8 month, u8 day, u8 hour, u8 minute, u8 second, u16 millisecond, u16 microsecond, i64 nanosecond);
 ThrowCompletionOr<PlainDateTime*> create_temporal_date_time(VM&, i32 iso_year, u8 iso_month, u8 iso_day, u8 hour, u8 minute, u8 second, u16 millisecond, u16 microsecond, u16 nanosecond, Object& calendar, FunctionObject const* new_target = nullptr);

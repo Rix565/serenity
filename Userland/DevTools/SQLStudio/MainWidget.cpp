@@ -1,15 +1,16 @@
 /*
  * Copyright (c) 2022, Dylan Katz <dykatz@uw.edu>
  * Copyright (c) 2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2023, Cameron Youell <cameronyouell@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <DevTools/SQLStudio/SQLStudioGML.h>
 #include <LibCore/DirIterator.h>
-#include <LibCore/File.h>
 #include <LibCore/StandardPaths.h>
 #include <LibDesktop/Launcher.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/BoxLayout.h>
@@ -45,7 +46,7 @@ static Vector<DeprecatedString> lookup_database_names()
     static constexpr auto database_extension = ".db"sv;
 
     auto database_path = DeprecatedString::formatted("{}/sql", Core::StandardPaths::data_directory());
-    if (!Core::File::exists(database_path))
+    if (!FileSystem::exists(database_path))
         return {};
 
     Core::DirIterator iterator(move(database_path), Core::DirIterator::SkipParentAndBaseDir);
@@ -59,11 +60,19 @@ static Vector<DeprecatedString> lookup_database_names()
     return database_names;
 }
 
-MainWidget::MainWidget()
+ErrorOr<NonnullRefPtr<MainWidget>> MainWidget::create()
 {
-    load_from_gml(sql_studio_gml).release_value_but_fixme_should_propagate_errors();
+    auto widget = TRY(try_make_ref_counted<MainWidget>());
 
-    m_new_action = GUI::Action::create("&New", { Mod_Ctrl, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/new.png"sv).release_value_but_fixme_should_propagate_errors(), [this](auto&) {
+    TRY(widget->load_from_gml(sql_studio_gml));
+    TRY(widget->setup());
+
+    return widget;
+}
+
+ErrorOr<void> MainWidget::setup()
+{
+    m_new_action = GUI::Action::create("&New", { Mod_Ctrl, Key_N }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/new.png"sv)), [this](auto&) {
         open_new_script();
     });
 
@@ -149,13 +158,13 @@ MainWidget::MainWidget()
         update_editor_actions(editor);
     });
 
-    m_connect_to_database_action = GUI::Action::create("Connect to Database"sv, { Mod_Alt, Key_C }, Gfx::Bitmap::load_from_file("/res/icons/16x16/go-forward.png"sv).release_value_but_fixme_should_propagate_errors(), [this](auto&) {
+    m_connect_to_database_action = GUI::Action::create("Connect to Database"sv, { Mod_Alt, Key_C }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/go-forward.png"sv)), [this](auto&) {
         auto database_name = m_databases_combo_box->text().trim_whitespace();
         if (database_name.is_empty())
             return;
 
         m_run_script_action->set_enabled(false);
-        m_statusbar->set_text(1, "Disconnected"sv);
+        m_statusbar->set_text(1, "Disconnected"_string.release_value_but_fixme_should_propagate_errors());
 
         if (m_connection_id.has_value()) {
             m_sql_client->disconnect(*m_connection_id);
@@ -163,7 +172,7 @@ MainWidget::MainWidget()
         }
 
         if (auto connection_id = m_sql_client->connect(database_name); connection_id.has_value()) {
-            m_statusbar->set_text(1, DeprecatedString::formatted("Connected to: {}", database_name));
+            m_statusbar->set_text(1, String::formatted("Connected to: {}", database_name).release_value_but_fixme_should_propagate_errors());
             m_connection_id = *connection_id;
             m_run_script_action->set_enabled(true);
         } else {
@@ -171,7 +180,7 @@ MainWidget::MainWidget()
         }
     });
 
-    m_run_script_action = GUI::Action::create("Run script", { Mod_Alt, Key_F9 }, Gfx::Bitmap::load_from_file("/res/icons/16x16/play.png"sv).release_value_but_fixme_should_propagate_errors(), [&](auto&) {
+    m_run_script_action = GUI::Action::create("Run Script", { Mod_Alt, Key_F9 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/play.png"sv)), [&](auto&) {
         m_results.clear();
         m_current_line_for_parsing = 0;
         read_next_sql_statement_of_editor();
@@ -226,98 +235,100 @@ MainWidget::MainWidget()
 
     m_action_tab_widget = find_descendant_of_type_named<GUI::TabWidget>("action_tab_widget"sv);
 
-    m_query_results_widget = m_action_tab_widget->add_tab<GUI::Widget>("Results");
-    m_query_results_widget->set_layout<GUI::VerticalBoxLayout>();
-    m_query_results_widget->layout()->set_margins(6);
+    m_query_results_widget = m_action_tab_widget->add_tab<GUI::Widget>("Results"_short_string);
+    m_query_results_widget->set_layout<GUI::VerticalBoxLayout>(6);
     m_query_results_table_view = m_query_results_widget->add<GUI::TableView>();
 
     m_action_tab_widget->on_tab_close_click = [this](auto&) {
-        m_action_tab_widget->set_fixed_height(0);
+        m_action_tab_widget->set_visible(false);
     };
 
     m_statusbar = find_descendant_of_type_named<GUI::Statusbar>("statusbar"sv);
     m_statusbar->segment(1).set_mode(GUI::Statusbar::Segment::Mode::Auto);
-    m_statusbar->set_text(1, "Disconnected"sv);
+    m_statusbar->set_text(1, TRY("Disconnected"_string));
     m_statusbar->segment(2).set_mode(GUI::Statusbar::Segment::Mode::Fixed);
-    m_statusbar->segment(2).set_fixed_width(font().width("Ln 0000, Col 000"sv) + font().max_glyph_width());
+    m_statusbar->segment(2).set_fixed_width(font().width("Ln 0,000  Col 000"sv) + font().max_glyph_width());
 
     GUI::Application::the()->on_action_enter = [this](GUI::Action& action) {
-        auto text = action.status_tip();
-        if (text.is_empty())
-            text = Gfx::parse_ampersand_string(action.text());
-        m_statusbar->set_override_text(move(text));
+        m_statusbar->set_override_text(action.status_tip());
     };
 
     GUI::Application::the()->on_action_leave = [this](GUI::Action&) {
         m_statusbar->set_override_text({});
     };
 
-    m_sql_client = SQL::SQLClient::try_create().release_value_but_fixme_should_propagate_errors();
-    m_sql_client->on_execution_success = [this](auto, auto, auto, auto, auto, auto) {
+    m_sql_client = TRY(SQL::SQLClient::try_create());
+    m_sql_client->on_execution_success = [this](auto result) {
+        m_result_column_names = move(result.column_names);
         read_next_sql_statement_of_editor();
     };
-    m_sql_client->on_execution_error = [this](auto, auto, auto, auto message) {
+    m_sql_client->on_execution_error = [this](auto result) {
         auto* editor = active_editor();
         VERIFY(editor);
 
-        GUI::MessageBox::show_error(window(), DeprecatedString::formatted("Error executing {}\n{}", editor->path(), message));
+        GUI::MessageBox::show_error(window(), DeprecatedString::formatted("Error executing {}\n{}", editor->path(), result.error_message));
     };
-    m_sql_client->on_next_result = [this](auto, auto, auto row) {
+    m_sql_client->on_next_result = [this](auto result) {
         m_results.append({});
-        m_results.last().ensure_capacity(row.size());
+        m_results.last().ensure_capacity(result.values.size());
 
-        for (auto const& value : row)
+        for (auto const& value : result.values)
             m_results.last().unchecked_append(value.to_deprecated_string());
     };
-    m_sql_client->on_results_exhausted = [this](auto, auto, auto) {
+    m_sql_client->on_results_exhausted = [this](auto) {
         if (m_results.size() == 0)
             return;
         if (m_results[0].size() == 0)
             return;
+
         Vector<GUI::JsonArrayModel::FieldSpec> query_result_fields;
-        for (size_t i = 0; i < m_results[0].size(); i++)
-            query_result_fields.empend(DeprecatedString::formatted("column_{}", i + 1), DeprecatedString::formatted("Column {}", i + 1), Gfx::TextAlignment::CenterLeft);
+        for (auto& column_name : m_result_column_names)
+            query_result_fields.empend(column_name, String::from_deprecated_string(column_name).release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterLeft);
+
         auto query_results_model = GUI::JsonArrayModel::create("{}", move(query_result_fields));
         m_query_results_table_view->set_model(MUST(GUI::SortingProxyModel::create(*query_results_model)));
         for (auto& result_row : m_results) {
             Vector<JsonValue> individual_result_as_json;
             for (auto& result_row_column : result_row)
                 individual_result_as_json.append(result_row_column);
-            query_results_model->add(move(individual_result_as_json));
+            MUST(query_results_model->add(move(individual_result_as_json)));
         }
-        m_action_tab_widget->set_fixed_height(200);
+        m_action_tab_widget->set_visible(true);
     };
+
+    return {};
 }
 
-void MainWidget::initialize_menu(GUI::Window* window)
+ErrorOr<void> MainWidget::initialize_menu(GUI::Window* window)
 {
-    auto& file_menu = window->add_menu("&File");
-    file_menu.add_action(*m_new_action);
-    file_menu.add_action(*m_open_action);
-    file_menu.add_action(*m_save_action);
-    file_menu.add_action(*m_save_as_action);
-    file_menu.add_action(*m_save_all_action);
-    file_menu.add_separator();
-    file_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    auto file_menu = TRY(window->try_add_menu("&File"_short_string));
+    TRY(file_menu->try_add_action(*m_new_action));
+    TRY(file_menu->try_add_action(*m_open_action));
+    TRY(file_menu->try_add_action(*m_save_action));
+    TRY(file_menu->try_add_action(*m_save_as_action));
+    TRY(file_menu->try_add_action(*m_save_all_action));
+    TRY(file_menu->try_add_separator());
+    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
-    }));
+    })));
 
-    auto& edit_menu = window->add_menu("&Edit");
-    edit_menu.add_action(*m_copy_action);
-    edit_menu.add_action(*m_cut_action);
-    edit_menu.add_action(*m_paste_action);
-    edit_menu.add_separator();
-    edit_menu.add_action(*m_undo_action);
-    edit_menu.add_action(*m_redo_action);
-    edit_menu.add_separator();
-    edit_menu.add_action(*m_run_script_action);
+    auto edit_menu = TRY(window->try_add_menu("&Edit"_short_string));
+    TRY(edit_menu->try_add_action(*m_copy_action));
+    TRY(edit_menu->try_add_action(*m_cut_action));
+    TRY(edit_menu->try_add_action(*m_paste_action));
+    TRY(edit_menu->try_add_separator());
+    TRY(edit_menu->try_add_action(*m_undo_action));
+    TRY(edit_menu->try_add_action(*m_redo_action));
+    TRY(edit_menu->try_add_separator());
+    TRY(edit_menu->try_add_action(*m_run_script_action));
 
-    auto& help_menu = window->add_menu("&Help");
-    help_menu.add_action(GUI::CommonActions::make_command_palette_action(window));
-    help_menu.add_action(GUI::CommonActions::make_help_action([](auto&) {
-        Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/SQLStudio.md"), "/bin/Help");
-    }));
-    help_menu.add_action(GUI::CommonActions::make_about_action("SQL Studio", GUI::Icon::default_icon("app-sql-studio"sv), window));
+    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
+    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
+    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+        Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Applications/SQLStudio.md"), "/bin/Help");
+    })));
+    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("SQL Studio", GUI::Icon::default_icon("app-sql-studio"sv), window)));
+    return {};
 }
 
 void MainWidget::open_new_script()
@@ -325,7 +336,7 @@ void MainWidget::open_new_script()
     auto new_script_name = DeprecatedString::formatted("New Script - {}", m_new_script_counter);
     ++m_new_script_counter;
 
-    auto& editor = m_tab_widget->add_tab<ScriptEditor>(new_script_name);
+    auto& editor = m_tab_widget->add_tab<ScriptEditor>(String::from_deprecated_string(new_script_name).release_value_but_fixme_should_propagate_errors());
     editor.new_script_with_temp_name(new_script_name);
 
     editor.on_cursor_change = [this] { on_editor_change(); };
@@ -337,7 +348,7 @@ void MainWidget::open_new_script()
 
 void MainWidget::open_script_from_file(LexicalPath const& file_path)
 {
-    auto& editor = m_tab_widget->add_tab<ScriptEditor>(file_path.title());
+    auto& editor = m_tab_widget->add_tab<ScriptEditor>(String::from_utf8(file_path.title()).release_value_but_fixme_should_propagate_errors());
 
     if (auto result = editor.open_script_from_file(file_path); result.is_error()) {
         GUI::MessageBox::show_error(window(), DeprecatedString::formatted("Failed to open {}\n{}", file_path, result.error()));
@@ -411,8 +422,8 @@ void MainWidget::on_editor_change()
 void MainWidget::update_statusbar(ScriptEditor* editor)
 {
     if (!editor) {
-        m_statusbar->set_text(0, "");
-        m_statusbar->set_text(2, "");
+        m_statusbar->set_text(0, {});
+        m_statusbar->set_text(2, {});
         return;
     }
 
@@ -420,11 +431,11 @@ void MainWidget::update_statusbar(ScriptEditor* editor)
     if (editor->has_selection()) {
         auto character_count = editor->selected_text().length();
         auto word_count = editor->number_of_selected_words();
-        builder.appendff("Selected: {} {} ({} {})", character_count, character_count == 1 ? "character" : "characters", word_count, word_count != 1 ? "words" : "word");
+        builder.appendff("Selected: {:'d} {} ({:'d} {})", character_count, character_count == 1 ? "character" : "characters", word_count, word_count != 1 ? "words" : "word");
     }
 
-    m_statusbar->set_text(0, builder.to_deprecated_string());
-    m_statusbar->set_text(2, DeprecatedString::formatted("Ln {}, Col {}", editor->cursor().line() + 1, editor->cursor().column()));
+    m_statusbar->set_text(0, builder.to_string().release_value_but_fixme_should_propagate_errors());
+    m_statusbar->set_text(2, String::formatted("Ln {:'d}  Col {:'d}", editor->cursor().line() + 1, editor->cursor().column()).release_value_but_fixme_should_propagate_errors());
 }
 
 void MainWidget::update_editor_actions(ScriptEditor* editor)
@@ -475,10 +486,10 @@ void MainWidget::drop_event(GUI::DropEvent& drop_event)
 
         for (auto& url : urls) {
             auto& scheme = url.scheme();
-            if (!scheme.equals_ignoring_case("file"sv))
+            if (!scheme.equals_ignoring_ascii_case("file"sv))
                 continue;
 
-            auto lexical_path = LexicalPath(url.path());
+            auto lexical_path = LexicalPath(url.serialize_path());
             open_script_from_file(lexical_path);
         }
     }

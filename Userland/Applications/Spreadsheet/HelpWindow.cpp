@@ -83,25 +83,26 @@ HelpWindow::HelpWindow(GUI::Window* parent)
     m_webview = splitter.add<WebView::OutOfProcessWebView>();
     m_webview->on_link_click = [this](auto& url, auto&, auto&&) {
         VERIFY(url.scheme() == "spreadsheet");
-        if (url.host() == "example") {
-            auto entry = LexicalPath::basename(url.path());
+        if (url.host().template has<String>() && url.host().template get<String>() == "example"sv) {
+            auto example_path = url.serialize_path();
+            auto entry = LexicalPath::basename(example_path);
             auto doc_option = m_docs.get_object(entry);
             if (!doc_option.has_value()) {
-                GUI::MessageBox::show_error(this, DeprecatedString::formatted("No documentation entry found for '{}'", url.path()));
+                GUI::MessageBox::show_error(this, DeprecatedString::formatted("No documentation entry found for '{}'", example_path));
                 return;
             }
             auto& doc = doc_option.value();
-            const auto& name = url.fragment();
+            auto name = url.fragment();
 
             auto maybe_example_data = doc.get_object("example_data"sv);
             if (!maybe_example_data.has_value()) {
-                GUI::MessageBox::show_error(this, DeprecatedString::formatted("No example data found for '{}'", url.path()));
+                GUI::MessageBox::show_error(this, DeprecatedString::formatted("No example data found for '{}'", example_path));
                 return;
             }
             auto& example_data = maybe_example_data.value();
 
             if (!example_data.has_object(name)) {
-                GUI::MessageBox::show_error(this, DeprecatedString::formatted("Example '{}' not found for '{}'", name, url.path()));
+                GUI::MessageBox::show_error(this, DeprecatedString::formatted("Example '{}' not found for '{}'", name, example_path));
                 return;
             }
             auto& value = example_data.get_object(name).value();
@@ -112,20 +113,20 @@ HelpWindow::HelpWindow(GUI::Window* parent)
             window->set_title(DeprecatedString::formatted("Spreadsheet Help - Example {} for {}", name, entry));
             window->on_close = [window = window.ptr()] { window->remove_from_parent(); };
 
-            auto widget = window->set_main_widget<SpreadsheetWidget>(window, NonnullRefPtrVector<Sheet> {}, false).release_value_but_fixme_should_propagate_errors();
+            auto widget = window->set_main_widget<SpreadsheetWidget>(window, Vector<NonnullRefPtr<Sheet>> {}, false).release_value_but_fixme_should_propagate_errors();
             auto sheet = Sheet::from_json(value, widget->workbook());
             if (!sheet) {
-                GUI::MessageBox::show_error(this, DeprecatedString::formatted("Corrupted example '{}' in '{}'", name, url.path()));
+                GUI::MessageBox::show_error(this, DeprecatedString::formatted("Corrupted example '{}' in '{}'", name, example_path));
                 return;
             }
 
             widget->add_sheet(sheet.release_nonnull());
             window->show();
-        } else if (url.host() == "doc") {
-            auto entry = LexicalPath::basename(url.path());
-            m_webview->load(URL::create_with_data("text/html", render(entry)));
+        } else if (url.host() == String::from_utf8_short_string("doc"sv)) {
+            auto entry = LexicalPath::basename(url.serialize_path());
+            m_webview->load(URL::create_with_data("text/html"sv, render(entry)));
         } else {
-            dbgln("Invalid spreadsheet action domain '{}'", url.host());
+            dbgln("Invalid spreadsheet action domain '{}'", url.serialized_host().release_value_but_fixme_should_propagate_errors());
         }
     };
 
@@ -134,7 +135,7 @@ HelpWindow::HelpWindow(GUI::Window* parent)
             return;
 
         auto key = static_cast<HelpListModel*>(m_listview->model())->key(index);
-        m_webview->load(URL::create_with_data("text/html", render(key)));
+        m_webview->load(URL::create_with_data("text/html"sv, render(key)));
     };
 }
 

@@ -22,34 +22,35 @@ class Location final : public Bindings::PlatformObject {
 public:
     virtual ~Location() override;
 
-    DeprecatedString href() const;
-    JS::ThrowCompletionOr<void> set_href(DeprecatedString const&);
+    WebIDL::ExceptionOr<String> href() const;
+    WebIDL::ExceptionOr<void> set_href(String const&);
 
-    DeprecatedString origin() const;
+    WebIDL::ExceptionOr<String> origin() const;
 
-    DeprecatedString protocol() const;
-    JS::ThrowCompletionOr<void> set_protocol(DeprecatedString const&);
+    WebIDL::ExceptionOr<String> protocol() const;
+    WebIDL::ExceptionOr<void> set_protocol(String const&);
 
-    DeprecatedString host() const;
-    JS::ThrowCompletionOr<void> set_host(DeprecatedString const&);
+    WebIDL::ExceptionOr<String> host() const;
+    WebIDL::ExceptionOr<void> set_host(String const&);
 
-    DeprecatedString hostname() const;
-    JS::ThrowCompletionOr<void> set_hostname(DeprecatedString const&);
+    WebIDL::ExceptionOr<String> hostname() const;
+    WebIDL::ExceptionOr<void> set_hostname(String const&);
 
-    DeprecatedString port() const;
-    JS::ThrowCompletionOr<void> set_port(DeprecatedString const&);
+    WebIDL::ExceptionOr<String> port() const;
+    WebIDL::ExceptionOr<void> set_port(String const&);
 
-    DeprecatedString pathname() const;
-    JS::ThrowCompletionOr<void> set_pathname(DeprecatedString const&);
+    WebIDL::ExceptionOr<String> pathname() const;
+    WebIDL::ExceptionOr<void> set_pathname(String const&);
 
-    DeprecatedString search() const;
-    JS::ThrowCompletionOr<void> set_search(DeprecatedString const&);
+    WebIDL::ExceptionOr<String> search() const;
+    WebIDL::ExceptionOr<void> set_search(String const&);
 
-    DeprecatedString hash() const;
-    JS::ThrowCompletionOr<void> set_hash(DeprecatedString const&);
+    WebIDL::ExceptionOr<String> hash() const;
+    WebIDL::ExceptionOr<void> set_hash(String const&);
 
-    void replace(DeprecatedString url) const;
+    void replace(String const& url) const;
     void reload() const;
+    WebIDL::ExceptionOr<void> assign(String const& url) const;
 
     virtual JS::ThrowCompletionOr<JS::Object*> internal_get_prototype_of() const override;
     virtual JS::ThrowCompletionOr<bool> internal_set_prototype_of(Object* prototype) override;
@@ -57,7 +58,7 @@ public:
     virtual JS::ThrowCompletionOr<bool> internal_prevent_extensions() override;
     virtual JS::ThrowCompletionOr<Optional<JS::PropertyDescriptor>> internal_get_own_property(JS::PropertyKey const&) const override;
     virtual JS::ThrowCompletionOr<bool> internal_define_own_property(JS::PropertyKey const&, JS::PropertyDescriptor const&) override;
-    virtual JS::ThrowCompletionOr<JS::Value> internal_get(JS::PropertyKey const&, JS::Value receiver) const override;
+    virtual JS::ThrowCompletionOr<JS::Value> internal_get(JS::PropertyKey const&, JS::Value receiver, JS::CacheablePropertyMetadata*) const override;
     virtual JS::ThrowCompletionOr<bool> internal_set(JS::PropertyKey const&, JS::Value value, JS::Value receiver) override;
     virtual JS::ThrowCompletionOr<bool> internal_delete(JS::PropertyKey const&) override;
     virtual JS::ThrowCompletionOr<JS::MarkedVector<JS::Value>> internal_own_property_keys() const override;
@@ -71,7 +72,7 @@ private:
     virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    DOM::Document const* relevant_document() const;
+    JS::GCPtr<DOM::Document> relevant_document() const;
     AK::URL url() const;
 
     // [[CrossOriginPropertyDescriptorMap]], https://html.spec.whatwg.org/multipage/browsers.html#crossoriginpropertydescriptormap

@@ -10,22 +10,21 @@
 #include "SlideObject.h"
 #include <AK/DeprecatedString.h>
 #include <AK/Forward.h>
-#include <AK/NonnullRefPtrVector.h>
 
 // A single slide of a presentation.
 class Slide final {
 public:
-    static ErrorOr<Slide> parse_slide(JsonObject const& slide_json);
+    static ErrorOr<Slide> parse_slide(JsonObject const& slide_json, unsigned slide_index);
 
-    // FIXME: shouldn't be hard-coded to 1.
-    unsigned frame_count() const { return 1; }
+    unsigned frame_count() const { return m_frame_count; }
     StringView title() const { return m_title; }
 
     ErrorOr<HTMLElement> render(Presentation const&) const;
 
 private:
-    Slide(NonnullRefPtrVector<SlideObject> slide_objects, DeprecatedString title);
+    Slide(unsigned frame_count, Vector<NonnullRefPtr<SlideObject>> slide_objects, DeprecatedString title);
 
-    NonnullRefPtrVector<SlideObject> m_slide_objects;
+    unsigned m_frame_count;
+    Vector<NonnullRefPtr<SlideObject>> m_slide_objects;
     DeprecatedString m_title;
 };

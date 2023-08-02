@@ -34,9 +34,9 @@ void InlineLevelIterator::enter_node_with_box_model_metrics(Layout::NodeWithStyl
     auto& used_values = m_layout_state.get_mutable(node);
     auto const& computed_values = node.computed_values();
 
-    used_values.margin_left = computed_values.margin().left().resolved(node, CSS::Length::make_px(m_container_state.content_width())).to_px(node);
+    used_values.margin_left = computed_values.margin().left().to_px(node, m_container_state.content_width());
     used_values.border_left = computed_values.border_left().width;
-    used_values.padding_left = computed_values.padding().left().resolved(node, CSS::Length::make_px(m_container_state.content_width())).to_px(node);
+    used_values.padding_left = computed_values.padding().left().to_px(node, m_container_state.content_width());
 
     m_extra_leading_metrics->margin += used_values.margin_left;
     m_extra_leading_metrics->border += used_values.border_left;
@@ -52,11 +52,11 @@ void InlineLevelIterator::exit_node_with_box_model_metrics()
 
     auto& node = m_box_model_node_stack.last();
     auto& used_values = m_layout_state.get_mutable(node);
-    auto const& computed_values = node.computed_values();
+    auto const& computed_values = node->computed_values();
 
-    used_values.margin_right = computed_values.margin().right().resolved(node, CSS::Length::make_px(m_container_state.content_width())).to_px(node);
+    used_values.margin_right = computed_values.margin().right().to_px(node, m_container_state.content_width());
     used_values.border_right = computed_values.border_right().width;
-    used_values.padding_right = computed_values.padding().right().resolved(node, CSS::Length::make_px(m_container_state.content_width())).to_px(node);
+    used_values.padding_right = computed_values.padding().right().to_px(node, m_container_state.content_width());
 
     m_extra_trailing_metrics->margin += used_values.margin_right;
     m_extra_trailing_metrics->border += used_values.border_right;
@@ -83,7 +83,7 @@ Layout::Node const* InlineLevelIterator::next_inline_node_in_pre_order(Layout::N
 
         // If node is the last node on the "box model node stack", pop it off.
         if (!m_box_model_node_stack.is_empty()
-            && &m_box_model_node_stack.last() == node) {
+            && m_box_model_node_stack.last() == node) {
             exit_node_with_box_model_metrics();
         }
         if (!node || node == stay_within)
@@ -92,7 +92,7 @@ Layout::Node const* InlineLevelIterator::next_inline_node_in_pre_order(Layout::N
 
     // If node is the last node on the "box model node stack", pop it off.
     if (!m_box_model_node_stack.is_empty()
-        && &m_box_model_node_stack.last() == node) {
+        && m_box_model_node_stack.last() == node) {
         exit_node_with_box_model_metrics();
     }
 
@@ -104,7 +104,7 @@ void InlineLevelIterator::compute_next()
     if (m_next_node == nullptr)
         return;
     do {
-        m_next_node = next_inline_node_in_pre_order(*m_next_node, &m_container);
+        m_next_node = next_inline_node_in_pre_order(*m_next_node, m_container);
     } while (m_next_node && (!m_next_node->is_inline() && !m_next_node->is_out_of_flow(m_inline_formatting_context)));
 }
 
@@ -187,9 +187,11 @@ Optional<InlineLevelIterator::Item> InlineLevelIterator::next(CSSPixels availabl
     }
 
     if (is<Layout::BreakNode>(*m_current_node)) {
+        auto& node = *m_current_node;
         skip_to_next();
         return Item {
             .type = Item::Type::ForcedBreak,
+            .node = &node,
         };
     }
 
@@ -257,9 +259,6 @@ void InlineLevelIterator::enter_text_node(Layout::TextNode const& text_node)
 
     if (text_node.dom_node().is_editable() && !text_node.dom_node().is_uninteresting_whitespace_node())
         do_collapse = false;
-
-    // FIXME: The const_cast here is gross.
-    const_cast<TextNode&>(text_node).compute_text_for_rendering(do_collapse);
 
     m_text_node_context = TextNodeContext {
         .do_collapse = do_collapse,

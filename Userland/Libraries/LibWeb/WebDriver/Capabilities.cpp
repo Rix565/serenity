@@ -52,7 +52,7 @@ static Response deserialize_as_ladybird_options(JsonValue value)
 
     auto const& object = value.as_object();
 
-    if (auto headless = object.get_bool("headless"sv); headless.has_value())
+    if (auto headless = object.get("headless"sv); headless.has_value() && !headless->is_bool())
         return Error::from_code(ErrorCode::InvalidArgument, "Extension capability serenity:ladybird/headless must be a boolean"sv);
 
     return value;
@@ -100,7 +100,7 @@ static ErrorOr<JsonObject, Error> validate_capabilities(JsonValue const& capabil
         // -> name equals "browserName"
         // -> name equals "browserVersion"
         // -> name equals "platformName"
-        else if (name.is_one_of("browserName"sv, "browser_version"sv, "platformName"sv)) {
+        else if (name.is_one_of("browserName"sv, "browserVersion"sv, "platformName"sv)) {
             // If value is not a string return an error with error code invalid argument. Otherwise, let deserialized be set to value.
             if (!value.is_string())
                 return Error::from_code(ErrorCode::InvalidArgument, DeprecatedString::formatted("Capability {} must be a string", name));
@@ -347,7 +347,7 @@ Response process_capabilities(JsonValue const& parameters)
         all_first_match_capabilities = capabilities->as_array();
     } else {
         // a. If all first match capabilities is undefined, set the value to a JSON List with a single entry of an empty JSON Object.
-        all_first_match_capabilities.append(JsonObject {});
+        all_first_match_capabilities.must_append(JsonObject {});
     }
 
     // 4. Let validated first match capabilities be an empty JSON List.
@@ -360,7 +360,7 @@ Response process_capabilities(JsonValue const& parameters)
         auto validated_capabilities = TRY(validate_capabilities(first_match_capabilities));
 
         // b. Append validated capabilities to validated first match capabilities.
-        validated_first_match_capabilities.append(move(validated_capabilities));
+        validated_first_match_capabilities.must_append(move(validated_capabilities));
         return {};
     }));
 
@@ -374,7 +374,7 @@ Response process_capabilities(JsonValue const& parameters)
         auto merged = TRY(merge_capabilities(required_capabilities, first_match_capabilities.as_object()));
 
         // b. Append merged to merged capabilities.
-        merged_capabilities.append(move(merged));
+        merged_capabilities.must_append(move(merged));
         return {};
     }));
 

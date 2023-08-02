@@ -72,21 +72,24 @@ static void consume_whitespace(GenericLexer& lexer)
                 lexer.ignore(2);
             } else {
                 lexer.ignore_until('\n');
+                lexer.ignore();
                 break;
             }
         }
     };
     for (;;) {
-        if (lexer.consume_specific("//"sv))
+        if (lexer.consume_specific("//"sv)) {
             ignore_line();
-        else if (lexer.consume_specific("/*"sv))
+        } else if (lexer.consume_specific("/*"sv)) {
             lexer.ignore_until("*/");
-        else if (lexer.next_is("\\\n"sv))
             lexer.ignore(2);
-        else if (lexer.is_eof() || !lexer.next_is(isspace))
+        } else if (lexer.next_is("\\\n"sv)) {
+            lexer.ignore(2);
+        } else if (lexer.is_eof() || !lexer.next_is(isspace)) {
             break;
-        else
+        } else {
             lexer.ignore();
+        }
     }
 }
 
@@ -224,6 +227,10 @@ void Preprocessor::handle_preprocessor_keyword(StringView keyword, GenericLexer&
         return;
     }
     if (keyword == "pragma") {
+        line_lexer.consume_all();
+        return;
+    }
+    if (keyword == "error") {
         line_lexer.consume_all();
         return;
     }

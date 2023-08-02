@@ -7,16 +7,20 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#define AK_DONT_REPLACE_STD
-
 #include "ConsoleWidget.h"
 #include "Utilities.h"
+#include "WebContentView.h"
 #include <AK/StringBuilder.h>
 #include <LibJS/MarkupGenerator.h>
+#include <QFontDatabase>
+#include <QKeyEvent>
 #include <QLineEdit>
+#include <QPalette>
 #include <QPushButton>
 #include <QTextEdit>
 #include <QVBoxLayout>
+
+bool is_using_dark_system_theme(QWidget&);
 
 namespace Ladybird {
 
@@ -24,34 +28,27 @@ ConsoleWidget::ConsoleWidget()
 {
     setLayout(new QVBoxLayout);
 
-    m_output_view = new QTextEdit(this);
-    m_output_view->setReadOnly(true);
-    layout()->addWidget(m_output_view);
+    m_output_view = new WebContentView({}, WebView::EnableCallgrindProfiling::No, WebView::UseJavaScriptBytecode::No, UseLagomNetworking::No);
+    if (is_using_dark_system_theme(*this))
+        m_output_view->update_palette(WebContentView::PaletteMode::Dark);
 
-    if (on_request_messages)
-        on_request_messages(0);
+    m_output_view->load("data:text/html,<html style=\"font: 10pt monospace;\"></html>"sv);
+    // Wait until our output WebView is loaded, and then request any messages that occurred before we existed
+    m_output_view->on_load_finish = [this](auto&) {
+        if (on_request_messages)
+            on_request_messages(0);
+    };
+
+    layout()->addWidget(m_output_view);
 
     auto* bottom_container = new QWidget(this);
     bottom_container->setLayout(new QHBoxLayout);
 
     layout()->addWidget(bottom_container);
 
-    m_input = new QLineEdit(bottom_container);
+    m_input = new ConsoleInputEdit(bottom_container, *this);
+    m_input->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     bottom_container->layout()->addWidget(m_input);
-
-    QObject::connect(m_input, &QLineEdit::returnPressed, [this] {
-        auto js_source = ak_deprecated_string_from_qstring(m_input->text());
-
-        if (js_source.is_whitespace())
-            return;
-
-        m_input->clear();
-
-        print_source_line(js_source);
-
-        if (on_js_input)
-            on_js_input(js_source);
-    });
 
     setFocusProxy(m_input);
 
@@ -139,12 +136,31 @@ void ConsoleWidget::print_source_line(StringView source)
 
 void ConsoleWidget::print_html(StringView line)
 {
-    m_output_view->append(QString::fromUtf8(line.characters_without_null_termination(), line.length()));
+    StringBuilder builder;
+
+    builder.append(R"~~~(
+        var p = document.createElement("p");
+        p.innerHTML = ")~~~"sv);
+    builder.append_escaped_for_json(line);
+    builder.append(R"~~~("
+        document.body.appendChild(p);
+)~~~"sv);
+
+    // FIXME: It should be sufficient to scrollTo a y value of document.documentElement.offsetHeight,
+    // but due to an unknown bug offsetHeight seems to not be properly updated after spamming
+    // a lot of document changes.
+    //
+    // The setTimeout makes the scrollTo async and allows the DOM to be updated.
+    builder.append("setTimeout(function() { window.scrollTo(0, 1_000_000_000); }, 0);"sv);
+
+    m_output_view->run_javascript(builder.string_view());
 }
 
 void ConsoleWidget::clear_output()
 {
-    m_output_view->clear();
+    m_output_view->run_javascript(R"~~~(
+        document.body.innerHTML = "";
+    )~~~"sv);
 }
 
 void ConsoleWidget::reset()
@@ -153,6 +169,52 @@ void ConsoleWidget::reset()
     m_highest_notified_message_index = -1;
     m_highest_received_message_index = -1;
     m_waiting_for_messages = false;
+}
+
+void ConsoleInputEdit::keyPressEvent(QKeyEvent* event)
+{
+    switch (event->key()) {
+    case Qt::Key_Down: {
+        if (m_history.is_empty())
+            break;
+        auto last_index = m_history.size() - 1;
+        if (m_history_index < last_index) {
+            m_history_index++;
+            setText(qstring_from_ak_deprecated_string(m_history.at(m_history_index)));
+        } else if (m_history_index == last_index) {
+            m_history_index++;
+            clear();
+        }
+        break;
+    }
+    case Qt::Key_Up:
+        if (m_history_index > 0) {
+            m_history_index--;
+            setText(qstring_from_ak_deprecated_string(m_history.at(m_history_index)));
+        }
+        break;
+    case Qt::Key_Return: {
+        auto js_source = ak_deprecated_string_from_qstring(text());
+        if (js_source.is_whitespace())
+            return;
+
+        if (m_history.is_empty() || m_history.last() != js_source) {
+            m_history.append(js_source);
+            m_history_index = m_history.size();
+        }
+
+        clear();
+
+        m_console_widget.print_source_line(js_source);
+
+        if (m_console_widget.on_js_input)
+            m_console_widget.on_js_input(js_source);
+
+        break;
+    }
+    default:
+        QLineEdit::keyPressEvent(event);
+    }
 }
 
 }

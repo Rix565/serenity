@@ -8,6 +8,7 @@
 
 #include "Forward.h"
 #include "RegexOptions.h"
+#include <AK/Error.h>
 
 #include <AK/DeprecatedFlyString.h>
 #include <AK/DeprecatedString.h>
@@ -162,6 +163,11 @@ public:
     {
     }
 
+    RegexStringView(String const& string)
+        : m_view(string.bytes_as_string_view())
+    {
+    }
+
     RegexStringView(StringView const view)
         : m_view(view)
     {
@@ -183,6 +189,11 @@ public:
     }
 
     explicit RegexStringView(DeprecatedString&&) = delete;
+
+    bool is_string_view() const
+    {
+        return m_view.has<StringView>();
+    }
 
     StringView string_view() const
     {
@@ -394,6 +405,19 @@ public:
             });
     }
 
+    ErrorOr<String> to_string() const
+    {
+        return m_view.visit(
+            [](StringView view) { return String::from_utf8(view); },
+            [](Utf16View view) { return view.to_utf8(Utf16View::AllowInvalidCodeUnits::Yes); },
+            [](auto& view) -> ErrorOr<String> {
+                StringBuilder builder;
+                for (auto it = view.begin(); it != view.end(); ++it)
+                    TRY(builder.try_append_code_point(*it));
+                return builder.to_string();
+            });
+    }
+
     // Note: index must always be the code unit offset to return.
     u32 operator[](size_t index) const
     {
@@ -410,6 +434,29 @@ public:
             [&](Utf16View const& view) -> u32 { return view.code_point_at(index); },
             [&](Utf8View const& view) -> u32 {
                 auto it = view.iterator_at_byte_offset(index);
+                VERIFY(it != view.end());
+                return *it;
+            });
+    }
+
+    u32 code_unit_at(size_t code_unit_index) const
+    {
+        if (unicode())
+            return operator[](code_unit_index);
+
+        return m_view.visit(
+            [&](StringView view) -> u32 {
+                auto ch = view[code_unit_index];
+                if constexpr (IsSigned<char>) {
+                    if (ch < 0)
+                        return 256u + ch;
+                    return ch;
+                }
+            },
+            [&](Utf32View const& view) -> u32 { return view[code_unit_index]; },
+            [&](Utf16View const& view) -> u32 { return view.code_unit_at(code_unit_index); },
+            [&](Utf8View const& view) -> u32 {
+                auto it = view.iterator_at_byte_offset(code_unit_index);
                 VERIFY(it != view.end());
                 return *it;
             });
@@ -498,7 +545,7 @@ public:
         return m_view.visit(
             [&](StringView view) {
                 return other.m_view.visit(
-                    [&](StringView other_view) { return view.equals_ignoring_case(other_view); },
+                    [&](StringView other_view) { return view.equals_ignoring_ascii_case(other_view); },
                     [](auto&) -> bool { TODO(); });
             },
             [&](Utf16View view) {
@@ -628,7 +675,7 @@ struct MatchInput {
     mutable Vector<size_t> saved_positions;
     mutable Vector<size_t> saved_code_unit_positions;
     mutable Vector<size_t> saved_forks_since_last_save;
-    mutable HashMap<u64, u64> checkpoints;
+    mutable Vector<u64, 64> checkpoints;
     mutable Optional<size_t> fork_to_replace;
 };
 

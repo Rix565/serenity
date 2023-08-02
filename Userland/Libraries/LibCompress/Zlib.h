@@ -7,11 +7,13 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
+#include <AK/Endian.h>
+#include <AK/MaybeOwned.h>
 #include <AK/Optional.h>
 #include <AK/OwnPtr.h>
 #include <AK/Span.h>
+#include <AK/Stream.h>
 #include <AK/Types.h>
-#include <LibCore/Stream.h>
 #include <LibCrypto/Checksum/Adler32.h>
 
 namespace Compress {
@@ -60,13 +62,13 @@ private:
     ReadonlyBytes m_data_bytes;
 };
 
-class ZlibCompressor : public Core::Stream::Stream {
+class ZlibCompressor : public Stream {
 public:
-    static ErrorOr<NonnullOwnPtr<ZlibCompressor>> construct(Core::Stream::Handle<Core::Stream::Stream>, ZlibCompressionLevel = ZlibCompressionLevel::Default);
+    static ErrorOr<NonnullOwnPtr<ZlibCompressor>> construct(MaybeOwned<Stream>, ZlibCompressionLevel = ZlibCompressionLevel::Default);
     ~ZlibCompressor();
 
-    virtual ErrorOr<Bytes> read(Bytes) override;
-    virtual ErrorOr<size_t> write(ReadonlyBytes) override;
+    virtual ErrorOr<Bytes> read_some(Bytes) override;
+    virtual ErrorOr<size_t> write_some(ReadonlyBytes) override;
     virtual bool is_eof() const override;
     virtual bool is_open() const override;
     virtual void close() override;
@@ -75,12 +77,12 @@ public:
     static ErrorOr<ByteBuffer> compress_all(ReadonlyBytes bytes, ZlibCompressionLevel = ZlibCompressionLevel::Default);
 
 private:
-    ZlibCompressor(Core::Stream::Handle<Core::Stream::Stream> stream, NonnullOwnPtr<Core::Stream::Stream> compressor_stream);
+    ZlibCompressor(MaybeOwned<Stream> stream, NonnullOwnPtr<Stream> compressor_stream);
     ErrorOr<void> write_header(ZlibCompressionMethod, ZlibCompressionLevel);
 
     bool m_finished { false };
-    Core::Stream::Handle<Core::Stream::Stream> m_output_stream;
-    NonnullOwnPtr<Core::Stream::Stream> m_compressor;
+    MaybeOwned<Stream> m_output_stream;
+    NonnullOwnPtr<Stream> m_compressor;
     Crypto::Checksum::Adler32 m_adler32_checksum;
 };
 

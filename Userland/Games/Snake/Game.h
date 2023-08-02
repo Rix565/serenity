@@ -1,19 +1,24 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include "Geometry.h"
+#include "Skins/SnakeSkin.h"
 #include <AK/CircularQueue.h>
-#include <AK/NonnullRefPtrVector.h>
+#include <LibConfig/Listener.h>
 #include <LibGUI/Frame.h>
 
 namespace Snake {
 
-class Game : public GUI::Frame {
+class Game
+    : public GUI::Frame
+    , public Config::Listener {
     C_OBJECT_ABSTRACT(Game);
 
 public:
@@ -21,35 +26,27 @@ public:
 
     virtual ~Game() override = default;
 
+    bool is_paused() const { return !has_timer(); }
     void start();
     void pause();
     void reset();
 
-    void set_snake_base_color(Color color);
-
     Function<bool(u32)> on_score_update;
 
+    void set_skin_color(Color);
+    Gfx::Color get_skin_color() const { return m_snake_color; }
+    void set_skin_name(DeprecatedString);
+    void set_skin(NonnullOwnPtr<SnakeSkin> skin);
+
 private:
-    explicit Game(NonnullRefPtrVector<Gfx::Bitmap> food_bitmaps);
+    explicit Game(Vector<NonnullRefPtr<Gfx::Bitmap>> food_bitmaps, Color snake_color, DeprecatedString snake_skin_name, NonnullOwnPtr<SnakeSkin> skin);
 
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void keydown_event(GUI::KeyEvent&) override;
     virtual void timer_event(Core::TimerEvent&) override;
 
-    struct Coordinate {
-        int row { 0 };
-        int column { 0 };
-
-        bool operator==(Coordinate const& other) const
-        {
-            return row == other.row && column == other.column;
-        }
-    };
-
-    struct Velocity {
-        int vertical { 0 };
-        int horizontal { 0 };
-    };
+    virtual void config_string_did_change(StringView domain, StringView group, StringView key, StringView value) override;
+    void config_u32_did_change(StringView domain, StringView group, StringView key, u32 value) override;
 
     void game_over();
     void spawn_fruit();
@@ -57,6 +54,7 @@ private:
     void queue_velocity(int v, int h);
     Velocity const& last_velocity() const;
     Gfx::IntRect cell_rect(Coordinate const&) const;
+    Direction direction_to_position(Coordinate const& from, Coordinate const& to) const;
 
     int m_rows { 20 };
     int m_columns { 20 };
@@ -76,9 +74,11 @@ private:
     unsigned m_score { 0 };
     bool m_is_new_high_score { false };
 
-    NonnullRefPtrVector<Gfx::Bitmap> m_food_bitmaps;
+    Vector<NonnullRefPtr<Gfx::Bitmap>> m_food_bitmaps;
 
-    Gfx::Color m_snake_base_color { Color::Yellow };
+    Color m_snake_color;
+    DeprecatedString m_snake_skin_name;
+    NonnullOwnPtr<SnakeSkin> m_snake_skin;
 };
 
 }

@@ -1,9 +1,12 @@
+#import <FileAPI/Blob.idl>
 #import <URL/URLSearchParams.idl>
 
 // https://url.spec.whatwg.org/#url
-[Exposed=*, LegacyWindowAlias=webkitURL]
+[Exposed=*, LegacyWindowAlias=webkitURL, UseNewAKString]
 interface URL {
     constructor(USVString url, optional USVString base);
+
+    static boolean canParse(USVString url, optional USVString base);
 
     stringifier attribute USVString href;
     readonly attribute USVString origin;
@@ -19,4 +22,7 @@ interface URL {
     attribute USVString hash;
 
     USVString toJSON();
+
+    static DOMString createObjectURL(Blob obj); // FIXME: Should be (Blob or MediaSource).
+    static undefined revokeObjectURL(DOMString url);
 };

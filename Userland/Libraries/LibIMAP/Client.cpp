@@ -5,12 +5,11 @@
  */
 
 #include <AK/OwnPtr.h>
-#include <LibCore/Stream.h>
 #include <LibIMAP/Client.h>
 
 namespace IMAP {
 
-Client::Client(StringView host, u16 port, NonnullOwnPtr<Core::Stream::Socket> socket)
+Client::Client(StringView host, u16 port, NonnullOwnPtr<Core::Socket> socket)
     : m_host(host)
     , m_port(port)
     , m_socket(move(socket))
@@ -49,7 +48,7 @@ ErrorOr<NonnullOwnPtr<Client>> Client::connect_tls(StringView host, u16 port)
 
 ErrorOr<NonnullOwnPtr<Client>> Client::connect_plaintext(StringView host, u16 port)
 {
-    auto socket = TRY(Core::Stream::TCPSocket::connect(host, port));
+    auto socket = TRY(Core::TCPSocket::connect(host, port));
     dbgln("Connected to {}:{}", host, port);
     return adopt_nonnull_own_or_enomem(new (nothrow) Client(host, port, move(socket)));
 }
@@ -61,7 +60,7 @@ ErrorOr<void> Client::on_ready_to_receive()
 
     auto pending_bytes = TRY(m_socket->pending_bytes());
     auto receive_buffer = TRY(m_buffer.get_bytes_for_writing(pending_bytes));
-    TRY(m_socket->read(receive_buffer));
+    TRY(m_socket->read_until_filled(receive_buffer));
 
     // Once we get server hello we can start sending.
     if (m_connect_pending) {
@@ -146,8 +145,8 @@ static ReadonlyBytes command_byte_buffer(CommandType command)
 
 ErrorOr<void> Client::send_raw(StringView data)
 {
-    TRY(m_socket->write(data.bytes()));
-    TRY(m_socket->write("\r\n"sv.bytes()));
+    TRY(m_socket->write_until_depleted(data.bytes()));
+    TRY(m_socket->write_until_depleted("\r\n"sv.bytes()));
 
     return {};
 }
@@ -387,13 +386,14 @@ RefPtr<Promise<Optional<SolidResponse>>> Client::append(StringView mailbox, Mess
     auto response_promise = Promise<Optional<Response>>::construct();
     m_pending_promises.append(response_promise);
 
-    continue_req->on_resolved = [this, message2 { move(message) }](auto& data) {
+    continue_req->on_resolution = [this, message2 { move(message) }](auto& data) -> ErrorOr<void> {
         if (!data.has_value()) {
-            MUST(handle_parsed_response({ .successful = false, .response = {} }));
+            TRY(handle_parsed_response({ .successful = false, .response = {} }));
         } else {
-            MUST(send_raw(message2.data));
+            TRY(send_raw(message2.data));
             m_expecting_response = true;
         }
+        return {};
     };
 
     return cast_promise<SolidResponse>(response_promise);

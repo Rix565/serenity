@@ -7,6 +7,7 @@
 
 #include <AK/CharacterTypes.h>
 #include <AK/Debug.h>
+#include <AK/GenericShorthands.h>
 #include <AK/SourceLocation.h>
 #include <LibTextCodec/Decoder.h>
 #include <LibWeb/HTML/Parser/Entities.h>
@@ -2798,9 +2799,9 @@ HTMLTokenizer::HTMLTokenizer()
 
 HTMLTokenizer::HTMLTokenizer(StringView input, DeprecatedString const& encoding)
 {
-    auto* decoder = TextCodec::decoder_for(encoding);
-    VERIFY(decoder);
-    m_decoded_input = decoder->to_utf8(input);
+    auto decoder = TextCodec::decoder_for(encoding);
+    VERIFY(decoder.has_value());
+    m_decoded_input = decoder->to_utf8(input).release_value_but_fixme_should_propagate_errors().to_deprecated_string();
     m_utf8_view = Utf8View(m_decoded_input);
     m_utf8_iterator = m_utf8_view.begin();
     m_prev_utf8_iterator = m_utf8_view.begin();

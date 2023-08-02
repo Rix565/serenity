@@ -130,7 +130,7 @@ private:
 
         Type type { Type::Invalid };
         CardStack* from { nullptr };
-        NonnullRefPtrVector<Card> cards;
+        Vector<NonnullRefPtr<Card>> cards;
         CardStack* to { nullptr };
     };
 
@@ -173,7 +173,7 @@ private:
 
     void score_move(CardStack& from, CardStack& to, bool inverse = false);
     void score_flip(bool inverse = false);
-    void remember_move_for_undo(CardStack& from, CardStack& to, NonnullRefPtrVector<Card> moved_cards);
+    void remember_move_for_undo(CardStack& from, CardStack& to, Vector<NonnullRefPtr<Card>> moved_cards);
     void remember_flip_for_undo(Card& card);
     void update_score(int to_add);
     void draw_cards();
@@ -187,6 +187,7 @@ private:
     void set_background_fill_enabled(bool);
     void check_for_game_over();
     void clear_hovered_stack();
+    void deal_next_card();
 
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void mousedown_event(GUI::MouseEvent&) override;
@@ -199,16 +200,21 @@ private:
     Mode m_mode { Mode::SingleCardDraw };
 
     LastMove m_last_move;
-    NonnullRefPtrVector<Card> m_new_deck;
+    Vector<NonnullRefPtr<Card>> m_new_deck;
     Gfx::IntPoint m_mouse_down_location;
 
     bool m_mouse_down { false };
 
+    enum class State {
+        WaitingForNewGame,
+        NewGameAnimation,
+        GameInProgress,
+        StartGameOverAnimationNextFrame,
+        GameOverAnimation,
+    };
+    State m_state { State::WaitingForNewGame };
+
     Animation m_animation;
-    bool m_start_game_over_animation_next_frame { false };
-    bool m_game_over_animation { false };
-    bool m_waiting_for_new_game { true };
-    bool m_new_game_animation { false };
     uint8_t m_new_game_animation_pile { 0 };
     uint8_t m_new_game_animation_delay { 0 };
 

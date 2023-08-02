@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <LibGfx/Color.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/HTML/Parser/HTMLTokenizer.h>
@@ -119,7 +120,7 @@ private:
 
     void generate_implied_end_tags(DeprecatedFlyString const& exception = {});
     void generate_all_implied_end_tags_thoroughly();
-    JS::NonnullGCPtr<DOM::Element> create_element_for(HTMLToken const&, DeprecatedFlyString const& namespace_, DOM::Node const& intended_parent);
+    JS::NonnullGCPtr<DOM::Element> create_element_for(HTMLToken const&, DeprecatedFlyString const& namespace_, DOM::Node& intended_parent);
 
     struct AdjustedInsertionLocation {
         JS::GCPtr<DOM::Node> parent;
@@ -200,5 +201,6 @@ private:
 
 RefPtr<CSS::StyleValue> parse_dimension_value(StringView);
 RefPtr<CSS::StyleValue> parse_nonzero_dimension_value(StringView);
+Optional<Color> parse_legacy_color_value(DeprecatedString input);
 
 }

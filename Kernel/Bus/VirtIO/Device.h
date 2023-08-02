@@ -6,80 +6,15 @@
 
 #pragma once
 
-#include <AK/NonnullOwnPtrVector.h>
 #include <Kernel/Bus/PCI/Access.h>
 #include <Kernel/Bus/PCI/Device.h>
+#include <Kernel/Bus/VirtIO/Definitions.h>
 #include <Kernel/Bus/VirtIO/Queue.h>
-#include <Kernel/IOWindow.h>
 #include <Kernel/Interrupts/IRQHandler.h>
+#include <Kernel/Library/IOWindow.h>
 #include <Kernel/Memory/MemoryManager.h>
 
-namespace Kernel {
-
-#define REG_DEVICE_FEATURES 0x0
-#define REG_GUEST_FEATURES 0x4
-#define REG_QUEUE_ADDRESS 0x8
-#define REG_QUEUE_SIZE 0xc
-#define REG_QUEUE_SELECT 0xe
-#define REG_QUEUE_NOTIFY 0x10
-#define REG_DEVICE_STATUS 0x12
-#define REG_ISR_STATUS 0x13
-
-#define DEVICE_STATUS_ACKNOWLEDGE (1 << 0)
-#define DEVICE_STATUS_DRIVER (1 << 1)
-#define DEVICE_STATUS_DRIVER_OK (1 << 2)
-#define DEVICE_STATUS_FEATURES_OK (1 << 3)
-#define DEVICE_STATUS_DEVICE_NEEDS_RESET (1 << 6)
-#define DEVICE_STATUS_FAILED (1 << 7)
-
-#define VIRTIO_F_INDIRECT_DESC ((u64)1 << 28)
-#define VIRTIO_F_VERSION_1 ((u64)1 << 32)
-#define VIRTIO_F_RING_PACKED ((u64)1 << 34)
-#define VIRTIO_F_IN_ORDER ((u64)1 << 35)
-
-#define VIRTIO_PCI_CAP_COMMON_CFG 1
-#define VIRTIO_PCI_CAP_NOTIFY_CFG 2
-#define VIRTIO_PCI_CAP_ISR_CFG 3
-#define VIRTIO_PCI_CAP_DEVICE_CFG 4
-#define VIRTIO_PCI_CAP_PCI_CFG 5
-
-// virtio_pci_common_cfg
-#define COMMON_CFG_DEVICE_FEATURE_SELECT 0x0
-#define COMMON_CFG_DEVICE_FEATURE 0x4
-#define COMMON_CFG_DRIVER_FEATURE_SELECT 0x8
-#define COMMON_CFG_DRIVER_FEATURE 0xc
-#define COMMON_CFG_MSIX_CONFIG 0x10
-#define COMMON_CFG_NUM_QUEUES 0x12
-#define COMMON_CFG_DEVICE_STATUS 0x14
-#define COMMON_CFG_CONFIG_GENERATION 0x15
-#define COMMON_CFG_QUEUE_SELECT 0x16
-#define COMMON_CFG_QUEUE_SIZE 0x18
-#define COMMON_CFG_QUEUE_MSIX_VECTOR 0x1a
-#define COMMON_CFG_QUEUE_ENABLE 0x1c
-#define COMMON_CFG_QUEUE_NOTIFY_OFF 0x1e
-#define COMMON_CFG_QUEUE_DESC 0x20
-#define COMMON_CFG_QUEUE_DRIVER 0x28
-#define COMMON_CFG_QUEUE_DEVICE 0x30
-
-#define QUEUE_INTERRUPT 0x1
-#define DEVICE_CONFIG_INTERRUPT 0x2
-
-namespace VirtIO {
-
-enum class ConfigurationType : u8 {
-    Common = 1,
-    Notify = 2,
-    ISR = 3,
-    Device = 4,
-    PCI = 5
-};
-
-struct Configuration {
-    ConfigurationType cfg_type;
-    u8 bar;
-    u32 offset;
-    u32 length;
-};
+namespace Kernel::VirtIO {
 
 void detect();
 
@@ -89,13 +24,13 @@ class Device
 public:
     virtual ~Device() override = default;
 
-    virtual void initialize();
+    virtual ErrorOr<void> initialize_virtio_resources();
 
 protected:
     virtual StringView class_name() const { return "VirtIO::Device"sv; }
     explicit Device(PCI::DeviceIdentifier const&);
 
-    Configuration const* get_config(ConfigurationType cfg_type, u32 index = 0) const
+    ErrorOr<Configuration const*> get_config(ConfigurationType cfg_type, u32 index = 0) const
     {
         for (auto const& cfg : m_configs) {
             if (cfg.cfg_type != cfg_type)
@@ -106,7 +41,7 @@ protected:
             }
             return &cfg;
         }
-        return nullptr;
+        return Error::from_errno(ENXIO);
     }
 
     template<typename F>
@@ -144,13 +79,13 @@ protected:
     Queue& get_queue(u16 queue_index)
     {
         VERIFY(queue_index < m_queue_count);
-        return m_queues[queue_index];
+        return *m_queues[queue_index];
     }
 
     Queue const& get_queue(u16 queue_index) const
     {
         VERIFY(queue_index < m_queue_count);
-        return m_queues[queue_index];
+        return *m_queues[queue_index];
     }
 
     template<typename F>
@@ -190,7 +125,7 @@ private:
     u8 isr_status();
     virtual bool handle_irq(RegisterState const&) override;
 
-    NonnullOwnPtrVector<Queue> m_queues;
+    Vector<NonnullOwnPtr<Queue>> m_queues;
     Vector<Configuration> m_configs;
     Configuration const* m_common_cfg { nullptr }; // Cached due to high usage
     Configuration const* m_notify_cfg { nullptr }; // Cached due to high usage
@@ -209,5 +144,5 @@ private:
     bool m_did_setup_queues { false };
     u32 m_notify_multiplier { 0 };
 };
-};
+
 }

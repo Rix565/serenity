@@ -10,11 +10,11 @@
 #include <LibJS/Runtime/GeneratorObject.h>
 #include <LibJS/Runtime/GeneratorPrototype.h>
 #include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/Iterator.h>
 
 namespace JS {
 
-ThrowCompletionOr<NonnullGCPtr<GeneratorObject>> GeneratorObject::create(Realm& realm, Value initial_value, ECMAScriptFunctionObject* generating_function, ExecutionContext execution_context, Bytecode::RegisterWindow frame)
+ThrowCompletionOr<NonnullGCPtr<GeneratorObject>> GeneratorObject::create(Realm& realm, Value initial_value, ECMAScriptFunctionObject* generating_function, ExecutionContext execution_context, Bytecode::CallFrame frame)
 {
     auto& vm = realm.vm();
     // This is "g1.prototype" in figure-2 (https://tc39.es/ecma262/img/figure-2.png)
@@ -27,23 +27,19 @@ ThrowCompletionOr<NonnullGCPtr<GeneratorObject>> GeneratorObject::create(Realm& 
     } else {
         generating_function_prototype = TRY(generating_function->get(vm.names.prototype));
     }
-    auto* generating_function_prototype_object = TRY(generating_function_prototype.to_object(vm));
-    auto object = MUST_OR_THROW_OOM(realm.heap().allocate<GeneratorObject>(realm, realm, *generating_function_prototype_object, move(execution_context)));
+    auto generating_function_prototype_object = TRY(generating_function_prototype.to_object(vm));
+    auto object = MUST_OR_THROW_OOM(realm.heap().allocate<GeneratorObject>(realm, realm, generating_function_prototype_object, move(execution_context)));
     object->m_generating_function = generating_function;
     object->m_frame = move(frame);
     object->m_previous_value = initial_value;
     return object;
 }
 
-GeneratorObject::GeneratorObject(Realm&, Object& prototype, ExecutionContext context)
+GeneratorObject::GeneratorObject(Realm&, Object& prototype, ExecutionContext context, Optional<StringView> generator_brand)
     : Object(ConstructWithPrototypeTag::Tag, prototype)
     , m_execution_context(move(context))
+    , m_generator_brand(move(generator_brand))
 {
-}
-
-ThrowCompletionOr<void> GeneratorObject::initialize(Realm&)
-{
-    return {};
 }
 
 void GeneratorObject::visit_edges(Cell::Visitor& visitor)
@@ -52,10 +48,12 @@ void GeneratorObject::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_generating_function);
     visitor.visit(m_previous_value);
     m_execution_context.visit_edges(visitor);
+    if (m_frame.has_value())
+        m_frame->visit_edges(visitor);
 }
 
 // 27.5.3.2 GeneratorValidate ( generator, generatorBrand ), https://tc39.es/ecma262/#sec-generatorvalidate
-ThrowCompletionOr<GeneratorObject::GeneratorState> GeneratorObject::validate(VM& vm, Optional<DeprecatedString> const& generator_brand)
+ThrowCompletionOr<GeneratorObject::GeneratorState> GeneratorObject::validate(VM& vm, Optional<StringView> const& generator_brand)
 {
     // 1. Perform ? RequireInternalSlot(generator, [[GeneratorState]]).
     // 2. Perform ? RequireInternalSlot(generator, [[GeneratorBrand]]).
@@ -63,7 +61,7 @@ ThrowCompletionOr<GeneratorObject::GeneratorState> GeneratorObject::validate(VM&
 
     // 3. If generator.[[GeneratorBrand]] is not the same value as generatorBrand, throw a TypeError exception.
     if (m_generator_brand != generator_brand)
-        return vm.throw_completion<TypeError>(ErrorType::GeneratorBrandMismatch, m_generator_brand.value_or("<empty>"), generator_brand.value_or("<empty>"));
+        return vm.throw_completion<TypeError>(ErrorType::GeneratorBrandMismatch, m_generator_brand.value_or("<empty>"sv), generator_brand.value_or("<empty>"sv));
 
     // 4. Assert: generator also has a [[GeneratorContext]] internal slot.
     // NOTE: Done by already being a GeneratorObject.
@@ -104,18 +102,7 @@ ThrowCompletionOr<Value> GeneratorObject::execute(VM& vm, Completion const& comp
     completion_object->define_direct_property(vm.names.type, Value(to_underlying(completion.type())), default_attributes);
     completion_object->define_direct_property(vm.names.value, completion.value().value(), default_attributes);
 
-    auto* bytecode_interpreter = Bytecode::Interpreter::current();
-
-    // If we're coming from a context which has no bytecode interpreter, e.g. from AST mode calling Generate.prototype.next,
-    // we need to make one to be able to continue, as generators are only supported in bytecode mode.
-    // See also ECMAScriptFunctionObject::ordinary_call_evaluate_body where this is done as well.
-    OwnPtr<Bytecode::Interpreter> temp_bc_interpreter;
-    if (!bytecode_interpreter) {
-        temp_bc_interpreter = make<Bytecode::Interpreter>(realm);
-        bytecode_interpreter = temp_bc_interpreter.ptr();
-    }
-
-    VERIFY(bytecode_interpreter);
+    auto& bytecode_interpreter = vm.bytecode_interpreter();
 
     auto const* next_block = generated_continuation(m_previous_value);
 
@@ -124,16 +111,16 @@ ThrowCompletionOr<Value> GeneratorObject::execute(VM& vm, Completion const& comp
 
     VERIFY(!m_generating_function->bytecode_executable()->basic_blocks.find_if([next_block](auto& block) { return block == next_block; }).is_end());
 
-    Bytecode::RegisterWindow* frame = nullptr;
+    Bytecode::CallFrame* frame = nullptr;
     if (m_frame.has_value())
         frame = &m_frame.value();
 
     if (frame)
         frame->registers[0] = completion_object;
     else
-        bytecode_interpreter->accumulator() = completion_object;
+        bytecode_interpreter.accumulator() = completion_object;
 
-    auto next_result = bytecode_interpreter->run_and_return_frame(*m_generating_function->bytecode_executable(), next_block, frame);
+    auto next_result = bytecode_interpreter.run_and_return_frame(realm, *m_generating_function->bytecode_executable(), next_block, frame);
 
     vm.pop_execution_context();
 
@@ -154,7 +141,7 @@ ThrowCompletionOr<Value> GeneratorObject::execute(VM& vm, Completion const& comp
 }
 
 // 27.5.3.3 GeneratorResume ( generator, value, generatorBrand ), https://tc39.es/ecma262/#sec-generatorresume
-ThrowCompletionOr<Value> GeneratorObject::resume(VM& vm, Value value, Optional<DeprecatedString> generator_brand)
+ThrowCompletionOr<Value> GeneratorObject::resume(VM& vm, Value value, Optional<StringView> const& generator_brand)
 {
     // 1. Let state be ? GeneratorValidate(generator, generatorBrand).
     auto state = TRY(validate(vm, generator_brand));
@@ -193,7 +180,7 @@ ThrowCompletionOr<Value> GeneratorObject::resume(VM& vm, Value value, Optional<D
 }
 
 // 27.5.3.4 GeneratorResumeAbrupt ( generator, abruptCompletion, generatorBrand ), https://tc39.es/ecma262/#sec-generatorresumeabrupt
-ThrowCompletionOr<Value> GeneratorObject::resume_abrupt(JS::VM& vm, JS::Completion abrupt_completion, Optional<AK::DeprecatedString> generator_brand)
+ThrowCompletionOr<Value> GeneratorObject::resume_abrupt(JS::VM& vm, JS::Completion abrupt_completion, Optional<StringView> const& generator_brand)
 {
     // Not part of the spec, but the spec assumes abruptCompletion.[[Value]] is not empty.
     VERIFY(abrupt_completion.value().has_value());

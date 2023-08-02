@@ -13,14 +13,14 @@
 #include <AK/MACAddress.h>
 #include <AK/Types.h>
 #include <Kernel/Bus/PCI/Definitions.h>
-#include <Kernel/KBuffer.h>
+#include <Kernel/Library/KBuffer.h>
 #include <Kernel/Library/LockWeakPtr.h>
 #include <Kernel/Library/LockWeakable.h>
+#include <Kernel/Library/UserOrKernelBuffer.h>
 #include <Kernel/Net/ARP.h>
 #include <Kernel/Net/EthernetFrameHeader.h>
 #include <Kernel/Net/ICMP.h>
 #include <Kernel/Net/IPv4.h>
-#include <Kernel/UserOrKernelBuffer.h>
 
 namespace Kernel {
 
@@ -29,7 +29,7 @@ class NetworkAdapter;
 using NetworkByteBuffer = AK::Detail::ByteBuffer<1500>;
 
 struct PacketWithTimestamp final : public AtomicRefCounted<PacketWithTimestamp> {
-    PacketWithTimestamp(NonnullOwnPtr<KBuffer> buffer, Time timestamp)
+    PacketWithTimestamp(NonnullOwnPtr<KBuffer> buffer, UnixDateTime timestamp)
         : buffer(move(buffer))
         , timestamp(timestamp)
     {
@@ -38,8 +38,8 @@ struct PacketWithTimestamp final : public AtomicRefCounted<PacketWithTimestamp> 
     ReadonlyBytes bytes() { return buffer->bytes(); }
 
     NonnullOwnPtr<KBuffer> buffer;
-    Time timestamp;
-    IntrusiveListNode<PacketWithTimestamp, LockRefPtr<PacketWithTimestamp>> packet_node;
+    UnixDateTime timestamp;
+    IntrusiveListNode<PacketWithTimestamp, RefPtr<PacketWithTimestamp>> packet_node;
 };
 
 class NetworkingManagement;
@@ -79,7 +79,7 @@ public:
     void send(MACAddress const&, ARPPacket const&);
     void fill_in_ipv4_header(PacketWithTimestamp&, IPv4Address const&, MACAddress const&, IPv4Address const&, IPv4Protocol, size_t, u8 type_of_service, u8 ttl);
 
-    size_t dequeue_packet(u8* buffer, size_t buffer_size, Time& packet_timestamp);
+    size_t dequeue_packet(u8* buffer, size_t buffer_size, UnixDateTime& packet_timestamp);
 
     bool has_queued_packets() const { return !m_packet_queue.is_empty(); }
 
@@ -91,7 +91,7 @@ public:
     u32 packets_out() const { return m_packets_out; }
     u32 bytes_out() const { return m_bytes_out; }
 
-    LockRefPtr<PacketWithTimestamp> acquire_packet_buffer(size_t);
+    RefPtr<PacketWithTimestamp> acquire_packet_buffer(size_t);
     void release_packet_buffer(PacketWithTimestamp&);
 
     constexpr size_t layer3_payload_offset() const { return sizeof(EthernetFrameHeader); }

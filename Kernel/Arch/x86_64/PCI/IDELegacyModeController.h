@@ -8,9 +8,9 @@
 
 #include <AK/OwnPtr.h>
 #include <AK/Types.h>
+#include <Kernel/Devices/Storage/ATA/GenericIDE/Controller.h>
+#include <Kernel/Devices/Storage/StorageDevice.h>
 #include <Kernel/Library/LockRefPtr.h>
-#include <Kernel/Storage/ATA/GenericIDE/Controller.h>
-#include <Kernel/Storage/StorageDevice.h>
 
 namespace Kernel {
 
@@ -19,7 +19,7 @@ class AsyncBlockDeviceRequest;
 class PCIIDELegacyModeController final : public IDEController
     , public PCI::Device {
 public:
-    static ErrorOr<NonnullLockRefPtr<PCIIDELegacyModeController>> initialize(PCI::DeviceIdentifier const&, bool force_pio);
+    static ErrorOr<NonnullRefPtr<PCIIDELegacyModeController>> initialize(PCI::DeviceIdentifier const&, bool force_pio);
 
     virtual StringView device_name() const override { return "PCIIDELegacyModeController"sv; }
 

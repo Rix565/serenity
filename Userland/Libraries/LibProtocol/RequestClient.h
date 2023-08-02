@@ -21,6 +21,8 @@ class RequestClient final
     IPC_CLIENT_CONNECTION(RequestClient, "/tmp/session/%sid/portal/request"sv)
 
 public:
+    explicit RequestClient(NonnullOwnPtr<Core::LocalSocket>);
+
     template<typename RequestHashMapTraits = Traits<DeprecatedString>>
     RefPtr<Request> start_request(DeprecatedString const& method, URL const&, HashMap<DeprecatedString, DeprecatedString, RequestHashMapTraits> const& request_headers = {}, ReadonlyBytes request_body = {}, Core::ProxyData const& = {});
 
@@ -30,12 +32,10 @@ public:
     bool set_certificate(Badge<Request>, Request&, DeprecatedString, DeprecatedString);
 
 private:
-    RequestClient(NonnullOwnPtr<Core::Stream::LocalSocket>);
-
-    virtual void request_progress(i32, Optional<u32> const&, u32) override;
-    virtual void request_finished(i32, bool, u32) override;
+    virtual void request_progress(i32, Optional<u64> const&, u64) override;
+    virtual void request_finished(i32, bool, u64) override;
     virtual void certificate_requested(i32) override;
-    virtual void headers_became_available(i32, IPC::Dictionary const&, Optional<u32> const&) override;
+    virtual void headers_became_available(i32, HashMap<DeprecatedString, DeprecatedString, CaseInsensitiveStringTraits> const&, Optional<u32> const&) override;
 
     HashMap<i32, RefPtr<Request>> m_requests;
 };

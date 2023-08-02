@@ -6,7 +6,8 @@
  */
 
 #include <AK/Debug.h>
-#include <LibCore/MemoryStream.h>
+#include <AK/Endian.h>
+#include <AK/MemoryStream.h>
 #include <LibWasm/AbstractMachine/AbstractMachine.h>
 #include <LibWasm/AbstractMachine/BytecodeInterpreter.h>
 #include <LibWasm/AbstractMachine/Configuration.h>
@@ -33,7 +34,7 @@ namespace Wasm {
 
 void BytecodeInterpreter::interpret(Configuration& configuration)
 {
-    m_trap.clear();
+    m_trap = Empty {};
     auto& instructions = configuration.frame().expression().instructions();
     auto max_ip_value = InstructionPointer { instructions.size() };
     auto& current_ip_value = configuration.ip();
@@ -50,7 +51,7 @@ void BytecodeInterpreter::interpret(Configuration& configuration)
         auto& instruction = instructions[current_ip_value.value()];
         auto old_ip = current_ip_value;
         interpret(configuration, current_ip_value, instruction);
-        if (m_trap.has_value())
+        if (did_trap())
             return;
         if (current_ip_value == old_ip) // If no jump occurred
             ++current_ip_value;
@@ -139,6 +140,11 @@ void BytecodeInterpreter::call_address(Configuration& configuration, FunctionAdd
         return;
     }
 
+    if (result.is_completion()) {
+        m_trap = move(result.completion());
+        return;
+    }
+
     configuration.stack().entries().ensure_capacity(configuration.stack().size() + result.values().size());
     for (auto& entry : result.values().in_reverse())
         configuration.stack().entries().unchecked_append(move(entry));
@@ -201,10 +207,9 @@ template<>
 struct ConvertToRaw<float> {
     u32 operator()(float value)
     {
-        LittleEndian<u32> res;
         ReadonlyBytes bytes { &value, sizeof(float) };
-        auto stream = Core::Stream::FixedMemoryStream::construct(bytes).release_value_but_fixme_should_propagate_errors();
-        stream->read_entire_buffer(res.bytes()).release_value_but_fixme_should_propagate_errors();
+        FixedMemoryStream stream { bytes };
+        auto res = stream.read_value<LittleEndian<u32>>().release_value_but_fixme_should_propagate_errors();
         return static_cast<u32>(res);
     }
 };
@@ -213,10 +218,9 @@ template<>
 struct ConvertToRaw<double> {
     u64 operator()(double value)
     {
-        LittleEndian<u64> res;
         ReadonlyBytes bytes { &value, sizeof(double) };
-        auto stream = Core::Stream::FixedMemoryStream::construct(bytes).release_value_but_fixme_should_propagate_errors();
-        stream->read_entire_buffer(res.bytes()).release_value_but_fixme_should_propagate_errors();
+        FixedMemoryStream stream { bytes };
+        auto res = stream.read_value<LittleEndian<u64>>().release_value_but_fixme_should_propagate_errors();
         return static_cast<u64>(res);
     }
 };
@@ -252,35 +256,34 @@ void BytecodeInterpreter::store_to_memory(Configuration& configuration, Instruct
 template<typename T>
 T BytecodeInterpreter::read_value(ReadonlyBytes data)
 {
-    LittleEndian<T> value;
-    auto stream = Core::Stream::FixedMemoryStream::construct(data).release_value_but_fixme_should_propagate_errors();
-    auto maybe_error = stream->read_entire_buffer(value.bytes());
-    if (maybe_error.is_error()) {
+    FixedMemoryStream stream { data };
+    auto value_or_error = stream.read_value<LittleEndian<T>>();
+    if (value_or_error.is_error()) {
         dbgln("Read from {} failed", data.data());
         m_trap = Trap { "Read from memory failed" };
     }
-    return value;
+    return value_or_error.release_value();
 }
 
 template<>
 float BytecodeInterpreter::read_value<float>(ReadonlyBytes data)
 {
-    LittleEndian<u32> raw_value;
-    auto stream = Core::Stream::FixedMemoryStream::construct(data).release_value_but_fixme_should_propagate_errors();
-    auto maybe_error = stream->read_entire_buffer(raw_value.bytes());
-    if (maybe_error.is_error())
+    FixedMemoryStream stream { data };
+    auto raw_value_or_error = stream.read_value<LittleEndian<u32>>();
+    if (raw_value_or_error.is_error())
         m_trap = Trap { "Read from memory failed" };
+    auto raw_value = raw_value_or_error.release_value();
     return bit_cast<float>(static_cast<u32>(raw_value));
 }
 
 template<>
 double BytecodeInterpreter::read_value<double>(ReadonlyBytes data)
 {
-    LittleEndian<u64> raw_value;
-    auto stream = Core::Stream::FixedMemoryStream::construct(data).release_value_but_fixme_should_propagate_errors();
-    auto maybe_error = stream->read_entire_buffer(raw_value.bytes());
-    if (maybe_error.is_error())
+    FixedMemoryStream stream { data };
+    auto raw_value_or_error = stream.read_value<LittleEndian<u64>>();
+    if (raw_value_or_error.is_error())
         m_trap = Trap { "Read from memory failed" };
+    auto raw_value = raw_value_or_error.release_value();
     return bit_cast<double>(static_cast<u64>(raw_value));
 }
 

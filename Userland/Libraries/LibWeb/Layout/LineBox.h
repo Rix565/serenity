@@ -20,7 +20,7 @@ public:
     CSSPixels bottom() const { return m_bottom; }
     CSSPixels baseline() const { return m_baseline; }
 
-    void add_fragment(Node const& layout_node, int start, int length, CSSPixels leading_size, CSSPixels trailing_size, CSSPixels leading_margin, CSSPixels trailing_margin, CSSPixels content_width, CSSPixels content_height, CSSPixels border_box_top, CSSPixels border_box_bottom, LineBoxFragment::Type = LineBoxFragment::Type::Normal);
+    void add_fragment(Node const& layout_node, int start, int length, CSSPixels leading_size, CSSPixels trailing_size, CSSPixels leading_margin, CSSPixels trailing_margin, CSSPixels content_width, CSSPixels content_height, CSSPixels border_box_top, CSSPixels border_box_bottom);
 
     Vector<LineBoxFragment> const& fragments() const { return m_fragments; }
     Vector<LineBoxFragment>& fragments() { return m_fragments; }
@@ -28,18 +28,31 @@ public:
     void trim_trailing_whitespace();
 
     bool is_empty_or_ends_in_whitespace() const;
-    bool is_empty() const { return m_fragments.is_empty(); }
+    bool is_empty() const { return m_fragments.is_empty() && !m_has_break; }
+
+    CSSPixels original_available_width() const { return m_original_available_width; }
+
+    CSSPixelRect const& absolute_rect() const { return m_absolute_rect; }
+    void set_absolute_rect(CSSPixelRect const& rect) { m_absolute_rect = rect; }
 
 private:
     friend class BlockContainer;
     friend class InlineFormattingContext;
     friend class LineBuilder;
 
+    CSSPixelRect m_absolute_rect;
+
     Vector<LineBoxFragment> m_fragments;
     CSSPixels m_width { 0 };
     CSSPixels m_height { 0 };
     CSSPixels m_bottom { 0 };
     CSSPixels m_baseline { 0 };
+
+    // The amount of available width that was originally available when creating this line box. Used for text justification.
+    CSSPixels m_original_available_width { 0 };
+
+    bool m_has_break { false };
+    bool m_has_forced_break { false };
 };
 
 }

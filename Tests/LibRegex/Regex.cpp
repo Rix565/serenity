@@ -36,33 +36,33 @@ TEST_CASE(regex_options_ecmascript)
     ECMAScriptOptions eo;
     eo |= ECMAScriptFlags::Global;
 
-    EXPECT(eo & ECMAScriptFlags::Global);
-    EXPECT(!(eo & ECMAScriptFlags::Insensitive));
+    EXPECT(eo.has_flag_set(ECMAScriptFlags::Global));
+    EXPECT(!eo.has_flag_set(ECMAScriptFlags::Insensitive));
 
     eo = match_test_api_options(ECMAScriptFlags::Global | ECMAScriptFlags::Insensitive | ECMAScriptFlags::Sticky);
-    EXPECT(eo & ECMAScriptFlags::Global);
-    EXPECT(eo & ECMAScriptFlags::Insensitive);
-    EXPECT(eo & ECMAScriptFlags::Sticky);
-    EXPECT(!(eo & ECMAScriptFlags::Unicode));
-    EXPECT(!(eo & ECMAScriptFlags::Multiline));
-    EXPECT(!(eo & ECMAScriptFlags::SingleLine));
+    EXPECT(eo.has_flag_set(ECMAScriptFlags::Global));
+    EXPECT(eo.has_flag_set(ECMAScriptFlags::Insensitive));
+    EXPECT(eo.has_flag_set(ECMAScriptFlags::Sticky));
+    EXPECT(!eo.has_flag_set(ECMAScriptFlags::Unicode));
+    EXPECT(!eo.has_flag_set(ECMAScriptFlags::Multiline));
+    EXPECT(!eo.has_flag_set(ECMAScriptFlags::SingleLine));
 
     eo &= ECMAScriptFlags::Insensitive;
-    EXPECT(!(eo & ECMAScriptFlags::Global));
-    EXPECT(eo & ECMAScriptFlags::Insensitive);
-    EXPECT(!(eo & ECMAScriptFlags::Multiline));
+    EXPECT(!eo.has_flag_set(ECMAScriptFlags::Global));
+    EXPECT(eo.has_flag_set(ECMAScriptFlags::Insensitive));
+    EXPECT(!eo.has_flag_set(ECMAScriptFlags::Multiline));
 
     eo &= ECMAScriptFlags::Sticky;
-    EXPECT(!(eo & ECMAScriptFlags::Global));
-    EXPECT(!(eo & ECMAScriptFlags::Insensitive));
-    EXPECT(!(eo & ECMAScriptFlags::Multiline));
-    EXPECT(!(eo & ECMAScriptFlags::Sticky));
+    EXPECT(!eo.has_flag_set(ECMAScriptFlags::Global));
+    EXPECT(!eo.has_flag_set(ECMAScriptFlags::Insensitive));
+    EXPECT(!eo.has_flag_set(ECMAScriptFlags::Multiline));
+    EXPECT(!eo.has_flag_set(ECMAScriptFlags::Sticky));
 
     eo = ~ECMAScriptFlags::Insensitive;
-    EXPECT(eo & ECMAScriptFlags::Global);
-    EXPECT(!(eo & ECMAScriptFlags::Insensitive));
-    EXPECT(eo & ECMAScriptFlags::Multiline);
-    EXPECT(eo & ECMAScriptFlags::Sticky);
+    EXPECT(eo.has_flag_set(ECMAScriptFlags::Global));
+    EXPECT(!eo.has_flag_set(ECMAScriptFlags::Insensitive));
+    EXPECT(eo.has_flag_set(ECMAScriptFlags::Multiline));
+    EXPECT(eo.has_flag_set(ECMAScriptFlags::Sticky));
 }
 
 TEST_CASE(regex_options_posix)
@@ -70,30 +70,30 @@ TEST_CASE(regex_options_posix)
     PosixOptions eo;
     eo |= PosixFlags::Global;
 
-    EXPECT(eo & PosixFlags::Global);
-    EXPECT(!(eo & PosixFlags::Insensitive));
+    EXPECT(eo.has_flag_set(PosixFlags::Global));
+    EXPECT(!eo.has_flag_set(PosixFlags::Insensitive));
 
     eo = match_test_api_options(PosixFlags::Global | PosixFlags::Insensitive | PosixFlags::MatchNotBeginOfLine);
-    EXPECT(eo & PosixFlags::Global);
-    EXPECT(eo & PosixFlags::Insensitive);
-    EXPECT(eo & PosixFlags::MatchNotBeginOfLine);
-    EXPECT(!(eo & PosixFlags::Unicode));
-    EXPECT(!(eo & PosixFlags::Multiline));
+    EXPECT(eo.has_flag_set(PosixFlags::Global));
+    EXPECT(eo.has_flag_set(PosixFlags::Insensitive));
+    EXPECT(eo.has_flag_set(PosixFlags::MatchNotBeginOfLine));
+    EXPECT(!eo.has_flag_set(PosixFlags::Unicode));
+    EXPECT(!eo.has_flag_set(PosixFlags::Multiline));
 
     eo &= PosixFlags::Insensitive;
-    EXPECT(!(eo & PosixFlags::Global));
-    EXPECT(eo & PosixFlags::Insensitive);
-    EXPECT(!(eo & PosixFlags::Multiline));
+    EXPECT(!eo.has_flag_set(PosixFlags::Global));
+    EXPECT(eo.has_flag_set(PosixFlags::Insensitive));
+    EXPECT(!eo.has_flag_set(PosixFlags::Multiline));
 
     eo &= PosixFlags::MatchNotBeginOfLine;
-    EXPECT(!(eo & PosixFlags::Global));
-    EXPECT(!(eo & PosixFlags::Insensitive));
-    EXPECT(!(eo & PosixFlags::Multiline));
+    EXPECT(!eo.has_flag_set(PosixFlags::Global));
+    EXPECT(!eo.has_flag_set(PosixFlags::Insensitive));
+    EXPECT(!eo.has_flag_set(PosixFlags::Multiline));
 
     eo = ~PosixFlags::Insensitive;
-    EXPECT(eo & PosixFlags::Global);
-    EXPECT(!(eo & PosixFlags::Insensitive));
-    EXPECT(eo & PosixFlags::Multiline);
+    EXPECT(eo.has_flag_set(PosixFlags::Global));
+    EXPECT(!eo.has_flag_set(PosixFlags::Insensitive));
+    EXPECT(eo.has_flag_set(PosixFlags::Multiline));
 }
 
 TEST_CASE(regex_lexer)
@@ -606,6 +606,8 @@ TEST_CASE(ECMA262_parse)
         { "((?=lg)?[vl]k\\-?\\d{3}) bui| 3\\.[-\\w; ]{10}lg?-([06cv9]{3,4})"sv, regex::Error::NoError, ECMAScriptFlags::BrowserExtended }, // #12373, quantifiable assertions.
         { parse_test_case_long_disjunction_chain.view() },                                                                                 // A whole lot of disjunctions, should not overflow the stack.
         { "(\"|')(?:(?!\\2)[^\\\\\\r\\n]|\\\\.)*\\2"sv, regex::Error::NoError, ECMAScriptFlags::BrowserExtended },                         // LegacyOctalEscapeSequence should not consume too many chars (and should not crash)
+        // #18324, Capture group counter skipped past EOF.
+        { "\\1[\\"sv, regex::Error::InvalidNumber },
     };
 
     for (auto& test : tests) {
@@ -624,6 +626,8 @@ TEST_CASE(ECMA262_parse)
 
 TEST_CASE(ECMA262_match)
 {
+    constexpr auto global_multiline = ECMAScriptFlags::Global | ECMAScriptFlags::Multiline;
+
     struct _test {
         StringView pattern;
         StringView subject;
@@ -697,6 +701,10 @@ TEST_CASE(ECMA262_match)
         { "^[a-sy-z]$"sv, "b"sv, true, ECMAScriptFlags::Insensitive },
         { "^[a-sy-z]$"sv, "y"sv, true, ECMAScriptFlags::Insensitive },
         { "^[a-sy-z]$"sv, "u"sv, false, ECMAScriptFlags::Insensitive },
+        { "."sv, "\n\r\u2028\u2029"sv, false }, // Dot should not match any of CR/LF/LS/PS in ECMA262 mode without DotAll.
+        { "a$"sv, "a\r\n"sv, true, global_multiline.value() }, // $ should accept all LineTerminators in ECMA262 mode with Multiline.
+        { "^a"sv, "\ra"sv, true, global_multiline.value() },
+        { "^(.*?):[ \\t]*([^\\r\\n]*)$"sv, "content-length: 488\r\ncontent-type: application/json; charset=utf-8\r\n"sv, true, global_multiline.value() },
     };
     // clang-format on
 
@@ -768,6 +776,23 @@ TEST_CASE(ECMA262_unicode_match)
 
         EXPECT_EQ(re.parser_result.error, regex::Error::NoError);
         EXPECT_EQ(re.match(view).success, test.matches);
+    }
+}
+
+TEST_CASE(ECMA262_unicode_sets_parser_error)
+{
+    struct _test {
+        StringView pattern;
+        regex::Error error;
+    };
+
+    constexpr _test tests[] {
+        { "[[]"sv, regex::Error::InvalidPattern },
+    };
+
+    for (auto test : tests) {
+        Regex<ECMA262> re(test.pattern, (ECMAScriptFlags)regex::AllFlags::UnicodeSets);
+        EXPECT_EQ(re.parser_result.error, test.error);
     }
 }
 
@@ -983,6 +1008,13 @@ TEST_CASE(optimizer_atomic_groups)
         Tuple { "(1+)0"sv, "10"sv, true },
         // Rewrite should not skip over first required iteration of <x>+.
         Tuple { "a+"sv, ""sv, false },
+        // 'y' and [^x] have an overlap ('y'), the loop should not be rewritten here.
+        Tuple { "[^x]+y"sv, "ay"sv, true },
+        // .+ should not be rewritten here, as it's followed by something that would be matched by `.`.
+        Tuple { ".+(a|b|c)"sv, "xxa"sv, true },
+        // (b+)(b+) produces an intermediate block with no matching ops, the optimiser should ignore that block when looking for following matches and correctly detect the overlap between (b+) and (b+).
+        // note that the second loop may be rewritten to a ForkReplace, but the first loop should not be rewritten.
+        Tuple { "(b+)(b+)"sv, "bbb"sv, true },
     };
 
     for (auto& test : tests) {
@@ -1015,6 +1047,8 @@ TEST_CASE(optimizer_alternation)
     Array tests {
         // Pattern, Subject, Expected length
         Tuple { "a|"sv, "a"sv, 1u },
+        Tuple { "a|a|a|a|a|a|a|a|a|b"sv, "a"sv, 1u },
+        Tuple { "ab|ac|ad|bc"sv, "bc"sv, 2u },
     };
 
     for (auto& test : tests) {

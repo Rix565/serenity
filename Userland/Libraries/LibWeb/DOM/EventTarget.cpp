@@ -6,6 +6,7 @@
  */
 
 #include <AK/StringBuilder.h>
+#include <Kernel/API/KeyCode.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Parser.h>
 #include <LibJS/Runtime/AbstractOperations.h>
@@ -30,7 +31,9 @@
 #include <LibWeb/HTML/HTMLFormElement.h>
 #include <LibWeb/HTML/HTMLFrameSetElement.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/UIEvents/EventNames.h>
+#include <LibWeb/UIEvents/KeyboardEvent.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
 
 namespace Web::DOM {
@@ -41,6 +44,25 @@ EventTarget::EventTarget(JS::Realm& realm)
 }
 
 EventTarget::~EventTarget() = default;
+
+// https://dom.spec.whatwg.org/#dom-eventtarget-eventtarget
+WebIDL::ExceptionOr<JS::NonnullGCPtr<EventTarget>> EventTarget::construct_impl(JS::Realm& realm)
+{
+    // The new EventTarget() constructor steps are to do nothing.
+    return MUST_OR_THROW_OOM(realm.heap().allocate<EventTarget>(realm, realm));
+}
+
+JS::ThrowCompletionOr<void> EventTarget::initialize(JS::Realm& realm)
+{
+    MUST_OR_THROW_OOM(Base::initialize(realm));
+
+    // FIXME: We can't do this for HTML::Window currently, as this will run when creating the initial global object.
+    //        During this time, the ESO is not setup, so it will cause a nullptr dereference in host_defined_intrinsics.
+    if (!is<HTML::Window>(this))
+        set_prototype(&Bindings::ensure_web_prototype<Bindings::EventTargetPrototype>(realm, "EventTarget"));
+
+    return {};
+}
 
 void EventTarget::visit_edges(Cell::Visitor& visitor)
 {
@@ -120,7 +142,7 @@ static FlattenedAddEventListenerOptions flatten_add_event_listener_options(Varia
 }
 
 // https://dom.spec.whatwg.org/#dom-eventtarget-addeventlistener
-void EventTarget::add_event_listener(DeprecatedFlyString const& type, IDLEventListener* callback, Variant<AddEventListenerOptions, bool> const& options)
+void EventTarget::add_event_listener(FlyString const& type, IDLEventListener* callback, Variant<AddEventListenerOptions, bool> const& options)
 {
     // 1. Let capture, passive, once, and signal be the result of flattening more options.
     auto flattened_options = flatten_add_event_listener_options(options);
@@ -138,7 +160,7 @@ void EventTarget::add_event_listener(DeprecatedFlyString const& type, IDLEventLi
     add_an_event_listener(*event_listener);
 }
 
-void EventTarget::add_event_listener_without_options(DeprecatedFlyString const& type, IDLEventListener& callback)
+void EventTarget::add_event_listener_without_options(FlyString const& type, IDLEventListener& callback)
 {
     add_event_listener(type, &callback, AddEventListenerOptions {});
 }
@@ -162,7 +184,7 @@ void EventTarget::add_an_event_listener(DOMEventListener& listener)
     //    and capture is listener’s capture, then append listener to eventTarget’s event listener list.
     auto it = m_event_listener_list.find_if([&](auto& entry) {
         return entry->type == listener.type
-            && &entry->callback->callback().callback == &listener.callback->callback().callback
+            && entry->callback->callback().callback == listener.callback->callback().callback
             && entry->capture == listener.capture;
     });
     if (it == m_event_listener_list.end())
@@ -179,7 +201,7 @@ void EventTarget::add_an_event_listener(DOMEventListener& listener)
 }
 
 // https://dom.spec.whatwg.org/#dom-eventtarget-removeeventlistener
-void EventTarget::remove_event_listener(DeprecatedFlyString const& type, IDLEventListener* callback, Variant<EventListenerOptions, bool> const& options)
+void EventTarget::remove_event_listener(FlyString const& type, IDLEventListener* callback, Variant<EventListenerOptions, bool> const& options)
 {
     // 1. Let capture be the result of flattening options.
     bool capture = flatten_event_listener_options(options);
@@ -191,7 +213,7 @@ void EventTarget::remove_event_listener(DeprecatedFlyString const& type, IDLEven
             return true;
         if (!entry.callback || !callback)
             return false;
-        return &entry.callback->callback().callback == &callback->callback().callback;
+        return entry.callback->callback().callback == callback->callback().callback;
     };
     auto it = m_event_listener_list.find_if([&](auto& entry) {
         return entry->type == type
@@ -202,7 +224,7 @@ void EventTarget::remove_event_listener(DeprecatedFlyString const& type, IDLEven
         remove_an_event_listener(**it);
 }
 
-void EventTarget::remove_event_listener_without_options(DeprecatedFlyString const& type, IDLEventListener& callback)
+void EventTarget::remove_event_listener_without_options(FlyString const& type, IDLEventListener& callback)
 {
     remove_event_listener(type, &callback, EventListenerOptions {});
 }
@@ -241,7 +263,7 @@ WebIDL::ExceptionOr<bool> EventTarget::dispatch_event_binding(Event& event)
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#window-reflecting-body-element-event-handler-set
-bool is_window_reflecting_body_element_event_handler(DeprecatedFlyString const& name)
+bool is_window_reflecting_body_element_event_handler(FlyString const& name)
 {
     return name.is_one_of(
         HTML::EventNames::blur,
@@ -253,7 +275,7 @@ bool is_window_reflecting_body_element_event_handler(DeprecatedFlyString const& 
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#windoweventhandlers
-static bool is_window_event_handler(DeprecatedFlyString const& name)
+static bool is_window_event_handler(FlyString const& name)
 {
     return name.is_one_of(
         HTML::EventNames::afterprint,
@@ -275,7 +297,7 @@ static bool is_window_event_handler(DeprecatedFlyString const& name)
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#determining-the-target-of-an-event-handler
-static EventTarget* determine_target_of_event_handler(EventTarget& event_target, DeprecatedFlyString const& name)
+static EventTarget* determine_target_of_event_handler(EventTarget& event_target, FlyString const& name)
 {
     // To determine the target of an event handler, given an EventTarget object eventTarget on which the event handler is exposed,
     // and an event handler name name, the following steps are taken:
@@ -300,7 +322,7 @@ static EventTarget* determine_target_of_event_handler(EventTarget& event_target,
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#event-handler-attributes:event-handler-idl-attributes-2
-WebIDL::CallbackType* EventTarget::event_handler_attribute(DeprecatedFlyString const& name)
+WebIDL::CallbackType* EventTarget::event_handler_attribute(FlyString const& name)
 {
     // 1. Let eventTarget be the result of determining the target of an event handler given this object and name.
     auto target = determine_target_of_event_handler(*this, name);
@@ -314,7 +336,7 @@ WebIDL::CallbackType* EventTarget::event_handler_attribute(DeprecatedFlyString c
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#getting-the-current-value-of-the-event-handler
-WebIDL::CallbackType* EventTarget::get_current_value_of_event_handler(DeprecatedFlyString const& name)
+WebIDL::CallbackType* EventTarget::get_current_value_of_event_handler(FlyString const& name)
 {
     // 1. Let handlerMap be eventTarget's event handler map. (NOTE: Not necessary)
 
@@ -454,7 +476,7 @@ WebIDL::CallbackType* EventTarget::get_current_value_of_event_handler(Deprecated
 
         //  6. Return scope. (NOTE: Not necessary)
 
-        auto function = JS::ECMAScriptFunctionObject::create(realm, name, builder.to_deprecated_string(), program->body(), program->parameters(), program->function_length(), scope, nullptr, JS::FunctionKind::Normal, program->is_strict_mode(), program->might_need_arguments_object(), is_arrow_function);
+        auto function = JS::ECMAScriptFunctionObject::create(realm, name.to_deprecated_fly_string(), builder.to_deprecated_string(), program->body(), program->parameters(), program->function_length(), program->local_variables_names(), scope, nullptr, JS::FunctionKind::Normal, program->is_strict_mode(), program->might_need_arguments_object(), is_arrow_function);
 
         // 10. Remove settings object's realm execution context from the JavaScript execution context stack.
         VERIFY(vm.execution_context_stack().last() == &settings_object.realm_execution_context());
@@ -464,16 +486,16 @@ WebIDL::CallbackType* EventTarget::get_current_value_of_event_handler(Deprecated
         function->set_script_or_module({});
 
         // 12. Set eventHandler's value to the result of creating a Web IDL EventHandler callback function object whose object reference is function and whose callback context is settings object.
-        event_handler->value = realm.heap().allocate_without_realm<WebIDL::CallbackType>(*function, settings_object).ptr();
+        event_handler->value = JS::GCPtr(realm.heap().allocate_without_realm<WebIDL::CallbackType>(*function, settings_object));
     }
 
     // 4. Return eventHandler's value.
-    VERIFY(event_handler->value.has<WebIDL::CallbackType*>());
-    return *event_handler->value.get_pointer<WebIDL::CallbackType*>();
+    VERIFY(event_handler->value.has<JS::GCPtr<WebIDL::CallbackType>>());
+    return *event_handler->value.get_pointer<JS::GCPtr<WebIDL::CallbackType>>();
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#event-handler-attributes:event-handler-idl-attributes-3
-void EventTarget::set_event_handler_attribute(DeprecatedFlyString const& name, WebIDL::CallbackType* value)
+void EventTarget::set_event_handler_attribute(FlyString const& name, WebIDL::CallbackType* value)
 {
     // 1. Let eventTarget be the result of determining the target of an event handler given this object and name.
     auto event_target = determine_target_of_event_handler(*this, name);
@@ -512,7 +534,7 @@ void EventTarget::set_event_handler_attribute(DeprecatedFlyString const& name, W
 
     auto& event_handler = event_handler_iterator->value;
 
-    event_handler->value = value;
+    event_handler->value = JS::GCPtr(value);
 
     //  4. Activate an event handler given eventTarget and name.
     //  NOTE: See the optimization comment above.
@@ -520,7 +542,7 @@ void EventTarget::set_event_handler_attribute(DeprecatedFlyString const& name, W
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#activate-an-event-handler
-void EventTarget::activate_event_handler(DeprecatedFlyString const& name, HTML::EventHandler& event_handler)
+void EventTarget::activate_event_handler(FlyString const& name, HTML::EventHandler& event_handler)
 {
     // 1. Let handlerMap be eventTarget's event handler map.
     // 2. Let eventHandler be handlerMap[name].
@@ -561,7 +583,7 @@ void EventTarget::activate_event_handler(DeprecatedFlyString const& name, HTML::
     // 5. Let listener be a new event listener whose type is the event handler event type corresponding to eventHandler and callback is callback.
     auto listener = realm.heap().allocate_without_realm<DOMEventListener>();
     listener->type = name;
-    listener->callback = IDLEventListener::create(realm, *callback).ptr();
+    listener->callback = IDLEventListener::create(realm, *callback).release_value_but_fixme_should_propagate_errors();
 
     // 6. Add an event listener with eventTarget and listener.
     add_an_event_listener(*listener);
@@ -570,7 +592,7 @@ void EventTarget::activate_event_handler(DeprecatedFlyString const& name, HTML::
     event_handler.listener = listener;
 }
 
-void EventTarget::deactivate_event_handler(DeprecatedFlyString const& name)
+void EventTarget::deactivate_event_handler(FlyString const& name)
 {
     // 1. Let handlerMap be eventTarget's event handler map. (NOTE: Not necessary)
 
@@ -600,7 +622,7 @@ void EventTarget::deactivate_event_handler(DeprecatedFlyString const& name)
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#the-event-handler-processing-algorithm
-JS::ThrowCompletionOr<void> EventTarget::process_event_handler_for_event(DeprecatedFlyString const& name, Event& event)
+JS::ThrowCompletionOr<void> EventTarget::process_event_handler_for_event(FlyString const& name, Event& event)
 {
     // 1. Let callback be the result of getting the current value of the event handler given eventTarget and name.
     auto* callback = get_current_value_of_event_handler(name);
@@ -679,9 +701,9 @@ JS::ThrowCompletionOr<void> EventTarget::process_event_handler_for_event(Depreca
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#event-handler-attributes:concept-element-attributes-change-ext
-void EventTarget::element_event_handler_attribute_changed(DeprecatedFlyString const& local_name, DeprecatedString const& value)
+void EventTarget::element_event_handler_attribute_changed(FlyString const& local_name, Optional<String> const& value)
 {
-    // NOTE: Step 1 of this algorithm was handled in HTMLElement::parse_attribute.
+    // NOTE: Step 1 of this algorithm was handled in HTMLElement::attribute_changed.
 
     // 2. Let eventTarget be the result of determining the target of an event handler given element and localName.
     // NOTE: element is `this`.
@@ -692,7 +714,7 @@ void EventTarget::element_event_handler_attribute_changed(DeprecatedFlyString co
         return;
 
     // 4. If value is null, then deactivate an event handler given eventTarget and localName.
-    if (value.is_null()) {
+    if (!value.has_value()) {
         event_target->deactivate_event_handler(local_name);
         return;
     }
@@ -714,7 +736,7 @@ void EventTarget::element_event_handler_attribute_changed(DeprecatedFlyString co
     // NOTE: See the optimization comments in set_event_handler_attribute.
 
     if (event_handler_iterator == handler_map.end()) {
-        auto new_event_handler = heap().allocate_without_realm<HTML::EventHandler>(value);
+        auto new_event_handler = heap().allocate_without_realm<HTML::EventHandler>(value->to_deprecated_string());
 
         //  6. Activate an event handler given eventTarget and name.
         event_target->activate_event_handler(local_name, *new_event_handler);
@@ -726,22 +748,74 @@ void EventTarget::element_event_handler_attribute_changed(DeprecatedFlyString co
     auto& event_handler = event_handler_iterator->value;
 
     //  6. Activate an event handler given eventTarget and name.
-    event_handler->value = value;
+    event_handler->value = value->to_deprecated_string();
     event_target->activate_event_handler(local_name, *event_handler);
 }
 
 bool EventTarget::dispatch_event(Event& event)
 {
+    // https://html.spec.whatwg.org/multipage/interaction.html#activation-triggering-input-event
+    auto is_activation_triggering_input_event = [&]() -> bool {
+        // An activation triggering input event is any event whose isTrusted attribute is true and whose type is one of:
+        if (!event.is_trusted())
+            return false;
+
+        // keydown, provided the key is neither the Esc key nor a shortcut key reserved by the user agent.
+        if (event.type() == UIEvents::EventNames::keydown)
+            return static_cast<UIEvents::KeyboardEvent*>(&event)->key_code() != KeyCode::Key_Escape;
+
+        // mousedown.
+        if (event.type() == UIEvents::EventNames::mousedown)
+            return true;
+
+        // FIXME:
+        // pointerdown, provided the event's pointerType is "mouse".
+        // pointerup, provided the event's pointerType is not "mouse".
+        // touchend.
+
+        return false;
+    };
+
+    // https://html.spec.whatwg.org/multipage/interaction.html#user-activation-processing-model
+    // When a user interaction causes firing of an activation triggering input event in a Document document,
+    // the user agent must perform the following activation notification steps before dispatching the event:
+
+    // FIXME: 1. Assert: document is fully active.
+    // FIXME: 2. Let windows be « document's relevant global object ».
+    // FIXME: 3. Extend windows with the active window of each of document's ancestor navigables.
+    // FIXME: 4. Extend windows with the active window of each of document's descendant navigables,
+    //           filtered to include only those navigables whose active document's origin is same origin with document's origin.
+    // FIXME: 5. For each window in windows, set window's last activation timestamp to the current high resolution time.
+
+    // FIXME: This is ad-hoc, but works for now.
+    if (is_activation_triggering_input_event()) {
+        auto unsafe_shared_time = HighResolutionTime::unsafe_shared_current_time();
+        auto current_time = HighResolutionTime::relative_high_resolution_time(unsafe_shared_time, realm().global_object());
+
+        if (is<HTML::Window>(this)) {
+            static_cast<HTML::Window*>(this)->set_last_activation_timestamp(current_time);
+        } else if (is<DOM::Element>(this)) {
+            auto const* element = static_cast<DOM::Element const*>(this);
+            auto& window = element->document().window();
+            window.set_last_activation_timestamp(current_time);
+        }
+    }
+
     return EventDispatcher::dispatch(*this, event);
 }
 
-bool EventTarget::has_event_listener(DeprecatedFlyString const& type) const
+bool EventTarget::has_event_listener(FlyString const& type) const
 {
     for (auto& listener : m_event_listener_list) {
         if (listener->type == type)
             return true;
     }
     return false;
+}
+
+bool EventTarget::has_event_listeners() const
+{
+    return !m_event_listener_list.is_empty();
 }
 
 }

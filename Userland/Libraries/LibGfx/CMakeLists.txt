@@ -1,15 +1,14 @@
 set(SOURCES
     AffineTransform.cpp
     AntiAliasingPainter.cpp
-    BMPLoader.cpp
-    BMPWriter.cpp
     Bitmap.cpp
     BitmapMixer.cpp
     ClassicStylePainter.cpp
     ClassicWindowTheme.cpp
     Color.cpp
     CursorParams.cpp
-    DDSLoader.cpp
+    DeltaE.cpp
+    EdgeFlagPathRasterizer.cpp
     Filters/ColorBlindnessFilter.cpp
     Filters/FastBoxBlurFilter.cpp
     Filters/LumaFilter.cpp
@@ -22,29 +21,44 @@ set(SOURCES
     Font/OpenType/Font.cpp
     Font/OpenType/Glyf.cpp
     Font/OpenType/Hinting/Opcodes.cpp
-    Font/PathRasterizer.cpp
     Font/ScaledFont.cpp
     Font/Typeface.cpp
     Font/WOFF/Font.cpp
     GradientPainting.cpp
-    GIFLoader.cpp
+    ICC/BinaryWriter.cpp
     ICC/Profile.cpp
     ICC/Tags.cpp
     ICC/TagTypes.cpp
-    ICOLoader.cpp
-    ImageDecoder.cpp
-    JPGLoader.cpp
-    PBMLoader.cpp
-    PGMLoader.cpp
-    PNGLoader.cpp
-    PNGWriter.cpp
-    PPMLoader.cpp
+    ICC/WellKnownProfiles.cpp
+    ImageFormats/BMPLoader.cpp
+    ImageFormats/BMPWriter.cpp
+    ImageFormats/BooleanDecoder.cpp
+    ImageFormats/DDSLoader.cpp
+    ImageFormats/GIFLoader.cpp
+    ImageFormats/ICOLoader.cpp
+    ImageFormats/ImageDecoder.cpp
+    ImageFormats/ISOBMFF/Boxes.cpp
+    ImageFormats/ISOBMFF/Reader.cpp
+    ImageFormats/JPEGLoader.cpp
+    ImageFormats/JPEGXLLoader.cpp
+    ImageFormats/JPEGWriter.cpp
+    ImageFormats/PBMLoader.cpp
+    ImageFormats/PGMLoader.cpp
+    ImageFormats/PNGLoader.cpp
+    ImageFormats/PNGWriter.cpp
+    ImageFormats/PortableFormatWriter.cpp
+    ImageFormats/PPMLoader.cpp
+    ImageFormats/QOILoader.cpp
+    ImageFormats/QOIWriter.cpp
+    ImageFormats/TGALoader.cpp
+    ImageFormats/TinyVGLoader.cpp
+    ImageFormats/WebPLoader.cpp
+    ImageFormats/WebPLoaderLossless.cpp
+    ImageFormats/WebPLoaderLossy.cpp
     Painter.cpp
     Palette.cpp
     Path.cpp
     Point.cpp
-    QOILoader.cpp
-    QOIWriter.cpp
     Rect.cpp
     ShareableBitmap.cpp
     Size.cpp
@@ -52,10 +66,10 @@ set(SOURCES
     SystemTheme.cpp
     TextDirection.cpp
     TextLayout.cpp
-    TGALoader.cpp
     Triangle.cpp
+    VectorGraphic.cpp
     WindowTheme.cpp
 )
 
 serenity_lib(LibGfx gfx)
-target_link_libraries(LibGfx PRIVATE LibCompress LibCore LibCrypto LibTextCodec LibIPC)
+target_link_libraries(LibGfx PRIVATE LibCompress LibCore LibCrypto LibFileSystem LibTextCodec LibIPC LibUnicode)

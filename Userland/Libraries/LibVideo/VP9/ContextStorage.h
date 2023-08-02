@@ -103,19 +103,16 @@ class Vector2D {
 public:
     ~Vector2D()
     {
-        if (m_storage)
-            free(m_storage);
-        m_storage = nullptr;
-        m_width = 0;
-        m_height = 0;
+        clear_storage();
     }
 
     ErrorOr<void> try_resize(u32 height, u32 width)
     {
         if (height != m_height && width != m_width) {
-            this->~Vector2D();
+            clear_storage();
+
             size_t size = height * width;
-            auto* new_storage = static_cast<T*>(malloc(size * sizeof(T)));
+            auto* new_storage = new (nothrow) T[size];
             if (!new_storage)
                 return Error::from_errno(ENOMEM);
             m_storage = new_storage;
@@ -147,6 +144,11 @@ public:
     T const& at(u32 row, u32 column) const
     {
         return m_storage[index_at(row, column)];
+    }
+
+    void assign(u32 row, u32 column, T&& value)
+    {
+        new (&m_storage[index_at(row, column)]) T(move(value));
     }
 
     template<typename OtherT, typename Function>
@@ -190,6 +192,14 @@ public:
     }
 
 private:
+    void clear_storage()
+    {
+        delete[] m_storage;
+        m_storage = nullptr;
+        m_width = 0;
+        m_height = 0;
+    }
+
     u32 m_height { 0 };
     u32 m_width { 0 };
     T* m_storage { nullptr };
@@ -233,15 +243,18 @@ struct PersistentBlockContext {
     u8 segment_id { 0 };
 };
 
-struct SegmentFeature {
+struct SegmentFeatureStatus {
     bool enabled { false };
     u8 value { 0 };
 };
 
+using SegmentFeatures = Array<SegmentFeatureStatus, to_underlying(SegmentFeature::Sentinel)>;
+using SegmentationFeatures = Array<SegmentFeatures, MAX_SEGMENTS>;
+
 struct ColorConfig {
     u8 bit_depth { 8 };
     ColorSpace color_space { ColorSpace::Bt601 };
-    ColorRange color_range { ColorRange::Studio };
+    VideoFullRangeFlag color_range { VideoFullRangeFlag::Studio };
     bool subsampling_x { true };
     bool subsampling_y { true };
 };
@@ -265,7 +278,13 @@ struct ReferenceFrame {
     u8 bit_depth { 0 };
     Array<Vector<u16>, 3> frame_planes {};
 
-    bool is_valid() { return bit_depth > 0; }
+    bool is_valid() const { return bit_depth > 0; }
+
+    // These values are set at the start of each inter frame to be used during prediction.
+    i32 x_scale { 0 };
+    i32 y_scale { 0 };
+    i32 scaled_step_x { 0 };
+    i32 scaled_step_y { 0 };
 };
 
 }

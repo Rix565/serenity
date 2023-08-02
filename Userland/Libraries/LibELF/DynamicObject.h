@@ -12,9 +12,9 @@
 #include <AK/Concepts.h>
 #include <AK/DeprecatedString.h>
 #include <AK/RefCounted.h>
-#include <Kernel/VirtualAddress.h>
-#include <LibC/elf.h>
-#include <LibC/link.h>
+#include <Kernel/Memory/VirtualAddress.h>
+#include <LibELF/ELFABI.h>
+#include <link.h>
 
 namespace ELF {
 
@@ -313,9 +313,6 @@ public:
 
     Optional<SymbolLookupResult> lookup_symbol(StringView name) const;
     Optional<SymbolLookupResult> lookup_symbol(HashSymbol const& symbol) const;
-
-    // Will be called from _fixup_plt_entry, as part of the PLT trampoline
-    VirtualAddress patch_plt_entry(u32 relocation_offset);
 
     bool elf_is_dynamic() const { return m_is_elf_dynamic; }
 

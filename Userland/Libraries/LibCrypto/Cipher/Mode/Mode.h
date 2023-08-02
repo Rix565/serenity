@@ -10,8 +10,7 @@
 #include <AK/Span.h>
 #include <LibCrypto/Cipher/Cipher.h>
 
-namespace Crypto {
-namespace Cipher {
+namespace Crypto::Cipher {
 
 template<typename T>
 class Mode {
@@ -25,7 +24,7 @@ public:
 
     T const& cipher() const { return m_cipher; }
 
-    ErrorOr<ByteBuffer> create_aligned_buffer(size_t input_size) const
+    static ErrorOr<ByteBuffer> create_aligned_buffer(size_t input_size)
     {
         size_t remainder = (input_size + T::block_size()) % T::block_size();
         if (remainder == 0)
@@ -98,6 +97,4 @@ protected:
 private:
     T m_cipher;
 };
-}
-
 }

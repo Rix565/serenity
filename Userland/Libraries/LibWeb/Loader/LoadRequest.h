@@ -24,6 +24,11 @@ public:
 
     static LoadRequest create_for_url_on_page(const AK::URL& url, Page* page);
 
+    // The main resource is the file being displayed in a frame (unlike subresources like images, scripts, etc.)
+    // If a main resource fails with an HTTP error, we may still display its content if non-empty, e.g a custom 404 page.
+    bool is_main_resource() const { return m_main_resource; }
+    void set_main_resource(bool b) { m_main_resource = b; }
+
     bool is_valid() const { return m_url.is_valid(); }
 
     const AK::URL& url() const { return m_url; }
@@ -35,10 +40,10 @@ public:
     ByteBuffer const& body() const { return m_body; }
     void set_body(ByteBuffer body) { m_body = move(body); }
 
-    void start_timer() { m_load_timer.start(); };
-    Time load_time() const { return m_load_timer.elapsed_time(); }
+    void start_timer() { m_load_timer.start(); }
+    Duration load_time() const { return m_load_timer.elapsed_time(); }
 
-    Optional<Page&>& page() { return m_page; };
+    Optional<Page&>& page() { return m_page; }
     void set_page(Page& page) { m_page = page; }
 
     unsigned hash() const
@@ -75,6 +80,7 @@ private:
     ByteBuffer m_body;
     Core::ElapsedTimer m_load_timer;
     Optional<Page&> m_page;
+    bool m_main_resource { false };
 };
 
 }

@@ -21,10 +21,12 @@
 #include <LibGfx/Rect.h>
 #include <LibGfx/Size.h>
 #include <LibGfx/StandardCursor.h>
+#include <LibIPC/Forward.h>
 #include <LibJS/Heap/Handle.h>
 #include <LibWeb/CSS/PreferredColorScheme.h>
 #include <LibWeb/Cookie/Cookie.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/HTML/ActivateTab.h>
 #include <LibWeb/Loader/FileRequest.h>
 #include <LibWeb/PixelUnits.h>
 
@@ -43,6 +45,9 @@ public:
     PageClient& client() { return m_client; }
     PageClient const& client() const { return m_client; }
 
+    // FIXME: This is a hack.
+    bool top_level_browsing_context_is_initialized() const;
+
     HTML::BrowsingContext& top_level_browsing_context();
     HTML::BrowsingContext const& top_level_browsing_context() const;
 
@@ -55,6 +60,8 @@ public:
     void load(LoadRequest&);
 
     void load_html(StringView, const AK::URL&);
+
+    bool has_ongoing_navigation() const;
 
     CSSPixelPoint device_to_css_point(DevicePixelPoint) const;
     DevicePixelPoint css_to_device_point(CSSPixelPoint) const;
@@ -93,14 +100,14 @@ public:
     DevicePixelSize window_size() const { return m_window_size; }
     void set_window_size(DevicePixelSize size) { m_window_size = size; }
 
-    void did_request_alert(DeprecatedString const& message);
+    void did_request_alert(String const& message);
     void alert_closed();
 
-    bool did_request_confirm(DeprecatedString const& message);
+    bool did_request_confirm(String const& message);
     void confirm_closed(bool accepted);
 
-    DeprecatedString did_request_prompt(DeprecatedString const& message, DeprecatedString const& default_);
-    void prompt_closed(DeprecatedString response);
+    Optional<String> did_request_prompt(String const& message, String const& default_);
+    void prompt_closed(Optional<String> response);
 
     enum class PendingDialog {
         None,
@@ -110,11 +117,29 @@ public:
     };
     bool has_pending_dialog() const { return m_pending_dialog != PendingDialog::None; }
     PendingDialog pending_dialog() const { return m_pending_dialog; }
-    Optional<DeprecatedString> const& pending_dialog_text() const { return m_pending_dialog_text; }
+    Optional<String> const& pending_dialog_text() const { return m_pending_dialog_text; }
     void dismiss_dialog();
     void accept_dialog();
 
+    struct MediaContextMenu {
+        AK::URL media_url;
+        bool is_video { false };
+        bool is_playing { false };
+        bool is_muted { false };
+        bool has_user_agent_controls { false };
+        bool is_looping { false };
+    };
+    void did_request_media_context_menu(i32 media_id, CSSPixelPoint, DeprecatedString const& target, unsigned modifiers, MediaContextMenu);
+    WebIDL::ExceptionOr<void> toggle_media_play_state();
+    void toggle_media_mute_state();
+    WebIDL::ExceptionOr<void> toggle_media_loop_state();
+    WebIDL::ExceptionOr<void> toggle_media_controls_state();
+
+    bool pdf_viewer_supported() const { return m_pdf_viewer_supported; }
+
 private:
+    JS::GCPtr<HTML::HTMLMediaElement> media_context_menu_element();
+
     PageClient& m_client;
 
     JS::Handle<HTML::BrowsingContext> m_top_level_browsing_context;
@@ -135,10 +160,18 @@ private:
     DevicePixelSize m_window_size {};
 
     PendingDialog m_pending_dialog { PendingDialog::None };
-    Optional<DeprecatedString> m_pending_dialog_text;
+    Optional<String> m_pending_dialog_text;
     Optional<Empty> m_pending_alert_response;
     Optional<bool> m_pending_confirm_response;
-    Optional<DeprecatedString> m_pending_prompt_response;
+    Optional<Optional<String>> m_pending_prompt_response;
+
+    Optional<int> m_media_context_menu_element_id;
+
+    // https://html.spec.whatwg.org/multipage/system-state.html#pdf-viewer-supported
+    // Each user agent has a PDF viewer supported boolean, whose value is implementation-defined (and might vary according to user preferences).
+    // Spec Note: This value also impacts the navigation processing model.
+    // FIXME: Actually support pdf viewing
+    bool m_pdf_viewer_supported { false };
 };
 
 class PageClient {
@@ -148,7 +181,7 @@ public:
     virtual bool is_connection_open() const = 0;
     virtual Gfx::Palette palette() const = 0;
     virtual DevicePixelRect screen_rect() const = 0;
-    virtual float device_pixels_per_css_pixel() const = 0;
+    virtual double device_pixels_per_css_pixel() const = 0;
     virtual CSS::PreferredColorScheme preferred_color_scheme() const = 0;
     virtual void paint(DevicePixelRect const&, Gfx::Bitmap&) = 0;
     virtual void page_did_change_title(DeprecatedString const&) { }
@@ -169,6 +202,7 @@ public:
     virtual void page_did_request_context_menu(CSSPixelPoint) { }
     virtual void page_did_request_link_context_menu(CSSPixelPoint, AK::URL const&, [[maybe_unused]] DeprecatedString const& target, [[maybe_unused]] unsigned modifiers) { }
     virtual void page_did_request_image_context_menu(CSSPixelPoint, AK::URL const&, [[maybe_unused]] DeprecatedString const& target, [[maybe_unused]] unsigned modifiers, Gfx::Bitmap const*) { }
+    virtual void page_did_request_media_context_menu(CSSPixelPoint, [[maybe_unused]] DeprecatedString const& target, [[maybe_unused]] unsigned modifiers, Page::MediaContextMenu) { }
     virtual void page_did_click_link(const AK::URL&, [[maybe_unused]] DeprecatedString const& target, [[maybe_unused]] unsigned modifiers) { }
     virtual void page_did_middle_click_link(const AK::URL&, [[maybe_unused]] DeprecatedString const& target, [[maybe_unused]] unsigned modifiers) { }
     virtual void page_did_enter_tooltip_area(CSSPixelPoint, DeprecatedString const&) { }
@@ -181,10 +215,10 @@ public:
     virtual void page_did_request_scroll(i32, i32) { }
     virtual void page_did_request_scroll_to(CSSPixelPoint) { }
     virtual void page_did_request_scroll_into_view(CSSPixelRect const&) { }
-    virtual void page_did_request_alert(DeprecatedString const&) { }
-    virtual void page_did_request_confirm(DeprecatedString const&) { }
-    virtual void page_did_request_prompt(DeprecatedString const&, DeprecatedString const&) { }
-    virtual void page_did_request_set_prompt_text(DeprecatedString const&) { }
+    virtual void page_did_request_alert(String const&) { }
+    virtual void page_did_request_confirm(String const&) { }
+    virtual void page_did_request_prompt(String const&, String const&) { }
+    virtual void page_did_request_set_prompt_text(String const&) { }
     virtual void page_did_request_accept_dialog() { }
     virtual void page_did_request_dismiss_dialog() { }
     virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies(AK::URL const&) { return {}; }
@@ -193,9 +227,11 @@ public:
     virtual void page_did_set_cookie(const AK::URL&, Cookie::ParsedCookie const&, Cookie::Source) { }
     virtual void page_did_update_cookie(Web::Cookie::Cookie) { }
     virtual void page_did_update_resource_count(i32) { }
+    virtual String page_did_request_new_tab(HTML::ActivateTab) { return {}; }
+    virtual void page_did_request_activate_tab() { }
     virtual void page_did_close_browsing_context(HTML::BrowsingContext const&) { }
 
-    virtual void request_file(NonnullRefPtr<FileRequest>&) = 0;
+    virtual void request_file(FileRequest) = 0;
 
     // https://html.spec.whatwg.org/multipage/input.html#show-the-picker,-if-applicable
     virtual void page_did_request_file_picker(WeakPtr<DOM::EventTarget>, [[maybe_unused]] bool multiple) {};
@@ -203,5 +239,15 @@ public:
 protected:
     virtual ~PageClient() = default;
 };
+
+}
+
+namespace IPC {
+
+template<>
+ErrorOr<void> encode(Encoder&, Web::Page::MediaContextMenu const&);
+
+template<>
+ErrorOr<Web::Page::MediaContextMenu> decode(Decoder&);
 
 }

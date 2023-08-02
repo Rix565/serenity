@@ -22,12 +22,13 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd rpath unix cpath wpath thread"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
-    TRY(Desktop::Launcher::add_allowed_handler_with_only_specific_urls("/bin/Help", { URL::create_with_file_scheme("/usr/share/man/man1/HexEditor.md") }));
+    TRY(Desktop::Launcher::add_allowed_handler_with_only_specific_urls("/bin/Help", { URL::create_with_file_scheme("/usr/share/man/man1/Applications/HexEditor.md") }));
     TRY(Desktop::Launcher::seal_allowlist());
 
     Config::pledge_domain("HexEditor");
+    app->set_config_domain(TRY("HexEditor"_string));
 
     auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-hex-editor"sv));
 
@@ -47,16 +48,15 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::unveil("/res", "r"));
     TRY(Core::System::unveil(nullptr, nullptr));
 
-    hex_editor_widget->initialize_menubar(*window);
+    TRY(hex_editor_widget->initialize_menubar(*window));
     window->show();
     window->set_icon(app_icon.bitmap_for_size(16));
 
     if (arguments.argc > 1) {
         // FIXME: Using `try_request_file_read_only_approved` doesn't work here since the file stored in the editor is only readable.
-        auto response = FileSystemAccessClient::Client::the().try_request_file_deprecated(window, arguments.strings[1], Core::OpenMode::ReadWrite);
-        if (response.is_error())
-            return 1;
-        hex_editor_widget->open_file(response.value());
+        auto response = FileSystemAccessClient::Client::the().request_file(window, arguments.strings[1], Core::File::OpenMode::ReadWrite);
+        if (!response.is_error())
+            hex_editor_widget->open_file(response.value().filename(), response.value().release_stream());
     }
 
     return app->exec();

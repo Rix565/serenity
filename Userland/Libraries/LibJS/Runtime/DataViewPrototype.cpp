@@ -11,7 +11,7 @@
 namespace JS {
 
 DataViewPrototype::DataViewPrototype(Realm& realm)
-    : PrototypeObject(*realm.intrinsics().object_prototype())
+    : PrototypeObject(realm.intrinsics().object_prototype())
 {
 }
 
@@ -47,7 +47,7 @@ ThrowCompletionOr<void> DataViewPrototype::initialize(Realm& realm)
     define_native_accessor(realm, vm.names.byteOffset, byte_offset_getter, {}, Attribute::Configurable);
 
     // 25.3.4.25 DataView.prototype [ @@toStringTag ], https://tc39.es/ecma262/#sec-dataview.prototype-@@tostringtag
-    define_direct_property(*vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, vm.names.DataView.as_string()), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, vm.names.DataView.as_string()), Attribute::Configurable);
 
     return {};
 }
@@ -58,7 +58,7 @@ static ThrowCompletionOr<Value> get_view_value(VM& vm, Value request_index, Valu
 {
     // 1. Perform ? RequireInternalSlot(view, [[DataView]]).
     // 2. Assert: view has a [[ViewedArrayBuffer]] internal slot.
-    auto* view = TRY(DataViewPrototype::typed_this_value(vm));
+    auto view = TRY(DataViewPrototype::typed_this_value(vm));
 
     // 3. Let getIndex be ? ToIndex(requestIndex).
     auto get_index = TRY(request_index.to_index(vm));
@@ -103,7 +103,7 @@ static ThrowCompletionOr<Value> set_view_value(VM& vm, Value request_index, Valu
 {
     // 1. Perform ? RequireInternalSlot(view, [[DataView]]).
     // 2. Assert: view has a [[ViewedArrayBuffer]] internal slot.
-    auto* view = TRY(DataViewPrototype::typed_this_value(vm));
+    auto view = TRY(DataViewPrototype::typed_this_value(vm));
 
     // 3. Let getIndex be ? ToIndex(requestIndex).
     auto get_index = TRY(request_index.to_index(vm));
@@ -148,7 +148,7 @@ static ThrowCompletionOr<Value> set_view_value(VM& vm, Value request_index, Valu
         return vm.throw_completion<RangeError>(ErrorType::DataViewOutOfRangeByteOffset, get_index, view_size);
 
     // 14. Perform SetValueInBuffer(buffer, bufferIndex, type, numberValue, false, Unordered, isLittleEndian).
-    buffer->set_value<T>(buffer_index.value(), number_value, false, ArrayBuffer::Order::Unordered, little_endian);
+    MUST_OR_THROW_OOM(buffer->set_value<T>(buffer_index.value(), number_value, false, ArrayBuffer::Order::Unordered, little_endian));
 
     // 15. Return undefined.
     return js_undefined();
@@ -160,7 +160,7 @@ JS_DEFINE_NATIVE_FUNCTION(DataViewPrototype::buffer_getter)
     // 1. Let O be the this value.
     // 2. Perform ? RequireInternalSlot(O, [[DataView]]).
     // 3. Assert: O has a [[ViewedArrayBuffer]] internal slot.
-    auto* data_view = TRY(typed_this_value(vm));
+    auto data_view = TRY(typed_this_value(vm));
 
     // 4. Let buffer be O.[[ViewedArrayBuffer]].
     // 5. Return buffer.
@@ -173,7 +173,7 @@ JS_DEFINE_NATIVE_FUNCTION(DataViewPrototype::byte_length_getter)
     // 1. Let O be the this value.
     // 2. Perform ? RequireInternalSlot(O, [[DataView]]).
     // 3. Assert: O has a [[ViewedArrayBuffer]] internal slot.
-    auto* data_view = TRY(typed_this_value(vm));
+    auto data_view = TRY(typed_this_value(vm));
 
     // 4. Let buffer be O.[[ViewedArrayBuffer]].
     // 5. If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
@@ -191,7 +191,7 @@ JS_DEFINE_NATIVE_FUNCTION(DataViewPrototype::byte_offset_getter)
     // 1. Let O be the this value.
     // 2. Perform ? RequireInternalSlot(O, [[DataView]]).
     // 3. Assert: O has a [[ViewedArrayBuffer]] internal slot.
-    auto* data_view = TRY(typed_this_value(vm));
+    auto data_view = TRY(typed_this_value(vm));
 
     // 4. Let buffer be O.[[ViewedArrayBuffer]].
     // 5. If IsDetachedBuffer(buffer) is true, throw a TypeError exception.

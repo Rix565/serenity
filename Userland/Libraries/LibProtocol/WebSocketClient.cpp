@@ -9,17 +9,17 @@
 
 namespace Protocol {
 
-WebSocketClient::WebSocketClient(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+WebSocketClient::WebSocketClient(NonnullOwnPtr<Core::LocalSocket> socket)
     : IPC::ConnectionToServer<WebSocketClientEndpoint, WebSocketServerEndpoint>(*this, move(socket))
 {
 }
 
 RefPtr<WebSocket> WebSocketClient::connect(const URL& url, DeprecatedString const& origin, Vector<DeprecatedString> const& protocols, Vector<DeprecatedString> const& extensions, HashMap<DeprecatedString, DeprecatedString> const& request_headers)
 {
-    IPC::Dictionary header_dictionary;
-    for (auto& it : request_headers)
-        header_dictionary.add(it.key, it.value);
-    auto connection_id = IPCProxy::connect(url, origin, protocols, extensions, header_dictionary);
+    auto headers_or_error = request_headers.clone();
+    if (headers_or_error.is_error())
+        return nullptr;
+    auto connection_id = IPCProxy::connect(url, origin, protocols, extensions, headers_or_error.release_value());
     if (connection_id < 0)
         return nullptr;
     auto connection = WebSocket::create_from_id({}, *this, connection_id);
@@ -32,6 +32,13 @@ u32 WebSocketClient::ready_state(Badge<WebSocket>, WebSocket& connection)
     if (!m_connections.contains(connection.id()))
         return (u32)WebSocket::ReadyState::Closed;
     return IPCProxy::ready_state(connection.id());
+}
+
+DeprecatedString WebSocketClient::subprotocol_in_use(Badge<WebSocket>, WebSocket& connection)
+{
+    if (!m_connections.contains(connection.id()))
+        return DeprecatedString::empty();
+    return IPCProxy::subprotocol_in_use(connection.id());
 }
 
 void WebSocketClient::send(Badge<WebSocket>, WebSocket& connection, ByteBuffer data, bool is_text)

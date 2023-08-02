@@ -6,6 +6,7 @@
  */
 
 #include <AK/CharacterTypes.h>
+#include <AK/FlyString.h>
 #include <AK/Utf16View.h>
 #include <AK/Utf8View.h>
 #include <LibJS/Runtime/AbstractOperations.h>
@@ -50,7 +51,7 @@ PrimitiveString::~PrimitiveString()
 
 void PrimitiveString::visit_edges(Cell::Visitor& visitor)
 {
-    Cell::visit_edges(visitor);
+    Base::visit_edges(visitor);
     if (m_is_rope) {
         visitor.visit(m_lhs);
         visitor.visit(m_rhs);
@@ -76,11 +77,11 @@ bool PrimitiveString::is_empty() const
 ThrowCompletionOr<String> PrimitiveString::utf8_string() const
 {
     auto& vm = this->vm();
-    TRY(resolve_rope_if_needed());
+    TRY(resolve_rope_if_needed(EncodingPreference::UTF8));
 
     if (!has_utf8_string()) {
         if (has_deprecated_string())
-            m_utf8_string = TRY_OR_THROW_OOM(vm, String::from_utf8(*m_deprecated_string));
+            m_utf8_string = TRY_OR_THROW_OOM(vm, String::from_deprecated_string(*m_deprecated_string));
         else if (has_utf16_string())
             m_utf8_string = TRY(m_utf16_string->to_utf8(vm));
         else
@@ -98,7 +99,7 @@ ThrowCompletionOr<StringView> PrimitiveString::utf8_string_view() const
 
 ThrowCompletionOr<DeprecatedString> PrimitiveString::deprecated_string() const
 {
-    TRY(resolve_rope_if_needed());
+    TRY(resolve_rope_if_needed(EncodingPreference::UTF8));
 
     if (!has_deprecated_string()) {
         if (has_utf8_string())
@@ -114,7 +115,7 @@ ThrowCompletionOr<DeprecatedString> PrimitiveString::deprecated_string() const
 
 ThrowCompletionOr<Utf16String> PrimitiveString::utf16_string() const
 {
-    TRY(resolve_rope_if_needed());
+    TRY(resolve_rope_if_needed(EncodingPreference::UTF16));
 
     if (!has_utf16_string()) {
         if (has_utf8_string()) {
@@ -144,7 +145,7 @@ ThrowCompletionOr<Optional<Value>> PrimitiveString::get(VM& vm, PropertyKey cons
             return Value(static_cast<double>(length));
         }
     }
-    auto index = canonical_numeric_index_string(property_key, CanonicalIndexMode::IgnoreNumericRoundtrip);
+    auto index = MUST_OR_THROW_OOM(canonical_numeric_index_string(vm, property_key, CanonicalIndexMode::IgnoreNumericRoundtrip));
     if (!index.is_index())
         return Optional<Value> {};
     auto str = TRY(utf16_string_view());
@@ -188,6 +189,16 @@ NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, String string)
     return *new_string;
 }
 
+NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, FlyString const& string)
+{
+    return create(vm, string.to_string());
+}
+
+ThrowCompletionOr<NonnullGCPtr<PrimitiveString>> PrimitiveString::create(VM& vm, StringView string)
+{
+    return create(vm, TRY_OR_THROW_OOM(vm, String::from_utf8(string)));
+}
+
 NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, DeprecatedString string)
 {
     if (string.is_empty())
@@ -207,6 +218,11 @@ NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, DeprecatedString s
         return *new_string;
     }
     return *it->value;
+}
+
+NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, DeprecatedFlyString const& string)
+{
+    return create(vm, string.impl());
 }
 
 NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, PrimitiveString& lhs, PrimitiveString& rhs)
@@ -229,30 +245,12 @@ NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, PrimitiveString& l
     return vm.heap().allocate_without_realm<PrimitiveString>(lhs, rhs);
 }
 
-ThrowCompletionOr<void> PrimitiveString::resolve_rope_if_needed() const
+ThrowCompletionOr<void> PrimitiveString::resolve_rope_if_needed(EncodingPreference preference) const
 {
     if (!m_is_rope)
         return {};
 
     auto& vm = this->vm();
-
-    // NOTE: Special case for two concatenated UTF-16 strings.
-    //       This is here as an optimization, although I'm unsure how valuable it is.
-    if (m_lhs->has_utf16_string() && m_rhs->has_utf16_string()) {
-        auto const& lhs_string = m_lhs->m_utf16_string.value();
-        auto const& rhs_string = m_rhs->m_utf16_string.value();
-
-        Utf16Data combined;
-        TRY_OR_THROW_OOM(vm, combined.try_ensure_capacity(lhs_string.length_in_code_units() + rhs_string.length_in_code_units()));
-        combined.extend(lhs_string.string());
-        combined.extend(rhs_string.string());
-
-        m_utf16_string = TRY(Utf16String::create(vm, move(combined)));
-        m_is_rope = false;
-        m_lhs = nullptr;
-        m_rhs = nullptr;
-        return {};
-    }
 
     // This vector will hold all the pieces of the rope that need to be assembled
     // into the resolved string.
@@ -271,6 +269,21 @@ ThrowCompletionOr<void> PrimitiveString::resolve_rope_if_needed() const
             continue;
         }
         TRY_OR_THROW_OOM(vm, pieces.try_append(current));
+    }
+
+    if (preference == EncodingPreference::UTF16) {
+        // The caller wants a UTF-16 string, so we can simply concatenate all the pieces
+        // into a UTF-16 code unit buffer and create a Utf16String from it.
+
+        Utf16Data code_units;
+        for (auto const* current : pieces)
+            code_units.extend(TRY(current->utf16_string()).string());
+
+        m_utf16_string = TRY(Utf16String::create(vm, move(code_units)));
+        m_is_rope = false;
+        m_lhs = nullptr;
+        m_rhs = nullptr;
+        return {};
     }
 
     // Now that we have all the pieces, we can concatenate them using a StringBuilder.

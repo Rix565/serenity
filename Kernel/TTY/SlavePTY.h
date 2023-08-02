@@ -21,7 +21,7 @@ public:
     void on_master_write(UserOrKernelBuffer const&, size_t);
     unsigned index() const { return m_index; }
 
-    time_t time_of_last_write() const { return m_time_of_last_write; }
+    UnixDateTime time_of_last_write() const { return m_time_of_last_write; }
 
     virtual FileBlockerSet& blocker_set() override;
 
@@ -42,10 +42,10 @@ private:
     virtual ErrorOr<void> close() override;
 
     friend class MasterPTY;
-    SlavePTY(MasterPTY&, unsigned index);
+    SlavePTY(NonnullRefPtr<MasterPTY>, unsigned index);
 
-    LockRefPtr<MasterPTY> m_master;
-    time_t m_time_of_last_write { 0 };
+    NonnullRefPtr<MasterPTY> const m_master;
+    UnixDateTime m_time_of_last_write {};
     unsigned m_index { 0 };
 
     mutable IntrusiveListNode<SlavePTY> m_list_node;

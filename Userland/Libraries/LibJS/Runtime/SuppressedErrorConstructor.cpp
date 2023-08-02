@@ -8,14 +8,14 @@
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/ErrorConstructor.h>
 #include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/Iterator.h>
 #include <LibJS/Runtime/SuppressedError.h>
 #include <LibJS/Runtime/SuppressedErrorConstructor.h>
 
 namespace JS {
 
 SuppressedErrorConstructor::SuppressedErrorConstructor(Realm& realm)
-    : NativeFunction(static_cast<Object&>(*realm.intrinsics().error_constructor()))
+    : NativeFunction(static_cast<Object&>(realm.intrinsics().error_constructor()))
 {
 }
 

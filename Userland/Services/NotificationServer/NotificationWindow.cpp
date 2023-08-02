@@ -27,9 +27,9 @@ static void update_notification_window_locations(Gfx::IntRect const& screen_rect
         auto& window = window_entry.value;
         Gfx::IntPoint new_window_location;
         if (last_window_rect.has_value())
-            new_window_location = last_window_rect.value().bottom_left().translated(0, 10);
+            new_window_location = last_window_rect.value().bottom_left().moved_down(9);
         else
-            new_window_location = screen_rect.top_right().translated(-window->rect().width() - 24, 7);
+            new_window_location = screen_rect.top_right().translated(-window->rect().width() - 24 - 1, 7);
         if (window->rect().location() != new_window_location) {
             window->move_to(new_window_location);
             window->set_original_rect(window->rect());
@@ -41,7 +41,6 @@ static void update_notification_window_locations(Gfx::IntRect const& screen_rect
 NotificationWindow::NotificationWindow(i32 client_id, DeprecatedString const& text, DeprecatedString const& title, Gfx::ShareableBitmap const& icon)
 {
     m_id = client_id;
-    s_windows.set(m_id, this);
 
     set_window_type(GUI::WindowType::Notification);
     set_resizable(false);
@@ -55,13 +54,15 @@ NotificationWindow::NotificationWindow(i32 client_id, DeprecatedString const& te
             lowest_notification_rect_on_screen = window->m_original_rect;
     }
 
+    s_windows.set(m_id, this);
+
     Gfx::IntRect rect;
     rect.set_width(220);
     rect.set_height(40);
-    rect.set_location(GUI::Desktop::the().rect().top_right().translated(-rect.width() - 24, 7));
+    rect.set_location(GUI::Desktop::the().rect().top_right().translated(-rect.width() - 24 - 1, 7));
 
     if (lowest_notification_rect_on_screen.has_value())
-        rect.set_location(lowest_notification_rect_on_screen.value().bottom_left().translated(0, 10));
+        rect.set_location(lowest_notification_rect_on_screen.value().bottom_left().moved_down(9));
 
     set_rect(rect);
 
@@ -70,9 +71,7 @@ NotificationWindow::NotificationWindow(i32 client_id, DeprecatedString const& te
     auto widget = set_main_widget<GUI::Widget>().release_value_but_fixme_should_propagate_errors();
 
     widget->set_fill_with_background_color(true);
-    widget->set_layout<GUI::HorizontalBoxLayout>();
-    widget->layout()->set_margins(8);
-    widget->layout()->set_spacing(6);
+    widget->set_layout<GUI::HorizontalBoxLayout>(8, 6);
 
     m_image = &widget->add<GUI::ImageWidget>();
     m_image->set_visible(icon.is_valid());
@@ -83,10 +82,10 @@ NotificationWindow::NotificationWindow(i32 client_id, DeprecatedString const& te
     auto& left_container = widget->add<GUI::Widget>();
     left_container.set_layout<GUI::VerticalBoxLayout>();
 
-    m_title_label = &left_container.add<GUI::Label>(title);
+    m_title_label = &left_container.add<GUI::Label>(String::from_deprecated_string(title).release_value_but_fixme_should_propagate_errors());
     m_title_label->set_font(Gfx::FontDatabase::default_font().bold_variant());
     m_title_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
-    m_text_label = &left_container.add<GUI::Label>(text);
+    m_text_label = &left_container.add<GUI::Label>(String::from_deprecated_string(text).release_value_but_fixme_should_propagate_errors());
     m_text_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
 
     // FIXME: There used to be code for setting the tooltip here, but since we
@@ -108,7 +107,7 @@ RefPtr<NotificationWindow> NotificationWindow::get_window_by_id(i32 id)
 
 void NotificationWindow::resize_to_fit_text()
 {
-    auto line_height = m_text_label->font().glyph_height();
+    auto line_height = m_text_label->font().pixel_size_rounded_up();
     auto total_height = m_text_label->text_calculated_preferred_height();
 
     m_text_label->set_fixed_height(total_height);
@@ -133,14 +132,14 @@ void NotificationWindow::leave_event(Core::Event&)
 
 void NotificationWindow::set_text(DeprecatedString const& value)
 {
-    m_text_label->set_text(value);
+    m_text_label->set_text(String::from_deprecated_string(value).release_value_but_fixme_should_propagate_errors());
     if (m_hovering)
         resize_to_fit_text();
 }
 
 void NotificationWindow::set_title(DeprecatedString const& value)
 {
-    m_title_label->set_text(value);
+    m_title_label->set_text(String::from_deprecated_string(value).release_value_but_fixme_should_propagate_errors());
 }
 
 void NotificationWindow::set_image(Gfx::ShareableBitmap const& image)

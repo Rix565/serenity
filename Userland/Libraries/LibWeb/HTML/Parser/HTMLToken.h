@@ -21,6 +21,7 @@ class HTMLTokenizer;
 
 class HTMLToken {
     AK_MAKE_NONCOPYABLE(HTMLToken);
+    AK_MAKE_DEFAULT_MOVABLE(HTMLToken);
 
 public:
     enum class Type : u8 {
@@ -94,9 +95,6 @@ public:
             break;
         }
     }
-
-    HTMLToken(HTMLToken&&) = default;
-    HTMLToken& operator=(HTMLToken&&) = default;
 
     bool is_doctype() const { return m_type == Type::DOCTYPE; }
     bool is_start_tag() const { return m_type == Type::StartTag; }
@@ -247,7 +245,7 @@ public:
         }
     }
 
-    StringView attribute(DeprecatedFlyString const& attribute_name)
+    StringView attribute(DeprecatedFlyString const& attribute_name) const
     {
         VERIFY(is_start_tag() || is_end_tag());
 

@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGfx/Font/PathRasterizer.h>
 #include <LibPDF/CommonNames.h>
 #include <LibPDF/Encoding.h>
 #include <LibPDF/Fonts/PS1FontProgram.h>
@@ -36,19 +35,18 @@ PDFErrorOr<NonnullRefPtr<Type1FontProgram>> PS1FontProgram::create(ReadonlyBytes
         if (TRY(parse_word(reader)) == "StandardEncoding") {
             font_program->set_encoding(Encoding::standard_encoding());
         } else {
-            HashMap<u16, CharDescriptor> descriptors;
-
+            auto encoding = Encoding::create();
             while (reader.remaining()) {
                 auto word = TRY(parse_word(reader));
                 if (word == "readonly") {
                     break;
                 } else if (word == "dup") {
-                    u32 char_code = TRY(parse_int(reader));
+                    u8 char_code = TRY(parse_int(reader));
                     auto name = TRY(parse_word(reader));
-                    descriptors.set(char_code, { name.starts_with('/') ? name.substring_view(1) : name.view(), char_code });
+                    encoding->set(char_code, name.starts_with('/') ? name.substring_view(1) : name.view());
                 }
             }
-            font_program->set_encoding(TRY(Encoding::create(descriptors)));
+            font_program->set_encoding(move(encoding));
         }
     }
 
@@ -93,13 +91,13 @@ PDFErrorOr<void> PS1FontProgram::parse_encrypted_portion(ByteBuffer const& buffe
                 auto line = TRY(decrypt(reader.bytes().slice(reader.offset(), encrypted_size), m_encryption_key, m_lenIV));
                 reader.move_by(encrypted_size);
                 auto glyph_name = word.substring_view(1);
-                auto char_code = encoding()->get_char_code(glyph_name);
                 GlyphParserState state;
-                TRY(add_glyph(char_code, TRY(parse_glyph(line, subroutines, state, false))));
+                TRY(add_glyph(glyph_name, TRY(parse_glyph(line, subroutines, state, false))));
             }
         }
     }
 
+    consolidate_glyphs();
     return {};
 }
 
@@ -109,7 +107,7 @@ PDFErrorOr<Vector<ByteBuffer>> PS1FontProgram::parse_subroutines(Reader& reader)
         return error("Expected array length");
 
     auto length = TRY(parse_int(reader));
-    VERIFY(length <= 1024);
+    VERIFY(length > 0);
 
     Vector<ByteBuffer> array;
     TRY(array.try_resize(length));
@@ -141,7 +139,7 @@ PDFErrorOr<Vector<ByteBuffer>> PS1FontProgram::parse_subroutines(Reader& reader)
             } else {
                 array[index] = TRY(ByteBuffer::copy(entry.bytes()));
             }
-        } else if (word == "index") {
+        } else if (word == "index" || word == "def" || word == "ND") {
             break;
         }
     }

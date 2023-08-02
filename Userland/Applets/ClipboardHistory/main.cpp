@@ -6,6 +6,8 @@
 
 #include "ClipboardHistoryModel.h"
 #include <LibConfig/Client.h>
+#include <LibCore/Directory.h>
+#include <LibCore/StandardPaths.h>
 #include <LibCore/System.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
@@ -17,24 +19,34 @@
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    TRY(Core::System::pledge("stdio recvfd sendfd rpath unix"));
-    auto app = TRY(GUI::Application::try_create(arguments));
+    TRY(Core::System::pledge("stdio recvfd sendfd rpath unix cpath wpath"));
+    auto app = TRY(GUI::Application::create(arguments));
+    auto clipboard_config = TRY(Core::ConfigFile::open_for_app("ClipboardHistory"));
+
+    auto const default_path = DeprecatedString::formatted("{}/{}", Core::StandardPaths::data_directory(), "Clipboard/ClipboardHistory.json"sv);
+    auto const clipboard_file_path = clipboard_config->read_entry("Clipboard", "ClipboardFilePath", default_path);
+    auto const parent_path = LexicalPath(clipboard_file_path);
+    TRY(Core::Directory::create(parent_path.dirname(), Core::Directory::CreateDirectories::Yes));
 
     Config::pledge_domain("ClipboardHistory");
     Config::monitor_domain("ClipboardHistory");
 
-    TRY(Core::System::pledge("stdio recvfd sendfd rpath"));
+    TRY(Core::System::pledge("stdio recvfd sendfd rpath cpath wpath"));
     TRY(Core::System::unveil("/res", "r"));
+    TRY(Core::System::unveil(parent_path.dirname(), "rwc"sv));
+
     TRY(Core::System::unveil(nullptr, nullptr));
     auto app_icon = TRY(GUI::Icon::try_create_default_icon("edit-copy"sv));
 
     auto main_window = TRY(GUI::Window::try_create());
-    main_window->set_title("Clipboard history");
+    main_window->set_title("Clipboard History");
     main_window->set_rect(670, 65, 325, 500);
     main_window->set_icon(app_icon.bitmap_for_size(16));
 
     auto table_view = TRY(main_window->set_main_widget<GUI::TableView>());
     auto model = ClipboardHistoryModel::create();
+
+    TRY(model->read_from_file(clipboard_file_path));
 
     auto data_and_type = GUI::Clipboard::the().fetch_data_and_type();
     if (!(data_and_type.data.is_empty() && data_and_type.mime_type.is_empty() && data_and_type.metadata.is_empty()))
@@ -61,13 +73,13 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         }
     });
 
-    auto debug_dump_action = GUI::Action::create("Dump to debug console", [&](const GUI::Action&) {
+    auto debug_dump_action = GUI::Action::create("Dump to Debug Console", [&](const GUI::Action&) {
         table_view->selection().for_each_index([&](GUI::ModelIndex& index) {
             dbgln("{}", model->data(index, GUI::ModelRole::Display).as_string());
         });
     });
 
-    auto clear_action = GUI::Action::create("Clear history", TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/trash-can.png"sv)), [&](const GUI::Action&) {
+    auto clear_action = GUI::Action::create("Clear History", TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/trash-can.png"sv)), [&](const GUI::Action&) {
         model->clear();
         GUI::Clipboard::the().clear();
     });

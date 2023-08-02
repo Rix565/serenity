@@ -28,7 +28,7 @@ enum class PaintPhase {
 };
 
 struct HitTestResult {
-    JS::Handle<Painting::Paintable> paintable;
+    JS::Handle<Paintable> paintable;
     int index_in_node { 0 };
 
     enum InternalPosition {
@@ -78,6 +78,28 @@ public:
     {
         for (auto* child = first_child(); child; child = child->next_sibling()) {
             if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
+        }
+        return TraversalDecision::Continue;
+    }
+
+    template<typename Callback>
+    TraversalDecision for_each_in_inclusive_subtree(Callback callback) const
+    {
+        if (auto decision = callback(*this); decision != TraversalDecision::Continue)
+            return decision;
+        for (auto* child = first_child(); child; child = child->next_sibling()) {
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
+        }
+        return TraversalDecision::Continue;
+    }
+
+    template<typename Callback>
+    TraversalDecision for_each_in_subtree(Callback callback) const
+    {
+        for (auto* child = first_child(); child; child = child->next_sibling()) {
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
                 return TraversalDecision::Break;
         }
         return TraversalDecision::Continue;
@@ -134,6 +156,8 @@ public:
     template<typename T>
     bool fast_is() const = delete;
 
+    StackingContext const* stacking_context_rooted_here() const;
+
 protected:
     explicit Paintable(Layout::Node const& layout_node)
         : m_layout_node(layout_node)
@@ -143,8 +167,8 @@ protected:
     virtual void visit_edges(Cell::Visitor&) override;
 
 private:
-    JS::NonnullGCPtr<Layout::Node> m_layout_node;
-    Optional<JS::GCPtr<Layout::Box>> mutable m_containing_block;
+    JS::NonnullGCPtr<Layout::Node const> m_layout_node;
+    Optional<JS::GCPtr<Layout::Box const>> mutable m_containing_block;
 };
 
 inline DOM::Node* HitTestResult::dom_node()

@@ -29,7 +29,7 @@ Key SchemaDef::key() const
 {
     auto key = Key(index_def()->to_tuple_descriptor());
     key["schema_name"] = name();
-    key.set_pointer(pointer());
+    key.set_block_index(block_index());
     return key;
 }
 
@@ -118,7 +118,7 @@ NonnullRefPtr<TupleDescriptor> IndexDef::to_tuple_descriptor() const
 {
     NonnullRefPtr<TupleDescriptor> ret = adopt_ref(*new TupleDescriptor);
     for (auto& part : m_key_definition) {
-        ret->append({ "", "", part.name(), part.type(), part.sort_order() });
+        ret->append({ "", "", part->name(), part->type(), part->sort_order() });
     }
     return ret;
 }
@@ -161,7 +161,7 @@ NonnullRefPtr<TupleDescriptor> TableDef::to_tuple_descriptor() const
 {
     NonnullRefPtr<TupleDescriptor> ret = adopt_ref(*new TupleDescriptor);
     for (auto& part : m_columns) {
-        ret->append({ parent()->name(), name(), part.name(), part.type(), Order::Ascending });
+        ret->append({ parent()->name(), name(), part->name(), part->type(), Order::Ascending });
     }
     return ret;
 }
@@ -171,7 +171,7 @@ Key TableDef::key() const
     auto key = Key(index_def()->to_tuple_descriptor());
     key["schema_hash"] = parent_relation()->key().hash();
     key["table_name"] = name();
-    key.set_pointer(pointer());
+    key.set_block_index(block_index());
     return key;
 }
 

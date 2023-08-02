@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,7 +12,7 @@
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/Iterator.h>
 #include <LibJS/Runtime/Promise.h>
 #include <LibJS/Runtime/PromiseCapability.h>
 #include <LibJS/Runtime/PromiseConstructor.h>
@@ -30,7 +30,7 @@ static ThrowCompletionOr<Value> get_promise_resolve(VM& vm, Value constructor)
 
     // 2. If IsCallable(promiseResolve) is false, throw a TypeError exception.
     if (!promise_resolve.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, promise_resolve.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, promise_resolve.to_string_without_side_effects()));
 
     // 3. Return promiseResolve.
     return promise_resolve;
@@ -39,7 +39,7 @@ static ThrowCompletionOr<Value> get_promise_resolve(VM& vm, Value constructor)
 using EndOfElementsCallback = Function<ThrowCompletionOr<Value>(PromiseValueList&)>;
 using InvokeElementFunctionCallback = Function<ThrowCompletionOr<Value>(PromiseValueList&, RemainingElements&, Value, size_t)>;
 
-static ThrowCompletionOr<Value> perform_promise_common(VM& vm, Iterator& iterator_record, Value constructor, PromiseCapability const& result_capability, Value promise_resolve, EndOfElementsCallback end_of_list, InvokeElementFunctionCallback invoke_element_function)
+static ThrowCompletionOr<Value> perform_promise_common(VM& vm, IteratorRecord& iterator_record, Value constructor, PromiseCapability const& result_capability, Value promise_resolve, EndOfElementsCallback end_of_list, InvokeElementFunctionCallback invoke_element_function)
 {
     VERIFY(constructor.is_constructor());
     VERIFY(promise_resolve.is_function());
@@ -64,7 +64,7 @@ static ThrowCompletionOr<Value> perform_promise_common(VM& vm, Iterator& iterato
             iterator_record.done = true;
             return next_or_error.release_error();
         }
-        auto* next = next_or_error.release_value();
+        auto next = next_or_error.release_value();
 
         // d. If next is false, then
         if (!next) {
@@ -113,7 +113,7 @@ static ThrowCompletionOr<Value> perform_promise_common(VM& vm, Iterator& iterato
 }
 
 // 27.2.4.1.2 PerformPromiseAll ( iteratorRecord, constructor, resultCapability, promiseResolve ), https://tc39.es/ecma262/#sec-performpromiseall
-static ThrowCompletionOr<Value> perform_promise_all(VM& vm, Iterator& iterator_record, Value constructor, PromiseCapability const& result_capability, Value promise_resolve)
+static ThrowCompletionOr<Value> perform_promise_all(VM& vm, IteratorRecord& iterator_record, Value constructor, PromiseCapability const& result_capability, Value promise_resolve)
 {
     auto& realm = *vm.current_realm();
 
@@ -147,7 +147,7 @@ static ThrowCompletionOr<Value> perform_promise_all(VM& vm, Iterator& iterator_r
 }
 
 // 27.2.4.2.1 PerformPromiseAllSettled ( iteratorRecord, constructor, resultCapability, promiseResolve ), https://tc39.es/ecma262/#sec-performpromiseallsettled
-static ThrowCompletionOr<Value> perform_promise_all_settled(VM& vm, Iterator& iterator_record, Value constructor, PromiseCapability const& result_capability, Value promise_resolve)
+static ThrowCompletionOr<Value> perform_promise_all_settled(VM& vm, IteratorRecord& iterator_record, Value constructor, PromiseCapability const& result_capability, Value promise_resolve)
 {
     auto& realm = *vm.current_realm();
 
@@ -190,7 +190,7 @@ static ThrowCompletionOr<Value> perform_promise_all_settled(VM& vm, Iterator& it
 }
 
 // 27.2.4.3.1 PerformPromiseAny ( iteratorRecord, constructor, resultCapability, promiseResolve ), https://tc39.es/ecma262/#sec-performpromiseany
-static ThrowCompletionOr<Value> perform_promise_any(VM& vm, Iterator& iterator_record, Value constructor, PromiseCapability const& result_capability, Value promise_resolve)
+static ThrowCompletionOr<Value> perform_promise_any(VM& vm, IteratorRecord& iterator_record, Value constructor, PromiseCapability& result_capability, Value promise_resolve)
 {
     auto& realm = *vm.current_realm();
 
@@ -225,7 +225,7 @@ static ThrowCompletionOr<Value> perform_promise_any(VM& vm, Iterator& iterator_r
 }
 
 // 27.2.4.5.1 PerformPromiseRace ( iteratorRecord, constructor, resultCapability, promiseResolve ), https://tc39.es/ecma262/#sec-performpromiserace
-static ThrowCompletionOr<Value> perform_promise_race(VM& vm, Iterator& iterator_record, Value constructor, PromiseCapability const& result_capability, Value promise_resolve)
+static ThrowCompletionOr<Value> perform_promise_race(VM& vm, IteratorRecord& iterator_record, Value constructor, PromiseCapability const& result_capability, Value promise_resolve)
 {
     return perform_promise_common(
         vm, iterator_record, constructor, result_capability, promise_resolve,
@@ -240,7 +240,7 @@ static ThrowCompletionOr<Value> perform_promise_race(VM& vm, Iterator& iterator_
 }
 
 PromiseConstructor::PromiseConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.Promise.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.Promise.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
@@ -259,8 +259,9 @@ ThrowCompletionOr<void> PromiseConstructor::initialize(Realm& realm)
     define_native_function(realm, vm.names.race, race, 1, attr);
     define_native_function(realm, vm.names.reject, reject, 1, attr);
     define_native_function(realm, vm.names.resolve, resolve, 1, attr);
+    define_native_function(realm, vm.names.withResolvers, with_resolvers, 0, attr);
 
-    define_native_accessor(realm, *vm.well_known_symbol_species(), symbol_species_getter, {}, Attribute::Configurable);
+    define_native_accessor(realm, vm.well_known_symbol_species(), symbol_species_getter, {}, Attribute::Configurable);
 
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
 
@@ -298,12 +299,12 @@ ThrowCompletionOr<NonnullGCPtr<Object>> PromiseConstructor::construct(FunctionOb
     auto [resolve_function, reject_function] = promise->create_resolving_functions();
 
     // 9. Let completion be Completion(Call(executor, undefined, « resolvingFunctions.[[Resolve]], resolvingFunctions.[[Reject]] »)).
-    auto completion = JS::call(vm, executor.as_function(), js_undefined(), &resolve_function, &reject_function);
+    auto completion = JS::call(vm, executor.as_function(), js_undefined(), resolve_function, reject_function);
 
     // 10. If completion is an abrupt completion, then
     if (completion.is_error()) {
         // a. Perform ? Call(resolvingFunctions.[[Reject]], undefined, « completion.[[Value]] »).
-        TRY(JS::call(vm, reject_function, js_undefined(), *completion.release_error().value()));
+        TRY(JS::call(vm, *reject_function, js_undefined(), *completion.release_error().value()));
     }
 
     // 11. Return promise.
@@ -314,7 +315,7 @@ ThrowCompletionOr<NonnullGCPtr<Object>> PromiseConstructor::construct(FunctionOb
 JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::all)
 {
     // 1. Let C be the this value.
-    auto* constructor = TRY(vm.this_value().to_object(vm));
+    auto constructor = TRY(vm.this_value().to_object(vm));
 
     // 2. Let promiseCapability be ? NewPromiseCapability(C).
     auto promise_capability = TRY(new_promise_capability(vm, constructor));
@@ -323,9 +324,9 @@ JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::all)
     // 4. IfAbruptRejectPromise(promiseResolve, promiseCapability).
     auto promise_resolve = TRY_OR_REJECT(vm, promise_capability, get_promise_resolve(vm, constructor));
 
-    // 5. Let iteratorRecord be Completion(GetIterator(iterable)).
+    // 5. Let iteratorRecord be Completion(GetIterator(iterable, sync)).
     // 6. IfAbruptRejectPromise(iteratorRecord, promiseCapability).
-    auto iterator_record = TRY_OR_REJECT(vm, promise_capability, get_iterator(vm, vm.argument(0)));
+    auto iterator_record = TRY_OR_REJECT(vm, promise_capability, get_iterator(vm, vm.argument(0), IteratorHint::Sync));
 
     // 7. Let result be Completion(PerformPromiseAll(iteratorRecord, C, promiseCapability, promiseResolve)).
     auto result = perform_promise_all(vm, iterator_record, constructor, promise_capability, promise_resolve);
@@ -348,7 +349,7 @@ JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::all)
 JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::all_settled)
 {
     // 1. Let C be the this value.
-    auto* constructor = TRY(vm.this_value().to_object(vm));
+    auto constructor = TRY(vm.this_value().to_object(vm));
 
     // 2. Let promiseCapability be ? NewPromiseCapability(C).
     auto promise_capability = TRY(new_promise_capability(vm, constructor));
@@ -357,9 +358,9 @@ JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::all_settled)
     // 4. IfAbruptRejectPromise(promiseResolve, promiseCapability).
     auto promise_resolve = TRY_OR_REJECT(vm, promise_capability, get_promise_resolve(vm, constructor));
 
-    // 5. Let iteratorRecord be Completion(GetIterator(iterable)).
+    // 5. Let iteratorRecord be Completion(GetIterator(iterable, sync)).
     // 6. IfAbruptRejectPromise(iteratorRecord, promiseCapability).
-    auto iterator_record = TRY_OR_REJECT(vm, promise_capability, get_iterator(vm, vm.argument(0)));
+    auto iterator_record = TRY_OR_REJECT(vm, promise_capability, get_iterator(vm, vm.argument(0), IteratorHint::Sync));
 
     // 7. Let result be Completion(PerformPromiseAllSettled(iteratorRecord, C, promiseCapability, promiseResolve)).
     auto result = perform_promise_all_settled(vm, iterator_record, constructor, promise_capability, promise_resolve);
@@ -382,7 +383,7 @@ JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::all_settled)
 JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::any)
 {
     // 1. Let C be the this value.
-    auto* constructor = TRY(vm.this_value().to_object(vm));
+    auto constructor = TRY(vm.this_value().to_object(vm));
 
     // 2. Let promiseCapability be ? NewPromiseCapability(C).
     auto promise_capability = TRY(new_promise_capability(vm, constructor));
@@ -391,9 +392,9 @@ JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::any)
     // 4. IfAbruptRejectPromise(promiseResolve, promiseCapability).
     auto promise_resolve = TRY_OR_REJECT(vm, promise_capability, get_promise_resolve(vm, constructor));
 
-    // 5. Let iteratorRecord be Completion(GetIterator(iterable)).
+    // 5. Let iteratorRecord be Completion(GetIterator(iterable, sync)).
     // 6. IfAbruptRejectPromise(iteratorRecord, promiseCapability).
-    auto iterator_record = TRY_OR_REJECT(vm, promise_capability, get_iterator(vm, vm.argument(0)));
+    auto iterator_record = TRY_OR_REJECT(vm, promise_capability, get_iterator(vm, vm.argument(0), IteratorHint::Sync));
 
     // 7. Let result be Completion(PerformPromiseAny(iteratorRecord, C, promiseCapability, promiseResolve)).
     auto result = perform_promise_any(vm, iterator_record, constructor, promise_capability, promise_resolve);
@@ -416,7 +417,7 @@ JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::any)
 JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::race)
 {
     // 1. Let C be the this value.
-    auto* constructor = TRY(vm.this_value().to_object(vm));
+    auto constructor = TRY(vm.this_value().to_object(vm));
 
     // 2. Let promiseCapability be ? NewPromiseCapability(C).
     auto promise_capability = TRY(new_promise_capability(vm, constructor));
@@ -425,9 +426,9 @@ JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::race)
     // 4. IfAbruptRejectPromise(promiseResolve, promiseCapability).
     auto promise_resolve = TRY_OR_REJECT(vm, promise_capability, get_promise_resolve(vm, constructor));
 
-    // 5. Let iteratorRecord be Completion(GetIterator(iterable)).
+    // 5. Let iteratorRecord be Completion(GetIterator(iterable, sync)).
     // 6. IfAbruptRejectPromise(iteratorRecord, promiseCapability).
-    auto iterator_record = TRY_OR_REJECT(vm, promise_capability, get_iterator(vm, vm.argument(0)));
+    auto iterator_record = TRY_OR_REJECT(vm, promise_capability, get_iterator(vm, vm.argument(0), IteratorHint::Sync));
 
     // 7. Let result be Completion(PerformPromiseRace(iteratorRecord, C, promiseCapability, promiseResolve)).
     auto result = perform_promise_race(vm, iterator_record, constructor, promise_capability, promise_resolve);
@@ -452,7 +453,7 @@ JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::reject)
     auto reason = vm.argument(0);
 
     // 1. Let C be the this value.
-    auto* constructor = TRY(vm.this_value().to_object(vm));
+    auto constructor = TRY(vm.this_value().to_object(vm));
 
     // 2. Let promiseCapability be ? NewPromiseCapability(C).
     auto promise_capability = TRY(new_promise_capability(vm, constructor));
@@ -474,7 +475,7 @@ JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::resolve)
 
     // 2. If Type(C) is not Object, throw a TypeError exception.
     if (!constructor.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, constructor.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, constructor.to_string_without_side_effects()));
 
     // 3. Return ? PromiseResolve(C, x).
     return TRY(promise_resolve(vm, constructor.as_object(), value));
@@ -485,6 +486,33 @@ JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::symbol_species_getter)
 {
     // 1. Return the this value.
     return vm.this_value();
+}
+
+// 1.1.1.1 Promise.withResolvers ( ), https://tc39.es/proposal-promise-with-resolvers/#sec-promise.withResolvers
+JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::with_resolvers)
+{
+    auto& realm = *vm.current_realm();
+
+    // 1. Let C be the this value.
+    auto constructor = vm.this_value();
+
+    // 2. Let promiseCapability be ? NewPromiseCapability(C).
+    auto promise_capability = TRY(new_promise_capability(vm, constructor));
+
+    // 3. Let obj be OrdinaryObjectCreate(%Object.prototype%).
+    auto object = Object::create(realm, realm.intrinsics().object_prototype());
+
+    // 4. Perform ! CreateDataPropertyOrThrow(obj, "promise", promiseCapability.[[Promise]]).
+    MUST(object->create_data_property_or_throw(vm.names.promise, promise_capability->promise()));
+
+    // 5. Perform ! CreateDataPropertyOrThrow(obj, "resolve", promiseCapability.[[Resolve]]).
+    MUST(object->create_data_property_or_throw(vm.names.resolve, promise_capability->resolve()));
+
+    // 6. Perform ! CreateDataPropertyOrThrow(obj, "reject", promiseCapability.[[Reject]]).
+    MUST(object->create_data_property_or_throw(vm.names.reject, promise_capability->reject()));
+
+    // 7. Return obj.
+    return object;
 }
 
 }

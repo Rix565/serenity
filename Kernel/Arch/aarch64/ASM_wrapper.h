@@ -16,31 +16,36 @@ namespace Kernel::Aarch64::Asm {
 
 inline void set_ttbr1_el1(FlatPtr ttbr1_el1)
 {
-    asm("msr ttbr1_el1, %[value]" ::[value] "r"(ttbr1_el1));
+    asm volatile("msr ttbr1_el1, %[value]" ::[value] "r"(ttbr1_el1));
 }
 
 inline void set_ttbr0_el1(FlatPtr ttbr0_el1)
 {
-    asm("msr ttbr0_el1, %[value]" ::[value] "r"(ttbr0_el1));
+    asm volatile("msr ttbr0_el1, %[value]" ::[value] "r"(ttbr0_el1));
 }
 
 inline FlatPtr get_ttbr0_el1()
 {
     FlatPtr ttbr0_el1;
-    asm("mrs %[value], ttbr0_el1\n"
-        : [value] "=r"(ttbr0_el1));
+    asm volatile("mrs %[value], ttbr0_el1\n"
+                 : [value] "=r"(ttbr0_el1));
     return ttbr0_el1;
 }
 
 inline void set_sp_el1(FlatPtr sp_el1)
 {
-    asm("msr sp_el1, %[value]" ::[value] "r"(sp_el1));
+    asm volatile("msr sp_el1, %[value]" ::[value] "r"(sp_el1));
+}
+
+inline void set_tpidr_el0(FlatPtr tpidr_el0)
+{
+    asm volatile("msr tpidr_el0, %[value]" ::[value] "r"(tpidr_el0));
 }
 
 inline void flush()
 {
-    asm("dsb ish");
-    asm("isb");
+    asm volatile("dsb ish");
+    asm volatile("isb");
 }
 
 [[noreturn]] inline void halt()
@@ -61,8 +66,8 @@ inline ExceptionLevel get_current_exception_level()
 {
     u64 current_exception_level;
 
-    asm("mrs  %[value], CurrentEL"
-        : [value] "=r"(current_exception_level));
+    asm volatile("mrs  %[value], CurrentEL"
+                 : [value] "=r"(current_exception_level));
 
     current_exception_level = (current_exception_level >> 2) & 0x3;
     return static_cast<ExceptionLevel>(current_exception_level);
@@ -78,7 +83,7 @@ inline void wait_cycles(int n)
 
 inline void load_el1_vector_table(void* vector_table)
 {
-    asm("msr VBAR_EL1, %[value]" ::[value] "r"(vector_table));
+    asm volatile("msr VBAR_EL1, %[value]" ::[value] "r"(vector_table));
 }
 
 inline void enter_el2_from_el3()
@@ -118,6 +123,25 @@ inline u64 read_rndrrs()
         : [value] "=r"(value));
 
     return value;
+}
+
+inline FlatPtr get_cache_line_size()
+{
+    FlatPtr ctr_el0;
+    asm volatile("mrs %[value], ctr_el0"
+                 : [value] "=r"(ctr_el0));
+    auto log2_size = (ctr_el0 >> 16) & 0xF;
+    return 1 << log2_size;
+}
+
+inline void flush_data_cache(FlatPtr start, size_t size)
+{
+    auto const cache_size = get_cache_line_size();
+    for (FlatPtr addr = align_down_to(start, cache_size); addr < start + size; addr += cache_size)
+        asm volatile("dc civac, %[addr]" ::[addr] "r"(addr)
+                     : "memory");
+    asm volatile("dsb sy" ::
+                     : "memory");
 }
 
 }

@@ -5,7 +5,6 @@
  */
 
 #include <AK/ByteReader.h>
-#include <AK/DeprecatedString.h>
 #include <AK/Endian.h>
 #include <AK/Random.h>
 #include <AK/StringBuilder.h>
@@ -41,10 +40,10 @@ static void export_big_endian(u256 const& value, Bytes data)
     u64 c = AK::convert_between_host_and_big_endian(value.high().low());
     u64 d = AK::convert_between_host_and_big_endian(value.high().high());
 
-    ByteReader::store(data.offset_pointer(0 * sizeof(u64)), d);
-    ByteReader::store(data.offset_pointer(1 * sizeof(u64)), c);
-    ByteReader::store(data.offset_pointer(2 * sizeof(u64)), b);
     ByteReader::store(data.offset_pointer(3 * sizeof(u64)), a);
+    ByteReader::store(data.offset_pointer(2 * sizeof(u64)), b);
+    ByteReader::store(data.offset_pointer(1 * sizeof(u64)), c);
+    ByteReader::store(data.offset_pointer(0 * sizeof(u64)), d);
 }
 
 static u256 select(u256 const& left, u256 const& right, bool condition)
@@ -57,8 +56,7 @@ static u256 select(u256 const& left, u256 const& right, bool condition)
 
 static u512 multiply(u256 const& left, u256 const& right)
 {
-    auto result = left.wide_multiply(right);
-    return { result.low, result.high };
+    return left.wide_multiply(right);
 }
 
 static u256 modular_reduce(u256 const& value)
@@ -358,7 +356,7 @@ static bool is_point_on_curve(JacobianPoint const& point)
 ErrorOr<ByteBuffer> SECP256r1::generate_private_key()
 {
     auto buffer = TRY(ByteBuffer::create_uninitialized(32));
-    fill_with_random(buffer.data(), buffer.size());
+    fill_with_random(buffer);
     return buffer;
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -23,8 +23,7 @@
 #include <AK/Traits.h>
 #include <AK/Utf8View.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/DirIterator.h>
-#include <LibCore/Stream.h>
+#include <LibCore/Directory.h>
 #include <LibLocale/DateTimeFormat.h>
 #include <LibTimeZone/TimeZone.h>
 
@@ -1655,8 +1654,6 @@ static ErrorOr<void> parse_all_locales(DeprecatedString core_path, DeprecatedStr
     TRY(parse_week_data(core_path, cldr));
     TRY(parse_meta_zones(core_path, cldr));
 
-    auto dates_iterator = TRY(path_to_dir_iterator(move(dates_path)));
-
     auto remove_variants_from_path = [&](DeprecatedString path) -> ErrorOr<DeprecatedString> {
         auto parsed_locale = TRY(CanonicalLanguageID::parse(cldr.unique_strings, LexicalPath::basename(path)));
 
@@ -1670,20 +1667,21 @@ static ErrorOr<void> parse_all_locales(DeprecatedString core_path, DeprecatedStr
         return builder.to_deprecated_string();
     };
 
-    while (dates_iterator.has_next()) {
-        auto dates_path = TRY(next_path_from_dir_iterator(dates_iterator));
-        auto calendars_iterator = TRY(path_to_dir_iterator(dates_path, {}));
+    TRY(Core::Directory::for_each_entry(TRY(String::formatted("{}/main", dates_path)), Core::DirIterator::SkipParentAndBaseDir, [&](auto& entry, auto& directory) -> ErrorOr<IterationDecision> {
+        auto dates_path = LexicalPath::join(directory.path().string(), entry.name).string();
 
         auto language = TRY(remove_variants_from_path(dates_path));
         auto& locale = cldr.locales.ensure(language);
 
-        while (calendars_iterator.has_next()) {
-            auto calendars_path = TRY(next_path_from_dir_iterator(calendars_iterator));
+        TRY(Core::Directory::for_each_entry(dates_path, Core::DirIterator::SkipParentAndBaseDir, [&](auto& dates_entry, auto& dates_directory) -> ErrorOr<IterationDecision> {
+            auto calendars_path = LexicalPath::join(dates_directory.path().string(), dates_entry.name).string();
             TRY(parse_calendars(move(calendars_path), cldr, locale));
-        }
+            return IterationDecision::Continue;
+        }));
 
         TRY(parse_time_zone_names(move(dates_path), cldr, locale));
-    }
+        return IterationDecision::Continue;
+    }));
 
     TRY(parse_day_periods(move(core_path), cldr));
     return {};
@@ -1701,7 +1699,7 @@ static DeprecatedString format_identifier(StringView owner, DeprecatedString ide
     return identifier;
 }
 
-static ErrorOr<void> generate_unicode_locale_header(Core::Stream::BufferedFile& file, CLDR& cldr)
+static ErrorOr<void> generate_unicode_locale_header(Core::InputBufferedFile& file, CLDR& cldr)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
@@ -1725,11 +1723,11 @@ namespace Locale {
 }
 )~~~");
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
-static ErrorOr<void> generate_unicode_locale_implementation(Core::Stream::BufferedFile& file, CLDR& cldr)
+static ErrorOr<void> generate_unicode_locale_implementation(Core::InputBufferedFile& file, CLDR& cldr)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
@@ -2047,11 +2045,11 @@ static Optional<Calendar> keyword_to_calendar(KeywordCalendar keyword)
     }
 }
 
-Vector<HourCycle> get_regional_hour_cycles(StringView region)
+ErrorOr<Vector<HourCycle>> get_regional_hour_cycles(StringView region)
 {
     auto region_value = hour_cycle_region_from_string(region);
     if (!region_value.has_value())
-        return {};
+        return Vector<HourCycle> {};
 
     auto region_index = to_underlying(*region_value);
 
@@ -2059,7 +2057,7 @@ Vector<HourCycle> get_regional_hour_cycles(StringView region)
     auto const& regional_hour_cycles = s_hour_cycle_lists.at(regional_hour_cycles_index);
 
     Vector<HourCycle> hour_cycles;
-    hour_cycles.ensure_capacity(regional_hour_cycles.size());
+    TRY(hour_cycles.try_ensure_capacity(regional_hour_cycles.size()));
 
     for (auto hour_cycle : regional_hour_cycles)
         hour_cycles.unchecked_append(static_cast<HourCycle>(hour_cycle));
@@ -2215,7 +2213,7 @@ ErrorOr<Vector<CalendarRangePattern>> get_calendar_range12_formats(StringView lo
     return result;
 }
 
-static ErrorOr<Span<@string_index_type@ const>> find_calendar_symbols(StringView locale, StringView calendar, CalendarSymbol symbol, CalendarPatternStyle style)
+static ErrorOr<ReadonlySpan<@string_index_type@>> find_calendar_symbols(StringView locale, StringView calendar, CalendarSymbol symbol, CalendarPatternStyle style)
 {
     if (auto const* data = TRY(find_calendar_data(locale, calendar)); data != nullptr) {
         auto const& symbols_list = s_calendar_symbol_lists[data->symbols];
@@ -2243,7 +2241,7 @@ static ErrorOr<Span<@string_index_type@ const>> find_calendar_symbols(StringView
         return s_symbol_lists.at(symbol_list_index);
     }
 
-    return Span<@string_index_type@ const> {};
+    return ReadonlySpan<@string_index_type@> {};
 }
 
 ErrorOr<Optional<StringView>> get_calendar_era_symbol(StringView locale, StringView calendar, CalendarPatternStyle style, Era value)
@@ -2398,7 +2396,7 @@ Optional<StringView> get_time_zone_name(StringView locale, StringView time_zone,
 }
 )~~~");
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
@@ -2416,8 +2414,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_option(dates_path, "Path to cldr-dates directory", "dates-path", 'd', "dates-path");
     args_parser.parse(arguments);
 
-    auto generated_header_file = TRY(open_file(generated_header_path, Core::Stream::OpenMode::Write));
-    auto generated_implementation_file = TRY(open_file(generated_implementation_path, Core::Stream::OpenMode::Write));
+    auto generated_header_file = TRY(open_file(generated_header_path, Core::File::OpenMode::Write));
+    auto generated_implementation_file = TRY(open_file(generated_implementation_path, Core::File::OpenMode::Write));
 
     CLDR cldr;
     TRY(parse_all_locales(core_path, dates_path, cldr));

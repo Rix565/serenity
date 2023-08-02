@@ -23,7 +23,7 @@ ErrorOr<NonnullRefPtr<GUI::Action>> make_cards_settings_action(GUI::Window* pare
             GUI::Process::spawn_or_show_error(parent, "/bin/GamesSettings"sv, Array { "--open-tab", "cards" });
         },
         parent);
-    action->set_status_tip("Open the Game Settings for Cards");
+    action->set_status_tip(TRY("Open the Game Settings for Cards"_string));
     return action;
 }
 
@@ -36,8 +36,8 @@ CardGame::CardGame()
 void CardGame::mark_intersecting_stacks_dirty(Cards::Card const& intersecting_card)
 {
     for (auto& stack : stacks()) {
-        if (intersecting_card.rect().intersects(stack.bounding_box()))
-            update(stack.bounding_box());
+        if (intersecting_card.rect().intersects(stack->bounding_box()))
+            update(stack->bounding_box());
     }
 
     update(intersecting_card.rect());
@@ -49,7 +49,7 @@ Gfx::IntRect CardGame::moving_cards_bounds() const
         return {};
 
     // Note: This assumes that the cards are arranged in a line.
-    return m_moving_cards.first().rect().united(m_moving_cards.last().rect());
+    return m_moving_cards.first()->rect().united(m_moving_cards.last()->rect());
 }
 
 ErrorOr<void> CardGame::pick_up_cards_from_stack(Cards::CardStack& stack, Gfx::IntPoint click_location, CardStack::MovementRule movement_rule)
@@ -59,21 +59,21 @@ ErrorOr<void> CardGame::pick_up_cards_from_stack(Cards::CardStack& stack, Gfx::I
     return {};
 }
 
-RefPtr<CardStack> CardGame::find_stack_to_drop_on(CardStack::MovementRule movement_rule) const
+RefPtr<CardStack> CardGame::find_stack_to_drop_on(CardStack::MovementRule movement_rule)
 {
     auto bounds_to_check = moving_cards_bounds();
 
     RefPtr<CardStack> closest_stack;
     float closest_distance = FLT_MAX;
 
-    for (auto const& stack : stacks()) {
+    for (auto& stack : stacks()) {
         if (stack == moving_cards_source_stack())
             continue;
 
-        if (stack.bounding_box().intersects(bounds_to_check)
-            && stack.is_allowed_to_push(moving_cards().at(0), moving_cards().size(), movement_rule)) {
+        if (stack->bounding_box().intersects(bounds_to_check)
+            && stack->is_allowed_to_push(moving_cards().at(0), moving_cards().size(), movement_rule)) {
 
-            auto distance = bounds_to_check.center().distance_from(stack.bounding_box().center());
+            auto distance = bounds_to_check.center().distance_from(stack->bounding_box().center());
             if (distance < closest_distance) {
                 closest_stack = stack;
                 closest_distance = distance;
@@ -112,7 +112,7 @@ void CardGame::dump_layout() const
         dbgln("{}", stack);
 }
 
-void CardGame::config_string_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, DeprecatedString const& value)
+void CardGame::config_string_did_change(StringView domain, StringView group, StringView key, StringView value)
 {
     if (domain == "Games" && group == "Cards") {
         if (key == "BackgroundColor") {
@@ -121,7 +121,7 @@ void CardGame::config_string_did_change(DeprecatedString const& domain, Deprecat
             return;
         }
         if (key == "CardBackImage") {
-            CardPainter::the().set_background_image_path(value);
+            CardPainter::the().set_background_image_path(String::from_utf8(value).release_value_but_fixme_should_propagate_errors());
             update();
             return;
         }

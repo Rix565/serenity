@@ -14,9 +14,11 @@ namespace Web::Encoding {
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<TextDecoder>> TextDecoder::construct_impl(JS::Realm& realm, DeprecatedFlyString encoding)
 {
+    auto& vm = realm.vm();
+
     auto decoder = TextCodec::decoder_for(encoding);
-    if (!decoder)
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, DeprecatedString::formatted("Invalid encoding {}", encoding) };
+    if (!decoder.has_value())
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, TRY_OR_THROW_OOM(vm, String::formatted("Invalid encoding {}", encoding)) };
 
     return MUST_OR_THROW_OOM(realm.heap().allocate<TextDecoder>(realm, realm, *decoder, move(encoding), false, false));
 }
@@ -42,15 +44,18 @@ JS::ThrowCompletionOr<void> TextDecoder::initialize(JS::Realm& realm)
 }
 
 // https://encoding.spec.whatwg.org/#dom-textdecoder-decode
-WebIDL::ExceptionOr<DeprecatedString> TextDecoder::decode(JS::Handle<JS::Object> const& input) const
+WebIDL::ExceptionOr<DeprecatedString> TextDecoder::decode(Optional<JS::Handle<JS::Object>> const& input) const
 {
+    if (!input.has_value())
+        return TRY_OR_THROW_OOM(vm(), m_decoder.to_utf8({}));
+
     // FIXME: Implement the streaming stuff.
 
-    auto data_buffer_or_error = WebIDL::get_buffer_source_copy(*input.cell());
+    auto data_buffer_or_error = WebIDL::get_buffer_source_copy(*input->cell());
     if (data_buffer_or_error.is_error())
         return WebIDL::OperationError::create(realm(), "Failed to copy bytes from ArrayBuffer");
     auto& data_buffer = data_buffer_or_error.value();
-    return m_decoder.to_utf8({ data_buffer.data(), data_buffer.size() });
+    return TRY_OR_THROW_OOM(vm(), m_decoder.to_utf8({ data_buffer.data(), data_buffer.size() }));
 }
 
 }

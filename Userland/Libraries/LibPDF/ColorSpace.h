@@ -9,6 +9,7 @@
 #include <AK/DeprecatedFlyString.h>
 #include <AK/Forward.h>
 #include <LibGfx/Color.h>
+#include <LibGfx/ICC/Profile.h>
 #include <LibPDF/Value.h>
 
 #define ENUMERATE_COLOR_SPACE_FAMILIES(V) \
@@ -34,8 +35,8 @@ public:
     {
     }
 
-    DeprecatedFlyString name() const { return m_name; };
-    bool never_needs_parameters() const { return m_never_needs_parameters; };
+    DeprecatedFlyString name() const { return m_name; }
+    bool never_needs_parameters() const { return m_never_needs_parameters; }
     static PDFErrorOr<ColorSpaceFamily> get(DeprecatedFlyString const&);
 
 #define ENUMERATE(name, ever_needs_parameters) static ColorSpaceFamily name;
@@ -54,7 +55,7 @@ public:
 
     virtual ~ColorSpace() = default;
 
-    virtual Color color(Vector<Value> const& arguments) const = 0;
+    virtual PDFErrorOr<Color> color(Vector<Value> const& arguments) const = 0;
     virtual int number_of_components() const = 0;
     virtual Vector<float> default_decode() const = 0;
     virtual ColorSpaceFamily const& family() const = 0;
@@ -66,7 +67,7 @@ public:
 
     ~DeviceGrayColorSpace() override = default;
 
-    Color color(Vector<Value> const& arguments) const override;
+    PDFErrorOr<Color> color(Vector<Value> const& arguments) const override;
     int number_of_components() const override { return 1; }
     Vector<float> default_decode() const override;
     ColorSpaceFamily const& family() const override { return ColorSpaceFamily::DeviceGray; }
@@ -81,7 +82,7 @@ public:
 
     ~DeviceRGBColorSpace() override = default;
 
-    Color color(Vector<Value> const& arguments) const override;
+    PDFErrorOr<Color> color(Vector<Value> const& arguments) const override;
     int number_of_components() const override { return 3; }
     Vector<float> default_decode() const override;
     ColorSpaceFamily const& family() const override { return ColorSpaceFamily::DeviceRGB; }
@@ -96,7 +97,7 @@ public:
 
     ~DeviceCMYKColorSpace() override = default;
 
-    Color color(Vector<Value> const& arguments) const override;
+    PDFErrorOr<Color> color(Vector<Value> const& arguments) const override;
     int number_of_components() const override { return 4; }
     Vector<float> default_decode() const override;
     ColorSpaceFamily const& family() const override { return ColorSpaceFamily::DeviceCMYK; }
@@ -111,7 +112,7 @@ public:
 
     ~CalRGBColorSpace() override = default;
 
-    Color color(Vector<Value> const& arguments) const override;
+    PDFErrorOr<Color> color(Vector<Value> const& arguments) const override;
     int number_of_components() const override { return 3; }
     Vector<float> default_decode() const override;
     ColorSpaceFamily const& family() const override { return ColorSpaceFamily::CalRGB; }
@@ -131,13 +132,31 @@ public:
 
     ~ICCBasedColorSpace() override = default;
 
-    Color color(Vector<Value> const& arguments) const override;
+    PDFErrorOr<Color> color(Vector<Value> const& arguments) const override;
     int number_of_components() const override { VERIFY_NOT_REACHED(); }
     Vector<float> default_decode() const override;
     ColorSpaceFamily const& family() const override { return ColorSpaceFamily::ICCBased; }
 
 private:
-    ICCBasedColorSpace() = delete;
+    ICCBasedColorSpace(NonnullRefPtr<Gfx::ICC::Profile>);
+
+    static RefPtr<Gfx::ICC::Profile> s_srgb_profile;
+    NonnullRefPtr<Gfx::ICC::Profile> m_profile;
+};
+
+class SeparationColorSpace final : public ColorSpace {
+public:
+    static PDFErrorOr<NonnullRefPtr<SeparationColorSpace>> create(Document*, Vector<Value>&& parameters);
+
+    ~SeparationColorSpace() override = default;
+
+    PDFErrorOr<Color> color(Vector<Value> const& arguments) const override;
+    int number_of_components() const override { TODO(); }
+    Vector<float> default_decode() const override;
+    ColorSpaceFamily const& family() const override { return ColorSpaceFamily::Separation; }
+
+private:
+    SeparationColorSpace() = default;
 };
 
 }

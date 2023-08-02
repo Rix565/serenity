@@ -10,6 +10,7 @@
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/PropertyDescriptor.h>
 #include <LibJS/Runtime/PropertyKey.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/CrossOrigin/AbstractOperations.h>
 #include <LibWeb/HTML/CrossOrigin/Reporting.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
@@ -72,14 +73,19 @@ JS::ThrowCompletionOr<Optional<JS::PropertyDescriptor>> WindowProxy::internal_ge
         auto index = property_key.as_number();
 
         // 2. Let maxProperties be the number of document-tree child browsing contexts of W.
-        auto max_properties = TRY(m_window->document_tree_child_browsing_context_count());
+        auto max_properties = m_window->document_tree_child_browsing_context_count();
 
         // 3. Let value be undefined.
         Optional<JS::Value> value;
 
         // 4. If maxProperties is greater than 0 and index is less than maxProperties, then set value to the WindowProxy object of the indexth document-tree child browsing context of W's browsing context, sorted in the order that their browsing context container elements were most recently inserted into W's associated Document, the WindowProxy object of the most recently inserted browsing context container's nested browsing context being last.
         if (max_properties > 0 && index < max_properties) {
-            // FIXME: Implement this.
+            JS::MarkedVector<BrowsingContext*> browsing_contexts { vm.heap() };
+            m_window->browsing_context()->for_each_child([&](BrowsingContext& child) {
+                if (child.container() && child.container()->in_a_document_tree())
+                    browsing_contexts.append(&child);
+            });
+            value = JS::Value(browsing_contexts[index]->window_proxy());
         }
 
         // 5. If value is undefined, then:
@@ -143,7 +149,7 @@ JS::ThrowCompletionOr<bool> WindowProxy::internal_define_own_property(JS::Proper
 }
 
 // 7.4.7 [[Get]] ( P, Receiver ), https://html.spec.whatwg.org/multipage/window-object.html#windowproxy-get
-JS::ThrowCompletionOr<JS::Value> WindowProxy::internal_get(JS::PropertyKey const& property_key, JS::Value receiver) const
+JS::ThrowCompletionOr<JS::Value> WindowProxy::internal_get(JS::PropertyKey const& property_key, JS::Value receiver, JS::CacheablePropertyMetadata*) const
 {
     auto& vm = this->vm();
 
@@ -227,7 +233,7 @@ JS::ThrowCompletionOr<JS::MarkedVector<JS::Value>> WindowProxy::internal_own_pro
     auto keys = JS::MarkedVector<JS::Value> { vm.heap() };
 
     // 3. Let maxProperties be the number of document-tree child browsing contexts of W.
-    auto max_properties = TRY(m_window->document_tree_child_browsing_context_count());
+    auto max_properties = m_window->document_tree_child_browsing_context_count();
 
     // 4. Let index be 0.
     // 5. Repeat while index < maxProperties,
@@ -255,9 +261,14 @@ void WindowProxy::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_window.ptr());
 }
 
-void WindowProxy::set_window(Badge<BrowsingContext>, JS::NonnullGCPtr<Window> window)
+void WindowProxy::set_window(JS::NonnullGCPtr<Window> window)
 {
-    m_window = window;
+    m_window = move(window);
+}
+
+JS::NonnullGCPtr<BrowsingContext> WindowProxy::associated_browsing_context() const
+{
+    return *m_window->associated_document().browsing_context();
 }
 
 }

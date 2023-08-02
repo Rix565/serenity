@@ -4,16 +4,27 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/URLParser.h>
 #include <LibJS/Runtime/ModuleRequest.h>
+#include <LibTextCodec/Decoder.h>
+#include <LibWeb/DOM/Document.h>
+#include <LibWeb/Fetch/Fetching/Fetching.h>
+#include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/Headers.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
+#include <LibWeb/HTML/HTMLScriptElement.h>
+#include <LibWeb/HTML/PotentialCORSRequest.h>
+#include <LibWeb/HTML/Scripting/ClassicScript.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/Fetching.h>
 #include <LibWeb/HTML/Scripting/ModuleScript.h>
+#include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/Infra/Strings.h>
 #include <LibWeb/Loader/LoadRequest.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/MimeSniff/MimeType.h>
+#include <LibWeb/URL/URL.h>
 
 namespace Web::HTML {
 
@@ -113,7 +124,7 @@ WebIDL::ExceptionOr<AK::URL> resolve_module_specifier(Optional<Script&> referrin
         return as_url.release_value();
 
     // 13. Throw a TypeError indicating that specifier was a bare specifier, but was not remapped to anything by importMap.
-    return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, DeprecatedString::formatted("Failed to resolve non relative module specifier '{}' from an import map.", specifier) };
+    return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, String::formatted("Failed to resolve non relative module specifier '{}' from an import map.", specifier).release_value_but_fixme_should_propagate_errors() };
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#resolving-an-imports-match
@@ -125,7 +136,7 @@ WebIDL::ExceptionOr<Optional<AK::URL>> resolve_imports_match(DeprecatedString co
         if (specifier_key == normalized_specifier) {
             // 1. If resolutionResult is null, then throw a TypeError indicating that resolution of specifierKey was blocked by a null entry.
             if (!resolution_result.has_value())
-                return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, DeprecatedString::formatted("Import resolution of '{}' was blocked by a null entry.", specifier_key) };
+                return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, String::formatted("Import resolution of '{}' was blocked by a null entry.", specifier_key).release_value_but_fixme_should_propagate_errors() };
 
             // 2. Assert: resolutionResult is a URL.
             VERIFY(resolution_result->is_valid());
@@ -146,7 +157,7 @@ WebIDL::ExceptionOr<Optional<AK::URL>> resolve_imports_match(DeprecatedString co
         ) {
             // 1. If resolutionResult is null, then throw a TypeError indicating that the resolution of specifierKey was blocked by a null entry.
             if (!resolution_result.has_value())
-                return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, DeprecatedString::formatted("Import resolution of '{}' was blocked by a null entry.", specifier_key) };
+                return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, String::formatted("Import resolution of '{}' was blocked by a null entry.", specifier_key).release_value_but_fixme_should_propagate_errors() };
 
             // 2. Assert: resolutionResult is a URL.
             VERIFY(resolution_result->is_valid());
@@ -159,12 +170,12 @@ WebIDL::ExceptionOr<Optional<AK::URL>> resolve_imports_match(DeprecatedString co
             VERIFY(resolution_result->serialize().ends_with("/"sv));
 
             // 5. Let url be the result of URL parsing afterPrefix with resolutionResult.
-            auto url = URLParser::parse(after_prefix, &*resolution_result);
+            auto url = URL::parse(after_prefix, *resolution_result);
 
             // 6. If url is failure, then throw a TypeError indicating that resolution of normalizedSpecifier was blocked since the afterPrefix portion
             //    could not be URL-parsed relative to the resolutionResult mapped to by the specifierKey prefix.
             if (!url.is_valid())
-                return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, DeprecatedString::formatted("Could not resolve '{}' as the after prefix portion could not be URL-parsed.", normalized_specifier) };
+                return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, String::formatted("Could not resolve '{}' as the after prefix portion could not be URL-parsed.", normalized_specifier).release_value_but_fixme_should_propagate_errors() };
 
             // 7. Assert: url is a URL.
             VERIFY(url.is_valid());
@@ -172,7 +183,7 @@ WebIDL::ExceptionOr<Optional<AK::URL>> resolve_imports_match(DeprecatedString co
             // 8. If the serialization of resolutionResult is not a code unit prefix of the serialization of url, then throw a TypeError indicating
             //    that the resolution of normalizedSpecifier was blocked due to it backtracking above its prefix specifierKey.
             if (!Infra::is_code_unit_prefix(resolution_result->serialize(), url.serialize()))
-                return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, DeprecatedString::formatted("Could not resolve '{}' as it backtracks above its prefix specifierKey.", normalized_specifier) };
+                return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, String::formatted("Could not resolve '{}' as it backtracks above its prefix specifierKey.", normalized_specifier).release_value_but_fixme_should_propagate_errors() };
 
             // 9. Return url.
             return url;
@@ -189,7 +200,7 @@ Optional<AK::URL> resolve_url_like_module_specifier(DeprecatedString const& spec
     // 1. If specifier starts with "/", "./", or "../", then:
     if (specifier.starts_with("/"sv) || specifier.starts_with("./"sv) || specifier.starts_with("../"sv)) {
         // 1. Let url be the result of URL parsing specifier with baseURL.
-        auto url = URLParser::parse(specifier, &base_url);
+        auto url = URL::parse(specifier, base_url);
 
         // 2. If url is failure, then return null.
         if (!url.is_valid())
@@ -200,7 +211,7 @@ Optional<AK::URL> resolve_url_like_module_specifier(DeprecatedString const& spec
     }
 
     // 2. Let url be the result of URL parsing specifier (with no base URL).
-    auto url = URLParser::parse(specifier);
+    auto url = URL::parse(specifier);
 
     // 3. If url is failure, then return null.
     if (!url.is_valid())
@@ -210,8 +221,87 @@ Optional<AK::URL> resolve_url_like_module_specifier(DeprecatedString const& spec
     return url;
 }
 
+// https://html.spec.whatwg.org/multipage/webappapis.html#set-up-the-classic-script-request
+static void set_up_classic_script_request(Fetch::Infrastructure::Request& request, ScriptFetchOptions const& options)
+{
+    // Set request's cryptographic nonce metadata to options's cryptographic nonce, its integrity metadata to options's
+    // integrity metadata, its parser metadata to options's parser metadata, its referrer policy to options's referrer
+    // policy, its render-blocking to options's render-blocking, and its priority to options's fetch priority.
+    request.set_cryptographic_nonce_metadata(options.cryptographic_nonce);
+    request.set_integrity_metadata(options.integrity_metadata);
+    request.set_parser_metadata(options.parser_metadata);
+    request.set_referrer_policy(options.referrer_policy);
+    request.set_render_blocking(options.render_blocking);
+    request.set_priority(options.fetch_priority);
+}
+
+// https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-classic-script
+WebIDL::ExceptionOr<void> fetch_classic_script(JS::NonnullGCPtr<HTMLScriptElement> element, AK::URL const& url, EnvironmentSettingsObject& settings_object, ScriptFetchOptions options, CORSSettingAttribute cors_setting, String character_encoding, OnFetchScriptComplete on_complete)
+{
+    auto& realm = element->realm();
+    auto& vm = realm.vm();
+
+    // 1. Let request be the result of creating a potential-CORS request given url, "script", and CORS setting.
+    auto request = create_potential_CORS_request(vm, url, Fetch::Infrastructure::Request::Destination::Script, cors_setting);
+
+    // 2. Set request's client to settings object.
+    request->set_client(&settings_object);
+
+    // 3. Set request's initiator type to "script".
+    request->set_initiator_type(Fetch::Infrastructure::Request::InitiatorType::Script);
+
+    // 4. Set up the classic script request given request and options.
+    set_up_classic_script_request(*request, options);
+
+    // 5. Fetch request with the following processResponseConsumeBody steps given response response and null, failure,
+    //    or a byte sequence bodyBytes:
+    Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
+    fetch_algorithms_input.process_response_consume_body = [element, &settings_object, options = move(options), character_encoding = move(character_encoding), on_complete = move(on_complete)](auto response, auto body_bytes) {
+        // 1. Set response to response's unsafe response.
+        response = response->unsafe_response();
+
+        // 2. If either of the following conditions are met:
+        // - bodyBytes is null or failure; or
+        // - response's status is not an ok status,
+        if (body_bytes.template has<Empty>() || body_bytes.template has<Fetch::Infrastructure::FetchAlgorithms::ConsumeBodyFailureTag>() || !Fetch::Infrastructure::is_ok_status(response->status())) {
+            // then run onComplete given null, and abort these steps.
+            on_complete(nullptr);
+            return;
+        }
+
+        // 3. Let potentialMIMETypeForEncoding be the result of extracting a MIME type given response's header list.
+        auto potential_mime_type_for_encoding = response->header_list()->extract_mime_type().release_value_but_fixme_should_propagate_errors();
+
+        // 4. Set character encoding to the result of legacy extracting an encoding given potentialMIMETypeForEncoding
+        //    and character encoding.
+        auto extracted_character_encoding = Fetch::Infrastructure::legacy_extract_an_encoding(potential_mime_type_for_encoding, character_encoding);
+
+        // 5. Let source text be the result of decoding bodyBytes to Unicode, using character encoding as the fallback
+        //    encoding.
+        auto fallback_decoder = TextCodec::decoder_for(extracted_character_encoding);
+        VERIFY(fallback_decoder.has_value());
+
+        auto source_text = TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*fallback_decoder, body_bytes.template get<ByteBuffer>()).release_value_but_fixme_should_propagate_errors();
+
+        // 6. Let muted errors be true if response was CORS-cross-origin, and false otherwise.
+        auto muted_errors = response->is_cors_cross_origin() ? ClassicScript::MutedErrors::Yes : ClassicScript::MutedErrors::No;
+
+        // 7. Let script be the result of creating a classic script given source text, settings object, response's URL,
+        //    options, and muted errors.
+        // FIXME: Pass options.
+        auto response_url = response->url().value_or({});
+        auto script = ClassicScript::create(response_url.to_deprecated_string(), source_text, settings_object, response_url, 1, muted_errors);
+
+        // 8. Run onComplete given script.
+        on_complete(script);
+    };
+
+    TRY(Fetch::Fetching::fetch(element->realm(), request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input))));
+    return {};
+}
+
 // https://html.spec.whatwg.org/multipage/webappapis.html#internal-module-script-graph-fetching-procedure
-void fetch_internal_module_script_graph(JS::ModuleRequest const& module_request, EnvironmentSettingsObject& fetch_client_settings_object, StringView destination, Script& referring_script, HashTable<ModuleLocationTuple> const& visited_set, ModuleCallback on_complete)
+void fetch_internal_module_script_graph(JS::ModuleRequest const& module_request, EnvironmentSettingsObject& fetch_client_settings_object, StringView destination, Script& referring_script, HashTable<ModuleLocationTuple> const& visited_set, OnFetchScriptComplete on_complete)
 {
     // 1. Let url be the result of resolving a module specifier given referringScript and moduleRequest.[[Specifier]].
     auto url = MUST(resolve_module_specifier(referring_script, module_request.module_specifier));
@@ -228,7 +318,7 @@ void fetch_internal_module_script_graph(JS::ModuleRequest const& module_request,
     // 5. Fetch a single module script given url, fetch client settings object, destination, options, referringScript's settings object,
     //    referringScript's base URL, moduleRequest, false, and onSingleFetchComplete as defined below. If performFetch was given, pass it along as well.
     // FIXME: Pass options and performFetch if given.
-    fetch_single_module_script(url, fetch_client_settings_object, destination, referring_script.settings_object(), referring_script.base_url(), module_request, TopLevelModule::No, [on_complete = move(on_complete), &fetch_client_settings_object, destination, visited_set](auto* result) mutable {
+    fetch_single_module_script(url, fetch_client_settings_object, destination, referring_script.settings_object(), referring_script.base_url(), module_request, TopLevelModule::No, [on_complete = move(on_complete), &fetch_client_settings_object, destination, visited_set](auto result) mutable {
         // onSingleFetchComplete given result is the following algorithm:
         // 1. If result is null, run onComplete with null, and abort these steps.
         if (!result) {
@@ -238,12 +328,13 @@ void fetch_internal_module_script_graph(JS::ModuleRequest const& module_request,
 
         // 2. Fetch the descendants of result given fetch client settings object, destination, visited set, and with onComplete. If performFetch was given, pass it along as well.
         // FIXME: Pass performFetch if given.
-        fetch_descendants_of_a_module_script(*result, fetch_client_settings_object, destination, visited_set, move(on_complete));
+        auto& module_script = verify_cast<JavaScriptModuleScript>(*result);
+        fetch_descendants_of_a_module_script(module_script, fetch_client_settings_object, destination, visited_set, move(on_complete));
     });
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-the-descendants-of-a-module-script
-void fetch_descendants_of_a_module_script(JavaScriptModuleScript& module_script, EnvironmentSettingsObject& fetch_client_settings_object, StringView destination, HashTable<ModuleLocationTuple> visited_set, ModuleCallback on_complete)
+void fetch_descendants_of_a_module_script(JavaScriptModuleScript& module_script, EnvironmentSettingsObject& fetch_client_settings_object, StringView destination, HashTable<ModuleLocationTuple> visited_set, OnFetchScriptComplete on_complete)
 {
     // 1. If module script's record is null, run onComplete with module script and return.
     if (!module_script.record()) {
@@ -309,7 +400,7 @@ void fetch_descendants_of_a_module_script(JavaScriptModuleScript& module_script,
     //     If performFetch was given, pass it along as well.
     for (auto const& module_request : module_requests) {
         // FIXME: Pass options and performFetch if given.
-        fetch_internal_module_script_graph(module_request, fetch_client_settings_object, destination, module_script, visited_set, [context, &module_script](auto const* result) mutable {
+        fetch_internal_module_script_graph(module_request, fetch_client_settings_object, destination, module_script, visited_set, [context, &module_script](auto result) mutable {
             // onInternalFetchingComplete given result is the following algorithm:
             // 1. If failed is true, then abort these steps.
             if (context->failed())
@@ -336,7 +427,7 @@ void fetch_descendants_of_a_module_script(JavaScriptModuleScript& module_script,
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script
-void fetch_single_module_script(AK::URL const& url, EnvironmentSettingsObject&, StringView, EnvironmentSettingsObject& module_map_settings_object, AK::URL const&, Optional<JS::ModuleRequest> const& module_request, TopLevelModule, ModuleCallback on_complete)
+void fetch_single_module_script(AK::URL const& url, EnvironmentSettingsObject&, StringView, EnvironmentSettingsObject& module_map_settings_object, AK::URL const&, Optional<JS::ModuleRequest> const& module_request, TopLevelModule, OnFetchScriptComplete on_complete)
 {
     // 1. Let moduleType be "javascript".
     DeprecatedString module_type = "javascript"sv;
@@ -401,7 +492,7 @@ void fetch_single_module_script(AK::URL const& url, EnvironmentSettingsObject&, 
             }
 
             if (MimeSniff::is_javascript_mime_type_essence_match(*content_type_header) && module_type == "javascript"sv) {
-                auto module_script = JavaScriptModuleScript::create(url.basename(), data, module_map_settings_object, url);
+                auto module_script = JavaScriptModuleScript::create(url.basename(), data, module_map_settings_object, url).release_value_but_fixme_should_propagate_errors();
                 module_map.set(url, module_type, { ModuleMap::EntryType::ModuleScript, module_script });
                 on_complete(module_script);
                 return;
@@ -418,14 +509,14 @@ void fetch_single_module_script(AK::URL const& url, EnvironmentSettingsObject&, 
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-module-script-tree
-void fetch_external_module_script_graph(AK::URL const& url, EnvironmentSettingsObject& settings_object, ModuleCallback on_complete)
+void fetch_external_module_script_graph(AK::URL const& url, EnvironmentSettingsObject& settings_object, OnFetchScriptComplete on_complete)
 {
     // 1. Disallow further import maps given settings object.
     settings_object.disallow_further_import_maps();
 
     // 2. Fetch a single module script given url, settings object, "script", options, settings object, "client", true, and with the following steps given result:
     // FIXME: Pass options.
-    fetch_single_module_script(url, settings_object, "script"sv, settings_object, "client"sv, {}, TopLevelModule::Yes, [&settings_object, on_complete = move(on_complete), url](auto* result) mutable {
+    fetch_single_module_script(url, settings_object, "script"sv, settings_object, "client"sv, {}, TopLevelModule::Yes, [&settings_object, on_complete = move(on_complete), url](auto result) mutable {
         // 1. If result is null, run onComplete given null, and abort these steps.
         if (!result) {
             on_complete(nullptr);
@@ -437,18 +528,19 @@ void fetch_external_module_script_graph(AK::URL const& url, EnvironmentSettingsO
         visited_set.set({ url, "javascript"sv });
 
         // 3. Fetch the descendants of and link result given settings object, "script", visited set, and onComplete.
-        fetch_descendants_of_and_link_a_module_script(*result, settings_object, "script"sv, move(visited_set), move(on_complete));
+        auto& module_script = verify_cast<JavaScriptModuleScript>(*result);
+        fetch_descendants_of_and_link_a_module_script(module_script, settings_object, "script"sv, move(visited_set), move(on_complete));
     });
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-an-inline-module-script-graph
-void fetch_inline_module_script_graph(DeprecatedString const& filename, DeprecatedString const& source_text, AK::URL const& base_url, EnvironmentSettingsObject& settings_object, ModuleCallback on_complete)
+void fetch_inline_module_script_graph(DeprecatedString const& filename, DeprecatedString const& source_text, AK::URL const& base_url, EnvironmentSettingsObject& settings_object, OnFetchScriptComplete on_complete)
 {
     // 1. Disallow further import maps given settings object.
     settings_object.disallow_further_import_maps();
 
     // 2. Let script be the result of creating a JavaScript module script using source text, settings object, base URL, and options.
-    auto script = JavaScriptModuleScript::create(filename, source_text.view(), settings_object, base_url);
+    auto script = JavaScriptModuleScript::create(filename, source_text.view(), settings_object, base_url).release_value_but_fixme_should_propagate_errors();
 
     // 3. If script is null, run onComplete given null, and return.
     if (!script) {
@@ -464,12 +556,12 @@ void fetch_inline_module_script_graph(DeprecatedString const& filename, Deprecat
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-the-descendants-of-and-link-a-module-script
-void fetch_descendants_of_and_link_a_module_script(JavaScriptModuleScript& module_script, EnvironmentSettingsObject& fetch_client_settings_object, StringView destination, HashTable<ModuleLocationTuple> const& visited_set, ModuleCallback on_complete)
+void fetch_descendants_of_and_link_a_module_script(JavaScriptModuleScript& module_script, EnvironmentSettingsObject& fetch_client_settings_object, StringView destination, HashTable<ModuleLocationTuple> const& visited_set, OnFetchScriptComplete on_complete)
 {
     // 1. Fetch the descendants of module script, given fetch client settings object, destination, visited set, and onFetchDescendantsComplete as defined below.
     //    If performFetch was given, pass it along as well.
     // FIXME: Pass performFetch if given.
-    fetch_descendants_of_a_module_script(module_script, fetch_client_settings_object, destination, visited_set, [on_complete = move(on_complete)](JavaScriptModuleScript* result) {
+    fetch_descendants_of_a_module_script(module_script, fetch_client_settings_object, destination, visited_set, [&fetch_client_settings_object, on_complete = move(on_complete)](auto result) {
         // onFetchDescendantsComplete given result is the following algorithm:
         // 1. If result is null, then run onComplete given result, and abort these steps.
         if (!result) {
@@ -477,19 +569,22 @@ void fetch_descendants_of_and_link_a_module_script(JavaScriptModuleScript& modul
             return;
         }
 
+        TemporaryExecutionContext execution_context { fetch_client_settings_object };
+
         // FIXME: 2. Let parse error be the result of finding the first parse error given result.
 
         // 3. If parse error is null, then:
-        if (result->record()) {
+        if (auto& module_script = verify_cast<JavaScriptModuleScript>(*result); module_script.record()) {
             // 1. Let record be result's record.
-            auto const& record = *result->record();
+            auto const& record = *module_script.record();
 
             // 2. Perform record.Link().
             auto linking_result = const_cast<JS::SourceTextModule&>(record).link(result->vm());
 
-            // TODO: If this throws an exception, set result's error to rethrow to that exception.
-            if (linking_result.is_error())
-                TODO();
+            // If this throws an exception, set result's error to rethrow to that exception.
+            if (linking_result.is_throw_completion()) {
+                result->set_error_to_rethrow(linking_result.release_error().value().value());
+            }
         } else {
             // FIXME: 4. Otherwise, set result's error to rethrow to parse error.
             TODO();

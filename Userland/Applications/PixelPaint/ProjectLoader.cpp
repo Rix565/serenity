@@ -7,7 +7,6 @@
 #include "ProjectLoader.h"
 #include "Image.h"
 #include "Layer.h"
-#include <AK/DeprecatedString.h>
 #include <AK/JsonObject.h>
 #include <AK/Result.h>
 #include <LibCore/MappedFile.h>
@@ -15,7 +14,7 @@
 
 namespace PixelPaint {
 
-ErrorOr<void> ProjectLoader::load_from_file(NonnullOwnPtr<Core::Stream::File> file)
+ErrorOr<void> ProjectLoader::load_from_file(NonnullOwnPtr<Core::File> file)
 {
     auto contents = TRY(file->read_until_eof());
 

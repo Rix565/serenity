@@ -5,6 +5,11 @@ set -eo pipefail
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# shellcheck source=/dev/null
+. "${DIR}/../Meta/shell_include.sh"
+
+exit_if_running_as_root "Do not run BuildClang.sh as root, parts of your Toolchain directory will become root-owned"
+
 echo "$DIR"
 
 PREFIX="$DIR/Local/clang/"
@@ -14,7 +19,6 @@ ARCHS="$USERLAND_ARCHS aarch64"
 
 MD5SUM="md5sum"
 REALPATH="realpath"
-NPROC="nproc"
 INSTALL="install"
 SED="sed"
 
@@ -23,25 +27,20 @@ SYSTEM_NAME="$(uname -s)"
 if [ "$SYSTEM_NAME" = "OpenBSD" ]; then
     MD5SUM="md5 -q"
     REALPATH="readlink -f"
-    NPROC="sysctl -n hw.ncpuonline"
     export CC=egcc
     export CXX=eg++
     export LDFLAGS=-Wl,-z,notext
 elif [ "$SYSTEM_NAME" = "FreeBSD" ]; then
     MD5SUM="md5 -q"
-    NPROC="sysctl -n hw.ncpu"
 elif [ "$SYSTEM_NAME" = "Darwin" ]; then
     MD5SUM="md5 -q"
-    NPROC="sysctl -n hw.ncpu"
     REALPATH="grealpath"  # GNU coreutils
     INSTALL="ginstall"    # GNU coreutils
     SED="gsed"            # GNU sed
 fi
 
-if [ -z "$MAKEJOBS" ]; then
-    MAKEJOBS=$($NPROC)
-fi
-
+NPROC=$(get_number_of_processing_units)
+[ -z "$MAKEJOBS" ] && MAKEJOBS=${NPROC}
 
 if [ ! -d "$BUILD" ]; then
     mkdir -p "$BUILD"
@@ -70,8 +69,8 @@ echo PREFIX is "$PREFIX"
 
 mkdir -p "$DIR/Tarballs"
 
-LLVM_VERSION="15.0.3"
-LLVM_MD5SUM="d435e1160fd16b8efe1e0f4d1058bd50"
+LLVM_VERSION="16.0.6"
+LLVM_MD5SUM="dc13938a604f70379d3b38d09031de98"
 LLVM_NAME="llvm-project-$LLVM_VERSION.src"
 LLVM_PKG="$LLVM_NAME.tar.xz"
 LLVM_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$LLVM_PKG"
@@ -248,14 +247,23 @@ popd
 # === COPY HEADERS ===
 
 SRC_ROOT=$($REALPATH "$DIR"/..)
-FILES=$(find "$SRC_ROOT"/Kernel/API "$SRC_ROOT"/Userland/Libraries/LibC -name '*.h' -print)
-
+FILES=$(find \
+    "$SRC_ROOT"/Kernel/API \
+    "$SRC_ROOT"/Kernel/Arch \
+    "$SRC_ROOT"/Userland/Libraries/LibC \
+    "$SRC_ROOT"/Userland/Libraries/LibELF/ELFABI.h \
+    "$SRC_ROOT"/Userland/Libraries/LibRegex/RegexDefs.h \
+    -name '*.h' -print)
 for arch in $ARCHS; do
     mkdir -p "$BUILD/${arch}clang"
     pushd "$BUILD/${arch}clang"
         mkdir -p Root/usr/include/
         for header in $FILES; do
-            target=$(echo "$header" | "$SED" -e "s@$SRC_ROOT/Userland/Libraries/LibC@@" -e "s@$SRC_ROOT/Kernel/@Kernel/@")
+            target=$(echo "$header" | "$SED" \
+                -e "s|$SRC_ROOT/Kernel/|Kernel/|" \
+                -e "s|$SRC_ROOT/Userland/Libraries/LibC||" \
+                -e "s|$SRC_ROOT/Userland/Libraries/LibELF/|LibELF/|" \
+                -e "s|$SRC_ROOT/Userland/Libraries/LibRegex/|LibRegex/|")
             buildstep "system_headers" "$INSTALL" -D "$header" "Root/usr/include/$target"
         done
     popd
@@ -325,6 +333,7 @@ pushd "$DIR/Local/clang/bin/"
     for arch in $ARCHS; do
         ln -s clang "$arch"-pc-serenity-clang
         ln -s clang++ "$arch"-pc-serenity-clang++
+        ln -s llvm-nm "$arch"-pc-serenity-nm
         echo "--sysroot=$BUILD/${arch}clang/Root" > "$arch"-pc-serenity.cfg
     done
 popd

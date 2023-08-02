@@ -47,6 +47,7 @@ system and customize the `inlayHints.sep` based on your preference.
 ```json
 {
     "clangd.fallbackFlags": ["-std=c++20"],
+    "clangd.arguments": ["--query-driver=${workspaceFolder}/Toolchain/Local/**/*"],
     "semanticTokens.enable": true,
     "inlayHint.subSeparator": "︴",
     "inlayHints.enableParameter": true,
@@ -66,6 +67,23 @@ conflicts.
 `coc-settings.json`, you should remove it to avoid running clangd twice!
 
 > **Note**: `clangd.inlayHints.sep` breaks on `clangd 15.0.6`.
+
+# Formatting
+For code formatting the formatter plugin can be used.
+```vim
+Plug 'mhartington/formatter.nvim'
+```
+### Configuration
+To use the formatter plugin one needs to opt-in to specific formatters. An example lua configuration which uses clang-format for cpp files:
+```lua
+require("formatter").setup{
+    filetype = {
+        cpp = {
+            require("formatter.filetypes.cpp").clangformat
+        }
+    }
+}
+```
 
 # Install git blame (Optional)
 

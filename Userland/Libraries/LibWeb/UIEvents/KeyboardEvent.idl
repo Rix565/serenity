@@ -1,6 +1,7 @@
 #import <UIEvents/EventModifier.idl>
 
-[Exposed=Window]
+// https://www.w3.org/TR/uievents/#idl-keyboardevent
+[Exposed=Window, UseNewAKString]
 interface KeyboardEvent : UIEvent {
 
     constructor(DOMString type, optional KeyboardEventInit eventInitDict = {});
@@ -30,6 +31,7 @@ interface KeyboardEvent : UIEvent {
 
 };
 
+// https://www.w3.org/TR/uievents/#dictdef-keyboardeventinit
 dictionary KeyboardEventInit : EventModifierInit {
     DOMString key = "";
     DOMString code = "";

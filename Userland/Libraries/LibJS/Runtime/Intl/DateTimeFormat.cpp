@@ -67,93 +67,7 @@ StringView DateTimeFormat::style_to_string(Style style)
     }
 }
 
-// 11.5.1 ToDateTimeOptions ( options, required, defaults ), https://tc39.es/ecma402/#sec-todatetimeoptions
-ThrowCompletionOr<Object*> to_date_time_options(VM& vm, Value options_value, OptionRequired required, OptionDefaults defaults)
-{
-    auto& realm = *vm.current_realm();
-
-    // 1. If options is undefined, let options be null; otherwise let options be ? ToObject(options).
-    Object* options = nullptr;
-    if (!options_value.is_undefined())
-        options = TRY(options_value.to_object(vm));
-
-    // 2. Let options be OrdinaryObjectCreate(options).
-    options = Object::create(realm, options);
-
-    // 3. Let needDefaults be true.
-    bool needs_defaults = true;
-
-    // 4. If required is "date" or "any", then
-    if ((required == OptionRequired::Date) || (required == OptionRequired::Any)) {
-        // a. For each property name prop of « "weekday", "year", "month", "day" », do
-        for (auto const& property : AK::Array { vm.names.weekday, vm.names.year, vm.names.month, vm.names.day }) {
-            // i. Let value be ? Get(options, prop).
-            auto value = TRY(options->get(property));
-
-            // ii. If value is not undefined, let needDefaults be false.
-            if (!value.is_undefined())
-                needs_defaults = false;
-        }
-    }
-
-    // 5. If required is "time" or "any", then
-    if ((required == OptionRequired::Time) || (required == OptionRequired::Any)) {
-        // a. For each property name prop of « "dayPeriod", "hour", "minute", "second", "fractionalSecondDigits" », do
-        for (auto const& property : AK::Array { vm.names.dayPeriod, vm.names.hour, vm.names.minute, vm.names.second, vm.names.fractionalSecondDigits }) {
-            // i. Let value be ? Get(options, prop).
-            auto value = TRY(options->get(property));
-
-            // ii. If value is not undefined, let needDefaults be false.
-            if (!value.is_undefined())
-                needs_defaults = false;
-        }
-    }
-
-    // 6. Let dateStyle be ? Get(options, "dateStyle").
-    auto date_style = TRY(options->get(vm.names.dateStyle));
-
-    // 7. Let timeStyle be ? Get(options, "timeStyle").
-    auto time_style = TRY(options->get(vm.names.timeStyle));
-
-    // 8. If dateStyle is not undefined or timeStyle is not undefined, let needDefaults be false.
-    if (!date_style.is_undefined() || !time_style.is_undefined())
-        needs_defaults = false;
-
-    // 9. If required is "date" and timeStyle is not undefined, then
-    if ((required == OptionRequired::Date) && !time_style.is_undefined()) {
-        // a. Throw a TypeError exception.
-        return vm.throw_completion<TypeError>(ErrorType::IntlInvalidDateTimeFormatOption, "timeStyle"sv, "date"sv);
-    }
-
-    // 10. If required is "time" and dateStyle is not undefined, then
-    if ((required == OptionRequired::Time) && !date_style.is_undefined()) {
-        // a. Throw a TypeError exception.
-        return vm.throw_completion<TypeError>(ErrorType::IntlInvalidDateTimeFormatOption, "dateStyle"sv, "time"sv);
-    }
-
-    // 11. If needDefaults is true and defaults is either "date" or "all", then
-    if (needs_defaults && ((defaults == OptionDefaults::Date) || (defaults == OptionDefaults::All))) {
-        // a. For each property name prop of « "year", "month", "day" », do
-        for (auto const& property : AK::Array { vm.names.year, vm.names.month, vm.names.day }) {
-            // i. Perform ? CreateDataPropertyOrThrow(options, prop, "numeric").
-            TRY(options->create_data_property_or_throw(property, PrimitiveString::create(vm, "numeric"sv)));
-        }
-    }
-
-    // 12. If needDefaults is true and defaults is either "time" or "all", then
-    if (needs_defaults && ((defaults == OptionDefaults::Time) || (defaults == OptionDefaults::All))) {
-        // a. For each property name prop of « "hour", "minute", "second" », do
-        for (auto const& property : AK::Array { vm.names.hour, vm.names.minute, vm.names.second }) {
-            // i. Perform ? CreateDataPropertyOrThrow(options, prop, "numeric").
-            TRY(options->create_data_property_or_throw(property, PrimitiveString::create(vm, "numeric"sv)));
-        }
-    }
-
-    // 13. Return options.
-    return options;
-}
-
-// 11.5.2 DateTimeStyleFormat ( dateStyle, timeStyle, styles ), https://tc39.es/ecma402/#sec-date-time-style-format
+// 11.5.1 DateTimeStyleFormat ( dateStyle, timeStyle, styles ), https://tc39.es/ecma402/#sec-date-time-style-format
 ThrowCompletionOr<Optional<::Locale::CalendarPattern>> date_time_style_format(VM& vm, StringView data_locale, DateTimeFormat& date_time_format)
 {
     ::Locale::CalendarPattern time_format {};
@@ -260,7 +174,7 @@ ThrowCompletionOr<Optional<::Locale::CalendarPattern>> date_time_style_format(VM
     return date_format;
 }
 
-// 11.5.3 BasicFormatMatcher ( options, formats ), https://tc39.es/ecma402/#sec-basicformatmatcher
+// 11.5.2 BasicFormatMatcher ( options, formats ), https://tc39.es/ecma402/#sec-basicformatmatcher
 Optional<::Locale::CalendarPattern> basic_format_matcher(::Locale::CalendarPattern const& options, Vector<::Locale::CalendarPattern> formats)
 {
     // 1. Let removalPenalty be 120.
@@ -457,7 +371,7 @@ Optional<::Locale::CalendarPattern> basic_format_matcher(::Locale::CalendarPatte
     return best_format;
 }
 
-// 11.5.4 BestFitFormatMatcher ( options, formats ), https://tc39.es/ecma402/#sec-bestfitformatmatcher
+// 11.5.3 BestFitFormatMatcher ( options, formats ), https://tc39.es/ecma402/#sec-bestfitformatmatcher
 Optional<::Locale::CalendarPattern> best_fit_format_matcher(::Locale::CalendarPattern const& options, Vector<::Locale::CalendarPattern> formats)
 {
     // When the BestFitFormatMatcher abstract operation is called with two arguments options and formats, it performs
@@ -510,7 +424,7 @@ static Optional<StyleAndValue> find_calendar_field(StringView name, ::Locale::Ca
     return {};
 }
 
-static ThrowCompletionOr<Optional<StringView>> resolve_day_period(VM& vm, StringView locale, StringView calendar, ::Locale::CalendarPatternStyle style, Span<PatternPartition const> pattern_parts, LocalTime local_time)
+static ThrowCompletionOr<Optional<StringView>> resolve_day_period(VM& vm, StringView locale, StringView calendar, ::Locale::CalendarPatternStyle style, ReadonlySpan<PatternPartition> pattern_parts, LocalTime local_time)
 {
     // Use the "noon" day period if the locale has it, but only if the time is either exactly 12:00.00 or would be displayed as such.
     if (local_time.hour == 12) {
@@ -534,7 +448,7 @@ static ThrowCompletionOr<Optional<StringView>> resolve_day_period(VM& vm, String
     return TRY_OR_THROW_OOM(vm, ::Locale::get_calendar_day_period_symbol_for_hour(locale, calendar, style, local_time.hour));
 }
 
-// 11.5.6 FormatDateTimePattern ( dateTimeFormat, patternParts, x, rangeFormatOptions ), https://tc39.es/ecma402/#sec-formatdatetimepattern
+// 11.5.5 FormatDateTimePattern ( dateTimeFormat, patternParts, x, rangeFormatOptions ), https://tc39.es/ecma402/#sec-formatdatetimepattern
 ThrowCompletionOr<Vector<PatternPartition>> format_date_time_pattern(VM& vm, DateTimeFormat& date_time_format, Vector<PatternPartition> pattern_parts, double time, ::Locale::CalendarPattern const* range_format_options)
 {
     auto& realm = *vm.current_realm();
@@ -551,7 +465,7 @@ ThrowCompletionOr<Vector<PatternPartition>> format_date_time_pattern(VM& vm, Dat
     auto const& data_locale = date_time_format.data_locale();
 
     auto construct_number_format = [&](auto& options) -> ThrowCompletionOr<NumberFormat*> {
-        auto number_format = TRY(construct(vm, *realm.intrinsics().intl_number_format_constructor(), PrimitiveString::create(vm, locale), options));
+        auto number_format = TRY(construct(vm, realm.intrinsics().intl_number_format_constructor(), PrimitiveString::create(vm, locale), options));
         return static_cast<NumberFormat*>(number_format.ptr());
     };
 
@@ -612,7 +526,7 @@ ThrowCompletionOr<Vector<PatternPartition>> format_date_time_pattern(VM& vm, Dat
         // b. If p is "literal", then
         if (part == "literal"sv) {
             // i. Append a new Record { [[Type]]: "literal", [[Value]]: patternPart.[[Value]] } as the last element of the list result.
-            result.append({ "literal"sv, move(pattern_part.value) });
+            TRY_OR_THROW_OOM(vm, result.try_append({ "literal"sv, move(pattern_part.value) }));
         }
 
         // c. Else if p is equal to "fractionalSecondDigits", then
@@ -627,7 +541,7 @@ ThrowCompletionOr<Vector<PatternPartition>> format_date_time_pattern(VM& vm, Dat
             auto formatted_value = MUST_OR_THROW_OOM(format_numeric(vm, *number_format3, Value(value)));
 
             // iv. Append a new Record { [[Type]]: "fractionalSecond", [[Value]]: fv } as the last element of result.
-            result.append({ "fractionalSecond"sv, move(formatted_value) });
+            TRY_OR_THROW_OOM(vm, result.try_append({ "fractionalSecond"sv, move(formatted_value) }));
         }
 
         // d. Else if p is equal to "dayPeriod", then
@@ -643,7 +557,7 @@ ThrowCompletionOr<Vector<PatternPartition>> format_date_time_pattern(VM& vm, Dat
                 formatted_value = TRY_OR_THROW_OOM(vm, String::from_utf8(*symbol));
 
             // iii. Append a new Record { [[Type]]: p, [[Value]]: fv } as the last element of the list result.
-            result.append({ "dayPeriod"sv, move(formatted_value) });
+            TRY_OR_THROW_OOM(vm, result.try_append({ "dayPeriod"sv, move(formatted_value) }));
         }
 
         // e. Else if p is equal to "timeZoneName", then
@@ -660,7 +574,7 @@ ThrowCompletionOr<Vector<PatternPartition>> format_date_time_pattern(VM& vm, Dat
             auto formatted_value = TRY_OR_THROW_OOM(vm, ::Locale::format_time_zone(data_locale, value, style, local_time.time_since_epoch()));
 
             // iv. Append a new Record { [[Type]]: p, [[Value]]: fv } as the last element of the list result.
-            result.append({ "timeZoneName"sv, move(formatted_value) });
+            TRY_OR_THROW_OOM(vm, result.try_append({ "timeZoneName"sv, move(formatted_value) }));
         }
 
         // f. Else if p matches a Property column of the row in Table 6, then
@@ -757,7 +671,7 @@ ThrowCompletionOr<Vector<PatternPartition>> format_date_time_pattern(VM& vm, Dat
             }
 
             // xi. Append a new Record { [[Type]]: p, [[Value]]: fv } as the last element of the list result.
-            result.append({ style_and_value->name, move(formatted_value) });
+            TRY_OR_THROW_OOM(vm, result.try_append({ style_and_value->name, move(formatted_value) }));
         }
 
         // g. Else if p is equal to "ampm", then
@@ -781,7 +695,7 @@ ThrowCompletionOr<Vector<PatternPartition>> format_date_time_pattern(VM& vm, Dat
             }
 
             // iv. Append a new Record { [[Type]]: "dayPeriod", [[Value]]: fv } as the last element of the list result.
-            result.append({ "dayPeriod"sv, move(formatted_value) });
+            TRY_OR_THROW_OOM(vm, result.try_append({ "dayPeriod"sv, move(formatted_value) }));
         }
 
         // h. Else if p is equal to "relatedYear", then
@@ -806,7 +720,7 @@ ThrowCompletionOr<Vector<PatternPartition>> format_date_time_pattern(VM& vm, Dat
         // to adhere to the selected locale. This depends on other generated data, so it is deferred to here.
         else if (part == "decimal"sv) {
             auto decimal_symbol = TRY_OR_THROW_OOM(vm, ::Locale::get_number_system_symbol(data_locale, date_time_format.numbering_system(), ::Locale::NumericSymbol::Decimal)).value_or("."sv);
-            result.append({ "literal"sv, TRY_OR_THROW_OOM(vm, String::from_utf8(decimal_symbol)) });
+            TRY_OR_THROW_OOM(vm, result.try_append({ "literal"sv, TRY_OR_THROW_OOM(vm, String::from_utf8(decimal_symbol)) }));
         }
 
         // j. Else,
@@ -823,7 +737,7 @@ ThrowCompletionOr<Vector<PatternPartition>> format_date_time_pattern(VM& vm, Dat
     return result;
 }
 
-// 11.5.7 PartitionDateTimePattern ( dateTimeFormat, x ), https://tc39.es/ecma402/#sec-partitiondatetimepattern
+// 11.5.6 PartitionDateTimePattern ( dateTimeFormat, x ), https://tc39.es/ecma402/#sec-partitiondatetimepattern
 ThrowCompletionOr<Vector<PatternPartition>> partition_date_time_pattern(VM& vm, DateTimeFormat& date_time_format, double time)
 {
     // 1. Let patternParts be PartitionPattern(dateTimeFormat.[[Pattern]]).
@@ -836,7 +750,7 @@ ThrowCompletionOr<Vector<PatternPartition>> partition_date_time_pattern(VM& vm, 
     return result;
 }
 
-// 11.5.8 FormatDateTime ( dateTimeFormat, x ), https://tc39.es/ecma402/#sec-formatdatetime
+// 11.5.7 FormatDateTime ( dateTimeFormat, x ), https://tc39.es/ecma402/#sec-formatdatetime
 ThrowCompletionOr<String> format_date_time(VM& vm, DateTimeFormat& date_time_format, double time)
 {
     // 1. Let parts be ? PartitionDateTimePattern(dateTimeFormat, x).
@@ -855,7 +769,7 @@ ThrowCompletionOr<String> format_date_time(VM& vm, DateTimeFormat& date_time_for
     return result.to_string();
 }
 
-// 11.5.9 FormatDateTimeToParts ( dateTimeFormat, x ), https://tc39.es/ecma402/#sec-formatdatetimetoparts
+// 11.5.8 FormatDateTimeToParts ( dateTimeFormat, x ), https://tc39.es/ecma402/#sec-formatdatetimetoparts
 ThrowCompletionOr<Array*> format_date_time_to_parts(VM& vm, DateTimeFormat& date_time_format, double time)
 {
     auto& realm = *vm.current_realm();
@@ -875,7 +789,7 @@ ThrowCompletionOr<Array*> format_date_time_to_parts(VM& vm, DateTimeFormat& date
         auto object = Object::create(realm, realm.intrinsics().object_prototype());
 
         // b. Perform ! CreateDataPropertyOrThrow(O, "type", part.[[Type]]).
-        MUST(object->create_data_property_or_throw(vm.names.type, PrimitiveString::create(vm, part.type)));
+        MUST(object->create_data_property_or_throw(vm.names.type, MUST_OR_THROW_OOM(PrimitiveString::create(vm, part.type))));
 
         // c. Perform ! CreateDataPropertyOrThrow(O, "value", part.[[Value]]).
         MUST(object->create_data_property_or_throw(vm.names.value, PrimitiveString::create(vm, move(part.value))));
@@ -927,7 +841,7 @@ ThrowCompletionOr<void> for_each_range_pattern_with_source(::Locale::CalendarRan
     return {};
 }
 
-// 11.5.10 PartitionDateTimeRangePattern ( dateTimeFormat, x, y ), https://tc39.es/ecma402/#sec-partitiondatetimerangepattern
+// 11.5.9 PartitionDateTimeRangePattern ( dateTimeFormat, x, y ), https://tc39.es/ecma402/#sec-partitiondatetimerangepattern
 ThrowCompletionOr<Vector<PatternPartitionWithSource>> partition_date_time_range_pattern(VM& vm, DateTimeFormat& date_time_format, double start, double end)
 {
     // 1. Let x be TimeClip(x).
@@ -1079,7 +993,7 @@ ThrowCompletionOr<Vector<PatternPartitionWithSource>> partition_date_time_range_
 
         // c. Let result be ? FormatDateTimePattern(dateTimeFormat, patternParts, x, undefined).
         auto raw_result = TRY(format_date_time_pattern(vm, date_time_format, move(pattern_parts), start, nullptr));
-        auto result = PatternPartitionWithSource::create_from_parent_list(move(raw_result));
+        auto result = MUST_OR_THROW_OOM(PatternPartitionWithSource::create_from_parent_list(vm, move(raw_result)));
 
         // d. For each Record { [[Type]], [[Value]] } r in result, do
         for (auto& part : result) {
@@ -1136,7 +1050,7 @@ ThrowCompletionOr<Vector<PatternPartitionWithSource>> partition_date_time_range_
 
         // f. Let partResult be ? FormatDateTimePattern(dateTimeFormat, patternParts, z, rangePattern).
         auto raw_part_result = TRY(format_date_time_pattern(vm, date_time_format, move(pattern_parts), time, &range_pattern.value()));
-        auto part_result = PatternPartitionWithSource::create_from_parent_list(move(raw_part_result));
+        auto part_result = MUST_OR_THROW_OOM(PatternPartitionWithSource::create_from_parent_list(vm, move(raw_part_result)));
 
         // g. For each Record { [[Type]], [[Value]] } r in partResult, do
         for (auto& part : part_result) {
@@ -1145,7 +1059,7 @@ ThrowCompletionOr<Vector<PatternPartitionWithSource>> partition_date_time_range_
         }
 
         // h. Add all elements in partResult to result in order.
-        result.extend(move(part_result));
+        TRY_OR_THROW_OOM(vm, result.try_extend(move(part_result)));
         return {};
     }));
 
@@ -1153,7 +1067,7 @@ ThrowCompletionOr<Vector<PatternPartitionWithSource>> partition_date_time_range_
     return result;
 }
 
-// 11.5.11 FormatDateTimeRange ( dateTimeFormat, x, y ), https://tc39.es/ecma402/#sec-formatdatetimerange
+// 11.5.10 FormatDateTimeRange ( dateTimeFormat, x, y ), https://tc39.es/ecma402/#sec-formatdatetimerange
 ThrowCompletionOr<String> format_date_time_range(VM& vm, DateTimeFormat& date_time_format, double start, double end)
 {
     // 1. Let parts be ? PartitionDateTimeRangePattern(dateTimeFormat, x, y).
@@ -1172,7 +1086,7 @@ ThrowCompletionOr<String> format_date_time_range(VM& vm, DateTimeFormat& date_ti
     return result.to_string();
 }
 
-// 11.5.12 FormatDateTimeRangeToParts ( dateTimeFormat, x, y ), https://tc39.es/ecma402/#sec-formatdatetimerangetoparts
+// 11.5.11 FormatDateTimeRangeToParts ( dateTimeFormat, x, y ), https://tc39.es/ecma402/#sec-formatdatetimerangetoparts
 ThrowCompletionOr<Array*> format_date_time_range_to_parts(VM& vm, DateTimeFormat& date_time_format, double start, double end)
 {
     auto& realm = *vm.current_realm();
@@ -1192,13 +1106,13 @@ ThrowCompletionOr<Array*> format_date_time_range_to_parts(VM& vm, DateTimeFormat
         auto object = Object::create(realm, realm.intrinsics().object_prototype());
 
         // b. Perform ! CreateDataPropertyOrThrow(O, "type", part.[[Type]]).
-        MUST(object->create_data_property_or_throw(vm.names.type, PrimitiveString::create(vm, part.type)));
+        MUST(object->create_data_property_or_throw(vm.names.type, MUST_OR_THROW_OOM(PrimitiveString::create(vm, part.type))));
 
         // c. Perform ! CreateDataPropertyOrThrow(O, "value", part.[[Value]]).
         MUST(object->create_data_property_or_throw(vm.names.value, PrimitiveString::create(vm, move(part.value))));
 
         // d. Perform ! CreateDataPropertyOrThrow(O, "source", part.[[Source]]).
-        MUST(object->create_data_property_or_throw(vm.names.source, PrimitiveString::create(vm, part.source)));
+        MUST(object->create_data_property_or_throw(vm.names.source, MUST_OR_THROW_OOM(PrimitiveString::create(vm, part.source))));
 
         // e. Perform ! CreateDataProperty(result, ! ToString(n), O).
         MUST(result->create_data_property_or_throw(n, object));
@@ -1211,7 +1125,7 @@ ThrowCompletionOr<Array*> format_date_time_range_to_parts(VM& vm, DateTimeFormat
     return result.ptr();
 }
 
-// 11.5.13 ToLocalTime ( epochNs, calendar, timeZone ), https://tc39.es/ecma402/#sec-tolocaltime
+// 11.5.12 ToLocalTime ( epochNs, calendar, timeZone ), https://tc39.es/ecma402/#sec-tolocaltime
 ThrowCompletionOr<LocalTime> to_local_time(VM& vm, Crypto::SignedBigInteger const& epoch_ns, StringView calendar, StringView time_zone)
 {
     // 1. Let offsetNs be GetNamedTimeZoneOffsetNanoseconds(timeZone, epochNs).
@@ -1235,8 +1149,8 @@ ThrowCompletionOr<LocalTime> to_local_time(VM& vm, Crypto::SignedBigInteger cons
         return LocalTime {
             // WeekDay(𝔽(floor(tz / 10^6)))
             .weekday = week_day(zoned_time),
-            // Let year be YearFromTime(𝔽(floor(tz / 10^6))). If year < -0𝔽, return "BC", else return "AD".
-            .era = year < 0 ? ::Locale::Era::BC : ::Locale::Era::AD,
+            // Let year be YearFromTime(𝔽(floor(tz / 10^6))). If year < 1𝔽, return "BC", else return "AD".
+            .era = year < 1 ? ::Locale::Era::BC : ::Locale::Era::AD,
             // YearFromTime(𝔽(floor(tz / 10^6)))
             .year = year,
             // undefined.

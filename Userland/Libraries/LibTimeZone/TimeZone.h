@@ -9,6 +9,7 @@
 #include <AK/Array.h>
 #include <AK/DeprecatedString.h>
 #include <AK/Error.h>
+#include <AK/Format.h>
 #include <AK/Optional.h>
 #include <AK/StringView.h>
 #include <AK/Time.h>
@@ -51,7 +52,7 @@ struct Location {
 StringView system_time_zone();
 StringView current_time_zone();
 ErrorOr<void> change_time_zone(StringView time_zone);
-Span<StringView const> all_time_zones();
+ReadonlySpan<StringView> all_time_zones();
 
 Optional<TimeZone> time_zone_from_string(StringView time_zone);
 StringView time_zone_to_string(TimeZone time_zone);
@@ -60,11 +61,11 @@ Optional<StringView> canonicalize_time_zone(StringView time_zone);
 Optional<DaylightSavingsRule> daylight_savings_rule_from_string(StringView daylight_savings_rule);
 StringView daylight_savings_rule_to_string(DaylightSavingsRule daylight_savings_rule);
 
-Optional<Offset> get_time_zone_offset(TimeZone time_zone, AK::Time time);
-Optional<Offset> get_time_zone_offset(StringView time_zone, AK::Time time);
+Optional<Offset> get_time_zone_offset(TimeZone time_zone, AK::UnixDateTime time);
+Optional<Offset> get_time_zone_offset(StringView time_zone, AK::UnixDateTime time);
 
-Optional<Array<NamedOffset, 2>> get_named_time_zone_offsets(TimeZone time_zone, AK::Time time);
-Optional<Array<NamedOffset, 2>> get_named_time_zone_offsets(StringView time_zone, AK::Time time);
+Optional<Array<NamedOffset, 2>> get_named_time_zone_offsets(TimeZone time_zone, AK::UnixDateTime time);
+Optional<Array<NamedOffset, 2>> get_named_time_zone_offsets(StringView time_zone, AK::UnixDateTime time);
 
 Optional<Location> get_time_zone_location(TimeZone time_zone);
 Optional<Location> get_time_zone_location(StringView time_zone);
@@ -74,3 +75,11 @@ StringView region_to_string(Region region);
 Vector<StringView> time_zones_in_region(StringView region);
 
 }
+
+template<>
+struct AK::Formatter<TimeZone::TimeZone> : Formatter<FormatString> {
+    ErrorOr<void> format(FormatBuilder& builder, TimeZone::TimeZone const& time_zone)
+    {
+        return Formatter<FormatString>::format(builder, TimeZone::time_zone_to_string(time_zone));
+    }
+};

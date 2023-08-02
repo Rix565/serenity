@@ -11,6 +11,7 @@
 #include <AK/ByteBuffer.h>
 #include <AK/Types.h>
 #include <AK/Variant.h>
+#include <LibCrypto/Checksum/CRC8.h>
 
 namespace Audio {
 
@@ -22,6 +23,11 @@ namespace Audio {
 #define FLAC_SAMPLERATE_AT_END_OF_HEADER_8 0xffffffff
 #define FLAC_SAMPLERATE_AT_END_OF_HEADER_16 0xfffffffe
 #define FLAC_SAMPLERATE_AT_END_OF_HEADER_16X10 0xfffffffd
+
+// 11.22.11. FRAME CRC
+// The polynomial used here is known as CRC-8-CCITT.
+static constexpr u8 flac_polynomial = 0x07;
+using FlacFrameHeaderCRC = Crypto::Checksum::CRC8<flac_polynomial>;
 
 // 11.8 BLOCK_TYPE (7 bits)
 enum class FlacMetadataBlockType : u8 {
@@ -79,7 +85,8 @@ struct FlacFrameHeader {
     u32 sample_count;
     u32 sample_rate;
     FlacFrameChannelType channels;
-    PcmSampleFormat bit_depth;
+    u8 bit_depth;
+    u8 checksum;
 };
 
 // 11.25. SUBFRAME_HEADER
@@ -89,13 +96,6 @@ struct FlacSubframeHeader {
     u8 order;
     u8 wasted_bits_per_sample;
     u8 bits_per_sample;
-};
-
-// 11.14. SEEKPOINT
-struct FlacSeekPoint {
-    u64 sample_index;
-    u64 byte_offset;
-    u16 num_samples;
 };
 
 }

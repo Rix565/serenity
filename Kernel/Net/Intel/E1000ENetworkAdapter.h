@@ -6,15 +6,14 @@
 
 #pragma once
 
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <Kernel/Bus/PCI/Access.h>
 #include <Kernel/Bus/PCI/Device.h>
-#include <Kernel/IOWindow.h>
 #include <Kernel/Interrupts/IRQHandler.h>
+#include <Kernel/Library/IOWindow.h>
 #include <Kernel/Net/Intel/E1000NetworkAdapter.h>
 #include <Kernel/Net/NetworkAdapter.h>
-#include <Kernel/Random.h>
+#include <Kernel/Security/Random.h>
 
 namespace Kernel {
 
@@ -22,7 +21,7 @@ class E1000ENetworkAdapter final
     : public E1000NetworkAdapter {
 public:
     static ErrorOr<bool> probe(PCI::DeviceIdentifier const&);
-    static ErrorOr<NonnullLockRefPtr<NetworkAdapter>> create(PCI::DeviceIdentifier const&);
+    static ErrorOr<NonnullRefPtr<NetworkAdapter>> create(PCI::DeviceIdentifier const&);
     virtual ErrorOr<void> initialize(Badge<NetworkingManagement>) override;
 
     virtual ~E1000ENetworkAdapter() override;

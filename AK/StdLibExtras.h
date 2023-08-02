@@ -8,7 +8,7 @@
 
 #include <AK/Platform.h>
 
-#if defined(AK_COMPILER_CLANG) || defined(__CLION_IDE__)
+#if defined(AK_COMPILER_CLANG)
 #    pragma clang diagnostic ignored "-Wunqualified-std-cast-call"
 #endif
 
@@ -31,6 +31,9 @@ requires(AK::Detail::IsIntegral<T>)
 {
     return value && !((value) & (value - 1));
 }
+
+template<typename... Args>
+void compiletime_fail(Args...);
 
 }
 
@@ -111,7 +114,7 @@ constexpr T clamp(T const& value, IdentityType<T> const& min, IdentityType<T> co
 }
 
 template<typename T, typename U>
-constexpr T mix(T const& v1, T const& v2, U const& interpolation)
+constexpr T mix(T const& v1, T const& v2, U const& interpolation) // aka lerp
 {
     return v1 + (v2 - v1) * interpolation;
 }
@@ -131,8 +134,8 @@ inline void swap(T& a, U& b)
 {
     if (&a == &b)
         return;
-    U tmp = move((U&)a);
-    a = (T &&) move(b);
+    U tmp = move(static_cast<U&>(a));
+    a = static_cast<T&&>(move(b));
     b = move(tmp);
 }
 
@@ -161,6 +164,28 @@ constexpr bool is_constant_evaluated()
 #else
     return false;
 #endif
+}
+
+template<typename T>
+ALWAYS_INLINE constexpr void taint_for_optimizer(T& value)
+requires(IsIntegral<T>)
+{
+    if (!is_constant_evaluated()) {
+        asm volatile(""
+                     : "+r"(value));
+    }
+}
+
+template<typename T>
+ALWAYS_INLINE constexpr void taint_for_optimizer(T& value)
+requires(!IsIntegral<T>)
+{
+    if (!is_constant_evaluated()) {
+        asm volatile(""
+                     :
+                     : "m"(value)
+                     : "memory");
+    }
 }
 
 // These can't be exported into the global namespace as they would clash with the C standard library.

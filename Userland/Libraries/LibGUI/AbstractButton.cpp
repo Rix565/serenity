@@ -15,7 +15,7 @@
 
 namespace GUI {
 
-AbstractButton::AbstractButton(DeprecatedString text)
+AbstractButton::AbstractButton(String text)
 {
     set_text(move(text));
 
@@ -34,7 +34,7 @@ AbstractButton::AbstractButton(DeprecatedString text)
     REGISTER_BOOL_PROPERTY("exclusive", is_exclusive, set_exclusive);
 }
 
-void AbstractButton::set_text(DeprecatedString text)
+void AbstractButton::set_text(String text)
 {
     if (m_text == text)
         return;
@@ -151,6 +151,12 @@ void AbstractButton::mouseup_event(MouseEvent& event)
         }
     }
     Widget::mouseup_event(event);
+}
+
+void AbstractButton::doubleclick_event(GUI::MouseEvent& event)
+{
+    double_click(event.modifiers());
+    Widget::doubleclick_event(event);
 }
 
 void AbstractButton::enter_event(Core::Event&)

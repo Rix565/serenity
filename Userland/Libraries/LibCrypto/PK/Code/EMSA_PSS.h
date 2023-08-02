@@ -13,8 +13,7 @@
 #include <AK/Vector.h>
 #include <LibCrypto/PK/Code/Code.h>
 
-namespace Crypto {
-namespace PK {
+namespace Crypto::PK {
 
 template<typename HashFunction, size_t SaltSize>
 class EMSA_PSS : public Code<HashFunction> {
@@ -39,7 +38,7 @@ public:
         auto em_length = (em_bits + 7) / 8;
         u8 salt[SaltLength];
 
-        fill_with_random(salt, SaltLength);
+        fill_with_random(salt);
 
         if (em_length < hash_length + SaltLength + 2) {
             dbgln("Ooops...encoding error");
@@ -167,5 +166,4 @@ private:
     Bytes m_buffer;
 };
 
-}
 }

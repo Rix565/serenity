@@ -7,6 +7,7 @@
  */
 
 #include <AK/DateConstants.h>
+#include <AK/String.h>
 #include <LibConfig/Client.h>
 #include <LibCore/DateTime.h>
 #include <LibGUI/Calendar.h>
@@ -38,6 +39,7 @@ Calendar::Calendar(Core::DateTime date_time, Mode mode)
     m_weekend_length = weekend_length;
 
     set_fill_with_background_color(true);
+    set_scrollbars_enabled(false);
 
     for (int i = 0; i < 7; i++) {
         Day day;
@@ -79,6 +81,38 @@ void Calendar::toggle_mode()
     update_tiles(this->view_year(), this->view_month());
     this->resize(this->height(), this->width());
     invalidate_layout();
+}
+
+void Calendar::show_previous_date()
+{
+    unsigned view_month = m_view_month;
+    unsigned view_year = m_view_year;
+    if (m_mode == GUI::Calendar::Month) {
+        --view_month;
+        if (view_month == 0) {
+            view_month = 12;
+            --view_year;
+        }
+    } else {
+        --view_year;
+    }
+    update_tiles(view_year, view_month);
+}
+
+void Calendar::show_next_date()
+{
+    unsigned view_month = m_view_month;
+    unsigned view_year = m_view_year;
+    if (m_mode == GUI::Calendar::Month) {
+        ++view_month;
+        if (view_month == 13) {
+            view_month = 1;
+            ++view_year;
+        }
+    } else {
+        ++view_year;
+    }
+    update_tiles(view_year, view_month);
 }
 
 void Calendar::resize_event(GUI::ResizeEvent& event)
@@ -332,20 +366,19 @@ void Calendar::update_tiles(unsigned view_year, unsigned view_month)
     update();
 }
 
-DeprecatedString Calendar::formatted_date(Format format)
+ErrorOr<String> Calendar::formatted_date(Format format)
 {
     switch (format) {
     case ShortMonthYear:
-        return DeprecatedString::formatted("{} {}", short_month_names[view_month() - 1], view_year());
+        return String::formatted("{} {}", short_month_names[view_month() - 1], view_year());
     case LongMonthYear:
-        return DeprecatedString::formatted("{} {}", long_month_names[view_month() - 1], view_year());
+        return String::formatted("{} {}", long_month_names[view_month() - 1], view_year());
     case MonthOnly:
-        return DeprecatedString::formatted("{}", long_month_names[view_month() - 1]);
+        return String::formatted("{}", long_month_names[view_month() - 1]);
     case YearOnly:
-        return DeprecatedString::number(view_year());
-    default:
-        VERIFY_NOT_REACHED();
+        return String::number(view_year());
     }
+    VERIFY_NOT_REACHED();
 }
 
 void Calendar::paint_event(GUI::PaintEvent& event)
@@ -376,7 +409,7 @@ void Calendar::paint_event(GUI::PaintEvent& event)
             22);
         y_offset += year_only_rect.height();
         painter.fill_rect(year_only_rect, palette().hover_highlight());
-        painter.draw_text(year_only_rect, formatted_date(YearOnly), medium_font->bold_variant(), Gfx::TextAlignment::Center, palette().base_text());
+        painter.draw_text(year_only_rect, formatted_date(YearOnly).release_value_but_fixme_should_propagate_errors(), medium_font->bold_variant(), Gfx::TextAlignment::Center, palette().base_text());
         painter.draw_line({ 0, y_offset }, { frame_inner_rect().width(), y_offset }, (!m_show_month_tiles ? palette().threed_shadow1() : palette().threed_shadow2()), 1);
         y_offset += 1;
         if (!m_show_month_tiles) {
@@ -391,9 +424,9 @@ void Calendar::paint_event(GUI::PaintEvent& event)
             22);
         painter.fill_rect(month_year_rect, palette().hover_highlight());
         month_year_rect.set_width(frame_inner_rect().width() / 2);
-        painter.draw_text(month_year_rect, formatted_date(MonthOnly), medium_font->bold_variant(), Gfx::TextAlignment::Center, palette().base_text());
+        painter.draw_text(month_year_rect, formatted_date(MonthOnly).release_value_but_fixme_should_propagate_errors(), medium_font->bold_variant(), Gfx::TextAlignment::Center, palette().base_text());
         month_year_rect.set_x(month_year_rect.width() + (frame_inner_rect().width() % 2 ? 1 : 0));
-        painter.draw_text(month_year_rect, formatted_date(YearOnly), medium_font->bold_variant(), Gfx::TextAlignment::Center, palette().base_text());
+        painter.draw_text(month_year_rect, formatted_date(YearOnly).release_value_but_fixme_should_propagate_errors(), medium_font->bold_variant(), Gfx::TextAlignment::Center, palette().base_text());
         y_offset += 22;
         painter.draw_line({ 0, y_offset }, { frame_inner_rect().width(), y_offset }, palette().threed_shadow1(), 1);
         y_offset += 1;
@@ -484,7 +517,7 @@ void Calendar::paint_event(GUI::PaintEvent& event)
                     x_offset,
                     y_offset + 4,
                     m_tiles[0][i].width - 4,
-                    font().glyph_height() + 4);
+                    font().pixel_size_rounded_up() + 4);
 
                 if (width > 150 && height > 150) {
                     set_font(extra_large_font);
@@ -745,6 +778,17 @@ void Calendar::mousedown_event(GUI::MouseEvent& event)
     }
 }
 
+void Calendar::mousewheel_event(GUI::MouseEvent& event)
+{
+    if (event.wheel_delta_y() > 0)
+        show_next_date();
+    else
+        show_previous_date();
+
+    if (on_scroll)
+        on_scroll();
+}
+
 void Calendar::doubleclick_event(GUI::MouseEvent& event)
 {
     int months;
@@ -769,7 +813,7 @@ size_t Calendar::day_of_week_index(DeprecatedString const& day_name)
     return AK::find_index(day_names.begin(), day_names.end(), day_name);
 }
 
-void Calendar::config_string_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, DeprecatedString const& value)
+void Calendar::config_string_did_change(StringView domain, StringView group, StringView key, StringView value)
 {
     if (domain == "Calendar" && group == "View" && key == "FirstDayOfWeek") {
         m_first_day_of_week = static_cast<DayOfWeek>(day_of_week_index(value));
@@ -780,7 +824,7 @@ void Calendar::config_string_did_change(DeprecatedString const& domain, Deprecat
     }
 }
 
-void Calendar::config_i32_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, i32 value)
+void Calendar::config_i32_did_change(StringView domain, StringView group, StringView key, i32 value)
 {
     if (domain == "Calendar" && group == "View" && key == "WeekendLength") {
         m_weekend_length = value;

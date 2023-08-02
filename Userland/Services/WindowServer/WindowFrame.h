@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/Forward.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/RefPtr.h>
 #include <LibCore/Forward.h>
 #include <LibGfx/Forward.h>
@@ -43,6 +42,8 @@ public:
         bool m_dirty { true };
     };
     friend class RenderedCache;
+
+    static Gfx::IntRect frame_rect_for_window(Window&, Gfx::IntRect const&);
 
     static void reload_config();
 
@@ -93,16 +94,9 @@ public:
     void set_has_alpha_channel(bool value) { m_has_alpha_channel = value; }
     bool has_shadow() const;
 
-    void set_opacity(float);
-    float opacity() const { return m_opacity; }
-
     bool is_opaque() const
     {
-        if (opacity() < 1.0f)
-            return false;
-        if (has_alpha_channel())
-            return false;
-        return true;
+        return !has_alpha_channel();
     }
 
     void set_dirty(bool re_render_shadow = false)
@@ -138,7 +132,7 @@ private:
     Gfx::IntRect leftmost_titlebar_button_rect() const;
 
     Window& m_window;
-    NonnullOwnPtrVector<Button> m_buttons;
+    Vector<NonnullOwnPtr<Button>> m_buttons;
     Button* m_close_button { nullptr };
     Button* m_maximize_button { nullptr };
     Button* m_minimize_button { nullptr };
@@ -147,7 +141,6 @@ private:
 
     RefPtr<Core::Timer> m_flash_timer;
     size_t m_flash_counter { 0 };
-    float m_opacity { 1 };
     bool m_has_alpha_channel { false };
 };
 

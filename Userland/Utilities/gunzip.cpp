@@ -6,22 +6,10 @@
 
 #include <LibCompress/Gzip.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
 #include <unistd.h>
-
-static ErrorOr<void> decompress_file(NonnullOwnPtr<Core::Stream::File> input_stream, Core::Stream::Stream& output_stream)
-{
-    auto gzip_stream = Compress::GzipDecompressor { move(input_stream) };
-
-    auto buffer = TRY(ByteBuffer::create_uninitialized(4096));
-    while (!gzip_stream.is_eof()) {
-        auto span = TRY(gzip_stream.read(buffer));
-        TRY(output_stream.write_entire_buffer(span));
-    }
-
-    return {};
-}
 
 ErrorOr<int> serenity_main(Main::Arguments args)
 {
@@ -50,10 +38,8 @@ ErrorOr<int> serenity_main(Main::Arguments args)
             output_filename = filename;
         }
 
-        auto input_stream_result = TRY(Core::Stream::File::open(input_filename, Core::Stream::OpenMode::Read));
-        auto output_stream = write_to_stdout ? TRY(Core::Stream::File::standard_output()) : TRY(Core::Stream::File::open(output_filename, Core::Stream::OpenMode::Write));
-
-        TRY(decompress_file(move(input_stream_result), *output_stream));
+        auto output_stream = write_to_stdout ? TRY(Core::File::standard_output()) : TRY(Core::File::open(output_filename, Core::File::OpenMode::Write));
+        TRY(Compress::GzipDecompressor::decompress_file(input_filename, move(output_stream)));
 
         if (!keep_input_files)
             TRY(Core::System::unlink(input_filename));

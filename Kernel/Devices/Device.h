@@ -43,7 +43,7 @@ public:
     MinorNumber minor() const { return m_minor; }
 
     virtual ErrorOr<NonnullOwnPtr<KString>> pseudo_path(OpenFileDescription const&) const override;
-    virtual ErrorOr<NonnullLockRefPtr<OpenFileDescription>> open(int options) override;
+    virtual ErrorOr<NonnullRefPtr<OpenFileDescription>> open(int options) override;
 
     UserID uid() const { return m_uid; }
     GroupID gid() const { return m_gid; }
@@ -96,10 +96,10 @@ private:
 protected:
     // FIXME: This pointer will be eventually removed after all nodes in /sys/dev/block/ and
     // /sys/dev/char/ are symlinks.
-    LockRefPtr<SysFSDeviceComponent> m_sysfs_component;
+    RefPtr<SysFSDeviceComponent> m_sysfs_component;
 
-    LockRefPtr<SysFSSymbolicLinkDeviceComponent> m_symlink_sysfs_component;
-    LockRefPtr<SysFSDirectory> m_sysfs_device_directory;
+    RefPtr<SysFSSymbolicLinkDeviceComponent> m_symlink_sysfs_component;
+    RefPtr<SysFSDirectory> m_sysfs_device_directory;
 };
 
 }

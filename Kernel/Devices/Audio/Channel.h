@@ -7,10 +7,6 @@
 #pragma once
 
 #include <Kernel/Devices/CharacterDevice.h>
-#include <Kernel/Interrupts/IRQHandler.h>
-#include <Kernel/Memory/PhysicalPage.h>
-#include <Kernel/PhysicalAddress.h>
-#include <Kernel/WaitQueue.h>
 
 namespace Kernel {
 
@@ -20,7 +16,7 @@ class AudioChannel final
     friend class DeviceManagement;
 
 public:
-    static NonnullLockRefPtr<AudioChannel> must_create(AudioController const&, size_t channel_index);
+    static ErrorOr<NonnullRefPtr<AudioChannel>> create(AudioController const&, size_t channel_index);
     virtual ~AudioChannel() override = default;
 
     // ^CharacterDevice

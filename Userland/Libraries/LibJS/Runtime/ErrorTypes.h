@@ -52,7 +52,6 @@
     M(IntlInvalidTime, "Time value must be between -8.64E15 and 8.64E15")                                                               \
     M(IntlInvalidUnit, "Unit {} is not a valid time unit")                                                                              \
     M(IntlMinimumExceedsMaximum, "Minimum value {} is larger than maximum value {}")                                                    \
-    M(IntlNumberIsNaN, "{} must not be NaN")                                                                                            \
     M(IntlNumberIsNaNOrInfinity, "Number must not be NaN or Infinity")                                                                  \
     M(IntlNumberIsNaNOrOutOfRange, "Value {} is NaN or is not between {} and {}")                                                       \
     M(IntlOptionUndefined, "Option {} must be defined when option {} is {}")                                                            \
@@ -101,6 +100,8 @@
     M(NotIterable, "{} is not iterable")                                                                                                \
     M(NotObjectCoercible, "{} cannot be converted to an object")                                                                        \
     M(NotUndefined, "{} is not undefined")                                                                                              \
+    M(NumberIsNaN, "{} must not be NaN")                                                                                                \
+    M(NumberIsNegative, "{} must not be negative")                                                                                      \
     M(ObjectDefineOwnPropertyReturnedFalse, "Object's [[DefineOwnProperty]] method returned false")                                     \
     M(ObjectDeleteReturnedFalse, "Object's [[Delete]] method returned false")                                                           \
     M(ObjectFreezeFailed, "Could not freeze object")                                                                                    \
@@ -271,6 +272,8 @@
     M(TemporalInvalidYearMonthStringUTCDesignator, "Invalid year month string '{}': must not contain a UTC designator")                 \
     M(TemporalInvalidZonedDateTimeOffset, "Invalid offset for the provided date and time in the current time zone")                     \
     M(TemporalInvalidZonedDateTimeString, "Invalid zoned date time string '{}'")                                                        \
+    M(TemporalOnlyISO8601WithMonthDayString, "MM-DD string format can only be used with the iso8601 calendar")                          \
+    M(TemporalOnlyISO8601WithYearMonthString, "YYYY-MM string format can only be used with the iso8601 calendar")                       \
     M(TemporalMissingOptionsObject, "Required options object is missing or undefined")                                                  \
     M(TemporalMissingStartingPoint, "A starting point is required for balancing {}")                                                    \
     M(TemporalMissingUnits, "One or both of smallestUnit or largestUnit is required")                                                   \

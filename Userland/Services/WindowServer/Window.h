@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -120,7 +120,7 @@ public:
 
     WindowTileType tile_type() const { return m_tile_type; }
     bool is_tiled() const { return m_tile_type != WindowTileType::None; }
-    void set_tiled(WindowTileType);
+    void set_tiled(WindowTileType, Optional<Screen const&> = {});
     WindowTileType tile_type_based_on_rect(Gfx::IntRect const&) const;
     void check_untile_due_to_resize(Gfx::IntRect const&);
     bool set_untiled();
@@ -152,9 +152,6 @@ public:
     void set_title(DeprecatedString const&);
 
     DeprecatedString computed_title() const;
-
-    float opacity() const { return m_opacity; }
-    void set_opacity(float);
 
     void set_hit_testing_enabled(bool value)
     {
@@ -279,13 +276,13 @@ public:
     void set_base_size(Gfx::IntSize size) { m_base_size = size; }
 
     Gfx::Bitmap const& icon() const { return *m_icon; }
-    void set_icon(NonnullRefPtr<Gfx::Bitmap>&& icon) { m_icon = move(icon); }
+    void set_icon(NonnullRefPtr<Gfx::Bitmap const>&& icon) { m_icon = move(icon); }
 
     void set_default_icon();
 
     Cursor const* cursor() const { return (m_cursor_override ? m_cursor_override : m_cursor).ptr(); }
-    void set_cursor(RefPtr<Cursor> cursor) { m_cursor = move(cursor); }
-    void set_cursor_override(RefPtr<Cursor> cursor) { m_cursor_override = move(cursor); }
+    void set_cursor(RefPtr<Cursor const> cursor) { m_cursor = move(cursor); }
+    void set_cursor_override(RefPtr<Cursor const> cursor) { m_cursor_override = move(cursor); }
     void remove_cursor_override() { m_cursor_override = nullptr; }
 
     void request_update(Gfx::IntRect const&, bool ignore_occlusion = false);
@@ -327,11 +324,7 @@ public:
 
     bool is_opaque() const
     {
-        if (opacity() < 1.0f)
-            return false;
-        if (has_alpha_channel())
-            return false;
-        return true;
+        return !has_alpha_channel();
     }
 
     Gfx::DisjointIntRectSet& opaque_rects() { return m_opaque_rects; }
@@ -376,6 +369,9 @@ public:
     void remove_all_stealing() { m_stealable_by_client_ids.clear(); }
     bool is_stealable_by_client(i32 client_id) const { return m_stealable_by_client_ids.contains_slow(client_id); }
 
+    void send_resize_event_to_client();
+    void send_move_event_to_client();
+
 private:
     Window(ConnectionFromClient&, WindowType, WindowMode, int window_id, bool minimizable, bool closeable, bool frameless, bool resizable, bool fullscreen, Window* parent_window = nullptr);
     Window(Core::Object&, WindowType);
@@ -386,6 +382,7 @@ private:
     void add_child_window(Window&);
     void ensure_window_menu();
     void update_window_menu_items();
+    void tile_type_changed(Optional<Screen const&> = {});
     ErrorOr<Optional<DeprecatedString>> compute_title_username(ConnectionFromClient* client);
 
     ConnectionFromClient* m_client { nullptr };
@@ -440,14 +437,13 @@ private:
     i32 m_last_backing_store_serial { -1 };
     int m_window_id { -1 };
     i32 m_client_id { -1 };
-    float m_opacity { 1 };
     float m_alpha_hit_threshold { 0.0f };
     Gfx::IntSize m_size_increment;
     Gfx::IntSize m_base_size;
     Gfx::IntSize m_minimum_size { 0, 0 };
-    NonnullRefPtr<Gfx::Bitmap> m_icon;
-    RefPtr<Cursor> m_cursor;
-    RefPtr<Cursor> m_cursor_override;
+    NonnullRefPtr<Gfx::Bitmap const> m_icon;
+    RefPtr<Cursor const> m_cursor;
+    RefPtr<Cursor const> m_cursor_override;
     WindowFrame m_frame;
     Gfx::DisjointIntRectSet m_pending_paint_rects;
     Gfx::IntRect m_rect_in_applet_area;

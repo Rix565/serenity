@@ -9,7 +9,6 @@
 
 #include <AK/URL.h>
 #include <LibCore/ElapsedTimer.h>
-#include <LibCore/Stream.h>
 #include <LibGUI/ImageWidget.h>
 #include <LibGUI/Progressbar.h>
 #include <LibGUI/Widget.h>
@@ -26,7 +25,7 @@ public:
 private:
     explicit DownloadWidget(const URL&);
 
-    void did_progress(Optional<u32> total_size, u32 downloaded_size);
+    void did_progress(Optional<u64> total_size, u64 downloaded_size);
     void did_finish(bool success);
 
     URL m_url;
@@ -38,7 +37,7 @@ private:
     RefPtr<GUI::Button> m_close_button;
     RefPtr<GUI::CheckBox> m_close_on_finish_checkbox;
     RefPtr<GUI::ImageWidget> m_browser_image;
-    OwnPtr<Core::Stream::File> m_output_file_stream;
+    OwnPtr<Core::File> m_output_file_stream;
     Core::ElapsedTimer m_elapsed_timer;
 };
 

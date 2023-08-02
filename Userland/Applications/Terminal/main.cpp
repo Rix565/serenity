@@ -6,14 +6,16 @@
 
 #include <AK/FixedArray.h>
 #include <AK/QuickSort.h>
+#include <AK/TypedTransfer.h>
 #include <AK/URL.h>
 #include <LibConfig/Client.h>
 #include <LibConfig/Listener.h>
+#include <LibCore/Account.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/DirIterator.h>
-#include <LibCore/File.h>
+#include <LibCore/Directory.h>
 #include <LibCore/System.h>
 #include <LibDesktop/Launcher.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/ActionGroup.h>
 #include <LibGUI/Application.h>
@@ -35,17 +37,7 @@
 #include <LibGfx/Palette.h>
 #include <LibMain/Main.h>
 #include <LibVT/TerminalWidget.h>
-#include <assert.h>
-#include <errno.h>
 #include <pty.h>
-#include <pwd.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/ioctl.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 class TerminalChangeListener : public Config::Listener {
 public:
@@ -54,7 +46,7 @@ public:
     {
     }
 
-    virtual void config_bool_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, bool value) override
+    virtual void config_bool_did_change(StringView domain, StringView group, StringView key, bool value) override
     {
         VERIFY(domain == "Terminal");
 
@@ -68,7 +60,7 @@ public:
         }
     }
 
-    virtual void config_string_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, DeprecatedString const& value) override
+    virtual void config_string_did_change(StringView domain, StringView group, StringView key, StringView value) override
     {
         VERIFY(domain == "Terminal");
 
@@ -94,7 +86,7 @@ public:
         }
     }
 
-    virtual void config_i32_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, i32 value) override
+    virtual void config_i32_did_change(StringView domain, StringView group, StringView key, i32 value) override
     {
         VERIFY(domain == "Terminal");
 
@@ -111,45 +103,45 @@ private:
     VT::TerminalWidget& m_parent_terminal;
 };
 
-static void utmp_update(DeprecatedString const& tty, pid_t pid, bool create)
+static ErrorOr<void> utmp_update(StringView tty, pid_t pid, bool create)
 {
-    int utmpupdate_pid = fork();
-    if (utmpupdate_pid < 0) {
-        perror("fork");
-        return;
-    }
-    if (utmpupdate_pid == 0) {
-        // Be careful here! Because fork() only clones one thread it's
-        // possible that we deadlock on anything involving a mutex,
-        // including the heap! So resort to low-level APIs
-        char pid_str[32];
-        snprintf(pid_str, sizeof(pid_str), "%d", pid);
-        execl("/bin/utmpupdate", "/bin/utmpupdate", "-f", "Terminal", "-p", pid_str, (create ? "-c" : "-d"), tty.characters(), nullptr);
-    } else {
-    wait_again:
-        int status = 0;
-        if (waitpid(utmpupdate_pid, &status, 0) < 0) {
-            int err = errno;
-            if (err == EINTR)
-                goto wait_again;
-            perror("waitpid");
-            return;
+    auto pid_string = TRY(String::number(pid));
+    Array utmp_update_command {
+        "-f"sv,
+        "Terminal"sv,
+        "-p"sv,
+        pid_string.bytes_as_string_view(),
+        (create ? "-c"sv : "-d"sv),
+        tty,
+    };
+
+    auto utmpupdate_pid = TRY(Core::Process::spawn("/bin/utmpupdate"sv, utmp_update_command, {}, Core::Process::KeepAsChild::Yes));
+
+    Core::System::WaitPidResult status;
+    auto wait_successful = false;
+    while (!wait_successful) {
+        auto result = Core::System::waitpid(utmpupdate_pid, 0);
+        if (result.is_error() && result.error().code() != EINTR) {
+            return result.release_error();
+        } else if (!result.is_error()) {
+            status = result.release_value();
+            wait_successful = true;
         }
-        if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
-            dbgln("Terminal: utmpupdate exited with status {}", WEXITSTATUS(status));
-        else if (WIFSIGNALED(status))
-            dbgln("Terminal: utmpupdate exited due to unhandled signal {}", WTERMSIG(status));
     }
+
+    if (WIFEXITED(status.status) && WEXITSTATUS(status.status) != 0)
+        dbgln("Terminal: utmpupdate exited with status {}", WEXITSTATUS(status.status));
+    else if (WIFSIGNALED(status.status))
+        dbgln("Terminal: utmpupdate exited due to unhandled signal {}", WTERMSIG(status.status));
+
+    return {};
 }
 
-static ErrorOr<void> run_command(DeprecatedString command, bool keep_open)
+static ErrorOr<void> run_command(StringView command, bool keep_open)
 {
-    DeprecatedString shell = "/bin/Shell";
-    auto* pw = getpwuid(getuid());
-    if (pw && pw->pw_shell) {
-        shell = pw->pw_shell;
-    }
-    endpwent();
+    auto shell = TRY(String::from_deprecated_string(TRY(Core::Account::self(Core::Account::Read::PasswdOnly)).shell()));
+    if (shell.is_empty())
+        shell = TRY("/bin/Shell"_string);
 
     Vector<StringView> arguments;
     arguments.append(shell);
@@ -175,12 +167,10 @@ static ErrorOr<NonnullRefPtr<GUI::Window>> create_find_window(VT::TerminalWidget
     auto main_widget = TRY(window->set_main_widget<GUI::Widget>());
     main_widget->set_fill_with_background_color(true);
     main_widget->set_background_role(ColorRole::Button);
-    (void)TRY(main_widget->try_set_layout<GUI::VerticalBoxLayout>());
-    main_widget->layout()->set_margins(4);
+    TRY(main_widget->try_set_layout<GUI::VerticalBoxLayout>(4));
 
     auto find = TRY(main_widget->try_add<GUI::Widget>());
-    (void)TRY(find->try_set_layout<GUI::HorizontalBoxLayout>());
-    find->layout()->set_margins(4);
+    TRY(find->try_set_layout<GUI::HorizontalBoxLayout>(4));
     find->set_fixed_height(30);
 
     auto find_textbox = TRY(find->try_add<GUI::TextBox>());
@@ -203,8 +193,8 @@ static ErrorOr<NonnullRefPtr<GUI::Window>> create_find_window(VT::TerminalWidget
         find_forwards->click();
     };
 
-    auto match_case = TRY(main_widget->try_add<GUI::CheckBox>("Case sensitive"));
-    auto wrap_around = TRY(main_widget->try_add<GUI::CheckBox>("Wrap around"));
+    auto match_case = TRY(main_widget->try_add<GUI::CheckBox>(TRY("Case sensitive"_string)));
+    auto wrap_around = TRY(main_widget->try_add<GUI::CheckBox>(TRY("Wrap around"_string)));
 
     find_backwards->on_click = [&terminal, find_textbox, match_case, wrap_around](auto) {
         auto needle = find_textbox->text();
@@ -241,19 +231,22 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::pledge("stdio tty rpath cpath wpath recvfd sendfd proc exec unix sigaction"));
 
     struct sigaction act;
-    memset(&act, 0, sizeof(act));
+    act.sa_mask = 0;
+    // Do not trust that both function pointers overlap.
+    act.sa_sigaction = nullptr;
+
     act.sa_flags = SA_NOCLDWAIT;
     act.sa_handler = SIG_IGN;
 
     TRY(Core::System::sigaction(SIGCHLD, &act, nullptr));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
     TRY(Core::System::pledge("stdio tty rpath cpath wpath recvfd sendfd proc exec unix"));
 
     Config::pledge_domain("Terminal");
 
-    char const* command_to_execute = nullptr;
+    StringView command_to_execute;
     bool keep_open = false;
 
     Core::ArgsParser args_parser;
@@ -262,20 +255,19 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     args_parser.parse(arguments);
 
-    if (keep_open && !command_to_execute) {
+    if (keep_open && command_to_execute.is_empty()) {
         warnln("Option -k can only be used in combination with -e.");
         return 1;
     }
 
     int ptm_fd;
     pid_t shell_pid = forkpty(&ptm_fd, nullptr, nullptr, nullptr);
-    if (shell_pid < 0) {
-        perror("forkpty");
-        return 1;
-    }
+    if (shell_pid < 0)
+        return Error::from_errno(errno);
+
+    // We're the child process; run the startup command.
     if (shell_pid == 0) {
-        close(ptm_fd);
-        if (command_to_execute)
+        if (!command_to_execute.is_empty())
             TRY(run_command(command_to_execute, keep_open));
         else
             TRY(run_command(Config::read_string("Terminal"sv, "Startup"sv, "Command"sv, ""sv), false));
@@ -283,7 +275,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     }
 
     auto ptsname = TRY(Core::System::ptsname(ptm_fd));
-    utmp_update(ptsname, shell_pid, true);
+    TRY(utmp_update(ptsname, shell_pid, true));
 
     auto app_icon = GUI::Icon::default_icon("app-terminal"sv);
 
@@ -343,7 +335,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(terminal->context_menu().try_add_separator());
     TRY(terminal->context_menu().try_add_action(open_settings_action));
 
-    auto file_menu = TRY(window->try_add_menu("&File"));
+    auto file_menu = TRY(window->try_add_menu("&File"_short_string));
     TRY(file_menu->try_add_action(GUI::Action::create("Open New &Terminal", { Mod_Ctrl | Mod_Shift, Key_N }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-terminal.png"sv)), [&](auto&) {
         GUI::Process::spawn_or_show_error(window, "/bin/Terminal"sv);
     })));
@@ -357,30 +349,32 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     };
 
     auto shell_child_process_count = [&] {
-        Core::DirIterator iterator(DeprecatedString::formatted("/proc/{}/children", shell_pid), Core::DirIterator::Flags::SkipParentAndBaseDir);
         int background_process_count = 0;
-        while (iterator.has_next()) {
+        Core::Directory::for_each_entry(String::formatted("/proc/{}/children", shell_pid).release_value_but_fixme_should_propagate_errors(), Core::DirIterator::Flags::SkipParentAndBaseDir, [&](auto&, auto&) {
             ++background_process_count;
-            (void)iterator.next_path();
-        }
+            return IterationDecision::Continue;
+        }).release_value_but_fixme_should_propagate_errors();
         return background_process_count;
     };
 
     auto check_terminal_quit = [&]() -> GUI::Dialog::ExecResult {
         if (!should_confirm_close)
             return GUI::MessageBox::ExecResult::OK;
-        Optional<DeprecatedString> close_message;
+        Optional<String> close_message;
+        auto title = "Running Process"sv;
         if (tty_has_foreground_process()) {
-            close_message = "There is still a process running in this terminal. Closing the terminal will kill it.";
+            close_message = "Close Terminal and kill its foreground process?"_string.release_value_but_fixme_should_propagate_errors();
         } else {
             auto child_process_count = shell_child_process_count();
-            if (child_process_count > 1)
-                close_message = DeprecatedString::formatted("There are {} background processes running in this terminal. Closing the terminal may kill them.", child_process_count);
-            else if (child_process_count == 1)
-                close_message = "There is a background process running in this terminal. Closing the terminal may kill it.";
+            if (child_process_count > 1) {
+                title = "Running Processes"sv;
+                close_message = String::formatted("Close Terminal and kill its {} background processes?", child_process_count).release_value_but_fixme_should_propagate_errors();
+            } else if (child_process_count == 1) {
+                close_message = "Close Terminal and kill its background process?"_string.release_value_but_fixme_should_propagate_errors();
+            }
         }
         if (close_message.has_value())
-            return GUI::MessageBox::show(window, *close_message, "Close this terminal?"sv, GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::OKCancel);
+            return GUI::MessageBox::show(window, *close_message, title, GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::OKCancel);
         return GUI::MessageBox::ExecResult::OK;
     };
 
@@ -390,7 +384,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             GUI::Application::the()->quit();
     })));
 
-    auto edit_menu = TRY(window->try_add_menu("&Edit"));
+    auto edit_menu = TRY(window->try_add_menu("&Edit"_short_string));
     TRY(edit_menu->try_add_action(terminal->copy_action()));
     TRY(edit_menu->try_add_action(terminal->paste_action()));
     TRY(edit_menu->try_add_separator());
@@ -400,7 +394,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             find_window->move_to_front();
         })));
 
-    auto view_menu = TRY(window->try_add_menu("&View"));
+    auto view_menu = TRY(window->try_add_menu("&View"_short_string));
     TRY(view_menu->try_add_action(GUI::CommonActions::make_fullscreen_action([&](auto&) {
         window->set_fullscreen(!window->is_fullscreen());
     })));
@@ -409,7 +403,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto adjust_font_size = [&](float adjustment) {
         auto& font = terminal->font();
         auto new_size = max(5, font.presentation_size() + adjustment);
-        if (auto new_font = Gfx::FontDatabase::the().get(font.family(), new_size, font.weight(), font.slope())) {
+        if (auto new_font = Gfx::FontDatabase::the().get(font.family(), new_size, font.weight(), font.width(), font.slope())) {
             terminal->set_font_and_resize_to_fit(*new_font);
             terminal->apply_size_increments_to_window(*window);
             window->resize(terminal->size());
@@ -424,10 +418,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         adjust_font_size(-1);
     })));
 
-    auto help_menu = TRY(window->try_add_menu("&Help"));
+    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
-        Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Terminal.md"), "/bin/Help");
+        Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Applications/Terminal.md"), "/bin/Help");
     })));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Terminal", app_icon, window)));
 
@@ -471,6 +465,6 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         modified_state_check_timer->start();
     int result = app->exec();
     dbgln("Exiting terminal, updating utmp");
-    utmp_update(ptsname, 0, false);
+    TRY(utmp_update(ptsname, 0, false));
     return result;
 }

@@ -8,19 +8,16 @@
 #include <AK/JsonArray.h>
 #include <AK/LexicalPath.h>
 #include <AK/SourceGenerator.h>
-#include <LibGemini/Document.h>
-#include <LibGfx/ImageDecoder.h>
-#include <LibMarkdown/Document.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/DOM/DocumentLoading.h>
 #include <LibWeb/DOM/ElementFactory.h>
 #include <LibWeb/DOM/Text.h>
-#include <LibWeb/HTML/BrowsingContext.h>
-#include <LibWeb/HTML/HTMLIFrameElement.h>
 #include <LibWeb/HTML/NavigationParams.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
 #include <LibWeb/Loader/FrameLoader.h>
 #include <LibWeb/Loader/ResourceLoader.h>
+#include <LibWeb/Namespace.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/ImageCodecPlugin.h>
 #include <LibWeb/XML/XMLDocumentBuilder.h>
@@ -46,160 +43,6 @@ FrameLoader::FrameLoader(HTML::BrowsingContext& browsing_context)
 
 FrameLoader::~FrameLoader() = default;
 
-static bool build_markdown_document(DOM::Document& document, ByteBuffer const& data)
-{
-    auto markdown_document = Markdown::Document::parse(data);
-    if (!markdown_document)
-        return false;
-
-    auto extra_head_contents = R"~~~(
-<style>
-    .zoomable {
-        cursor: zoom-in;
-        max-width: 100%;
-    }
-    .zoomable.zoomed-in {
-        cursor: zoom-out;
-        max-width: none;
-    }
-</style>
-<script>
-    function imageClickEventListener(event) {
-        let image = event.target;
-        if (image.classList.contains("zoomable")) {
-            image.classList.toggle("zoomed-in");
-        }
-    }
-    function processImages() {
-        let images = document.querySelectorAll("img");
-        let windowWidth = window.innerWidth;
-        images.forEach((image) => {
-            if (image.naturalWidth > windowWidth) {
-                image.classList.add("zoomable");
-            } else {
-                image.classList.remove("zoomable");
-                image.classList.remove("zoomed-in");
-            }
-
-            image.addEventListener("click", imageClickEventListener);
-        });
-    }
-
-    document.addEventListener("load", () => {
-        processImages();
-    });
-
-    window.addEventListener("resize", () => {
-        processImages();
-    });
-</script>
-)~~~"sv;
-
-    auto parser = HTML::HTMLParser::create(document, markdown_document->render_to_html(extra_head_contents), "utf-8");
-    parser->run(document.url());
-    return true;
-}
-
-static bool build_text_document(DOM::Document& document, ByteBuffer const& data)
-{
-    auto html_element = document.create_element("html").release_value();
-    MUST(document.append_child(html_element));
-
-    auto head_element = document.create_element("head").release_value();
-    MUST(html_element->append_child(head_element));
-    auto title_element = document.create_element("title").release_value();
-    MUST(head_element->append_child(title_element));
-
-    auto title_text = document.create_text_node(document.url().basename());
-    MUST(title_element->append_child(title_text));
-
-    auto body_element = document.create_element("body").release_value();
-    MUST(html_element->append_child(body_element));
-
-    auto pre_element = document.create_element("pre").release_value();
-    MUST(body_element->append_child(pre_element));
-
-    MUST(pre_element->append_child(document.create_text_node(DeprecatedString::copy(data))));
-    return true;
-}
-
-static bool build_image_document(DOM::Document& document, ByteBuffer const& data)
-{
-    auto image = Platform::ImageCodecPlugin::the().decode_image(data);
-    if (!image.has_value() || image->frames.is_empty())
-        return false;
-    auto const& frame = image->frames[0];
-    auto const& bitmap = frame.bitmap;
-    if (!bitmap)
-        return false;
-
-    auto html_element = document.create_element("html").release_value();
-    MUST(document.append_child(html_element));
-
-    auto head_element = document.create_element("head").release_value();
-    MUST(html_element->append_child(head_element));
-    auto title_element = document.create_element("title").release_value();
-    MUST(head_element->append_child(title_element));
-
-    auto basename = LexicalPath::basename(document.url().path());
-    auto title_text = document.heap().allocate<DOM::Text>(document.realm(), document, DeprecatedString::formatted("{} [{}x{}]", basename, bitmap->width(), bitmap->height())).release_allocated_value_but_fixme_should_propagate_errors();
-    MUST(title_element->append_child(*title_text));
-
-    auto body_element = document.create_element("body").release_value();
-    MUST(html_element->append_child(body_element));
-
-    auto image_element = document.create_element("img").release_value();
-    MUST(image_element->set_attribute(HTML::AttributeNames::src, document.url().to_deprecated_string()));
-    MUST(body_element->append_child(image_element));
-
-    return true;
-}
-
-static bool build_gemini_document(DOM::Document& document, ByteBuffer const& data)
-{
-    StringView gemini_data { data };
-    auto gemini_document = Gemini::Document::parse(gemini_data, document.url());
-    DeprecatedString html_data = gemini_document->render_to_html();
-
-    dbgln_if(GEMINI_DEBUG, "Gemini data:\n\"\"\"{}\"\"\"", gemini_data);
-    dbgln_if(GEMINI_DEBUG, "Converted to HTML:\n\"\"\"{}\"\"\"", html_data);
-
-    auto parser = HTML::HTMLParser::create(document, html_data, "utf-8");
-    parser->run(document.url());
-    return true;
-}
-
-static bool build_xml_document(DOM::Document& document, ByteBuffer const& data)
-{
-
-    XML::Parser parser(data, { .resolve_external_resource = resolve_xml_resource });
-    XMLDocumentBuilder builder { document };
-    auto result = parser.parse_with_listener(builder);
-    return !result.is_error() && !builder.has_error();
-}
-
-bool FrameLoader::parse_document(DOM::Document& document, ByteBuffer const& data)
-{
-    auto& mime_type = document.content_type();
-    if (mime_type == "text/html" || mime_type == "image/svg+xml") {
-        auto parser = HTML::HTMLParser::create_with_uncertain_encoding(document, data);
-        parser->run(document.url());
-        return true;
-    }
-    if (mime_type.ends_with("+xml"sv) || mime_type.is_one_of("text/xml", "application/xml"))
-        return build_xml_document(document, data);
-    if (mime_type.starts_with("image/"sv))
-        return build_image_document(document, data);
-    if (mime_type == "text/plain" || mime_type == "application/json")
-        return build_text_document(document, data);
-    if (mime_type == "text/markdown")
-        return build_markdown_document(document, data);
-    if (mime_type == "text/gemini")
-        return build_gemini_document(document, data);
-
-    return false;
-}
-
 bool FrameLoader::load(LoadRequest& request, Type type)
 {
     if (!request.is_valid()) {
@@ -207,16 +50,18 @@ bool FrameLoader::load(LoadRequest& request, Type type)
         return false;
     }
 
-    if (!m_browsing_context.is_frame_nesting_allowed(request.url())) {
+    if (!m_browsing_context->is_frame_nesting_allowed(request.url())) {
         dbgln("No further recursion is allowed for the frame, abort load!");
         return false;
     }
+
+    request.set_main_resource(true);
 
     auto& url = request.url();
 
     if (type == Type::Navigation || type == Type::Reload || type == Type::Redirect) {
         if (auto* page = browsing_context().page()) {
-            if (&page->top_level_browsing_context() == &m_browsing_context)
+            if (&page->top_level_browsing_context() == m_browsing_context)
                 page->client().page_did_start_loading(url, type == Type::Redirect);
         }
     }
@@ -235,10 +80,6 @@ bool FrameLoader::load(LoadRequest& request, Type type)
     set_resource(ResourceLoader::the().load_resource(Resource::Type::Generic, request));
 
     if (type == Type::IFrame)
-        return true;
-
-    auto* document = browsing_context().active_document();
-    if (document && document->has_active_favicon())
         return true;
 
     if (url.scheme() == "http" || url.scheme() == "https") {
@@ -312,11 +153,9 @@ void FrameLoader::load_html(StringView html, const AK::URL& url)
         .coop_enforcement_result = HTML::CrossOriginOpenerPolicyEnforcementResult {},
         .reserved_environment = {},
         .browsing_context = browsing_context(),
+        .navigable = nullptr,
     };
-    auto document = DOM::Document::create_and_initialize(
-        DOM::Document::Type::HTML,
-        "text/html",
-        move(navigation_params));
+    auto document = DOM::Document::create_and_initialize(DOM::Document::Type::HTML, "text/html", move(navigation_params)).release_value_but_fixme_should_propagate_errors();
     browsing_context().set_active_document(document);
 
     auto parser = HTML::HTMLParser::create(document, html, "utf-8");
@@ -366,6 +205,34 @@ void FrameLoader::load_favicon(RefPtr<Gfx::Bitmap> bitmap)
 
 void FrameLoader::resource_did_load()
 {
+    // This prevents us setting up the document of a removed browsing context container (BCC, e.g. <iframe>), which will cause a crash
+    // if the document contains a script that inserts another BCC as this will use the stale browsing context it previously set up,
+    // even if it's reinserted.
+    // Example:
+    // index.html:
+    // ```
+    // <body><script>
+    //     var i = document.createElement("iframe");
+    //     i.src = "b.html";
+    //     document.body.append(i);
+    //     i.remove();
+    // </script>
+    // ```
+    // b.html:
+    // ```
+    // <body><script>
+    //     var i = document.createElement("iframe");
+    //     document.body.append(i);
+    // </script>
+    // ```
+    // Required by Prebid.js, which does this by inserting an <iframe> into a <div> in the active document via innerHTML,
+    // then transfers it to the <html> element:
+    // https://github.com/prebid/Prebid.js/blob/7b7389c5abdd05626f71c3df606a93713d1b9f85/src/utils.js#L597
+    // This is done in the spec by removing all tasks and aborting all fetches when a document is destroyed:
+    // https://html.spec.whatwg.org/multipage/document-lifecycle.html#destroy-a-document
+    if (browsing_context().has_been_discarded())
+        return;
+
     auto url = resource()->url();
 
     // For 3xx (Redirection) responses, the Location value refers to the preferred target resource for automatically redirecting the request.
@@ -412,12 +279,9 @@ void FrameLoader::resource_did_load()
         .coop_enforcement_result = HTML::CrossOriginOpenerPolicyEnforcementResult {},
         .reserved_environment = {},
         .browsing_context = browsing_context(),
+        .navigable = nullptr,
     };
-    auto document = DOM::Document::create_and_initialize(
-        DOM::Document::Type::HTML,
-        "text/html",
-        move(navigation_params));
-
+    auto document = DOM::Document::create_and_initialize(DOM::Document::Type::HTML, "text/html", move(navigation_params)).release_value_but_fixme_should_propagate_errors();
     document->set_url(url);
     document->set_encoding(resource()->encoding());
     document->set_content_type(resource()->mime_type());
@@ -442,6 +306,10 @@ void FrameLoader::resource_did_load()
 
 void FrameLoader::resource_did_fail()
 {
+    // See comment in resource_did_load() about why this is done.
+    if (browsing_context().has_been_discarded())
+        return;
+
     load_error_page(resource()->url(), resource()->error());
 }
 

@@ -4,6 +4,8 @@
  * Copyright (c) 2021, Mohsan Ali <mohsan0073@gmail.com>
  * Copyright (c) 2022, Mustafa Quraish <mustafa@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2023, Caoimhe Byrne <caoimhebyrne06@gmail.com>
+ * Copyright (c) 2023, MacDue <macdue@dueutil.tech>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,9 +15,79 @@
 #include <LibCore/Timer.h>
 #include <LibGUI/AbstractZoomPanWidget.h>
 #include <LibGUI/Painter.h>
-#include <LibImageDecoderClient/Client.h>
+#include <LibGfx/VectorGraphic.h>
 
 namespace ImageViewer {
+
+class Image : public RefCounted<Image> {
+public:
+    virtual Gfx::IntSize size() const = 0;
+    virtual Gfx::IntRect rect() const { return { {}, size() }; }
+
+    virtual void flip(Gfx::Orientation) = 0;
+    virtual void rotate(Gfx::RotationDirection) = 0;
+
+    virtual void draw_into(Gfx::Painter&, Gfx::IntRect const& dest, Gfx::Painter::ScalingMode) const = 0;
+
+    virtual ErrorOr<NonnullRefPtr<Gfx::Bitmap>> bitmap(Optional<Gfx::IntSize> ideal_size) const = 0;
+
+    virtual ~Image() = default;
+};
+
+class VectorImage final : public Image {
+public:
+    static NonnullRefPtr<VectorImage> create(Gfx::VectorGraphic& vector) { return adopt_ref(*new VectorImage(vector)); }
+
+    virtual Gfx::IntSize size() const override { return m_size; }
+
+    virtual void flip(Gfx::Orientation) override;
+    virtual void rotate(Gfx::RotationDirection) override;
+
+    virtual void draw_into(Gfx::Painter&, Gfx::IntRect const& dest, Gfx::Painter::ScalingMode) const override;
+
+    virtual ErrorOr<NonnullRefPtr<Gfx::Bitmap>> bitmap(Optional<Gfx::IntSize> ideal_size) const override;
+
+private:
+    VectorImage(Gfx::VectorGraphic& vector)
+        : m_vector(vector)
+        , m_size(vector.size())
+    {
+    }
+
+    void apply_transform(Gfx::AffineTransform transform)
+    {
+        m_transform = transform.multiply(m_transform);
+    }
+
+    NonnullRefPtr<Gfx::VectorGraphic> m_vector;
+    Gfx::IntSize m_size;
+    Gfx::AffineTransform m_transform;
+};
+
+class BitmapImage final : public Image {
+public:
+    static NonnullRefPtr<BitmapImage> create(Gfx::Bitmap& bitmap) { return adopt_ref(*new BitmapImage(bitmap)); }
+
+    virtual Gfx::IntSize size() const override { return m_bitmap->size(); }
+
+    virtual void flip(Gfx::Orientation) override;
+    virtual void rotate(Gfx::RotationDirection) override;
+
+    virtual void draw_into(Gfx::Painter&, Gfx::IntRect const& dest, Gfx::Painter::ScalingMode) const override;
+
+    virtual ErrorOr<NonnullRefPtr<Gfx::Bitmap>> bitmap(Optional<Gfx::IntSize>) const override
+    {
+        return m_bitmap;
+    }
+
+private:
+    BitmapImage(Gfx::Bitmap& bitmap)
+        : m_bitmap(bitmap)
+    {
+    }
+
+    NonnullRefPtr<Gfx::Bitmap> m_bitmap;
+};
 
 class ViewWidget final : public GUI::AbstractZoomPanWidget {
     C_OBJECT(ViewWidget)
@@ -29,14 +101,15 @@ public:
 
     virtual ~ViewWidget() override = default;
 
-    Gfx::Bitmap const* bitmap() const { return m_bitmap.ptr(); }
-    DeprecatedString const& path() const { return m_path; }
+    Image const* image() const { return m_image.ptr(); }
+    String const& path() const { return m_path; }
     void set_toolbar_height(int height) { m_toolbar_height = height; }
     int toolbar_height() { return m_toolbar_height; }
     bool scaled_for_first_image() { return m_scaled_for_first_image; }
     void set_scaled_for_first_image(bool val) { m_scaled_for_first_image = val; }
-    void set_path(DeprecatedString const& path);
+    void set_path(String const& path);
     void resize_window();
+    void scale_image_for_window();
     void set_scaling_mode(Gfx::Painter::ScalingMode);
 
     bool is_next_available() const;
@@ -46,11 +119,12 @@ public:
     void flip(Gfx::Orientation);
     void rotate(Gfx::RotationDirection);
     void navigate(Directions);
-    void load_from_file(DeprecatedString const&);
+    void open_file(String const&, Core::File&);
 
     Function<void()> on_doubleclick;
     Function<void(const GUI::DropEvent&)> on_drop;
-    Function<void(Gfx::Bitmap const*)> on_image_change;
+
+    Function<void(Image*)> on_image_change;
 
 private:
     ViewWidget();
@@ -60,14 +134,27 @@ private:
     virtual void mouseup_event(GUI::MouseEvent&) override;
     virtual void drag_enter_event(GUI::DragEvent&) override;
     virtual void drop_event(GUI::DropEvent&) override;
+    virtual void resize_event(GUI::ResizeEvent&) override;
 
-    void set_bitmap(Gfx::Bitmap const* bitmap);
+    void set_image(Image const* image);
     void animate();
     Vector<DeprecatedString> load_files_from_directory(DeprecatedString const& path) const;
+    ErrorOr<void> try_open_file(String const&, Core::File&);
 
-    DeprecatedString m_path;
-    RefPtr<Gfx::Bitmap> m_bitmap;
-    Optional<ImageDecoderClient::DecodedImage> m_decoded_image;
+    String m_path;
+    RefPtr<Image> m_image;
+
+    struct Animation {
+        struct Frame {
+            RefPtr<Image> image;
+            int duration { 0 };
+        };
+
+        size_t loop_count { 0 };
+        Vector<Frame> frames;
+    };
+
+    Optional<Animation> m_animation;
 
     size_t m_current_frame_index { 0 };
     size_t m_loops_completed { 0 };

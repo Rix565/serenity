@@ -11,7 +11,7 @@
 #include <AK/Types.h>
 #include <AK/UFixedBigInt.h>
 #include <Kernel/Arch/aarch64/Registers.h>
-#include <Kernel/KString.h>
+#include <Kernel/Library/KString.h>
 
 #include <AK/Platform.h>
 VALIDATE_IS_AARCH64()
@@ -270,7 +270,7 @@ AK_MAKE_ARBITRARY_SIZED_ENUM(CPUFeature, u256,
     TRBE = CPUFeature(1u) << 239u,         // Trace Buffer Extension
     SME = CPUFeature(1u) << 240u,          // Scalable Matrix Extension
 
-    __End = CPUFeature(1u) << 255u); // XXX — SENTINEL VALUE — XXX
+    __End = CPUFeature(1u) << 255u); // SENTINEL VALUE
 
 CPUFeature::Type detect_cpu_features();
 StringView cpu_feature_to_name(CPUFeature::Type const&);

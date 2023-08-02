@@ -15,6 +15,48 @@
 #include <stdio.h>
 #include <unistd.h>
 
+#define TRY_OR_THROW_PARSE_ERROR(expr) ({                                              \
+    /* Ignore -Wshadow to allow nesting the macro. */                                  \
+    AK_IGNORE_DIAGNOSTIC("-Wshadow",                                                   \
+                         auto&& _value_or_error = expr;)                               \
+    if (_value_or_error.is_error()) {                                                  \
+        AK_IGNORE_DIAGNOSTIC("-Wshadow",                                               \
+                             auto _error = _value_or_error.release_error();)           \
+        if (_error.is_errno() && _error.code() == ENOMEM)                              \
+            return create<AST::SyntaxError>("OOM"_short_string);                       \
+        return create<AST::SyntaxError>(MUST(String::formatted("Error: {}", _error))); \
+    }                                                                                  \
+    _value_or_error.release_value();                                                   \
+})
+
+#define TRY_OR_RESOLVE_TO_ERROR_STRING(expr) ({                                   \
+    /* Ignore -Wshadow to allow nesting the macro. */                             \
+    AK_IGNORE_DIAGNOSTIC("-Wshadow",                                              \
+                         auto&& _value_or_error = expr;                           \
+                         String _string_value;)                                   \
+    if (_value_or_error.is_error()) {                                             \
+        AK_IGNORE_DIAGNOSTIC("-Wshadow",                                          \
+                             auto _error = _value_or_error.release_error();)      \
+        if (_error.is_errno() && _error.code() == ENOMEM)                         \
+            _string_value = "OOM"_short_string;                                   \
+        else                                                                      \
+            _string_value = MUST(String::formatted("Error: {}", _error));         \
+    }                                                                             \
+    _value_or_error.is_error() ? _string_value : _value_or_error.release_value(); \
+})
+
+#define TRY_OR(expr, catch_expr) ({                                          \
+    /* Ignore -Wshadow to allow nesting the macro. */                        \
+    AK_IGNORE_DIAGNOSTIC("-Wshadow",                                         \
+                         auto&& _value_or_error = expr;)                     \
+    if (_value_or_error.is_error()) {                                        \
+        AK_IGNORE_DIAGNOSTIC("-Wshadow",                                     \
+                             auto _error = _value_or_error.release_error();) \
+        catch_expr;                                                          \
+    }                                                                        \
+    _value_or_error.release_value();                                         \
+})
+
 namespace Shell {
 
 Parser::SavedOffset Parser::save_offset() const
@@ -132,7 +174,7 @@ RefPtr<AST::Node> Parser::parse()
         auto error_start = push_start();
         while (!at_end())
             consume();
-        auto syntax_error_node = create<AST::SyntaxError>("Unexpected tokens past the end");
+        auto syntax_error_node = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Unexpected tokens past the end"_string));
         if (!toplevel)
             toplevel = move(syntax_error_node);
         else if (!toplevel->is_syntax_error())
@@ -149,9 +191,9 @@ RefPtr<AST::Node> Parser::parse_as_single_expression()
     return parser.parse_expression();
 }
 
-NonnullRefPtrVector<AST::Node> Parser::parse_as_multiple_expressions()
+Vector<NonnullRefPtr<AST::Node>> Parser::parse_as_multiple_expressions()
 {
-    NonnullRefPtrVector<AST::Node> nodes;
+    Vector<NonnullRefPtr<AST::Node>> nodes;
     for (;;) {
         consume_while(is_whitespace);
         auto node = parse_expression();
@@ -168,7 +210,7 @@ RefPtr<AST::Node> Parser::parse_toplevel()
     auto rule_start = push_start();
 
     SequenceParseResult result;
-    NonnullRefPtrVector<AST::Node> sequence;
+    Vector<NonnullRefPtr<AST::Node>> sequence;
     Vector<AST::Position> positions;
     do {
         result = parse_sequence();
@@ -188,7 +230,7 @@ RefPtr<AST::Node> Parser::parse_toplevel()
 
 Parser::SequenceParseResult Parser::parse_sequence()
 {
-    NonnullRefPtrVector<AST::Node> left;
+    Vector<NonnullRefPtr<AST::Node>> left;
     auto read_terminators = [&](bool consider_tabs_and_spaces) {
         if (m_heredoc_initiations.is_empty()) {
         discard_terminators:;
@@ -217,7 +259,7 @@ Parser::SequenceParseResult Parser::parse_sequence()
                                 error_builder.appendff(", {} (at {}:{})", entry.end, entry.node->position().start_line.line_column, entry.node->position().start_line.line_number);
                             first = false;
                         }
-                        left.append(create<AST::SyntaxError>(error_builder.to_deprecated_string(), true));
+                        left.append(create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING(error_builder.to_string()), true));
                         // Just read the rest of the newlines
                         goto discard_terminators;
                     }
@@ -314,7 +356,7 @@ RefPtr<AST::Node> Parser::parse_variable_decls()
         return nullptr;
     }
 
-    auto name_expr = create<AST::BarewordLiteral>(move(var_name));
+    auto name_expr = create<AST::BarewordLiteral>(TRY_OR_THROW_PARSE_ERROR(String::from_utf8(var_name)));
 
     auto start = push_start();
     auto expression = parse_expression();
@@ -326,14 +368,14 @@ RefPtr<AST::Node> Parser::parse_variable_decls()
             if (!command)
                 restore_to(*start);
             else if (!expect(')'))
-                command->set_is_syntax_error(*create<AST::SyntaxError>("Expected a terminating close paren", true));
+                command->set_is_syntax_error(*create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a terminating close paren"_string), true));
             expression = command;
         }
     }
     if (!expression) {
         if (is_whitespace(peek())) {
             auto string_start = push_start();
-            expression = create<AST::StringLiteral>("", AST::StringLiteral::EnclosureType::None);
+            expression = create<AST::StringLiteral>(String {}, AST::StringLiteral::EnclosureType::None);
         } else {
             restore_to(pos_before_name.offset, pos_before_name.line);
             return nullptr;
@@ -391,7 +433,7 @@ RefPtr<AST::Node> Parser::parse_function_decl()
             // FIXME: Should this be a syntax error, or just return?
             return restore();
         }
-        arguments.append({ arg_name, { name_offset, m_offset, start_line, line() } });
+        arguments.append({ TRY_OR_THROW_PARSE_ERROR(String::from_utf8(arg_name)), { name_offset, m_offset, start_line, line() } });
     }
 
     consume_while(is_any_of("\n\t "sv));
@@ -400,12 +442,12 @@ RefPtr<AST::Node> Parser::parse_function_decl()
         RefPtr<AST::Node> syntax_error;
         {
             auto obrace_error_start = push_start();
-            syntax_error = create<AST::SyntaxError>("Expected an open brace '{' to start a function body", true);
+            syntax_error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an open brace '{' to start a function body"_string), true);
         }
         if (!expect('{')) {
             return create<AST::FunctionDeclaration>(
                 AST::NameWithPosition {
-                    move(function_name),
+                    TRY_OR_THROW_PARSE_ERROR(String::from_utf8(function_name)),
                     { pos_before_name.offset, pos_after_name.offset, pos_before_name.line, pos_after_name.line } },
                 move(arguments),
                 move(syntax_error));
@@ -419,7 +461,7 @@ RefPtr<AST::Node> Parser::parse_function_decl()
         RefPtr<AST::SyntaxError> syntax_error;
         {
             auto cbrace_error_start = push_start();
-            syntax_error = create<AST::SyntaxError>("Expected a close brace '}' to end a function body", true);
+            syntax_error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a close brace '}' to end a function body"_string), true);
         }
         if (!expect('}')) {
             if (body)
@@ -429,7 +471,7 @@ RefPtr<AST::Node> Parser::parse_function_decl()
 
             return create<AST::FunctionDeclaration>(
                 AST::NameWithPosition {
-                    move(function_name),
+                    TRY_OR_THROW_PARSE_ERROR(String::from_utf8(function_name)),
                     { pos_before_name.offset, pos_after_name.offset, pos_before_name.line, pos_after_name.line } },
                 move(arguments),
                 move(body));
@@ -438,7 +480,7 @@ RefPtr<AST::Node> Parser::parse_function_decl()
 
     return create<AST::FunctionDeclaration>(
         AST::NameWithPosition {
-            move(function_name),
+            TRY_OR_THROW_PARSE_ERROR(String::from_utf8(function_name)),
             { pos_before_name.offset, pos_after_name.offset, pos_before_name.line, pos_after_name.line } },
         move(arguments),
         move(body));
@@ -460,7 +502,7 @@ RefPtr<AST::Node> Parser::parse_or_logical_sequence()
 
     auto right_and_sequence = parse_and_logical_sequence();
     if (!right_and_sequence)
-        right_and_sequence = create<AST::SyntaxError>("Expected an expression after '||'", true);
+        right_and_sequence = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an expression after '||'"_string), true);
 
     return create<AST::Or>(
         and_sequence.release_nonnull(),
@@ -484,7 +526,7 @@ RefPtr<AST::Node> Parser::parse_and_logical_sequence()
 
     auto right_and_sequence = parse_and_logical_sequence();
     if (!right_and_sequence)
-        right_and_sequence = create<AST::SyntaxError>("Expected an expression after '&&'", true);
+        right_and_sequence = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an expression after '&&'"_string), true);
 
     return create<AST::And>(
         pipe_sequence.release_nonnull(),
@@ -642,7 +684,7 @@ RefPtr<AST::Node> Parser::parse_for_loop()
 
                 auto offset_after_variable = current_position();
                 index_variable_name = AST::NameWithPosition {
-                    variable,
+                    TRY_OR_THROW_PARSE_ERROR(String::from_utf8(variable)),
                     { offset_before_variable.offset, offset_after_variable.offset, offset_before_variable.line, offset_after_variable.line },
                 };
 
@@ -660,13 +702,13 @@ RefPtr<AST::Node> Parser::parse_for_loop()
     auto variable_name_end_offset = current_position();
     if (!name.is_empty()) {
         variable_name = AST::NameWithPosition {
-            name,
+            TRY_OR_THROW_PARSE_ERROR(String::from_utf8(name)),
             { variable_name_start_offset.offset, variable_name_end_offset.offset, variable_name_start_offset.line, variable_name_end_offset.line }
         };
         consume_while(is_whitespace);
         auto in_error_start = push_start();
         if (!expect("in"sv)) {
-            auto syntax_error = create<AST::SyntaxError>("Expected 'in' after a variable name in a 'for' loop", true);
+            auto syntax_error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected 'in' after a variable name in a 'for' loop"_string), true);
             return create<AST::ForLoop>(move(variable_name), move(index_variable_name), move(syntax_error), nullptr); // ForLoop Var Iterated Block
         }
         in_start_position = AST::Position { in_error_start->offset, m_offset, in_error_start->line, line() };
@@ -678,14 +720,14 @@ RefPtr<AST::Node> Parser::parse_for_loop()
         auto iter_error_start = push_start();
         iterated_expression = parse_expression();
         if (!iterated_expression)
-            iterated_expression = create<AST::SyntaxError>("Expected an expression in 'for' loop", true);
+            iterated_expression = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an expression in 'for' loop"_string), true);
     }
 
     consume_while(is_any_of(" \t\n"sv));
     {
         auto obrace_error_start = push_start();
         if (!expect('{')) {
-            auto syntax_error = create<AST::SyntaxError>("Expected an open brace '{' to start a 'for' loop body", true);
+            auto syntax_error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an open brace '{' to start a 'for' loop body"_string), true);
             return create<AST::ForLoop>(move(variable_name), move(index_variable_name), move(iterated_expression), move(syntax_error), move(in_start_position), move(index_start_position)); // ForLoop Var Iterated Block
         }
     }
@@ -697,7 +739,7 @@ RefPtr<AST::Node> Parser::parse_for_loop()
         auto cbrace_error_start = push_start();
         if (!expect('}')) {
             auto error_start = push_start();
-            auto syntax_error = create<AST::SyntaxError>("Expected a close brace '}' to end a 'for' loop body", true);
+            auto syntax_error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a close brace '}' to end a 'for' loop body"_string), true);
             if (body)
                 body->set_is_syntax_error(*syntax_error);
             else
@@ -722,7 +764,7 @@ RefPtr<AST::Node> Parser::parse_loop_loop()
     {
         auto obrace_error_start = push_start();
         if (!expect('{')) {
-            auto syntax_error = create<AST::SyntaxError>("Expected an open brace '{' to start a 'loop' loop body", true);
+            auto syntax_error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an open brace '{' to start a 'loop' loop body"_string), true);
             return create<AST::ForLoop>(AST::NameWithPosition {}, AST::NameWithPosition {}, nullptr, move(syntax_error)); // ForLoop null null Block
         }
     }
@@ -734,7 +776,7 @@ RefPtr<AST::Node> Parser::parse_loop_loop()
         auto cbrace_error_start = push_start();
         if (!expect('}')) {
             auto error_start = push_start();
-            auto syntax_error = create<AST::SyntaxError>("Expected a close brace '}' to end a 'loop' loop body", true);
+            auto syntax_error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a close brace '}' to end a 'loop' loop body"_string), true);
             if (body)
                 body->set_is_syntax_error(*syntax_error);
             else
@@ -761,7 +803,7 @@ RefPtr<AST::Node> Parser::parse_if_expr()
         auto cond_error_start = push_start();
         condition = parse_or_logical_sequence();
         if (!condition)
-            condition = create<AST::SyntaxError>("Expected a logical sequence after 'if'", true);
+            condition = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a logical sequence after 'if'"_string), true);
     }
 
     auto parse_braced_toplevel = [&]() -> RefPtr<AST::Node> {
@@ -769,7 +811,7 @@ RefPtr<AST::Node> Parser::parse_if_expr()
         {
             auto obrace_error_start = push_start();
             if (!expect('{')) {
-                body = create<AST::SyntaxError>("Expected an open brace '{' to start an 'if' true branch", true);
+                body = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an open brace '{' to start an 'if' true branch"_string), true);
             }
         }
 
@@ -780,7 +822,7 @@ RefPtr<AST::Node> Parser::parse_if_expr()
             auto cbrace_error_start = push_start();
             if (!expect('}')) {
                 auto error_start = push_start();
-                RefPtr<AST::SyntaxError> syntax_error = create<AST::SyntaxError>("Expected a close brace '}' to end an 'if' true branch", true);
+                RefPtr<AST::SyntaxError> syntax_error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a close brace '}' to end an 'if' true branch"_string), true);
                 if (body)
                     body->set_is_syntax_error(*syntax_error);
                 else
@@ -832,7 +874,7 @@ RefPtr<AST::Node> Parser::parse_subshell()
         auto cbrace_error_start = push_start();
         if (!expect('}')) {
             auto error_start = push_start();
-            RefPtr<AST::SyntaxError> syntax_error = create<AST::SyntaxError>("Expected a close brace '}' to end a subshell", true);
+            RefPtr<AST::SyntaxError> syntax_error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a close brace '}' to end a subshell"_string), true);
             if (body)
                 body->set_is_syntax_error(*syntax_error);
             else
@@ -857,13 +899,13 @@ RefPtr<AST::Node> Parser::parse_match_expr()
     auto match_expression = parse_expression();
     if (!match_expression) {
         return create<AST::MatchExpr>(
-            create<AST::SyntaxError>("Expected an expression after 'match'", true),
-            DeprecatedString {}, Optional<AST::Position> {}, Vector<AST::MatchEntry> {});
+            create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an expression after 'match'"_string), true),
+            String {}, Optional<AST::Position> {}, Vector<AST::MatchEntry> {});
     }
 
     consume_while(is_any_of(" \t\n"sv));
 
-    DeprecatedString match_name;
+    String match_name;
     Optional<AST::Position> as_position;
     auto as_start = m_offset;
     auto as_line = line();
@@ -873,17 +915,17 @@ RefPtr<AST::Node> Parser::parse_match_expr()
         if (consume_while(is_any_of(" \t\n"sv)).is_empty()) {
             auto node = create<AST::MatchExpr>(
                 match_expression.release_nonnull(),
-                DeprecatedString {}, move(as_position), Vector<AST::MatchEntry> {});
-            node->set_is_syntax_error(create<AST::SyntaxError>("Expected whitespace after 'as' in 'match'", true));
+                String {}, move(as_position), Vector<AST::MatchEntry> {});
+            node->set_is_syntax_error(create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected whitespace after 'as' in 'match'"_string), true));
             return node;
         }
 
-        match_name = consume_while(is_word_character);
+        match_name = TRY_OR_THROW_PARSE_ERROR(String::from_utf8(consume_while(is_word_character)));
         if (match_name.is_empty()) {
             auto node = create<AST::MatchExpr>(
                 match_expression.release_nonnull(),
-                DeprecatedString {}, move(as_position), Vector<AST::MatchEntry> {});
-            node->set_is_syntax_error(create<AST::SyntaxError>("Expected an identifier after 'as' in 'match'", true));
+                String {}, move(as_position), Vector<AST::MatchEntry> {});
+            node->set_is_syntax_error(create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an identifier after 'as' in 'match'"_string), true));
             return node;
         }
     }
@@ -894,7 +936,7 @@ RefPtr<AST::Node> Parser::parse_match_expr()
         auto node = create<AST::MatchExpr>(
             match_expression.release_nonnull(),
             move(match_name), move(as_position), Vector<AST::MatchEntry> {});
-        node->set_is_syntax_error(create<AST::SyntaxError>("Expected an open brace '{' to start a 'match' entry list", true));
+        node->set_is_syntax_error(create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an open brace '{' to start a 'match' entry list"_string), true));
         return node;
     }
 
@@ -916,7 +958,7 @@ RefPtr<AST::Node> Parser::parse_match_expr()
         auto node = create<AST::MatchExpr>(
             match_expression.release_nonnull(),
             move(match_name), move(as_position), move(entries));
-        node->set_is_syntax_error(create<AST::SyntaxError>("Expected a close brace '}' to end a 'match' entry list", true));
+        node->set_is_syntax_error(create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a close brace '}' to end a 'match' entry list"_string), true));
         return node;
     }
 
@@ -927,10 +969,10 @@ AST::MatchEntry Parser::parse_match_entry()
 {
     auto rule_start = push_start();
 
-    NonnullRefPtrVector<AST::Node> patterns;
+    Vector<NonnullRefPtr<AST::Node>> patterns;
     Vector<Regex<ECMA262>> regexps;
     Vector<AST::Position> pipe_positions;
-    Optional<Vector<DeprecatedString>> match_names;
+    Optional<Vector<String>> match_names;
     Optional<AST::Position> match_as_position;
     enum {
         Regex,
@@ -942,14 +984,14 @@ AST::MatchEntry Parser::parse_match_entry()
     auto regex_pattern = parse_regex_pattern();
     if (regex_pattern.has_value()) {
         if (auto error = regex_pattern.value().parser_result.error; error != regex::Error::NoError)
-            return { NonnullRefPtrVector<AST::Node> {}, {}, {}, {}, create<AST::SyntaxError>(regex::get_error_string(error), false) };
+            return { Vector<NonnullRefPtr<AST::Node>> {}, {}, {}, {}, create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING(String::from_utf8(regex::get_error_string(error))), false) };
 
         pattern_kind = Regex;
         regexps.append(regex_pattern.release_value());
     } else {
         auto glob_pattern = parse_match_pattern();
         if (!glob_pattern)
-            return { NonnullRefPtrVector<AST::Node> {}, {}, {}, {}, create<AST::SyntaxError>("Expected a pattern in 'match' body", true) };
+            return { Vector<NonnullRefPtr<AST::Node>> {}, {}, {}, {}, create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a pattern in 'match' body"_string), true) };
 
         pattern_kind = Glob;
         patterns.append(glob_pattern.release_nonnull());
@@ -967,7 +1009,7 @@ AST::MatchEntry Parser::parse_match_entry()
         case Regex: {
             auto pattern = parse_regex_pattern();
             if (!pattern.has_value()) {
-                error = create<AST::SyntaxError>("Expected a regex pattern to follow '|' in 'match' body", true);
+                error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a regex pattern to follow '|' in 'match' body"_string), true);
                 break;
             }
             regexps.append(pattern.release_value());
@@ -976,7 +1018,7 @@ AST::MatchEntry Parser::parse_match_entry()
         case Glob: {
             auto pattern = parse_match_pattern();
             if (!pattern) {
-                error = create<AST::SyntaxError>("Expected a pattern to follow '|' in 'match' body", true);
+                error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a pattern to follow '|' in 'match' body"_string), true);
                 break;
             }
             patterns.append(pattern.release_nonnull());
@@ -999,42 +1041,51 @@ AST::MatchEntry Parser::parse_match_entry()
         consume_while(is_any_of(" \t\n"sv));
         if (!expect('(')) {
             if (!error)
-                error = create<AST::SyntaxError>("Expected an explicit list of identifiers after a pattern 'as'");
+                error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an explicit list of identifiers after a pattern 'as'"_string));
         } else {
-            match_names = Vector<DeprecatedString>();
+            match_names = Vector<String>();
             for (;;) {
                 consume_while(is_whitespace);
                 auto name = consume_while(is_word_character);
                 if (name.is_empty())
                     break;
-                match_names.value().append(move(name));
+                match_names->append(TRY_OR(
+                    String::from_utf8(name),
+                    error = create<AST::SyntaxError>(MUST(String::from_utf8(_error.string_literal())));
+                    break;));
             }
 
             if (!expect(')')) {
                 if (!error)
-                    error = create<AST::SyntaxError>("Expected a close paren ')' to end the identifier list of pattern 'as'", true);
+                    error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a close paren ')' to end the identifier list of pattern 'as'"_string), true);
             }
         }
         consume_while(is_any_of(" \t\n"sv));
     }
 
     if (pattern_kind == Regex) {
-        Vector<DeprecatedString> names;
+        Vector<String> names;
         for (auto& regex : regexps) {
             if (names.is_empty()) {
                 for (auto& name : regex.parser_result.capture_groups)
-                    names.append(name);
+                    names.append(TRY_OR(
+                        String::from_deprecated_string(name),
+                        error = create<AST::SyntaxError>(MUST(String::from_utf8(_error.string_literal())));
+                        break;));
             } else {
                 size_t index = 0;
                 for (auto& name : regex.parser_result.capture_groups) {
                     if (names.size() <= index) {
-                        names.append(name);
+                        names.append(TRY_OR(
+                            String::from_deprecated_string(name),
+                            error = create<AST::SyntaxError>(MUST(String::from_utf8(_error.string_literal())));
+                            break;));
                         continue;
                     }
 
-                    if (names[index] != name) {
+                    if (names[index] != name.view()) {
                         if (!error)
-                            error = create<AST::SyntaxError>("Alternative regex patterns must have the same capture groups", false);
+                            error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Alternative regex patterns must have the same capture groups"_string), false);
                         break;
                     }
                 }
@@ -1045,14 +1096,14 @@ AST::MatchEntry Parser::parse_match_entry()
 
     if (!expect('{')) {
         if (!error)
-            error = create<AST::SyntaxError>("Expected an open brace '{' to start a match entry body", true);
+            error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an open brace '{' to start a match entry body"_string), true);
     }
 
     auto body = parse_toplevel();
 
     if (!expect('}')) {
         if (!error)
-            error = create<AST::SyntaxError>("Expected a close brace '}' to end a match entry body", true);
+            error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a close brace '}' to end a match entry body"_string), true);
     }
 
     if (body && error)
@@ -1131,7 +1182,7 @@ RefPtr<AST::Node> Parser::parse_redirection()
                     // Eat a character and hope the problem goes away
                     consume();
                 }
-                path = create<AST::SyntaxError>("Expected a path after redirection", true);
+                path = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a path after redirection"_string), true);
             }
             return create<AST::WriteAppendRedirection>(pipe_fd, path.release_nonnull()); // Redirection WriteAppend
         }
@@ -1154,7 +1205,7 @@ RefPtr<AST::Node> Parser::parse_redirection()
             }
             auto redir = create<AST::Fd2FdRedirection>(pipe_fd, dest_pipe_fd); // Redirection Fd2Fd
             if (dest_pipe_fd == -1)
-                redir->set_is_syntax_error(*create<AST::SyntaxError>("Expected a file descriptor"));
+                redir->set_is_syntax_error(*create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a file descriptor"_string)));
             return redir;
         }
         consume_while(is_whitespace);
@@ -1165,7 +1216,7 @@ RefPtr<AST::Node> Parser::parse_redirection()
                 // Eat a character and hope the problem goes away
                 consume();
             }
-            path = create<AST::SyntaxError>("Expected a path after redirection", true);
+            path = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a path after redirection"_string), true);
         }
         return create<AST::WriteRedirection>(pipe_fd, path.release_nonnull()); // Redirection Write
     }
@@ -1189,7 +1240,7 @@ RefPtr<AST::Node> Parser::parse_redirection()
                 // Eat a character and hope the problem goes away
                 consume();
             }
-            path = create<AST::SyntaxError>("Expected a path after redirection", true);
+            path = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a path after redirection"_string), true);
         }
         if (mode == Read)
             return create<AST::ReadRedirection>(pipe_fd, path.release_nonnull()); // Redirection Read
@@ -1226,7 +1277,7 @@ RefPtr<AST::Node> Parser::parse_expression()
 {
     auto rule_start = push_start();
     if (m_rule_start_offsets.size() > max_allowed_nested_rule_depth)
-        return create<AST::SyntaxError>(DeprecatedString::formatted("Expression nested too deep (max allowed is {})", max_allowed_nested_rule_depth));
+        return create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING(String::formatted("Expression nested too deep (max allowed is {})", max_allowed_nested_rule_depth)));
 
     auto starting_char = peek();
 
@@ -1362,10 +1413,10 @@ RefPtr<AST::Node> Parser::parse_string()
         consume();
         auto inner = parse_string_inner(StringEndCondition::DoubleQuote);
         if (!inner)
-            inner = create<AST::SyntaxError>("Unexpected EOF in string", true);
+            inner = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Unexpected EOF in string"_string), true);
         if (!expect('"')) {
             inner = create<AST::DoubleQuotedString>(move(inner));
-            inner->set_is_syntax_error(*create<AST::SyntaxError>("Expected a terminating double quote", true));
+            inner->set_is_syntax_error(*create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a terminating double quote"_string), true));
             return inner;
         }
         return create<AST::DoubleQuotedString>(move(inner)); // Double Quoted String
@@ -1377,9 +1428,9 @@ RefPtr<AST::Node> Parser::parse_string()
         bool is_error = false;
         if (!expect('\''))
             is_error = true;
-        auto result = create<AST::StringLiteral>(move(text), AST::StringLiteral::EnclosureType::SingleQuotes); // String Literal
+        auto result = create<AST::StringLiteral>(TRY_OR_THROW_PARSE_ERROR(String::from_utf8(text)), AST::StringLiteral::EnclosureType::SingleQuotes); // String Literal
         if (is_error)
-            result->set_is_syntax_error(*create<AST::SyntaxError>("Expected a terminating single quote", true));
+            result->set_is_syntax_error(*create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a terminating single quote"_string), true));
         return result;
     }
 
@@ -1459,7 +1510,7 @@ RefPtr<AST::Node> Parser::parse_string_inner(StringEndCondition condition)
             continue;
         }
         if (peek() == '$') {
-            auto string_literal = create<AST::StringLiteral>(builder.to_deprecated_string(), AST::StringLiteral::EnclosureType::DoubleQuotes); // String Literal
+            auto string_literal = create<AST::StringLiteral>(TRY_OR_THROW_PARSE_ERROR(builder.to_string()), AST::StringLiteral::EnclosureType::DoubleQuotes); // String Literal
             auto read_concat = [&](auto&& node) {
                 auto inner = create<AST::StringPartCompose>(
                     move(string_literal),
@@ -1485,7 +1536,7 @@ RefPtr<AST::Node> Parser::parse_string_inner(StringEndCondition condition)
         builder.append(consume());
     }
 
-    return create<AST::StringLiteral>(builder.to_deprecated_string(), AST::StringLiteral::EnclosureType::DoubleQuotes); // String Literal
+    return create<AST::StringLiteral>(TRY_OR_THROW_PARSE_ERROR(builder.to_string()), AST::StringLiteral::EnclosureType::DoubleQuotes); // String Literal
 }
 
 RefPtr<AST::Node> Parser::parse_variable()
@@ -1530,7 +1581,7 @@ RefPtr<AST::Node> Parser::parse_variable_ref()
         return nullptr;
     }
 
-    return create<AST::SimpleVariable>(move(name)); // Variable Simple
+    return create<AST::SimpleVariable>(TRY_OR_THROW_PARSE_ERROR(String::from_utf8(name))); // Variable Simple
 }
 
 RefPtr<AST::Slice> Parser::parse_slice()
@@ -1548,7 +1599,7 @@ RefPtr<AST::Slice> Parser::parse_slice()
     RefPtr<AST::SyntaxError> error;
 
     if (peek() != ']')
-        error = create<AST::SyntaxError>("Expected a close bracket ']' to end a variable slice");
+        error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a close bracket ']' to end a variable slice"_string));
     else
         consume();
 
@@ -1556,7 +1607,7 @@ RefPtr<AST::Slice> Parser::parse_slice()
         if (error)
             spec = move(error);
         else
-            spec = create<AST::SyntaxError>("Expected either a range, or a comma-seprated list of selectors");
+            spec = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected either a range, or a comma-seprated list of selectors"_string));
     }
 
     auto node = create<AST::Slice>(spec.release_nonnull());
@@ -1579,16 +1630,16 @@ RefPtr<AST::Node> Parser::parse_evaluate()
         consume();
         auto inner = parse_pipe_sequence();
         if (!inner)
-            inner = create<AST::SyntaxError>("Unexpected EOF in list", true);
+            inner = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Unexpected EOF in list"_string), true);
         if (!expect(')'))
-            inner->set_is_syntax_error(*create<AST::SyntaxError>("Expected a terminating close paren", true));
+            inner->set_is_syntax_error(*create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a terminating close paren"_string), true));
 
         return create<AST::Execute>(inner.release_nonnull(), true);
     }
     auto inner = parse_expression();
 
     if (!inner) {
-        inner = create<AST::SyntaxError>("Expected a command", true);
+        inner = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a command"_string), true);
     } else {
         if (inner->is_list()) {
             auto execute_inner = create<AST::Execute>(inner.release_nonnull(), true);
@@ -1633,7 +1684,7 @@ RefPtr<AST::Node> Parser::parse_immediate_expression()
 
     consume_while(is_whitespace);
 
-    NonnullRefPtrVector<AST::Node> arguments;
+    Vector<NonnullRefPtr<AST::Node>> arguments;
     do {
         auto expr = parse_expression();
         if (!expr)
@@ -1659,14 +1710,14 @@ RefPtr<AST::Node> Parser::parse_immediate_expression()
           };
 
     auto node = create<AST::ImmediateExpression>(
-        AST::NameWithPosition { function_name, move(function_position) },
+        AST::NameWithPosition { TRY_OR_THROW_PARSE_ERROR(String::from_utf8(function_name)), move(function_position) },
         move(arguments),
         ending_brace_position);
 
     if (!ending_brace_position.has_value())
-        node->set_is_syntax_error(create<AST::SyntaxError>("Expected a closing brace '}' to end an immediate expression", true));
+        node->set_is_syntax_error(create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a closing brace '}' to end an immediate expression"_string), true));
     else if (node->function_name().is_empty())
-        node->set_is_syntax_error(create<AST::SyntaxError>("Expected an immediate function name"));
+        node->set_is_syntax_error(create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an immediate function name"_string)));
 
     return node;
 }
@@ -1711,7 +1762,7 @@ RefPtr<AST::Node> Parser::parse_history_designator()
         consume();
         selector.event.kind = AST::HistorySelector::EventKind::IndexFromEnd;
         selector.event.index = 0;
-        selector.event.text = "!";
+        selector.event.text = "!"_short_string;
         break;
     case '?':
         consume();
@@ -1728,22 +1779,23 @@ RefPtr<AST::Node> Parser::parse_history_designator()
 
         selector.event.text = static_ptr_cast<AST::BarewordLiteral>(bareword)->text();
         selector.event.text_position = bareword->position();
-        auto it = selector.event.text.begin();
+        auto selector_bytes = selector.event.text.bytes();
+        auto it = selector_bytes.begin();
         bool is_negative = false;
         if (*it == '-') {
             ++it;
             is_negative = true;
         }
-        if (it != selector.event.text.end() && all_of(it, selector.event.text.end(), is_digit)) {
+        if (it != selector_bytes.end() && all_of(it, selector_bytes.end(), is_digit)) {
             if (is_negative)
                 selector.event.kind = AST::HistorySelector::EventKind::IndexFromEnd;
             else
                 selector.event.kind = AST::HistorySelector::EventKind::IndexFromStart;
-            auto number = abs(selector.event.text.to_int().value_or(0));
+            auto number = abs(selector.event.text.bytes_as_string_view().to_int().value_or(0));
             if (number != 0)
                 selector.event.index = number - 1;
             else
-                syntax_error = create<AST::SyntaxError>("History entry index value invalid or out of range");
+                syntax_error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("History entry index value invalid or out of range"_string));
         }
         if (":^$*"sv.contains(peek())) {
             is_word_selector = true;
@@ -1803,7 +1855,7 @@ RefPtr<AST::Node> Parser::parse_history_designator()
     auto first_char = peek();
     if (!(is_digit(first_char) || "^$-*"sv.contains(first_char))) {
         if (!syntax_error)
-            syntax_error = create<AST::SyntaxError>("Expected a word selector after ':' in a history event designator", true);
+            syntax_error = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a word selector after ':' in a history event designator"_string), true);
     } else if (first_char == '*') {
         consume();
         selector.word_selector_range.start = make_word_selector(AST::HistorySelector::WordSelectorKind::Index, 1);
@@ -1853,7 +1905,7 @@ RefPtr<AST::Node> Parser::parse_comment()
 
     consume();
     auto text = consume_while(is_not('\n'));
-    return create<AST::Comment>(move(text)); // Comment
+    return create<AST::Comment>(TRY_OR_THROW_PARSE_ERROR(String::from_utf8(text))); // Comment
 }
 
 RefPtr<AST::Node> Parser::parse_bareword()
@@ -1895,18 +1947,18 @@ RefPtr<AST::Node> Parser::parse_bareword()
 
     auto current_end = m_offset;
     auto current_line = line();
-    auto string = builder.to_deprecated_string();
+    auto string = TRY_OR_THROW_PARSE_ERROR(builder.to_string());
     if (string.starts_with('~')) {
-        DeprecatedString username;
+        String username;
         RefPtr<AST::Node> tilde, text;
 
-        auto first_slash_index = string.find('/');
+        auto first_slash_index = string.find_byte_offset('/');
         if (first_slash_index.has_value()) {
-            username = string.substring_view(1, first_slash_index.value() - 1);
-            string = string.substring_view(first_slash_index.value(), string.length() - first_slash_index.value());
+            username = TRY_OR_THROW_PARSE_ERROR(string.substring_from_byte_offset(1, *first_slash_index - 1));
+            string = TRY_OR_THROW_PARSE_ERROR(string.substring_from_byte_offset(*first_slash_index));
         } else {
-            username = string.substring_view(1, string.length() - 1);
-            string = "";
+            username = TRY_OR_THROW_PARSE_ERROR(string.substring_from_byte_offset(1));
+            string = {};
         }
 
         // Synthesize a Tilde Node with the correct positioning information.
@@ -1914,7 +1966,7 @@ RefPtr<AST::Node> Parser::parse_bareword()
             restore_to(rule_start->offset, rule_start->line);
             auto ch = consume();
             VERIFY(ch == '~');
-            auto username_length = username.length();
+            auto username_length = username.bytes_as_string_view().length();
             tilde = create<AST::Tilde>(move(username));
             // Consume the username (if any)
             for (size_t i = 0; i < username_length; ++i)
@@ -1934,9 +1986,9 @@ RefPtr<AST::Node> Parser::parse_bareword()
         return create<AST::Juxtaposition>(tilde.release_nonnull(), text.release_nonnull()); // Juxtaposition Variable Bareword
     }
 
-    if (string.starts_with("\\~"sv)) {
+    if (string.starts_with_bytes("\\~"sv)) {
         // Un-escape the tilde, but only at the start (where it would be an expansion)
-        string = string.substring(1, string.length() - 1);
+        string = TRY_OR_THROW_PARSE_ERROR(string.substring_from_byte_offset(1));
     }
 
     return create<AST::BarewordLiteral>(move(string)); // Bareword Literal
@@ -1963,7 +2015,7 @@ RefPtr<AST::Node> Parser::parse_glob()
             } else {
                 // FIXME: Allow composition of tilde+bareword with globs: '~/foo/bar/baz*'
                 restore_to(saved_offset.offset, saved_offset.line);
-                bareword_part->set_is_syntax_error(*create<AST::SyntaxError>(DeprecatedString::formatted("Unexpected {} inside a glob", bareword_part->class_name())));
+                bareword_part->set_is_syntax_error(*create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING(String::formatted("Unexpected {} inside a glob", bareword_part->class_name()))));
                 return bareword_part;
             }
             textbuilder.append(text);
@@ -1984,11 +2036,11 @@ RefPtr<AST::Node> Parser::parse_glob()
                 textbuilder.append('~');
                 textbuilder.append(bareword->text());
             } else {
-                return create<AST::SyntaxError>(DeprecatedString::formatted("Invalid node '{}' in glob position, escape shell special characters", glob_after->class_name()));
+                return create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING(String::formatted("Invalid node '{}' in glob position, escape shell special characters", glob_after->class_name())));
             }
         }
 
-        return create<AST::Glob>(textbuilder.to_deprecated_string()); // Glob
+        return create<AST::Glob>(TRY_OR_THROW_PARSE_ERROR(textbuilder.to_string())); // Glob
     }
 
     return bareword_part;
@@ -2003,7 +2055,7 @@ RefPtr<AST::Node> Parser::parse_brace_expansion()
 
     if (auto spec = parse_brace_expansion_spec()) {
         if (!expect('}'))
-            spec->set_is_syntax_error(create<AST::SyntaxError>("Expected a close brace '}' to end a brace expansion", true));
+            spec->set_is_syntax_error(create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a close brace '}' to end a brace expansion"_string), true));
 
         return spec;
     }
@@ -2020,23 +2072,23 @@ RefPtr<AST::Node> Parser::parse_brace_expansion_spec()
     m_extra_chars_not_allowed_in_barewords.append(',');
 
     auto rule_start = push_start();
-    NonnullRefPtrVector<AST::Node> subexpressions;
+    Vector<NonnullRefPtr<AST::Node>> subexpressions;
 
     if (next_is(","sv)) {
         // Note that we don't consume the ',' here.
-        subexpressions.append(create<AST::StringLiteral>("", AST::StringLiteral::EnclosureType::None));
+        subexpressions.append(create<AST::StringLiteral>(String {}, AST::StringLiteral::EnclosureType::None));
     } else {
         auto start_expr = parse_expression();
         if (start_expr) {
             if (expect(".."sv)) {
                 if (auto end_expr = parse_expression()) {
                     if (end_expr->position().start_offset != start_expr->position().end_offset + 2)
-                        end_expr->set_is_syntax_error(create<AST::SyntaxError>("Expected no whitespace between '..' and the following expression in brace expansion"));
+                        end_expr->set_is_syntax_error(create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected no whitespace between '..' and the following expression in brace expansion"_string)));
 
                     return create<AST::Range>(start_expr.release_nonnull(), end_expr.release_nonnull());
                 }
 
-                return create<AST::Range>(start_expr.release_nonnull(), create<AST::SyntaxError>("Expected an expression to end range brace expansion with", true));
+                return create<AST::Range>(start_expr.release_nonnull(), create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected an expression to end range brace expansion with"_string), true));
             }
         }
 
@@ -2049,7 +2101,7 @@ RefPtr<AST::Node> Parser::parse_brace_expansion_spec()
         if (expr) {
             subexpressions.append(expr.release_nonnull());
         } else {
-            subexpressions.append(create<AST::StringLiteral>("", AST::StringLiteral::EnclosureType::None));
+            subexpressions.append(create<AST::StringLiteral>(String {}, AST::StringLiteral::EnclosureType::None));
         }
     }
 
@@ -2071,7 +2123,7 @@ RefPtr<AST::Node> Parser::parse_heredoc_initiation_record()
     consume();
 
     HeredocInitiationRecord record;
-    record.end = "<error>";
+    record.end = TRY_OR_THROW_PARSE_ERROR("<error>"_string);
 
     RefPtr<AST::SyntaxError> syntax_error_node;
 
@@ -2093,7 +2145,7 @@ RefPtr<AST::Node> Parser::parse_heredoc_initiation_record()
     // StringLiteral | bareword
     if (auto bareword = parse_bareword()) {
         if (!bareword->is_bareword()) {
-            syntax_error_node = create<AST::SyntaxError>(DeprecatedString::formatted("Expected a bareword or a quoted string, not {}", bareword->class_name()));
+            syntax_error_node = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING(String::formatted("Expected a bareword or a quoted string, not {}", bareword->class_name())));
         } else {
             if (bareword->is_syntax_error())
                 syntax_error_node = bareword->syntax_error_node();
@@ -2109,19 +2161,19 @@ RefPtr<AST::Node> Parser::parse_heredoc_initiation_record()
         if (!expect('\''))
             is_error = true;
         if (is_error)
-            syntax_error_node = create<AST::SyntaxError>("Expected a terminating single quote", true);
+            syntax_error_node = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a terminating single quote"_string), true);
 
-        record.end = text;
+        record.end = TRY_OR_THROW_PARSE_ERROR(String::from_utf8(text));
         record.interpolate = false;
     } else {
-        syntax_error_node = create<AST::SyntaxError>("Expected a bareword or a single-quoted string literal for heredoc end key", true);
+        syntax_error_node = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING("Expected a bareword or a single-quoted string literal for heredoc end key"_string), true);
     }
 
     auto node = create<AST::Heredoc>(record.end, record.interpolate, record.deindent);
     if (syntax_error_node)
         node->set_is_syntax_error(*syntax_error_node);
     else
-        node->set_is_syntax_error(*create<AST::SyntaxError>(DeprecatedString::formatted("Expected heredoc contents for heredoc with end key '{}'", node->end()), true));
+        node->set_is_syntax_error(*create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING(String::formatted("Expected heredoc contents for heredoc with end key '{}'", node->end())), true));
 
     record.node = node;
     m_heredoc_initiations.append(move(record));
@@ -2137,7 +2189,7 @@ bool Parser::parse_heredoc_entries()
     for (auto& record : heredocs) {
         auto rule_start = push_start();
         if (m_rule_start_offsets.size() > max_allowed_nested_rule_depth) {
-            record.node->set_is_syntax_error(*create<AST::SyntaxError>(DeprecatedString::formatted("Expression nested too deep (max allowed is {})", max_allowed_nested_rule_depth)));
+            record.node->set_is_syntax_error(*create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING(String::formatted("Expression nested too deep (max allowed is {})", max_allowed_nested_rule_depth))));
             continue;
         }
         bool found_key = false;
@@ -2162,9 +2214,11 @@ bool Parser::parse_heredoc_entries()
             if (!last_line_offset.has_value())
                 last_line_offset = current_position();
             // Now just wrap it in a StringLiteral and set it as the node's contents
-            auto node = create<AST::StringLiteral>(m_input.substring_view(rule_start->offset, last_line_offset->offset - rule_start->offset), AST::StringLiteral::EnclosureType::None);
+            auto node = create<AST::StringLiteral>(
+                MUST(String::from_utf8(m_input.substring_view(rule_start->offset, last_line_offset->offset - rule_start->offset))),
+                AST::StringLiteral::EnclosureType::None);
             if (!found_key)
-                node->set_is_syntax_error(*create<AST::SyntaxError>(DeprecatedString::formatted("Expected to find the heredoc key '{}', but found Eof", record.end), true));
+                node->set_is_syntax_error(*create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING(String::formatted("Expected to find the heredoc key '{}', but found Eof", record.end)), true));
             record.node->set_contents(move(node));
         } else {
             // Interpolation is allowed, so we're going to read doublequoted string innards
@@ -2211,11 +2265,11 @@ bool Parser::parse_heredoc_entries()
             }
 
             if (!expr && found_key) {
-                expr = create<AST::StringLiteral>("", AST::StringLiteral::EnclosureType::None);
+                expr = create<AST::StringLiteral>(String {}, AST::StringLiteral::EnclosureType::None);
             } else if (!expr) {
-                expr = create<AST::SyntaxError>(DeprecatedString::formatted("Expected to find a valid string inside a heredoc (with end key '{}')", record.end), true);
+                expr = create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING(String::formatted("Expected to find a valid string inside a heredoc (with end key '{}')", record.end)), true);
             } else if (!found_key) {
-                expr->set_is_syntax_error(*create<AST::SyntaxError>(DeprecatedString::formatted("Expected to find the heredoc key '{}'", record.end), true));
+                expr->set_is_syntax_error(*create<AST::SyntaxError>(TRY_OR_RESOLVE_TO_ERROR_STRING(String::formatted("Expected to find the heredoc key '{}'", record.end)), true));
             }
 
             record.node->set_contents(create<AST::DoubleQuotedString>(move(expr)));

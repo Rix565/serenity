@@ -25,8 +25,11 @@ class PrimitiveString final : public Cell {
 public:
     [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, Utf16String);
     [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, String);
+    [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, FlyString const&);
     [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, DeprecatedString);
+    [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, DeprecatedFlyString const&);
     [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, PrimitiveString&, PrimitiveString&);
+    static ThrowCompletionOr<NonnullGCPtr<PrimitiveString>> create(VM&, StringView);
 
     virtual ~PrimitiveString();
 
@@ -56,12 +59,16 @@ private:
 
     virtual void visit_edges(Cell::Visitor&) override;
 
-    ThrowCompletionOr<void> resolve_rope_if_needed() const;
+    enum class EncodingPreference {
+        UTF8,
+        UTF16,
+    };
+    ThrowCompletionOr<void> resolve_rope_if_needed(EncodingPreference) const;
 
     mutable bool m_is_rope { false };
 
-    mutable PrimitiveString* m_lhs { nullptr };
-    mutable PrimitiveString* m_rhs { nullptr };
+    mutable GCPtr<PrimitiveString> m_lhs;
+    mutable GCPtr<PrimitiveString> m_rhs;
 
     mutable Optional<String> m_utf8_string;
     mutable Optional<DeprecatedString> m_deprecated_string;

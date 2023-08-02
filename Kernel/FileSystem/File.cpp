@@ -8,14 +8,14 @@
 #include <AK/Userspace.h>
 #include <Kernel/FileSystem/File.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
 File::File() = default;
 File::~File() = default;
 
-ErrorOr<NonnullLockRefPtr<OpenFileDescription>> File::open(int options)
+ErrorOr<NonnullRefPtr<OpenFileDescription>> File::open(int options)
 {
     auto description = OpenFileDescription::try_create(*this);
     if (!description.is_error()) {

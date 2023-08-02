@@ -2,7 +2,7 @@
 
 For low-level styling (spaces, parentheses, brace placement, etc), all code should follow the format specified in `.clang-format` in the project root.
 
-**Important: Make sure you use `clang-format` version 15 or later!**
+**Important: Make sure you use `clang-format` version 16 or later!**
 
 This document describes the coding style used for C++ code in the Serenity Operating System project. All new code should conform to this style.
 
@@ -11,7 +11,11 @@ We'll definitely be tweaking and amending this over time, so let's consider it a
 
 ### Names
 
-A combination of CamelCase and snake\_case. Use CamelCase (Capitalize the first letter, including all letters in an acronym) in a class, struct, or namespace name. Use snake\_case (all lowercase, with underscores separating words) for variable and function names.
+A combination of CamelCase, snake\_case, and SCREAMING\_CASE:
+
+- Use CamelCase (Capitalize the first letter, including all letters in an acronym) in a class, struct, or namespace name
+- Use snake\_case (all lowercase, with underscores separating words) for variable and function names
+- Use SCREAMING\_CASE for constants (both global and static member variables)
 
 ###### Right:
 
@@ -666,7 +670,7 @@ T* ret = reinterpret_cast<T*>(buffer);
 ```
 
 ```cpp
-// Core::Stream::SeekableStream::tell()
+// SeekableStream::tell()
 
 // Seek with 0 and SEEK_CUR does not modify anything despite the const_cast,
 // so it's safe to do this.

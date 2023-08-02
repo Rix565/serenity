@@ -66,11 +66,6 @@ Usage: $NAME COMMAND [TARGET] [TOOLCHAIN] [ARGS...]
 EOF
 }
 
-die() {
-    >&2 echo "die: $*"
-    exit 1
-}
-
 usage() {
     >&2 print_help
     exit 1
@@ -84,9 +79,12 @@ if [ "$CMD" = "help" ]; then
     exit 0
 fi
 
-if [ "$(id -u)" -eq 0 ]; then
-   die "Do not run serenity.sh as root, your Build directory will become root-owned"
-fi
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# shellcheck source=/dev/null
+. "${DIR}/shell_include.sh"
+
+exit_if_running_as_root "Do not run serenity.sh as root, your Build directory will become root-owned"
 
 if [ -n "$1" ]; then
     TARGET="$1"; shift
@@ -154,10 +152,12 @@ is_supported_compiler() {
     MAJOR_VERSION="${VERSION%%.*}"
     if $COMPILER --version 2>&1 | grep "Apple clang" >/dev/null; then
         # Apple Clang version check
-        [ "$MAJOR_VERSION" -ge 14 ] && return 0
+        BUILD_VERSION=$(echo | $COMPILER -dM -E - | grep __apple_build_version__ | cut -d ' ' -f3)
+        # Xcode 14.3, based on upstream LLVM 15
+        [ "$BUILD_VERSION" -ge 14030022 ] && return 0
     elif $COMPILER --version 2>&1 | grep "clang" >/dev/null; then
         # Clang version check
-        [ "$MAJOR_VERSION" -ge 13 ] && return 0
+        [ "$MAJOR_VERSION" -ge 15 ] && return 0
     else
         # GCC version check
         [ "$MAJOR_VERSION" -ge 12 ] && return 0
@@ -191,21 +191,25 @@ pick_host_compiler() {
         return
     fi
 
-    find_newest_compiler clang clang-13 clang-14 clang-15 /opt/homebrew/opt/llvm/bin/clang
+    find_newest_compiler clang clang-15 clang-16 /opt/homebrew/opt/llvm/bin/clang
     if is_supported_compiler "$HOST_COMPILER"; then
         export CC="${HOST_COMPILER}"
         export CXX="${HOST_COMPILER/clang/clang++}"
         return
     fi
 
-    find_newest_compiler egcc gcc gcc-12 /usr/local/bin/gcc-12 /opt/homebrew/bin/gcc-12
+    find_newest_compiler egcc gcc gcc-12 gcc-13 /usr/local/bin/gcc-{12,13} /opt/homebrew/bin/gcc-{12,13}
     if is_supported_compiler "$HOST_COMPILER"; then
         export CC="${HOST_COMPILER}"
         export CXX="${HOST_COMPILER/gcc/g++}"
         return
     fi
 
-    die "Please make sure that GCC version 12, Clang version 13, or higher is installed."
+    if [ "$(uname -s)" = "Darwin" ]; then
+        die "Please make sure that Xcode 14.3, Homebrew Clang 15, or higher is installed."
+    else
+        die "Please make sure that GCC version 12, Clang version 15, or higher is installed."
+    fi
 }
 
 cmd_with_target() {
@@ -283,7 +287,7 @@ build_image() {
     if [ "$SERENITY_RUN" = "limine" ]; then
         build_target limine-image
     else
-        build_target image
+        build_target qemu-image
     fi
 }
 
@@ -299,10 +303,16 @@ build_cmake() {
 
 build_toolchain() {
     echo "build_toolchain: $TOOLCHAIN_DIR"
+
     if [ "$TOOLCHAIN_TYPE" = "Clang" ]; then
         ( cd "$SERENITY_SOURCE_DIR/Toolchain" && ./BuildClang.sh )
     else
-        ( cd "$SERENITY_SOURCE_DIR/Toolchain" && ARCH="$TARGET" ./BuildIt.sh )
+        (
+            # HACK: ISL's configure fails with "Link Time Optimisation is not supported" if CC is
+            #       Homebrew Clang due to incompatibility with Xcode's ranlib.
+            [ "$(uname -s)" = "Darwin" ] && unset CC CXX
+            cd "$SERENITY_SOURCE_DIR/Toolchain" && ARCH="$TARGET" ./BuildGNU.sh
+        )
     fi
 }
 
@@ -315,7 +325,7 @@ ensure_toolchain() {
     if [ "$TOOLCHAIN_TYPE" = "GNU" ]; then
         local ld_version
         ld_version="$("$TOOLCHAIN_DIR"/bin/"$TARGET"-pc-serenity-ld -v)"
-        local expected_version="GNU ld (GNU Binutils) 2.39"
+        local expected_version="GNU ld (GNU Binutils) 2.40"
         if [ "$ld_version" != "$expected_version" ]; then
             echo "Your toolchain has an old version of binutils installed."
             echo "    installed version: \"$ld_version\""
@@ -375,7 +385,6 @@ run_gdb() {
                 fi
                 LAGOM_EXECUTABLE="$arg"
                 if [ "$LAGOM_EXECUTABLE" = "ladybird" ]; then
-                    LAGOM_EXECUTABLE="Ladybird/ladybird"
                     # FIXME: Make ladybird less cwd-dependent while in the build directory
                     cd "$BUILD_DIR/Ladybird"
                 fi
@@ -391,7 +400,7 @@ run_gdb() {
         GDB_ARGS+=( "$PASS_ARG_TO_GDB" )
     fi
     if [ "$TARGET" = "lagom" ]; then
-        gdb "$BUILD_DIR/$LAGOM_EXECUTABLE" "${GDB_ARGS[@]}"
+        gdb "$BUILD_DIR/bin/$LAGOM_EXECUTABLE" "${GDB_ARGS[@]}"
     else
         if [ -n "$KERNEL_CMD_LINE" ]; then
             export SERENITY_KERNEL_CMDLINE="$KERNEL_CMD_LINE"
@@ -463,12 +472,12 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
             fi
             ;;
         gdb)
-            command -v tmux >/dev/null 2>&1 || die "Please install tmux!"
             if [ "$TARGET" = "lagom" ]; then
                 [ $# -ge 1 ] || usage
                 build_target "$@"
                 run_gdb "${CMD_ARGS[@]}"
             else
+                command -v tmux >/dev/null 2>&1 || die "Please install tmux!"
                 build_target
                 build_target install
                 build_image

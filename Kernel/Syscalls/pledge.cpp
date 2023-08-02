@@ -5,13 +5,13 @@
  */
 
 #include <AK/StringView.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
 ErrorOr<FlatPtr> Process::sys$pledge(Userspace<Syscall::SC_pledge_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     auto params = TRY(copy_typed_from_user(user_params));
 
     if (params.promises.length > 1024 || params.execpromises.length > 1024)

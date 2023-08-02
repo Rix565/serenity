@@ -13,7 +13,7 @@ namespace WebSocket {
 
 static HashMap<int, RefPtr<ConnectionFromClient>> s_connections;
 
-ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket> socket)
     : IPC::ConnectionFromClient<WebSocketClientEndpoint, WebSocketServerEndpoint>(*this, move(socket), 1)
 {
     s_connections.set(1, *this);
@@ -27,7 +27,7 @@ void ConnectionFromClient::die()
 }
 
 Messages::WebSocketServer::ConnectResponse ConnectionFromClient::connect(URL const& url, DeprecatedString const& origin,
-    Vector<DeprecatedString> const& protocols, Vector<DeprecatedString> const& extensions, IPC::Dictionary const& additional_request_headers)
+    Vector<DeprecatedString> const& protocols, Vector<DeprecatedString> const& extensions, HashMap<DeprecatedString, DeprecatedString> const& additional_request_headers)
 {
     if (!url.is_valid()) {
         dbgln("WebSocket::Connect: Invalid URL requested: '{}'", url);
@@ -40,7 +40,7 @@ Messages::WebSocketServer::ConnectResponse ConnectionFromClient::connect(URL con
     connection_info.set_extensions(extensions);
 
     Vector<ConnectionInfo::Header> headers;
-    for (auto const& header : additional_request_headers.entries()) {
+    for (auto const& header : additional_request_headers) {
         headers.append({ header.key, header.value });
     }
     connection_info.set_headers(headers);
@@ -73,6 +73,15 @@ Messages::WebSocketServer::ReadyStateResponse ConnectionFromClient::ready_state(
         return (u32)connection->ready_state();
     }
     return (u32)ReadyState::Closed;
+}
+
+Messages::WebSocketServer::SubprotocolInUseResponse ConnectionFromClient::subprotocol_in_use(i32 connection_id)
+{
+    RefPtr<WebSocket> connection = m_connections.get(connection_id).value_or({});
+    if (connection) {
+        return connection->subprotocol_in_use();
+    }
+    return DeprecatedString::empty();
 }
 
 void ConnectionFromClient::send(i32 connection_id, bool is_text, ByteBuffer const& data)

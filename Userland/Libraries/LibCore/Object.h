@@ -12,7 +12,6 @@
 #include <AK/HashMap.h>
 #include <AK/IntrusiveList.h>
 #include <AK/Noncopyable.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <AK/StringView.h>
 #include <AK/TypeCasts.h>
@@ -112,14 +111,14 @@ public:
     DeprecatedString const& name() const { return m_name; }
     void set_name(DeprecatedString name) { m_name = move(name); }
 
-    NonnullRefPtrVector<Object>& children() { return m_children; }
-    NonnullRefPtrVector<Object> const& children() const { return m_children; }
+    Vector<NonnullRefPtr<Object>>& children() { return m_children; }
+    Vector<NonnullRefPtr<Object>> const& children() const { return m_children; }
 
     template<typename Callback>
     void for_each_child(Callback callback)
     {
         for (auto& child : m_children) {
-            if (callback(child) == IterationDecision::Break)
+            if (callback(*child) == IterationDecision::Break)
                 return;
         }
     }
@@ -129,12 +128,26 @@ public:
     requires IsBaseOf<Object, T>;
 
     template<typename T>
-    T* find_child_of_type_named(DeprecatedString const&)
+    T* find_child_of_type_named(StringView)
     requires IsBaseOf<Object, T>;
 
+    template<typename T, size_t N>
+    ALWAYS_INLINE T* find_child_of_type_named(char const (&string_literal)[N])
+    requires IsBaseOf<Object, T>
+    {
+        return find_child_of_type_named<T>(StringView { string_literal, N - 1 });
+    }
+
     template<typename T>
-    T* find_descendant_of_type_named(DeprecatedString const&)
+    T* find_descendant_of_type_named(StringView)
     requires IsBaseOf<Object, T>;
+
+    template<typename T, size_t N>
+    ALWAYS_INLINE T* find_descendant_of_type_named(char const (&string_literal)[N])
+    requires IsBaseOf<Object, T>
+    {
+        return find_descendant_of_type_named<T>(StringView { string_literal, N - 1 });
+    }
 
     bool is_ancestor_of(Object const&) const;
 
@@ -157,8 +170,6 @@ public:
     void dump_tree(int indent = 0);
 
     void deferred_invoke(Function<void()>);
-
-    void save_to(JsonObject&);
 
     bool set_property(DeprecatedString const& name, JsonValue const& value);
     JsonValue property(DeprecatedString const& name) const;
@@ -219,7 +230,7 @@ private:
     int m_timer_id { 0 };
     unsigned m_inspector_count { 0 };
     HashMap<DeprecatedString, NonnullOwnPtr<Property>> m_properties;
-    NonnullRefPtrVector<Object> m_children;
+    Vector<NonnullRefPtr<Object>> m_children;
     Function<bool(Core::Event&)> m_event_filter;
 };
 
@@ -246,7 +257,7 @@ requires IsBaseOf<Object, T>
 }
 
 template<typename T>
-T* Object::find_child_of_type_named(DeprecatedString const& name)
+T* Object::find_child_of_type_named(StringView name)
 requires IsBaseOf<Object, T>
 {
     T* found_child = nullptr;
@@ -262,7 +273,7 @@ requires IsBaseOf<Object, T>
 }
 
 template<typename T>
-T* Object::find_descendant_of_type_named(DeprecatedString const& name)
+T* Object::find_descendant_of_type_named(StringView name)
 requires IsBaseOf<Object, T>
 {
     if (is<T>(*this) && this->name() == name) {
@@ -296,13 +307,23 @@ requires IsBaseOf<Object, T>
             return true;                                      \
         });
 
-#define REGISTER_STRING_PROPERTY(property_name, getter, setter) \
-    register_property(                                          \
-        property_name,                                          \
-        [this] { return this->getter(); },                      \
-        [this](auto& value) {                                   \
-            this->setter(value.to_deprecated_string());         \
-            return true;                                        \
+// FIXME: Port JsonValue to the new String class.
+#define REGISTER_STRING_PROPERTY(property_name, getter, setter)                                                                           \
+    register_property(                                                                                                                    \
+        property_name,                                                                                                                    \
+        [this]() { return this->getter().to_deprecated_string(); },                                                                       \
+        [this](auto& value) {                                                                                                             \
+            this->setter(String::from_deprecated_string(value.to_deprecated_string()).release_value_but_fixme_should_propagate_errors()); \
+            return true;                                                                                                                  \
+        });
+
+#define REGISTER_DEPRECATED_STRING_PROPERTY(property_name, getter, setter) \
+    register_property(                                                     \
+        property_name,                                                     \
+        [this] { return this->getter(); },                                 \
+        [this](auto& value) {                                              \
+            this->setter(value.to_deprecated_string());                    \
+            return true;                                                   \
         });
 
 #define REGISTER_READONLY_STRING_PROPERTY(property_name, getter) \
@@ -326,8 +347,8 @@ requires IsBaseOf<Object, T>
         [this] {                                               \
             auto size = this->getter();                        \
             JsonArray size_array;                              \
-            size_array.append(size.width());                   \
-            size_array.append(size.height());                  \
+            size_array.must_append(size.width());              \
+            size_array.must_append(size.height());             \
             return size_array;                                 \
         },                                                     \
         {});
@@ -370,8 +391,8 @@ requires IsBaseOf<Object, T>
         [this] {                                              \
             auto size = this->getter();                       \
             JsonArray size_array;                             \
-            size_array.append(size.width());                  \
-            size_array.append(size.height());                 \
+            size_array.must_append(size.width());             \
+            size_array.must_append(size.height());            \
             return size_array;                                \
         },                                                    \
         [this](auto& value) {                                 \

@@ -71,10 +71,12 @@ size_t Parser::s_debug_indent_level { 0 };
 void Parser::append_node(NonnullOwnPtr<Node> node)
 {
     if (m_entered_node) {
-        m_entered_node->content.get<Node::Element>().children.append(move(node));
+        auto& entered_element = m_entered_node->content.get<Node::Element>();
+        entered_element.children.append(move(node));
+        enter_node(*entered_element.children.last());
     } else {
         m_root_node = move(node);
-        m_entered_node = m_root_node.ptr();
+        enter_node(*m_root_node);
     }
 }
 
@@ -95,7 +97,7 @@ void Parser::append_text(StringView text)
     m_entered_node->content.visit(
         [&](Node::Element& node) {
             if (!node.children.is_empty()) {
-                auto* text_node = node.children.last().content.get_pointer<Node::Text>();
+                auto* text_node = node.children.last()->content.get_pointer<Node::Text>();
                 if (text_node) {
                     text_node->builder.append(text);
                     return;
@@ -242,7 +244,7 @@ ErrorOr<void, ParseError> Parser::expect(StringView expected)
 }
 
 template<typename Pred>
-requires(IsCallableWithArguments<Pred, char>) ErrorOr<StringView, ParseError> Parser::expect(Pred predicate, StringView description)
+requires(IsCallableWithArguments<Pred, bool, char>) ErrorOr<StringView, ParseError> Parser::expect(Pred predicate, StringView description)
 {
     auto rollback = rollback_point();
     auto start = m_lexer.tell();
@@ -257,7 +259,7 @@ requires(IsCallableWithArguments<Pred, char>) ErrorOr<StringView, ParseError> Pa
 }
 
 template<typename Pred>
-requires(IsCallableWithArguments<Pred, char>) ErrorOr<StringView, ParseError> Parser::expect_many(Pred predicate, StringView description)
+requires(IsCallableWithArguments<Pred, bool, char>) ErrorOr<StringView, ParseError> Parser::expect_many(Pred predicate, StringView description)
 {
     auto rollback = rollback_point();
     auto start = m_lexer.tell();
@@ -407,6 +409,7 @@ ErrorOr<void, ParseError> Parser::parse_standalone_document_decl()
     TRY(expect("standalone"sv));
     auto accept = accept_rule();
 
+    TRY(parse_eq());
     TRY(expect(is_any_of("'\""sv), "one of ' or \""sv));
     m_lexer.retreat();
 
@@ -515,7 +518,7 @@ ErrorOr<Name, ParseError> Parser::parse_processing_instruction_target()
     auto target = TRY(parse_name());
     auto accept = accept_rule();
 
-    if (target.equals_ignoring_case("xml"sv) && m_options.treat_errors_as_fatal) {
+    if (target.equals_ignoring_ascii_case("xml"sv) && m_options.treat_errors_as_fatal) {
         return parse_error(
             m_lexer.tell() - target.length(),
             "Use of the reserved 'xml' name for processing instruction target name is disallowed");
@@ -612,6 +615,7 @@ ErrorOr<void, ParseError> Parser::parse_element()
     //           | STag content ETag
     if (auto result = parse_empty_element_tag(); !result.is_error()) {
         append_node(result.release_value());
+        leave_node();
         rollback.disarm();
         return {};
     }
@@ -620,7 +624,6 @@ ErrorOr<void, ParseError> Parser::parse_element()
     auto& node = *start_tag;
     auto& tag = node.content.get<Node::Element>();
     append_node(move(start_tag));
-    enter_node(node);
     ScopeGuard quit {
         [&] {
             leave_node();
@@ -859,7 +862,7 @@ ErrorOr<void, ParseError> Parser::parse_content()
             if (auto char_reference = reference.get_pointer<DeprecatedString>())
                 append_text(*char_reference);
             else
-                TRY(resolve_reference(reference.get<EntityReference>(), ReferencePlacement::Content));
+                append_text(TRY(resolve_reference(reference.get<EntityReference>(), ReferencePlacement::Content)));
             goto try_char_data;
         }
         if (auto result = parse_cdata_section(); !result.is_error()) {

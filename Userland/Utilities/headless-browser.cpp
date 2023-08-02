@@ -1,778 +1,446 @@
 /*
  * Copyright (c) 2022, Dex♪ <dexes.ttp@gmail.com>
+ * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Assertions.h>
-#include <AK/ByteBuffer.h>
-#include <AK/Format.h>
-#include <AK/HashTable.h>
+#include <AK/Badge.h>
+#include <AK/DeprecatedString.h>
+#include <AK/Function.h>
 #include <AK/LexicalPath.h>
 #include <AK/NonnullOwnPtr.h>
-#include <AK/StringBuilder.h>
-#include <AK/Types.h>
+#include <AK/Platform.h>
+#include <AK/String.h>
+#include <AK/URL.h>
+#include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/ConfigFile.h>
+#include <LibCore/DirIterator.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/File.h>
-#include <LibCore/MemoryStream.h>
-#include <LibCore/Stream.h>
-#include <LibCore/System.h>
-#include <LibCore/SystemServerTakeover.h>
 #include <LibCore/Timer.h>
-#include <LibGemini/GeminiRequest.h>
-#include <LibGemini/GeminiResponse.h>
-#include <LibGemini/Job.h>
+#include <LibDiff/Format.h>
+#include <LibDiff/Generator.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Font/FontDatabase.h>
-#include <LibGfx/ImageDecoder.h>
-#include <LibGfx/PNGWriter.h>
+#include <LibGfx/ImageFormats/PNGWriter.h>
+#include <LibGfx/Point.h>
 #include <LibGfx/Rect.h>
-#include <LibHTTP/HttpRequest.h>
-#include <LibHTTP/HttpResponse.h>
-#include <LibHTTP/HttpsJob.h>
-#include <LibHTTP/Job.h>
-#include <LibMain/Main.h>
+#include <LibGfx/ShareableBitmap.h>
+#include <LibGfx/Size.h>
+#include <LibGfx/StandardCursor.h>
+#include <LibGfx/SystemTheme.h>
+#include <LibIPC/File.h>
+#include <LibWeb/Cookie/Cookie.h>
 #include <LibWeb/Cookie/ParsedCookie.h>
-#include <LibWeb/DOM/Document.h>
-#include <LibWeb/HTML/BrowsingContext.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
-#include <LibWeb/Loader/ResourceLoader.h>
-#include <LibWeb/Page/Page.h>
-#include <LibWeb/Painting/PaintableBox.h>
-#include <LibWeb/Platform/EventLoopPluginSerenity.h>
-#include <LibWeb/Platform/FontPluginSerenity.h>
-#include <LibWeb/Platform/ImageCodecPlugin.h>
-#include <LibWeb/WebSockets/WebSocket.h>
-#include <LibWebSocket/ConnectionInfo.h>
-#include <LibWebSocket/Message.h>
-#include <LibWebSocket/WebSocket.h>
-#include <WebContent/WebDriverConnection.h>
+#include <LibWeb/HTML/ActivateTab.h>
+#include <LibWeb/Loader/FrameLoader.h>
+#include <LibWebView/ViewImplementation.h>
+#include <LibWebView/WebContentClient.h>
 
-class HeadlessBrowserPageClient final : public Web::PageClient {
+#if !defined(AK_OS_SERENITY)
+#    include <Ladybird/HelperProcess.h>
+#    include <Ladybird/Utilities.h>
+#    include <QCoreApplication>
+#endif
+
+class HeadlessWebContentView final : public WebView::ViewImplementation {
 public:
-    static NonnullOwnPtr<HeadlessBrowserPageClient> create()
+    static ErrorOr<NonnullOwnPtr<HeadlessWebContentView>> create(Core::AnonymousBuffer theme, Gfx::IntSize const& window_size, StringView web_driver_ipc_path, WebView::IsLayoutTestMode is_layout_test_mode = WebView::IsLayoutTestMode::No, WebView::UseJavaScriptBytecode use_javascript_bytecode = WebView::UseJavaScriptBytecode::No)
     {
-        return adopt_own(*new HeadlessBrowserPageClient());
+        auto view = TRY(adopt_nonnull_own_or_enomem(new (nothrow) HeadlessWebContentView(use_javascript_bytecode)));
+
+#if defined(AK_OS_SERENITY)
+        view->m_client_state.client = TRY(WebView::WebContentClient::try_create(*view));
+        (void)is_layout_test_mode;
+        (void)use_javascript_bytecode;
+#else
+        auto candidate_web_content_paths = TRY(get_paths_for_helper_process("WebContent"sv));
+        view->m_client_state.client = TRY(launch_web_content_process(*view, candidate_web_content_paths, WebView::EnableCallgrindProfiling::No, is_layout_test_mode, use_javascript_bytecode, UseLagomNetworking::No));
+#endif
+
+        view->client().async_update_system_theme(move(theme));
+        view->client().async_update_system_fonts(Gfx::FontDatabase::default_font_query(), Gfx::FontDatabase::fixed_width_font_query(), Gfx::FontDatabase::window_title_font_query());
+
+        view->m_viewport_rect = { { 0, 0 }, window_size };
+        view->client().async_set_viewport_rect(view->m_viewport_rect);
+        view->client().async_set_window_size(window_size);
+
+        if (!web_driver_ipc_path.is_empty())
+            view->client().async_connect_to_webdriver(web_driver_ipc_path);
+
+        return view;
     }
 
-    virtual Web::Page& page() override { return *m_page; }
-    virtual Web::Page const& page() const override { return *m_page; }
-
-    Web::Layout::InitialContainingBlock* layout_root()
+    RefPtr<Gfx::Bitmap> take_screenshot()
     {
-        auto* document = page().top_level_browsing_context().active_document();
-        if (!document)
-            return nullptr;
-        return document->layout_node();
+        return client().take_document_screenshot().bitmap();
     }
 
-    void load(AK::URL const& url)
+    ErrorOr<String> dump_layout_tree()
     {
-        page().load(url);
+        return String::from_deprecated_string(client().dump_layout_tree());
     }
 
-    virtual void paint(Web::DevicePixelRect const& content_rect, Gfx::Bitmap& target) override
+    ErrorOr<String> dump_text()
     {
-        Gfx::Painter painter(target);
-
-        if (auto* document = page().top_level_browsing_context().active_document())
-            document->update_layout();
-
-        painter.fill_rect({ {}, content_rect.size().to_type<int>() }, palette().base());
-
-        auto* layout_root = this->layout_root();
-        if (!layout_root) {
-            return;
-        }
-
-        Web::PaintContext context(painter, palette(), device_pixels_per_css_pixel());
-        context.set_should_show_line_box_borders(false);
-        context.set_device_viewport_rect(content_rect);
-        context.set_has_focus(true);
-        layout_root->paint_all_phases(context);
+        return String::from_deprecated_string(client().dump_text());
     }
 
-    void setup_palette(Core::AnonymousBuffer theme_buffer)
+    void clear_content_filters()
     {
-        m_palette_impl = Gfx::PaletteImpl::create_with_anonymous_buffer(theme_buffer);
-    }
-
-    void set_viewport_rect(Gfx::IntRect viewport_rect)
-    {
-        page().top_level_browsing_context().set_viewport_rect(page().device_to_css_rect(viewport_rect.to_type<Web::DevicePixels>()));
-    }
-
-    void set_screen_rect(Web::DevicePixelRect screen_rect)
-    {
-        m_screen_rect = screen_rect;
-    }
-
-    ErrorOr<void> connect_to_webdriver(StringView webdriver_ipc_path)
-    {
-        VERIFY(!m_webdriver);
-        m_webdriver = TRY(WebContent::WebDriverConnection::connect(*this, webdriver_ipc_path));
-        return {};
-    }
-
-    // ^Web::PageClient
-    virtual bool is_connection_open() const override
-    {
-        if (m_webdriver)
-            return m_webdriver->is_open();
-        return true;
-    }
-
-    virtual Gfx::Palette palette() const override
-    {
-        return Gfx::Palette(*m_palette_impl);
-    }
-
-    virtual Web::DevicePixelRect screen_rect() const override
-    {
-        return m_screen_rect;
-    }
-
-    virtual float device_pixels_per_css_pixel() const override
-    {
-        return 1.0f;
-    }
-
-    virtual Web::CSS::PreferredColorScheme preferred_color_scheme() const override
-    {
-        return m_preferred_color_scheme;
-    }
-
-    virtual void page_did_change_title(DeprecatedString const&) override
-    {
-    }
-
-    virtual void page_did_start_loading(AK::URL const&, bool) override
-    {
-    }
-
-    virtual void page_did_finish_loading(AK::URL const&) override
-    {
-    }
-
-    virtual void page_did_change_selection() override
-    {
-    }
-
-    virtual void page_did_request_cursor_change(Gfx::StandardCursor) override
-    {
-    }
-
-    virtual void page_did_request_context_menu(Web::CSSPixelPoint) override
-    {
-    }
-
-    virtual void page_did_request_link_context_menu(Web::CSSPixelPoint, AK::URL const&, DeprecatedString const&, unsigned) override
-    {
-    }
-
-    virtual void page_did_request_image_context_menu(Web::CSSPixelPoint, AK::URL const&, DeprecatedString const&, unsigned, Gfx::Bitmap const*) override
-    {
-    }
-
-    virtual void page_did_click_link(AK::URL const&, DeprecatedString const&, unsigned) override
-    {
-    }
-
-    virtual void page_did_middle_click_link(AK::URL const&, DeprecatedString const&, unsigned) override
-    {
-    }
-
-    virtual void page_did_enter_tooltip_area(Web::CSSPixelPoint, DeprecatedString const&) override
-    {
-    }
-
-    virtual void page_did_leave_tooltip_area() override
-    {
-    }
-
-    virtual void page_did_hover_link(AK::URL const&) override
-    {
-    }
-
-    virtual void page_did_unhover_link() override
-    {
-    }
-
-    virtual void page_did_invalidate(Web::CSSPixelRect const&) override
-    {
-    }
-
-    virtual void page_did_change_favicon(Gfx::Bitmap const&) override
-    {
-    }
-
-    virtual void page_did_layout() override
-    {
-    }
-
-    virtual void page_did_request_scroll_into_view(Web::CSSPixelRect const&) override
-    {
-    }
-
-    virtual void page_did_request_alert(DeprecatedString const&) override
-    {
-    }
-
-    virtual void page_did_request_confirm(DeprecatedString const&) override
-    {
-    }
-
-    virtual void page_did_request_prompt(DeprecatedString const&, DeprecatedString const&) override
-    {
-    }
-
-    virtual DeprecatedString page_did_request_cookie(AK::URL const&, Web::Cookie::Source) override
-    {
-        return DeprecatedString::empty();
-    }
-
-    virtual void page_did_set_cookie(AK::URL const&, Web::Cookie::ParsedCookie const&, Web::Cookie::Source) override
-    {
-    }
-
-    void request_file(NonnullRefPtr<Web::FileRequest>& request) override
-    {
-        auto const file = Core::System::open(request->path(), O_RDONLY);
-        request->on_file_request_finish(file);
+        client().async_set_content_filters({});
     }
 
 private:
-    HeadlessBrowserPageClient()
-        : m_page(make<Web::Page>(*this))
+    HeadlessWebContentView(WebView::UseJavaScriptBytecode use_javascript_bytecode)
+        : WebView::ViewImplementation(use_javascript_bytecode)
     {
     }
 
-    NonnullOwnPtr<Web::Page> m_page;
+    void notify_server_did_layout(Badge<WebView::WebContentClient>, Gfx::IntSize) override { }
+    void notify_server_did_paint(Badge<WebView::WebContentClient>, i32, Gfx::IntSize) override { }
+    void notify_server_did_invalidate_content_rect(Badge<WebView::WebContentClient>, Gfx::IntRect const&) override { }
+    void notify_server_did_change_selection(Badge<WebView::WebContentClient>) override { }
+    void notify_server_did_request_cursor_change(Badge<WebView::WebContentClient>, Gfx::StandardCursor) override { }
+    void notify_server_did_request_scroll(Badge<WebView::WebContentClient>, i32, i32) override { }
+    void notify_server_did_request_scroll_to(Badge<WebView::WebContentClient>, Gfx::IntPoint) override { }
+    void notify_server_did_request_scroll_into_view(Badge<WebView::WebContentClient>, Gfx::IntRect const&) override { }
+    void notify_server_did_enter_tooltip_area(Badge<WebView::WebContentClient>, Gfx::IntPoint, DeprecatedString const&) override { }
+    void notify_server_did_leave_tooltip_area(Badge<WebView::WebContentClient>) override { }
+    void notify_server_did_request_alert(Badge<WebView::WebContentClient>, String const&) override { }
+    void notify_server_did_request_confirm(Badge<WebView::WebContentClient>, String const&) override { }
+    void notify_server_did_request_prompt(Badge<WebView::WebContentClient>, String const&, String const&) override { }
+    void notify_server_did_request_set_prompt_text(Badge<WebView::WebContentClient>, String const&) override { }
+    void notify_server_did_request_accept_dialog(Badge<WebView::WebContentClient>) override { }
+    void notify_server_did_request_dismiss_dialog(Badge<WebView::WebContentClient>) override { }
 
-    RefPtr<Gfx::PaletteImpl> m_palette_impl;
-    Web::DevicePixelRect m_screen_rect { 0, 0, 800, 600 };
-    Web::CSS::PreferredColorScheme m_preferred_color_scheme { Web::CSS::PreferredColorScheme::Auto };
-
-    RefPtr<WebContent::WebDriverConnection> m_webdriver;
-};
-
-class ImageCodecPluginHeadless : public Web::Platform::ImageCodecPlugin {
-public:
-    ImageCodecPluginHeadless() = default;
-    virtual ~ImageCodecPluginHeadless() override = default;
-
-    virtual Optional<Web::Platform::DecodedImage> decode_image(ReadonlyBytes data) override
+    void notify_server_did_request_file(Badge<WebView::WebContentClient>, DeprecatedString const& path, i32 request_id) override
     {
-        auto decoder = Gfx::ImageDecoder::try_create_for_raw_bytes(data);
+        auto file = Core::File::open(path, Core::File::OpenMode::Read);
 
-        if (!decoder)
-            return Web::Platform::DecodedImage { false, 0, Vector<Web::Platform::Frame> {} };
-
-        if (!decoder->frame_count())
-            return Web::Platform::DecodedImage { false, 0, Vector<Web::Platform::Frame> {} };
-
-        Vector<Web::Platform::Frame> frames;
-        for (size_t i = 0; i < decoder->frame_count(); ++i) {
-            auto frame_or_error = decoder->frame(i);
-            if (frame_or_error.is_error()) {
-                frames.append({ {}, 0 });
-            } else {
-                auto frame = frame_or_error.release_value();
-                frames.append({ move(frame.image), static_cast<size_t>(frame.duration) });
-            }
-        }
-
-        return Web::Platform::DecodedImage {
-            decoder->is_animated(),
-            static_cast<u32>(decoder->loop_count()),
-            frames,
-        };
-    }
-};
-
-static HashTable<RefPtr<Web::ResourceLoaderConnectorRequest>> s_all_requests;
-
-class HeadlessRequestServer : public Web::ResourceLoaderConnector {
-public:
-    class HTTPHeadlessRequest
-        : public Web::ResourceLoaderConnectorRequest
-        , public Weakable<HTTPHeadlessRequest> {
-    public:
-        static ErrorOr<NonnullRefPtr<HTTPHeadlessRequest>> create(DeprecatedString const& method, AK::URL const& url, HashMap<DeprecatedString, DeprecatedString> const& request_headers, ReadonlyBytes request_body, Core::ProxyData const&)
-        {
-            auto stream_backing_buffer = TRY(ByteBuffer::create_uninitialized(1 * MiB));
-            auto underlying_socket = TRY(Core::Stream::TCPSocket::connect(url.host(), url.port().value_or(80)));
-            TRY(underlying_socket->set_blocking(false));
-            auto socket = TRY(Core::Stream::BufferedSocket<Core::Stream::TCPSocket>::create(move(underlying_socket)));
-
-            HTTP::HttpRequest request;
-            if (method.equals_ignoring_case("head"sv))
-                request.set_method(HTTP::HttpRequest::HEAD);
-            else if (method.equals_ignoring_case("get"sv))
-                request.set_method(HTTP::HttpRequest::GET);
-            else if (method.equals_ignoring_case("post"sv))
-                request.set_method(HTTP::HttpRequest::POST);
-            else
-                request.set_method(HTTP::HttpRequest::Invalid);
-            request.set_url(move(url));
-            request.set_headers(request_headers);
-            request.set_body(TRY(ByteBuffer::copy(request_body)));
-
-            return adopt_ref(*new HTTPHeadlessRequest(move(request), move(socket), move(stream_backing_buffer)));
-        }
-
-        virtual ~HTTPHeadlessRequest() override
-        {
-        }
-
-        virtual void set_should_buffer_all_input(bool) override
-        {
-        }
-
-        virtual bool stop() override
-        {
-            return false;
-        }
-
-        virtual void stream_into(Core::Stream::Stream&) override
-        {
-        }
-
-    private:
-        HTTPHeadlessRequest(HTTP::HttpRequest&& request, NonnullOwnPtr<Core::Stream::BufferedSocketBase> socket, ByteBuffer&& stream_backing_buffer)
-            : m_stream_backing_buffer(move(stream_backing_buffer))
-            , m_output_stream(Core::Stream::FixedMemoryStream::construct(m_stream_backing_buffer.bytes()).release_value_but_fixme_should_propagate_errors())
-            , m_socket(move(socket))
-            , m_job(HTTP::Job::construct(move(request), *m_output_stream))
-        {
-            m_job->on_headers_received = [weak_this = make_weak_ptr()](auto& response_headers, auto response_code) {
-                if (auto strong_this = weak_this.strong_ref()) {
-                    strong_this->m_response_code = response_code;
-                    for (auto& header : response_headers) {
-                        strong_this->m_response_headers.set(header.key, header.value);
-                    }
-                }
-            };
-            m_job->on_finish = [weak_this = make_weak_ptr()](bool success) {
-                Core::deferred_invoke([weak_this, success] {
-                    if (auto strong_this = weak_this.strong_ref()) {
-                        ReadonlyBytes response_bytes { strong_this->m_output_stream->bytes().data(), strong_this->m_output_stream->offset() };
-                        auto response_buffer = ByteBuffer::copy(response_bytes).release_value_but_fixme_should_propagate_errors();
-                        strong_this->on_buffered_request_finish(success, strong_this->m_output_stream->offset(), strong_this->m_response_headers, strong_this->m_response_code, response_buffer);
-                    }
-                });
-            };
-            m_job->start(*m_socket);
-        }
-
-        Optional<u32> m_response_code;
-        ByteBuffer m_stream_backing_buffer;
-        NonnullOwnPtr<Core::Stream::FixedMemoryStream> m_output_stream;
-        NonnullOwnPtr<Core::Stream::BufferedSocketBase> m_socket;
-        NonnullRefPtr<HTTP::Job> m_job;
-        HashMap<DeprecatedString, DeprecatedString, CaseInsensitiveStringTraits> m_response_headers;
-    };
-
-    class HTTPSHeadlessRequest
-        : public Web::ResourceLoaderConnectorRequest
-        , public Weakable<HTTPSHeadlessRequest> {
-    public:
-        static ErrorOr<NonnullRefPtr<HTTPSHeadlessRequest>> create(DeprecatedString const& method, AK::URL const& url, HashMap<DeprecatedString, DeprecatedString> const& request_headers, ReadonlyBytes request_body, Core::ProxyData const&)
-        {
-            auto stream_backing_buffer = TRY(ByteBuffer::create_uninitialized(1 * MiB));
-            auto underlying_socket = TRY(TLS::TLSv12::connect(url.host(), url.port().value_or(443)));
-            TRY(underlying_socket->set_blocking(false));
-            auto socket = TRY(Core::Stream::BufferedSocket<TLS::TLSv12>::create(move(underlying_socket)));
-
-            HTTP::HttpRequest request;
-            if (method.equals_ignoring_case("head"sv))
-                request.set_method(HTTP::HttpRequest::HEAD);
-            else if (method.equals_ignoring_case("get"sv))
-                request.set_method(HTTP::HttpRequest::GET);
-            else if (method.equals_ignoring_case("post"sv))
-                request.set_method(HTTP::HttpRequest::POST);
-            else
-                request.set_method(HTTP::HttpRequest::Invalid);
-            request.set_url(move(url));
-            request.set_headers(request_headers);
-            request.set_body(TRY(ByteBuffer::copy(request_body)));
-
-            return adopt_ref(*new HTTPSHeadlessRequest(move(request), move(socket), move(stream_backing_buffer)));
-        }
-
-        virtual ~HTTPSHeadlessRequest() override
-        {
-        }
-
-        virtual void set_should_buffer_all_input(bool) override
-        {
-        }
-
-        virtual bool stop() override
-        {
-            return false;
-        }
-
-        virtual void stream_into(Core::Stream::Stream&) override
-        {
-        }
-
-    private:
-        HTTPSHeadlessRequest(HTTP::HttpRequest&& request, NonnullOwnPtr<Core::Stream::BufferedSocketBase> socket, ByteBuffer&& stream_backing_buffer)
-            : m_stream_backing_buffer(move(stream_backing_buffer))
-            , m_output_stream(Core::Stream::FixedMemoryStream::construct(m_stream_backing_buffer.bytes()).release_value_but_fixme_should_propagate_errors())
-            , m_socket(move(socket))
-            , m_job(HTTP::HttpsJob::construct(move(request), *m_output_stream))
-        {
-            m_job->on_headers_received = [weak_this = make_weak_ptr()](auto& response_headers, auto response_code) {
-                if (auto strong_this = weak_this.strong_ref()) {
-                    strong_this->m_response_code = response_code;
-                    for (auto& header : response_headers) {
-                        strong_this->m_response_headers.set(header.key, header.value);
-                    }
-                }
-            };
-            m_job->on_finish = [weak_this = make_weak_ptr()](bool success) {
-                Core::deferred_invoke([weak_this, success] {
-                    if (auto strong_this = weak_this.strong_ref()) {
-                        ReadonlyBytes response_bytes { strong_this->m_output_stream->bytes().data(), strong_this->m_output_stream->offset() };
-                        auto response_buffer = ByteBuffer::copy(response_bytes).release_value_but_fixme_should_propagate_errors();
-                        strong_this->on_buffered_request_finish(success, strong_this->m_output_stream->offset(), strong_this->m_response_headers, strong_this->m_response_code, response_buffer);
-                    }
-                });
-            };
-            m_job->start(*m_socket);
-        }
-
-        Optional<u32> m_response_code;
-        ByteBuffer m_stream_backing_buffer;
-        NonnullOwnPtr<Core::Stream::FixedMemoryStream> m_output_stream;
-        NonnullOwnPtr<Core::Stream::BufferedSocketBase> m_socket;
-        NonnullRefPtr<HTTP::HttpsJob> m_job;
-        HashMap<DeprecatedString, DeprecatedString, CaseInsensitiveStringTraits> m_response_headers;
-    };
-
-    class GeminiHeadlessRequest
-        : public Web::ResourceLoaderConnectorRequest
-        , public Weakable<GeminiHeadlessRequest> {
-    public:
-        static ErrorOr<NonnullRefPtr<GeminiHeadlessRequest>> create(DeprecatedString const&, AK::URL const& url, HashMap<DeprecatedString, DeprecatedString> const&, ReadonlyBytes, Core::ProxyData const&)
-        {
-            auto stream_backing_buffer = TRY(ByteBuffer::create_uninitialized(1 * MiB));
-            auto underlying_socket = TRY(Core::Stream::TCPSocket::connect(url.host(), url.port().value_or(80)));
-            TRY(underlying_socket->set_blocking(false));
-            auto socket = TRY(Core::Stream::BufferedSocket<Core::Stream::TCPSocket>::create(move(underlying_socket)));
-
-            Gemini::GeminiRequest request;
-            request.set_url(url);
-
-            return adopt_ref(*new GeminiHeadlessRequest(move(request), move(socket), move(stream_backing_buffer)));
-        }
-
-        virtual ~GeminiHeadlessRequest() override
-        {
-        }
-
-        virtual void set_should_buffer_all_input(bool) override
-        {
-        }
-
-        virtual bool stop() override
-        {
-            return false;
-        }
-
-        virtual void stream_into(Core::Stream::Stream&) override
-        {
-        }
-
-    private:
-        GeminiHeadlessRequest(Gemini::GeminiRequest&& request, NonnullOwnPtr<Core::Stream::BufferedSocketBase> socket, ByteBuffer&& stream_backing_buffer)
-            : m_stream_backing_buffer(move(stream_backing_buffer))
-            , m_output_stream(Core::Stream::FixedMemoryStream::construct(m_stream_backing_buffer.bytes()).release_value_but_fixme_should_propagate_errors())
-            , m_socket(move(socket))
-            , m_job(Gemini::Job::construct(move(request), *m_output_stream))
-        {
-            m_job->on_headers_received = [weak_this = make_weak_ptr()](auto& response_headers, auto response_code) {
-                if (auto strong_this = weak_this.strong_ref()) {
-                    strong_this->m_response_code = response_code;
-                    for (auto& header : response_headers) {
-                        strong_this->m_response_headers.set(header.key, header.value);
-                    }
-                }
-            };
-            m_job->on_finish = [weak_this = make_weak_ptr()](bool success) {
-                Core::deferred_invoke([weak_this, success] {
-                    if (auto strong_this = weak_this.strong_ref()) {
-                        ReadonlyBytes response_bytes { strong_this->m_output_stream->bytes().data(), strong_this->m_output_stream->offset() };
-                        auto response_buffer = ByteBuffer::copy(response_bytes).release_value_but_fixme_should_propagate_errors();
-                        strong_this->on_buffered_request_finish(success, strong_this->m_output_stream->offset(), strong_this->m_response_headers, strong_this->m_response_code, response_buffer);
-                    }
-                });
-            };
-            m_job->start(*m_socket);
-        }
-
-        Optional<u32> m_response_code;
-        ByteBuffer m_stream_backing_buffer;
-        NonnullOwnPtr<Core::Stream::FixedMemoryStream> m_output_stream;
-        NonnullOwnPtr<Core::Stream::BufferedSocketBase> m_socket;
-        NonnullRefPtr<Gemini::Job> m_job;
-        HashMap<DeprecatedString, DeprecatedString, CaseInsensitiveStringTraits> m_response_headers;
-    };
-
-    static NonnullRefPtr<HeadlessRequestServer> create()
-    {
-        return adopt_ref(*new HeadlessRequestServer());
+        if (file.is_error())
+            client().async_handle_file_return(file.error().code(), {}, request_id);
+        else
+            client().async_handle_file_return(0, IPC::File(*file.value()), request_id);
     }
 
-    virtual ~HeadlessRequestServer() override { }
+    void notify_server_did_finish_handling_input_event(bool) override { }
+    void update_zoom() override { }
+    void create_client(WebView::EnableCallgrindProfiling) override { }
 
-    virtual void prefetch_dns(AK::URL const&) override { }
-    virtual void preconnect(AK::URL const&) override { }
-
-    virtual RefPtr<Web::ResourceLoaderConnectorRequest> start_request(DeprecatedString const& method, AK::URL const& url, HashMap<DeprecatedString, DeprecatedString> const& request_headers, ReadonlyBytes request_body, Core::ProxyData const& proxy) override
-    {
-        RefPtr<Web::ResourceLoaderConnectorRequest> request;
-        if (url.scheme().equals_ignoring_case("http"sv)) {
-            auto request_or_error = HTTPHeadlessRequest::create(method, url, request_headers, request_body, proxy);
-            if (request_or_error.is_error())
-                return {};
-            request = request_or_error.release_value();
-        }
-        if (url.scheme().equals_ignoring_case("https"sv)) {
-            auto request_or_error = HTTPSHeadlessRequest::create(method, url, request_headers, request_body, proxy);
-            if (request_or_error.is_error())
-                return {};
-            request = request_or_error.release_value();
-        }
-        if (url.scheme().equals_ignoring_case("gemini"sv)) {
-            auto request_or_error = GeminiHeadlessRequest::create(method, url, request_headers, request_body, proxy);
-            if (request_or_error.is_error())
-                return {};
-            request = request_or_error.release_value();
-        }
-        if (request)
-            s_all_requests.set(request);
-        return request;
-    }
+    virtual Gfx::IntRect viewport_rect() const override { return m_viewport_rect; }
+    virtual Gfx::IntPoint to_content_position(Gfx::IntPoint widget_position) const override { return widget_position; }
+    virtual Gfx::IntPoint to_widget_position(Gfx::IntPoint content_position) const override { return content_position; }
 
 private:
-    HeadlessRequestServer() { }
+    Gfx::IntRect m_viewport_rect;
 };
 
-class HeadlessWebSocketClientManager : public Web::WebSockets::WebSocketClientManager {
-public:
-    class HeadlessWebSocket
-        : public Web::WebSockets::WebSocketClientSocket
-        , public Weakable<HeadlessWebSocket> {
-    public:
-        static NonnullRefPtr<HeadlessWebSocket> create(NonnullRefPtr<WebSocket::WebSocket> underlying_socket)
-        {
-            return adopt_ref(*new HeadlessWebSocket(move(underlying_socket)));
-        }
-
-        virtual ~HeadlessWebSocket() override
-        {
-        }
-
-        virtual Web::WebSockets::WebSocket::ReadyState ready_state() override
-        {
-            switch (m_websocket->ready_state()) {
-            case WebSocket::ReadyState::Connecting:
-                return Web::WebSockets::WebSocket::ReadyState::Connecting;
-            case WebSocket::ReadyState::Open:
-                return Web::WebSockets::WebSocket::ReadyState::Open;
-            case WebSocket::ReadyState::Closing:
-                return Web::WebSockets::WebSocket::ReadyState::Closing;
-            case WebSocket::ReadyState::Closed:
-                return Web::WebSockets::WebSocket::ReadyState::Closed;
-            }
-            VERIFY_NOT_REACHED();
-        }
-
-        virtual void send(ByteBuffer binary_or_text_message, bool is_text) override
-        {
-            m_websocket->send(WebSocket::Message(binary_or_text_message, is_text));
-        }
-
-        virtual void send(StringView message) override
-        {
-            m_websocket->send(WebSocket::Message(message));
-        }
-
-        virtual void close(u16 code, DeprecatedString reason) override
-        {
-            m_websocket->close(code, reason);
-        }
-
-    private:
-        HeadlessWebSocket(NonnullRefPtr<WebSocket::WebSocket> underlying_socket)
-            : m_websocket(move(underlying_socket))
-        {
-            m_websocket->on_open = [weak_this = make_weak_ptr()] {
-                if (auto strong_this = weak_this.strong_ref())
-                    if (strong_this->on_open)
-                        strong_this->on_open();
-            };
-            m_websocket->on_message = [weak_this = make_weak_ptr()](auto message) {
-                if (auto strong_this = weak_this.strong_ref()) {
-                    if (strong_this->on_message) {
-                        strong_this->on_message(Web::WebSockets::WebSocketClientSocket::Message {
-                            .data = move(message.data()),
-                            .is_text = message.is_text(),
-                        });
-                    }
-                }
-            };
-            m_websocket->on_error = [weak_this = make_weak_ptr()](auto error) {
-                if (auto strong_this = weak_this.strong_ref()) {
-                    if (strong_this->on_error) {
-                        switch (error) {
-                        case WebSocket::WebSocket::Error::CouldNotEstablishConnection:
-                            strong_this->on_error(Web::WebSockets::WebSocketClientSocket::Error::CouldNotEstablishConnection);
-                            return;
-                        case WebSocket::WebSocket::Error::ConnectionUpgradeFailed:
-                            strong_this->on_error(Web::WebSockets::WebSocketClientSocket::Error::ConnectionUpgradeFailed);
-                            return;
-                        case WebSocket::WebSocket::Error::ServerClosedSocket:
-                            strong_this->on_error(Web::WebSockets::WebSocketClientSocket::Error::ServerClosedSocket);
-                            return;
-                        }
-                        VERIFY_NOT_REACHED();
-                    }
-                }
-            };
-            m_websocket->on_close = [weak_this = make_weak_ptr()](u16 code, DeprecatedString reason, bool was_clean) {
-                if (auto strong_this = weak_this.strong_ref())
-                    if (strong_this->on_close)
-                        strong_this->on_close(code, move(reason), was_clean);
-            };
-        }
-
-        NonnullRefPtr<WebSocket::WebSocket> m_websocket;
-    };
-
-    static NonnullRefPtr<HeadlessWebSocketClientManager> create()
-    {
-        return adopt_ref(*new HeadlessWebSocketClientManager());
-    }
-
-    virtual ~HeadlessWebSocketClientManager() override { }
-
-    virtual RefPtr<Web::WebSockets::WebSocketClientSocket> connect(AK::URL const& url, DeprecatedString const& origin) override
-    {
-        WebSocket::ConnectionInfo connection_info(url);
-        connection_info.set_origin(origin);
-
-        auto connection = HeadlessWebSocket::create(WebSocket::WebSocket::create(move(connection_info)));
-        return connection;
-    }
-
-private:
-    HeadlessWebSocketClientManager() { }
-};
-
-static void load_page_for_screenshot_and_exit(HeadlessBrowserPageClient& page_client, int take_screenshot_after)
+static ErrorOr<NonnullRefPtr<Core::Timer>> load_page_for_screenshot_and_exit(Core::EventLoop& event_loop, HeadlessWebContentView& view, int screenshot_timeout)
 {
-    dbgln("Taking screenshot after {} seconds", take_screenshot_after);
+    // FIXME: Allow passing the output path as an argument.
+    static constexpr auto output_file_path = "output.png"sv;
 
-    auto timer = Core::Timer::create_single_shot(
-        take_screenshot_after * 1000,
+    if (FileSystem::exists(output_file_path))
+        TRY(FileSystem::remove(output_file_path, FileSystem::RecursionMode::Disallowed));
+
+    outln("Taking screenshot after {} seconds", screenshot_timeout);
+
+    auto timer = TRY(Core::Timer::create_single_shot(
+        screenshot_timeout * 1000,
         [&]() {
-            // FIXME: Allow passing the output path as argument
-            DeprecatedString output_file_path = "output.png";
-            dbgln("Saving to {}", output_file_path);
+            if (auto screenshot = view.take_screenshot()) {
+                outln("Saving screenshot to {}", output_file_path);
 
-            if (Core::File::exists(output_file_path))
-                MUST(Core::File::remove(output_file_path, Core::File::RecursionMode::Disallowed));
+                auto output_file = MUST(Core::File::open(output_file_path, Core::File::OpenMode::Write));
+                auto image_buffer = MUST(Gfx::PNGWriter::encode(*screenshot));
+                MUST(output_file->write_until_depleted(image_buffer.bytes()));
+            } else {
+                warnln("No screenshot available");
+            }
 
-            auto output_file = MUST(Core::Stream::File::open(output_file_path, Core::Stream::OpenMode::Write));
-
-            auto output_rect = page_client.screen_rect();
-            auto output_bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRx8888, output_rect.size().to_type<int>()));
-
-            page_client.paint(output_rect, output_bitmap);
-
-            auto image_buffer = MUST(Gfx::PNGWriter::encode(output_bitmap));
-            MUST(output_file->write(image_buffer.bytes()));
-
-            exit(0);
-        }).release_value_but_fixme_should_propagate_errors();
+            event_loop.quit(0);
+        }));
 
     timer->start();
+    return timer;
+}
+
+static ErrorOr<URL> format_url(StringView url)
+{
+    if (FileSystem::exists(url))
+        return URL::create_with_file_scheme(TRY(FileSystem::real_path(url)).to_deprecated_string());
+
+    URL formatted_url { url };
+    if (!formatted_url.is_valid())
+        formatted_url = TRY(String::formatted("http://{}", url));
+
+    return formatted_url;
+}
+
+enum class TestMode {
+    Layout,
+    Text,
+};
+
+static ErrorOr<String> run_one_test(HeadlessWebContentView& view, StringView input_path, StringView expectation_path, TestMode mode, int timeout_in_milliseconds = 15000)
+{
+    Core::EventLoop loop;
+    bool did_timeout = false;
+
+    auto timeout_timer = TRY(Core::Timer::create_single_shot(5000, [&] {
+        did_timeout = true;
+        loop.quit(0);
+    }));
+
+    view.load(URL::create_with_file_scheme(TRY(FileSystem::real_path(input_path)).to_deprecated_string()));
+    (void)expectation_path;
+
+    String result;
+
+    if (mode == TestMode::Layout) {
+        view.on_load_finish = [&](auto const&) {
+            // NOTE: We take a screenshot here to force the lazy layout of SVG-as-image documents to happen.
+            //       It also causes a lot more code to run, which is good for finding bugs. :^)
+            (void)view.take_screenshot();
+
+            result = view.dump_layout_tree().release_value_but_fixme_should_propagate_errors();
+            loop.quit(0);
+        };
+    } else if (mode == TestMode::Text) {
+        view.on_load_finish = [&](auto const&) {
+            result = view.dump_text().release_value_but_fixme_should_propagate_errors();
+            loop.quit(0);
+        };
+    }
+
+    timeout_timer->start(timeout_in_milliseconds);
+    loop.exec();
+
+    if (did_timeout)
+        return Error::from_errno(ETIMEDOUT);
+
+    return result;
+}
+
+enum class TestResult {
+    Pass,
+    Fail,
+    Timeout,
+};
+
+static ErrorOr<TestResult> run_test(HeadlessWebContentView& view, StringView input_path, StringView expectation_path, TestMode mode)
+{
+    auto result = run_one_test(view, input_path, expectation_path, mode);
+
+    if (result.is_error() && result.error().code() == ETIMEDOUT)
+        return TestResult::Timeout;
+    if (result.is_error())
+        return result.release_error();
+
+    auto expectation_file_or_error = Core::File::open(expectation_path, Core::File::OpenMode::Read);
+    if (expectation_file_or_error.is_error()) {
+        warnln("Failed opening '{}': {}", expectation_path, expectation_file_or_error.error());
+        return expectation_file_or_error.release_error();
+    }
+
+    auto expectation_file = expectation_file_or_error.release_value();
+
+    auto expectation = TRY(String::from_utf8(StringView(TRY(expectation_file->read_until_eof()).bytes())));
+
+    auto actual = result.release_value();
+    auto actual_trimmed = TRY(actual.trim("\n"sv, TrimMode::Right));
+    auto expectation_trimmed = TRY(expectation.trim("\n"sv, TrimMode::Right));
+
+    if (actual_trimmed == expectation_trimmed)
+        return TestResult::Pass;
+
+    auto const color_output = isatty(STDOUT_FILENO) ? Diff::ColorOutput::Yes : Diff::ColorOutput::No;
+
+    if (color_output == Diff::ColorOutput::Yes)
+        outln("\n\033[33;1mTest failed\033[0m: {}", input_path);
+    else
+        outln("\nTest failed: {}", input_path);
+
+    auto hunks = TRY(Diff::from_text(expectation, actual, 3));
+    auto out = TRY(Core::File::standard_output());
+
+    TRY(Diff::write_unified_header(expectation_path, expectation_path, *out));
+    for (auto const& hunk : hunks)
+        TRY(Diff::write_unified(hunk, *out, color_output));
+
+    return TestResult::Fail;
+}
+
+struct Test {
+    String input_path;
+    String expectation_path;
+    TestMode mode;
+    Optional<TestResult> result;
+};
+
+static ErrorOr<void> collect_tests(Vector<Test>& tests, StringView path, StringView trail, TestMode mode)
+{
+    Core::DirIterator it(TRY(String::formatted("{}/input/{}", path, trail)).to_deprecated_string(), Core::DirIterator::Flags::SkipDots);
+    while (it.has_next()) {
+        auto name = it.next_path();
+        auto input_path = TRY(FileSystem::real_path(TRY(String::formatted("{}/input/{}/{}", path, trail, name))));
+        if (FileSystem::is_directory(input_path)) {
+            TRY(collect_tests(tests, path, TRY(String::formatted("{}/{}", trail, name)), mode));
+            continue;
+        }
+        if (!name.ends_with(".html"sv))
+            continue;
+        auto basename = LexicalPath::title(name);
+        auto expectation_path = TRY(String::formatted("{}/expected/{}/{}.txt", path, trail, basename));
+
+        tests.append({ move(input_path), move(expectation_path), mode, {} });
+    }
+    return {};
+}
+
+static ErrorOr<int> run_tests(HeadlessWebContentView& view, StringView test_root_path)
+{
+    view.clear_content_filters();
+
+    Vector<Test> tests;
+    TRY(collect_tests(tests, TRY(String::formatted("{}/Layout", test_root_path)), "."sv, TestMode::Layout));
+    TRY(collect_tests(tests, TRY(String::formatted("{}/Text", test_root_path)), "."sv, TestMode::Text));
+
+    size_t pass_count = 0;
+    size_t fail_count = 0;
+    size_t timeout_count = 0;
+
+    bool is_tty = isatty(STDOUT_FILENO);
+
+    outln("Running {} tests...", tests.size());
+    for (size_t i = 0; i < tests.size(); ++i) {
+        auto& test = tests[i];
+
+        if (is_tty) {
+            // Keep clearing and reusing the same line if stdout is a TTY.
+            out("\33[2K\r");
+        }
+
+        out("{}/{}: {}", i + 1, tests.size(), LexicalPath::relative_path(test.input_path, test_root_path));
+
+        if (is_tty)
+            fflush(stdout);
+        else
+            outln("");
+
+        test.result = TRY(run_test(view, test.input_path, test.expectation_path, test.mode));
+        switch (*test.result) {
+        case TestResult::Pass:
+            ++pass_count;
+            break;
+        case TestResult::Fail:
+            ++fail_count;
+            break;
+        case TestResult::Timeout:
+            ++timeout_count;
+            break;
+        }
+    }
+
+    if (is_tty)
+        outln("\33[2K\rDone!");
+
+    outln("==================================================");
+    outln("Pass: {}, Fail: {}, Timeout: {}", pass_count, fail_count, timeout_count);
+    outln("==================================================");
+    for (auto& test : tests) {
+        if (*test.result == TestResult::Pass)
+            continue;
+        outln("{}: {}", *test.result == TestResult::Fail ? "Fail" : "Timeout", test.input_path);
+    }
+
+    if (timeout_count == 0 && fail_count == 0)
+        return 0;
+    return 1;
 }
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    int take_screenshot_after = 1;
-    StringView url;
-    StringView resources_folder;
-    StringView error_page_url;
-    StringView ca_certs_path;
-    StringView webdriver_ipc_path;
-
+#if !defined(AK_OS_SERENITY)
+    QCoreApplication app(arguments.argc, arguments.argv);
+#endif
     Core::EventLoop event_loop;
+
+    int screenshot_timeout = 1;
+    StringView url;
+    auto resources_folder = "/res"sv;
+    StringView web_driver_ipc_path;
+    bool dump_layout_tree = false;
+    bool dump_text = false;
+    bool is_layout_test_mode = false;
+    bool use_ast_interpreter = false;
+    StringView test_root_path;
+
     Core::ArgsParser args_parser;
     args_parser.set_general_help("This utility runs the Browser in headless mode.");
-    args_parser.add_option(take_screenshot_after, "Take a screenshot after [n] seconds (default: 1)", "screenshot", 's', "n");
+    args_parser.add_option(screenshot_timeout, "Take a screenshot after [n] seconds (default: 1)", "screenshot", 's', "n");
+    args_parser.add_option(dump_layout_tree, "Dump layout tree and exit", "dump-layout-tree", 'd');
+    args_parser.add_option(dump_text, "Dump text and exit", "dump-text", 'T');
+    args_parser.add_option(test_root_path, "Run tests in path", "run-tests", 'R', "test-root-path");
     args_parser.add_option(resources_folder, "Path of the base resources folder (defaults to /res)", "resources", 'r', "resources-root-path");
-    args_parser.add_option(error_page_url, "URL for the error page (defaults to file:///res/html/error.html)", "error-page", 'e', "error-page-url");
-    args_parser.add_option(ca_certs_path, "The bundled ca certificates file", "certs", 'c', "ca-certs-path");
-    args_parser.add_option(webdriver_ipc_path, "Path to the WebDriver IPC socket", "webdriver-ipc-path", 0, "path");
-    args_parser.add_positional_argument(url, "URL to open", "url", Core::ArgsParser::Required::Yes);
+    args_parser.add_option(web_driver_ipc_path, "Path to the WebDriver IPC socket", "webdriver-ipc-path", 0, "path");
+    args_parser.add_option(is_layout_test_mode, "Enable layout test mode", "layout-test-mode", 0);
+    args_parser.add_option(use_ast_interpreter, "Enable JavaScript AST interpreter (deprecated)", "ast", 0);
+    args_parser.add_positional_argument(url, "URL to open", "url", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
-
-    Web::Platform::EventLoopPlugin::install(*new Web::Platform::EventLoopPluginSerenity);
-    Web::Platform::FontPlugin::install(*new Web::Platform::FontPluginSerenity);
-    Web::Platform::ImageCodecPlugin::install(*new ImageCodecPluginHeadless);
-    Web::ResourceLoader::initialize(HeadlessRequestServer::create());
-    Web::WebSockets::WebSocketClientManager::initialize(HeadlessWebSocketClientManager::create());
-
-    if (!resources_folder.is_empty()) {
-        Web::FrameLoader::set_default_favicon_path(LexicalPath::join(resources_folder, "icons/16x16/app-browser.png"sv).string());
-        Gfx::FontDatabase::set_default_fonts_lookup_path(LexicalPath::join(resources_folder, "fonts"sv).string());
-    }
-    if (!ca_certs_path.is_empty()) {
-        auto config_result = Core::ConfigFile::open(ca_certs_path);
-        if (config_result.is_error()) {
-            dbgln("Failed to load CA Certificates: {}", config_result.error());
-        } else {
-            auto config = config_result.release_value();
-            DefaultRootCACertificates::the().reload_certificates(config);
-        }
-    }
 
     Gfx::FontDatabase::set_default_font_query("Katica 10 400 0");
     Gfx::FontDatabase::set_window_title_font_query("Katica 10 700 0");
     Gfx::FontDatabase::set_fixed_width_font_query("Csilla 10 400 0");
 
-    if (!error_page_url.is_empty())
-        Web::FrameLoader::set_error_page_url(error_page_url);
+    auto fonts_path = LexicalPath::join(resources_folder, "fonts"sv);
+    Gfx::FontDatabase::set_default_fonts_lookup_path(fonts_path.string());
 
-    auto page_client = HeadlessBrowserPageClient::create();
+    auto theme_path = LexicalPath::join(resources_folder, "themes"sv, "Default.ini"sv);
+    auto theme = TRY(Gfx::load_system_theme(theme_path.string()));
 
-    if (!resources_folder.is_empty()) {
-        auto system_theme = TRY(Gfx::load_system_theme(LexicalPath::join(resources_folder, "themes/Default.ini"sv).string()));
-        page_client->setup_palette(system_theme);
-    } else {
-        auto system_theme = TRY(Gfx::load_system_theme("/res/themes/Default.ini"));
-        page_client->setup_palette(system_theme);
+    // FIXME: Allow passing the window size as an argument.
+    static constexpr Gfx::IntSize window_size { 800, 600 };
+
+    if (!test_root_path.is_empty()) {
+        // --run-tests implies --layout-test-mode.
+        is_layout_test_mode = true;
     }
 
-    dbgln("Loading {}", url);
-    page_client->load(AK::URL(url));
+    auto view = TRY(HeadlessWebContentView::create(move(theme), window_size, web_driver_ipc_path, is_layout_test_mode ? WebView::IsLayoutTestMode::Yes : WebView::IsLayoutTestMode::No, use_ast_interpreter ? WebView::UseJavaScriptBytecode::No : WebView::UseJavaScriptBytecode::Yes));
+    RefPtr<Core::Timer> timer;
 
-    // FIXME: Allow passing these values as arguments
-    page_client->set_viewport_rect({ 0, 0, 800, 600 });
-    page_client->set_screen_rect({ 0, 0, 800, 600 });
+    if (!test_root_path.is_empty()) {
+        return run_tests(*view, test_root_path);
+    }
 
-    if (!webdriver_ipc_path.is_empty())
-        TRY(page_client->connect_to_webdriver(webdriver_ipc_path));
-    else
-        load_page_for_screenshot_and_exit(*page_client, take_screenshot_after);
+    if (dump_layout_tree) {
+        view->on_load_finish = [&](auto const&) {
+            (void)view->take_screenshot();
+            auto layout_tree = view->dump_layout_tree().release_value_but_fixme_should_propagate_errors();
 
+            out("{}", layout_tree);
+            fflush(stdout);
+
+            event_loop.quit(0);
+        };
+    } else if (dump_text) {
+        view->on_load_finish = [&](auto const&) {
+            auto text = view->dump_text().release_value_but_fixme_should_propagate_errors();
+
+            out("{}", text);
+            fflush(stdout);
+
+            event_loop.quit(0);
+        };
+    } else if (web_driver_ipc_path.is_empty()) {
+        timer = TRY(load_page_for_screenshot_and_exit(event_loop, *view, screenshot_timeout));
+    }
+
+    view->load(TRY(format_url(url)));
     return event_loop.exec();
 }

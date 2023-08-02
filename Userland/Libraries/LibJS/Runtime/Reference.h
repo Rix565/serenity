@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/DeprecatedString.h>
 #include <LibJS/Runtime/Environment.h>
 #include <LibJS/Runtime/EnvironmentCoordinate.h>
 #include <LibJS/Runtime/PropertyKey.h>
@@ -39,12 +38,6 @@ public:
         , m_this_value(this_value)
         , m_strict(strict)
     {
-        if (base.is_nullish()) {
-            m_base_type = BaseType::Unresolvable;
-            m_base_value = {};
-            m_this_value = {};
-            m_name = {};
-        }
     }
 
     Reference(Environment& base, DeprecatedFlyString referenced_name, bool strict = false, Optional<EnvironmentCoordinate> environment_coordinate = {})
@@ -126,8 +119,6 @@ public:
     ThrowCompletionOr<void> put_value(VM&, Value);
     ThrowCompletionOr<Value> get_value(VM&) const;
     ThrowCompletionOr<bool> delete_(VM&);
-
-    DeprecatedString to_deprecated_string() const;
 
     bool is_valid_reference() const { return m_name.is_valid() || m_is_private; }
 

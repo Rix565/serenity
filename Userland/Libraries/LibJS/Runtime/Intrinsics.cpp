@@ -63,6 +63,8 @@
 #include <LibJS/Runtime/Intl/SegmenterPrototype.h>
 #include <LibJS/Runtime/Intl/SegmentsPrototype.h>
 #include <LibJS/Runtime/Intrinsics.h>
+#include <LibJS/Runtime/IteratorConstructor.h>
+#include <LibJS/Runtime/IteratorHelperPrototype.h>
 #include <LibJS/Runtime/IteratorPrototype.h>
 #include <LibJS/Runtime/JSONObject.h>
 #include <LibJS/Runtime/MapConstructor.h>
@@ -88,6 +90,8 @@
 #include <LibJS/Runtime/ShadowRealmConstructor.h>
 #include <LibJS/Runtime/ShadowRealmPrototype.h>
 #include <LibJS/Runtime/Shape.h>
+#include <LibJS/Runtime/SharedArrayBufferConstructor.h>
+#include <LibJS/Runtime/SharedArrayBufferPrototype.h>
 #include <LibJS/Runtime/StringConstructor.h>
 #include <LibJS/Runtime/StringIteratorPrototype.h>
 #include <LibJS/Runtime/StringPrototype.h>
@@ -125,6 +129,7 @@
 #include <LibJS/Runtime/WeakRefPrototype.h>
 #include <LibJS/Runtime/WeakSetConstructor.h>
 #include <LibJS/Runtime/WeakSetPrototype.h>
+#include <LibJS/Runtime/WrapForValidIteratorPrototype.h>
 
 namespace JS {
 
@@ -136,7 +141,7 @@ static void initialize_constructor(VM& vm, PropertyKey const& property_key, Obje
 }
 
 // 9.3.2 CreateIntrinsics ( realmRec ), https://tc39.es/ecma262/#sec-createintrinsics
-NonnullGCPtr<Intrinsics> Intrinsics::create(Realm& realm)
+ThrowCompletionOr<NonnullGCPtr<Intrinsics>> Intrinsics::create(Realm& realm)
 {
     auto& vm = realm.vm();
 
@@ -158,7 +163,7 @@ NonnullGCPtr<Intrinsics> Intrinsics::create(Realm& realm)
     //    is the specified value of the function's [[Prototype]] internal slot. The
     //    creation of the intrinsics and their properties must be ordered to avoid
     //    any dependencies upon objects that have not yet been created.
-    intrinsics->initialize_intrinsics(realm);
+    MUST_OR_THROW_OOM(intrinsics->initialize_intrinsics(realm));
 
     // 3. Perform AddRestrictedFunctionProperties(realmRec.[[Intrinsics]].[[%Function.prototype%]], realmRec).
     add_restricted_function_properties(static_cast<FunctionObject&>(*realm.intrinsics().function_prototype()), realm);
@@ -167,7 +172,7 @@ NonnullGCPtr<Intrinsics> Intrinsics::create(Realm& realm)
     return *intrinsics;
 }
 
-void Intrinsics::initialize_intrinsics(Realm& realm)
+ThrowCompletionOr<void> Intrinsics::initialize_intrinsics(Realm& realm)
 {
     auto& vm = this->vm();
 
@@ -184,8 +189,8 @@ void Intrinsics::initialize_intrinsics(Realm& realm)
     m_new_ordinary_function_prototype_object_shape->add_property_without_transition(vm.names.constructor, Attribute::Writable | Attribute::Configurable);
 
     // Normally Heap::allocate() takes care of this, but these are allocated via allocate_without_realm().
-    static_cast<FunctionPrototype*>(m_function_prototype)->initialize(realm);
-    static_cast<ObjectPrototype*>(m_object_prototype)->initialize(realm);
+    MUST_OR_THROW_OOM(m_function_prototype->initialize(realm));
+    MUST_OR_THROW_OOM(m_object_prototype->initialize(realm));
 
 #define __JS_ENUMERATE(ClassName, snake_name) \
     VERIFY(!m_##snake_name##_prototype);      \
@@ -198,6 +203,7 @@ void Intrinsics::initialize_intrinsics(Realm& realm)
     m_async_generator_prototype = heap().allocate<AsyncGeneratorPrototype>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
     m_generator_prototype = heap().allocate<GeneratorPrototype>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
     m_intl_segments_prototype = heap().allocate<Intl::SegmentsPrototype>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
+    m_wrap_for_valid_iterator_prototype = heap().allocate<WrapForValidIteratorPrototype>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
 
     // These must be initialized before allocating...
     // - AggregateErrorPrototype, which uses ErrorPrototype as its prototype
@@ -232,7 +238,7 @@ void Intrinsics::initialize_intrinsics(Realm& realm)
         },
         0, "", &realm);
     m_throw_type_error_function->define_direct_property(vm.names.length, Value(0), 0);
-    m_throw_type_error_function->define_direct_property(vm.names.name, PrimitiveString::create(vm, ""), 0);
+    m_throw_type_error_function->define_direct_property(vm.names.name, PrimitiveString::create(vm, String {}), 0);
     MUST(m_throw_type_error_function->internal_prevent_extensions());
 
     initialize_constructor(vm, vm.names.Error, *m_error_constructor, m_error_prototype);
@@ -255,6 +261,8 @@ void Intrinsics::initialize_intrinsics(Realm& realm)
     m_json_parse_function = &json_object()->get_without_side_effects(vm.names.parse).as_function();
     m_json_stringify_function = &json_object()->get_without_side_effects(vm.names.stringify).as_function();
     m_object_prototype_to_string_function = &object_prototype()->get_without_side_effects(vm.names.toString).as_function();
+
+    return {};
 }
 
 template<typename T>
@@ -300,18 +308,18 @@ JS_ENUMERATE_TYPED_ARRAYS
             initialize_constructor(vm, vm.names.ClassName, *m_##snake_namespace##snake_name##_constructor, m_##snake_namespace##snake_name##_prototype);                                                           \
     }                                                                                                                                                                                                              \
                                                                                                                                                                                                                    \
-    Namespace::ConstructorName* Intrinsics::snake_namespace##snake_name##_constructor()                                                                                                                            \
+    NonnullGCPtr<Namespace::ConstructorName> Intrinsics::snake_namespace##snake_name##_constructor()                                                                                                               \
     {                                                                                                                                                                                                              \
         if (!m_##snake_namespace##snake_name##_constructor)                                                                                                                                                        \
             initialize_##snake_namespace##snake_name();                                                                                                                                                            \
-        return m_##snake_namespace##snake_name##_constructor;                                                                                                                                                      \
+        return *m_##snake_namespace##snake_name##_constructor;                                                                                                                                                     \
     }                                                                                                                                                                                                              \
                                                                                                                                                                                                                    \
-    Object* Intrinsics::snake_namespace##snake_name##_prototype()                                                                                                                                                  \
+    NonnullGCPtr<Object> Intrinsics::snake_namespace##snake_name##_prototype()                                                                                                                                     \
     {                                                                                                                                                                                                              \
         if (!m_##snake_namespace##snake_name##_prototype)                                                                                                                                                          \
             initialize_##snake_namespace##snake_name();                                                                                                                                                            \
-        return m_##snake_namespace##snake_name##_prototype;                                                                                                                                                        \
+        return *m_##snake_namespace##snake_name##_prototype;                                                                                                                                                       \
     }
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, ArrayType) \
@@ -332,17 +340,18 @@ JS_ENUMERATE_TEMPORAL_OBJECTS
 #undef __JS_ENUMERATE_INNER
 
 #define __JS_ENUMERATE(ClassName, snake_name)                                                                                                   \
-    ClassName* Intrinsics::snake_name##_object()                                                                                                \
+    NonnullGCPtr<ClassName> Intrinsics::snake_name##_object()                                                                                   \
     {                                                                                                                                           \
         if (!m_##snake_name##_object)                                                                                                           \
             m_##snake_name##_object = heap().allocate<ClassName>(m_realm, m_realm).release_allocated_value_but_fixme_should_propagate_errors(); \
-        return m_##snake_name##_object;                                                                                                         \
+        return *m_##snake_name##_object;                                                                                                        \
     }
 JS_ENUMERATE_BUILTIN_NAMESPACE_OBJECTS
 #undef __JS_ENUMERATE
 
 void Intrinsics::visit_edges(Visitor& visitor)
 {
+    Base::visit_edges(visitor);
     visitor.visit(m_realm);
     visitor.visit(m_empty_object_shape);
     visitor.visit(m_new_object_shape);
@@ -352,6 +361,18 @@ void Intrinsics::visit_edges(Visitor& visitor)
     visitor.visit(m_async_generator_prototype);
     visitor.visit(m_generator_prototype);
     visitor.visit(m_intl_segments_prototype);
+    visitor.visit(m_wrap_for_valid_iterator_prototype);
+    visitor.visit(m_eval_function);
+    visitor.visit(m_is_finite_function);
+    visitor.visit(m_is_nan_function);
+    visitor.visit(m_parse_float_function);
+    visitor.visit(m_parse_int_function);
+    visitor.visit(m_decode_uri_function);
+    visitor.visit(m_decode_uri_component_function);
+    visitor.visit(m_encode_uri_function);
+    visitor.visit(m_encode_uri_component_function);
+    visitor.visit(m_escape_function);
+    visitor.visit(m_unescape_function);
     visitor.visit(m_array_prototype_values_function);
     visitor.visit(m_date_constructor_now_function);
     visitor.visit(m_eval_function);
@@ -395,10 +416,10 @@ void add_restricted_function_properties(FunctionObject& function, Realm& realm)
     auto& vm = realm.vm();
 
     // 1. Assert: realm.[[Intrinsics]].[[%ThrowTypeError%]] exists and has been initialized.
-    VERIFY(realm.intrinsics().throw_type_error_function());
+    // NOTE: This is ensured by dereferencing the GCPtr in the getter.
 
     // 2. Let thrower be realm.[[Intrinsics]].[[%ThrowTypeError%]].
-    auto* thrower = realm.intrinsics().throw_type_error_function();
+    auto thrower = realm.intrinsics().throw_type_error_function();
 
     // 3. Perform ! DefinePropertyOrThrow(F, "caller", PropertyDescriptor { [[Get]]: thrower, [[Set]]: thrower, [[Enumerable]]: false, [[Configurable]]: true }).
     function.define_direct_accessor(vm.names.caller, thrower, thrower, Attribute::Configurable);

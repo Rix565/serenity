@@ -9,13 +9,14 @@
 #include <AK/HashMap.h>
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
+#include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/ConfigFile.h>
 #include <LibCore/Directory.h>
-#include <LibCore/File.h>
 #include <LibCore/SessionManagement.h>
 #include <LibCore/SocketAddress.h>
 #include <LibCore/System.h>
+#include <LibFileSystem/FileSystem.h>
 #include <fcntl.h>
 #include <sched.h>
 #include <stdio.h>
@@ -81,13 +82,14 @@ void Service::setup_notifier()
     VERIFY(m_sockets.size() == 1);
     VERIFY(!m_socket_notifier);
 
-    m_socket_notifier = Core::Notifier::construct(m_sockets[0].fd, Core::Notifier::Event::Read, this);
-    m_socket_notifier->on_ready_to_read = [this] {
-        handle_socket_connection();
+    m_socket_notifier = Core::Notifier::construct(m_sockets[0].fd, Core::Notifier::Type::Read, this);
+    m_socket_notifier->on_activation = [this] {
+        if (auto result = handle_socket_connection(); result.is_error())
+            dbgln("{}", result.release_error());
     };
 }
 
-void Service::handle_socket_connection()
+ErrorOr<void> Service::handle_socket_connection()
 {
     VERIFY(m_sockets.size() == 1);
     dbgln_if(SERVICE_DEBUG, "Ready to read on behalf of {}", name());
@@ -95,59 +97,67 @@ void Service::handle_socket_connection()
     int socket_fd = m_sockets[0].fd;
 
     if (m_accept_socket_connections) {
-        // FIXME: Propagate errors
-        auto maybe_accepted_fd = Core::System::accept(socket_fd, nullptr, nullptr);
-        if (maybe_accepted_fd.is_error()) {
-            dbgln("accept: {}", maybe_accepted_fd.error());
-            return;
-        }
+        auto const accepted_fd = TRY(Core::System::accept(socket_fd, nullptr, nullptr));
 
-        int accepted_fd = maybe_accepted_fd.release_value();
-        // FIXME: Propagate errors
-        MUST(determine_account(accepted_fd));
-        spawn(accepted_fd);
-        close(accepted_fd);
+        TRY(determine_account(accepted_fd));
+        TRY(spawn(accepted_fd));
+        TRY(Core::System::close(accepted_fd));
     } else {
         remove_child(*m_socket_notifier);
         m_socket_notifier = nullptr;
-        spawn(socket_fd);
+        TRY(spawn(socket_fd));
     }
+    return {};
 }
 
-void Service::activate()
+ErrorOr<void> Service::activate()
 {
     VERIFY(m_pid < 0);
 
     if (m_lazy)
         setup_notifier();
     else
-        spawn();
+        TRY(spawn());
+    return {};
 }
 
-void Service::spawn(int socket_fd)
+ErrorOr<void> Service::change_privileges()
 {
-    if (!Core::File::exists(m_executable_path)) {
+    // NOTE: Dropping privileges makes sense when SystemServer is running
+    // for a root session.
+    // This could happen when we need to spawn a Service to serve a client with non-user UID/GID.
+    // However, in case the user explicitly specified a username via the User= option, then we must
+    // try to login as at that user, so we can't ignore the failure when it was requested to change
+    // privileges.
+    if (auto current_uid = getuid(); m_account.has_value() && m_account.value().uid() != current_uid) {
+        if (current_uid != 0 && !m_must_login)
+            return {};
+        auto& account = m_account.value();
+        if (auto error_or_void = account.login(); error_or_void.is_error()) {
+            dbgln("Failed to drop privileges (tried to change to GID={}, UID={}), due to {}\n", account.gid(), account.uid(), error_or_void.error());
+            exit(1);
+        }
+        TRY(Core::System::setenv("HOME"sv, account.home_directory(), true));
+    }
+    return {};
+}
+
+ErrorOr<void> Service::spawn(int socket_fd)
+{
+    if (!FileSystem::exists(m_executable_path)) {
         dbgln("{}: binary \"{}\" does not exist, skipping service.", name(), m_executable_path);
-        return;
+        return Error::from_errno(ENOENT);
     }
 
     dbgln_if(SERVICE_DEBUG, "Spawning {}", name());
 
     m_run_timer.start();
-    pid_t pid = fork();
+    pid_t pid = TRY(Core::System::fork());
 
-    if (pid < 0) {
-        perror("fork");
-        dbgln("Failed to spawn {}. Sucks, dude :(", name());
-    } else if (pid == 0) {
+    if (pid == 0) {
         // We are the child.
-
-        if (!m_working_directory.is_null()) {
-            if (chdir(m_working_directory.characters()) < 0) {
-                perror("chdir");
-                VERIFY_NOT_REACHED();
-            }
-        }
+        if (!m_working_directory.is_null())
+            TRY(Core::System::chdir(m_working_directory));
 
         struct sched_param p;
         p.sched_priority = m_priority;
@@ -159,12 +169,9 @@ void Service::spawn(int socket_fd)
 
         if (!m_stdio_file_path.is_null()) {
             close(STDIN_FILENO);
-            int fd = open(m_stdio_file_path.characters(), O_RDWR, 0);
-            VERIFY(fd <= 0);
-            if (fd < 0) {
-                perror("open");
-                VERIFY_NOT_REACHED();
-            }
+            auto const fd = TRY(Core::System::open(m_stdio_file_path, O_RDWR, 0));
+            VERIFY(fd == 0);
+
             dup2(STDIN_FILENO, STDOUT_FILENO);
             dup2(STDIN_FILENO, STDERR_FILENO);
 
@@ -179,13 +186,13 @@ void Service::spawn(int socket_fd)
             close(STDOUT_FILENO);
             close(STDERR_FILENO);
 
-            int fd = open("/dev/null", O_RDWR);
+            auto const fd = TRY(Core::System::open("/dev/null"sv, O_RDWR));
             VERIFY(fd == STDIN_FILENO);
             dup2(STDIN_FILENO, STDOUT_FILENO);
             dup2(STDIN_FILENO, STDERR_FILENO);
         }
 
-        StringBuilder builder;
+        StringBuilder socket_takeover_builder;
 
         if (socket_fd >= 0) {
             // We were spawned by socket activation. We currently only support
@@ -193,7 +200,7 @@ void Service::spawn(int socket_fd)
             VERIFY(m_sockets.size() == 1);
 
             int fd = dup(socket_fd);
-            builder.appendff("{}:{}", m_sockets[0].path, fd);
+            TRY(socket_takeover_builder.try_appendff("{}:{}", m_sockets[0].path, fd));
         } else {
             // We were spawned as a regular process, so dup every socket for this
             // service and let the service know via SOCKET_TAKEOVER.
@@ -202,62 +209,58 @@ void Service::spawn(int socket_fd)
 
                 int new_fd = dup(socket.fd);
                 if (i != 0)
-                    builder.append(';');
-                builder.appendff("{}:{}", socket.path, new_fd);
+                    TRY(socket_takeover_builder.try_append(';'));
+                TRY(socket_takeover_builder.try_appendff("{}:{}", socket.path, new_fd));
             }
         }
 
         if (!m_sockets.is_empty()) {
             // The new descriptor is !CLOEXEC here.
-            setenv("SOCKET_TAKEOVER", builder.to_deprecated_string().characters(), true);
+            TRY(Core::System::setenv("SOCKET_TAKEOVER"sv, socket_takeover_builder.string_view(), true));
         }
 
-        if (m_account.has_value() && m_account.value().uid() != getuid()) {
-            auto& account = m_account.value();
-            if (setgid(account.gid()) < 0 || setgroups(account.extra_gids().size(), account.extra_gids().data()) < 0 || setuid(account.uid()) < 0) {
-                dbgln("Failed to drop privileges (GID={}, UID={})\n", account.gid(), account.uid());
-                exit(1);
-            }
-            setenv("HOME", account.home_directory().characters(), true);
-        }
+        TRY(change_privileges());
 
-        for (DeprecatedString& env : m_environment)
-            putenv(const_cast<char*>(env.characters()));
+        TRY(m_environment.view().for_each_split_view(' ', SplitBehavior::Nothing, [&](auto env) {
+            return Core::System::putenv(env);
+        }));
 
-        char* argv[m_extra_arguments.size() + 2];
-        argv[0] = const_cast<char*>(m_executable_path.characters());
-        for (size_t i = 0; i < m_extra_arguments.size(); i++)
-            argv[i + 1] = const_cast<char*>(m_extra_arguments[i].characters());
-        argv[m_extra_arguments.size() + 1] = nullptr;
+        Vector<StringView, 10> arguments;
+        TRY(arguments.try_append(m_executable_path));
+        TRY(m_extra_arguments.view().for_each_split_view(' ', SplitBehavior::Nothing, [&](auto arg) {
+            return arguments.try_append(arg);
+        }));
 
-        rc = execv(argv[0], argv);
-        warnln("Failed to execv({}, ...): {}", argv[0], strerror(errno));
-        dbgln("Failed to execv({}, ...): {}", argv[0], strerror(errno));
-        VERIFY_NOT_REACHED();
+        TRY(Core::System::exec(m_executable_path, arguments, Core::System::SearchInPath::No));
     } else if (!m_multi_instance) {
         // We are the parent.
         m_pid = pid;
         s_service_map.set(pid, this);
     }
+
+    return {};
 }
 
-void Service::did_exit(int exit_code)
+ErrorOr<void> Service::did_exit(int status)
 {
     using namespace AK::TimeLiterals;
 
     VERIFY(m_pid > 0);
     VERIFY(!m_multi_instance);
 
-    dbgln("Service {} has exited with exit code {}", name(), exit_code);
+    if (WIFEXITED(status))
+        dbgln("Service {} has exited with exit code {}", name(), WEXITSTATUS(status));
+    if (WIFSIGNALED(status))
+        dbgln("Service {} terminated due to signal {}", name(), WTERMSIG(status));
 
     s_service_map.remove(m_pid);
     m_pid = -1;
 
     if (!m_keep_alive)
-        return;
+        return {};
 
     auto run_time = m_run_timer.elapsed_time();
-    bool exited_successfully = exit_code == 0;
+    bool exited_successfully = WIFEXITED(status) == 0;
 
     if (!exited_successfully && run_time < 1_sec) {
         switch (m_restart_attempts) {
@@ -269,12 +272,13 @@ void Service::did_exit(int exit_code)
             break;
         default:
             dbgln("Giving up on {}. Good luck!", name());
-            return;
+            return {};
         }
         m_restart_attempts++;
     }
 
-    activate();
+    TRY(activate());
+    return {};
 }
 
 Service::Service(Core::ConfigFile const& config, StringView name)
@@ -284,7 +288,7 @@ Service::Service(Core::ConfigFile const& config, StringView name)
 
     set_name(name);
     m_executable_path = config.read_entry(name, "Executable", DeprecatedString::formatted("/bin/{}", this->name()));
-    m_extra_arguments = config.read_entry(name, "Arguments", "").split(' ');
+    m_extra_arguments = config.read_entry(name, "Arguments", "");
     m_stdio_file_path = config.read_entry(name, "StdIO");
 
     DeprecatedString prio = config.read_entry(name, "Priority");
@@ -303,14 +307,16 @@ Service::Service(Core::ConfigFile const& config, StringView name)
     m_user = config.read_entry(name, "User");
     if (!m_user.is_null()) {
         auto result = Core::Account::from_name(m_user, Core::Account::Read::PasswdOnly);
-        if (result.is_error())
+        if (result.is_error()) {
             warnln("Failed to resolve user {}: {}", m_user, result.error());
-        else
+        } else {
+            m_must_login = true;
             m_account = result.value();
+        }
     }
 
     m_working_directory = config.read_entry(name, "WorkingDirectory");
-    m_environment = config.read_entry(name, "Environment").split(' ');
+    m_environment = config.read_entry(name, "Environment");
     m_system_modes = config.read_entry(name, "SystemModes", "graphical").split(',');
     m_multi_instance = config.read_bool_entry(name, "MultiInstance");
     m_accept_socket_connections = config.read_bool_entry(name, "AcceptSocketConnections");
@@ -357,56 +363,6 @@ ErrorOr<NonnullRefPtr<Service>> Service::try_create(Core::ConfigFile const& conf
     if (service->is_enabled())
         TRY(service->setup_sockets());
     return service;
-}
-
-void Service::save_to(JsonObject& json)
-{
-    Core::Object::save_to(json);
-
-    json.set("executable_path", m_executable_path);
-
-    // FIXME: This crashes Inspector.
-    /*
-    JsonArray extra_args;
-    for (String& arg : m_extra_arguments)
-        extra_args.append(arg);
-    json.set("extra_arguments", move(extra_args));
-
-    JsonArray system_modes;
-    for (String& mode : m_system_modes)
-        system_modes.append(mode);
-    json.set("system_modes", system_modes);
-
-    JsonArray environment;
-    for (String& env : m_environment)
-        system_modes.append(env);
-    json.set("environment", environment);
-
-    JsonArray sockets;
-    for (SocketDescriptor &socket : m_sockets) {
-        JsonObject socket_obj;
-        socket_obj.set("path", socket.path);
-        socket_obj.set("permissions", socket.permissions);
-        sockets.append(socket);
-    }
-    json.set("sockets", sockets);
-    */
-
-    json.set("stdio_file_path", m_stdio_file_path);
-    json.set("priority", m_priority);
-    json.set("keep_alive", m_keep_alive);
-    json.set("lazy", m_lazy);
-    json.set("user", m_user);
-    json.set("multi_instance", m_multi_instance);
-    json.set("accept_socket_connections", m_accept_socket_connections);
-
-    if (m_pid > 0)
-        json.set("pid", m_pid);
-    else
-        json.set("pid", nullptr);
-
-    json.set("restart_attempts", m_restart_attempts);
-    json.set("working_directory", m_working_directory);
 }
 
 bool Service::is_enabled() const

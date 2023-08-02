@@ -221,7 +221,7 @@ void AbstractView::notify_selection_changed(Badge<ModelSelection>)
         update();
 }
 
-NonnullRefPtr<Gfx::Font> AbstractView::font_for_index(ModelIndex const& index) const
+NonnullRefPtr<Gfx::Font const> AbstractView::font_for_index(ModelIndex const& index) const
 {
     if (!model())
         return font();
@@ -291,8 +291,10 @@ void AbstractView::mousemove_event(MouseEvent& event)
     if (!model())
         return AbstractScrollableWidget::mousemove_event(event);
 
-    auto hovered_index = index_at_event_position(event.position());
-    set_hovered_index(hovered_index);
+    if (widget_inner_rect().contains(event.position())) {
+        auto hovered_index = index_at_event_position(event.position());
+        set_hovered_index(hovered_index);
+    }
 
     auto data_type = m_model->drag_data_type();
     if (data_type.is_null())
@@ -713,7 +715,9 @@ void AbstractView::draw_item_text(Gfx::Painter& painter, ModelIndex const& index
         return;
 
     Color text_color;
-    if (is_selected)
+    if (!is_enabled())
+        text_color = palette().color(Gfx::ColorRole::DisabledText);
+    else if (is_selected)
         text_color = is_focused() ? palette().selection_text() : palette().inactive_selection_text();
     else
         text_color = index.data(ModelRole::ForegroundColor).to_color(palette().color(foreground_role()));

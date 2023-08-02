@@ -6,7 +6,6 @@ set(SOURCES
     Containers/Matroska/Reader.cpp
     PlaybackManager.cpp
     VideoFrame.cpp
-    VP9/BitStream.cpp
     VP9/Decoder.cpp
     VP9/Parser.cpp
     VP9/ProbabilityTables.cpp
@@ -15,4 +14,4 @@ set(SOURCES
 )
 
 serenity_lib(LibVideo video)
-target_link_libraries(LibVideo PRIVATE LibAudio LibCore LibIPC LibGfx)
+target_link_libraries(LibVideo PRIVATE LibAudio LibCore LibIPC LibGfx LibThreading)

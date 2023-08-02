@@ -7,7 +7,6 @@
 #pragma once
 
 #include <LibJS/SourceTextModule.h>
-#include <LibWeb/HTML/Scripting/ModuleMap.h>
 #include <LibWeb/HTML/Scripting/Script.h>
 
 namespace Web::HTML {
@@ -29,7 +28,7 @@ class JavaScriptModuleScript final : public ModuleScript {
 public:
     virtual ~JavaScriptModuleScript() override;
 
-    static JS::GCPtr<JavaScriptModuleScript> create(DeprecatedString const& filename, StringView source, EnvironmentSettingsObject&, AK::URL base_url);
+    static WebIDL::ExceptionOr<JS::GCPtr<JavaScriptModuleScript>> create(DeprecatedString const& filename, StringView source, EnvironmentSettingsObject&, AK::URL base_url);
 
     enum class PreventErrorReporting {
         Yes,
@@ -38,8 +37,8 @@ public:
 
     JS::Promise* run(PreventErrorReporting = PreventErrorReporting::No);
 
-    JS::SourceTextModule const* record() const { return m_record.ptr(); };
-    JS::SourceTextModule* record() { return m_record.ptr(); };
+    JS::SourceTextModule const* record() const { return m_record.ptr(); }
+    JS::SourceTextModule* record() { return m_record.ptr(); }
 
 protected:
     JavaScriptModuleScript(AK::URL base_url, DeprecatedString filename, EnvironmentSettingsObject& environment_settings_object);

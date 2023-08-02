@@ -25,11 +25,11 @@ public:
 
     virtual ~TextDecoder() override;
 
-    WebIDL::ExceptionOr<DeprecatedString> decode(JS::Handle<JS::Object> const&) const;
+    WebIDL::ExceptionOr<DeprecatedString> decode(Optional<JS::Handle<JS::Object>> const&) const;
 
     DeprecatedFlyString const& encoding() const { return m_encoding; }
     bool fatal() const { return m_fatal; }
-    bool ignore_bom() const { return m_ignore_bom; };
+    bool ignore_bom() const { return m_ignore_bom; }
 
 private:
     // https://encoding.spec.whatwg.org/#dom-textdecoder

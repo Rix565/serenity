@@ -29,7 +29,7 @@ JavaScriptModuleScript::JavaScriptModuleScript(AK::URL base_url, DeprecatedStrin
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#creating-a-javascript-module-script
-JS::GCPtr<JavaScriptModuleScript> JavaScriptModuleScript::create(DeprecatedString const& filename, StringView source, EnvironmentSettingsObject& settings_object, AK::URL base_url)
+WebIDL::ExceptionOr<JS::GCPtr<JavaScriptModuleScript>> JavaScriptModuleScript::create(DeprecatedString const& filename, StringView source, EnvironmentSettingsObject& settings_object, AK::URL base_url)
 {
     // 1. If scripting is disabled for settings, then set source to the empty string.
     if (settings_object.is_scripting_disabled())
@@ -38,7 +38,7 @@ JS::GCPtr<JavaScriptModuleScript> JavaScriptModuleScript::create(DeprecatedStrin
     auto& realm = settings_object.realm();
 
     // 2. Let script be a new module script that this algorithm will subsequently initialize.
-    auto script = realm.heap().allocate<JavaScriptModuleScript>(realm, move(base_url), filename, settings_object).release_allocated_value_but_fixme_should_propagate_errors();
+    auto script = MUST_OR_THROW_OOM(realm.heap().allocate<JavaScriptModuleScript>(realm, move(base_url), filename, settings_object));
 
     // 3. Set script's settings object to settings.
     // NOTE: This was already done when constructing.
@@ -49,7 +49,8 @@ JS::GCPtr<JavaScriptModuleScript> JavaScriptModuleScript::create(DeprecatedStrin
     // FIXME: 5. Set script's fetch options to options.
 
     // 6. Set script's parse error and error to rethrow to null.
-    // NOTE: Parse error and error to rethrow were set to null in the construction of Script.
+    script->set_parse_error(JS::js_null());
+    script->set_error_to_rethrow(JS::js_null());
 
     // 7. Let result be ParseModule(source, settings's Realm, script).
     auto result = JS::SourceTextModule::parse(source, settings_object.realm(), filename.view(), script);
@@ -59,7 +60,8 @@ JS::GCPtr<JavaScriptModuleScript> JavaScriptModuleScript::create(DeprecatedStrin
         auto& parse_error = result.error().first();
         dbgln("JavaScriptModuleScript: Failed to parse: {}", parse_error.to_deprecated_string());
 
-        // FIXME: 1. Set script's parse error to result[0].
+        // 1. Set script's parse error to result[0].
+        script->set_parse_error(JS::SyntaxError::create(settings_object.realm(), parse_error.to_string().release_value_but_fixme_should_propagate_errors()));
 
         // 2. Return script.
         return script;
@@ -123,12 +125,16 @@ JS::Promise* JavaScriptModuleScript::run(PreventErrorReporting)
     // 4. Let evaluationPromise be null.
     JS::Promise* evaluation_promise = nullptr;
 
-    // FIXME: 5. If script's error to rethrow is not null, then set evaluationPromise to a promise rejected with script's error to rethrow.
-
+    // 5. If script's error to rethrow is not null, then set evaluationPromise to a promise rejected with script's error to rethrow.
+    if (!error_to_rethrow().is_null()) {
+        evaluation_promise = JS::Promise::create(settings.realm());
+        evaluation_promise->reject(error_to_rethrow());
+    }
     // 6. Otherwise:
-    if (m_record) {
+    else {
         // 1. Let record be script's record.
         auto record = m_record;
+        VERIFY(record);
 
         auto interpreter = JS::Interpreter::create_with_existing_realm(settings.realm());
         JS::VM::InterpreterExecutionScope scope(*interpreter);
@@ -147,8 +153,6 @@ JS::Promise* JavaScriptModuleScript::run(PreventErrorReporting)
         } else {
             evaluation_promise = elevation_promise_or_error.value();
         }
-    } else {
-        TODO();
     }
 
     // FIXME: 7. If preventErrorReporting is false, then upon rejection of evaluationPromise with reason, report the exception given by reason for script.

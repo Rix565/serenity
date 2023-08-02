@@ -84,6 +84,7 @@ Result<regex::RegexOptions<ECMAScriptFlags>, DeprecatedString> regex_flags_from_
     return options;
 }
 
+// 22.2.3.4 Static Semantics: ParsePattern ( patternText, u, v ), https://tc39.es/ecma262/#sec-parsepattern
 ErrorOr<DeprecatedString, ParseRegexPatternError> parse_regex_pattern(StringView pattern, bool unicode, bool unicode_sets)
 {
     if (unicode && unicode_sets)
@@ -119,6 +120,7 @@ ErrorOr<DeprecatedString, ParseRegexPatternError> parse_regex_pattern(StringView
     return builder.to_deprecated_string();
 }
 
+// 22.2.3.4 Static Semantics: ParsePattern ( patternText, u, v ), https://tc39.es/ecma262/#sec-parsepattern
 ThrowCompletionOr<DeprecatedString> parse_regex_pattern(VM& vm, StringView pattern, bool unicode, bool unicode_sets)
 {
     auto result = parse_regex_pattern(pattern, unicode, unicode_sets);
@@ -130,12 +132,12 @@ ThrowCompletionOr<DeprecatedString> parse_regex_pattern(VM& vm, StringView patte
 
 NonnullGCPtr<RegExpObject> RegExpObject::create(Realm& realm)
 {
-    return realm.heap().allocate<RegExpObject>(realm, *realm.intrinsics().regexp_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<RegExpObject>(realm, realm.intrinsics().regexp_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
 }
 
 NonnullGCPtr<RegExpObject> RegExpObject::create(Realm& realm, Regex<ECMA262> regex, DeprecatedString pattern, DeprecatedString flags)
 {
-    return realm.heap().allocate<RegExpObject>(realm, move(regex), move(pattern), move(flags), *realm.intrinsics().regexp_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<RegExpObject>(realm, move(regex), move(pattern), move(flags), realm.intrinsics().regexp_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
 }
 
 RegExpObject::RegExpObject(Object& prototype)
@@ -162,11 +164,9 @@ ThrowCompletionOr<void> RegExpObject::initialize(Realm& realm)
     return {};
 }
 
-// 22.2.3.2.2 RegExpInitialize ( obj, pattern, flags ), https://tc39.es/ecma262/#sec-regexpinitialize
+// 22.2.3.3 RegExpInitialize ( obj, pattern, flags ), https://tc39.es/ecma262/#sec-regexpinitialize
 ThrowCompletionOr<NonnullGCPtr<RegExpObject>> RegExpObject::regexp_initialize(VM& vm, Value pattern_value, Value flags_value)
 {
-    // NOTE: This also contains changes adapted from https://arai-a.github.io/ecma262-compare/?pr=2418, which doesn't match the upstream spec anymore.
-
     // 1. If pattern is undefined, let P be the empty String.
     // 2. Else, let P be ? ToString(pattern).
     auto pattern = pattern_value.is_undefined()
@@ -179,7 +179,7 @@ ThrowCompletionOr<NonnullGCPtr<RegExpObject>> RegExpObject::regexp_initialize(VM
         ? DeprecatedString::empty()
         : TRY(flags_value.to_deprecated_string(vm));
 
-    // 5. If F contains any code unit other than "d", "g", "i", "m", "s", "u", or "y" or if it contains the same code unit more than once, throw a SyntaxError exception.
+    // 5. If F contains any code unit other than "d", "g", "i", "m", "s", "u", "v", or "y", or if F contains any code unit more than once, throw a SyntaxError exception.
     // 6. If F contains "i", let i be true; else let i be false.
     // 7. If F contains "m", let m be true; else let m be false.
     // 8. If F contains "s", let s be true; else let s be false.
@@ -195,7 +195,7 @@ ThrowCompletionOr<NonnullGCPtr<RegExpObject>> RegExpObject::regexp_initialize(VM
         bool unicode = parsed_flags.has_flag_set(regex::ECMAScriptFlags::Unicode);
         bool unicode_sets = parsed_flags.has_flag_set(regex::ECMAScriptFlags::UnicodeSets);
 
-        // 11. If u is true, then
+        // 11. If u is true or v is true, then
         //     a. Let patternText be StringToCodePoints(P).
         // 12. Else,
         //     a. Let patternText be the result of interpreting each of P's 16-bit elements as a Unicode BMP code point. UTF-16 decoding is not applied to the elements.
@@ -230,7 +230,7 @@ ThrowCompletionOr<NonnullGCPtr<RegExpObject>> RegExpObject::regexp_initialize(VM
     return NonnullGCPtr { *this };
 }
 
-// 22.2.3.2.5 EscapeRegExpPattern ( P, F ), https://tc39.es/ecma262/#sec-escaperegexppattern
+// 22.2.6.13.1 EscapeRegExpPattern ( P, F ), https://tc39.es/ecma262/#sec-escaperegexppattern
 DeprecatedString RegExpObject::escape_regexp_pattern() const
 {
     // 1. Let S be a String in the form of a Pattern[~UnicodeMode] (Pattern[+UnicodeMode] if F contains "u") equivalent
@@ -248,17 +248,56 @@ DeprecatedString RegExpObject::escape_regexp_pattern() const
     // 3. Return S.
     if (m_pattern.is_empty())
         return "(?:)";
+
     // FIXME: Check the 'u' and 'v' flags and escape accordingly
-    return m_pattern.replace("\n"sv, "\\n"sv, ReplaceMode::All).replace("\r"sv, "\\r"sv, ReplaceMode::All).replace(LINE_SEPARATOR_STRING, "\\u2028"sv, ReplaceMode::All).replace(PARAGRAPH_SEPARATOR_STRING, "\\u2029"sv, ReplaceMode::All).replace("/"sv, "\\/"sv, ReplaceMode::All);
+    StringBuilder builder;
+    auto pattern = Utf8View { m_pattern };
+    auto escaped = false;
+    for (auto code_point : pattern) {
+        if (escaped) {
+            escaped = false;
+            builder.append_code_point('\\');
+            builder.append_code_point(code_point);
+            continue;
+        }
+
+        if (code_point == '\\') {
+            escaped = true;
+            continue;
+        }
+
+        switch (code_point) {
+        case '/':
+            builder.append("\\/"sv);
+            break;
+        case '\n':
+            builder.append("\\n"sv);
+            break;
+        case '\r':
+            builder.append("\\r"sv);
+            break;
+        case LINE_SEPARATOR:
+            builder.append("\\u2028"sv);
+            break;
+        case PARAGRAPH_SEPARATOR:
+            builder.append("\\u2029"sv);
+            break;
+        default:
+            builder.append_code_point(code_point);
+            break;
+        }
+    }
+
+    return builder.to_deprecated_string();
 }
 
-// 22.2.3.2.4 RegExpCreate ( P, F ), https://tc39.es/ecma262/#sec-regexpcreate
+// 22.2.3.1 RegExpCreate ( P, F ), https://tc39.es/ecma262/#sec-regexpcreate
 ThrowCompletionOr<NonnullGCPtr<RegExpObject>> regexp_create(VM& vm, Value pattern, Value flags)
 {
     auto& realm = *vm.current_realm();
 
     // 1. Let obj be ! RegExpAlloc(%RegExp%).
-    auto regexp_object = MUST(regexp_alloc(vm, *realm.intrinsics().regexp_constructor()));
+    auto regexp_object = MUST(regexp_alloc(vm, realm.intrinsics().regexp_constructor()));
 
     // 2. Return ? RegExpInitialize(obj, P, F).
     return TRY(regexp_object->regexp_initialize(vm, pattern, flags));
@@ -278,8 +317,7 @@ ThrowCompletionOr<NonnullGCPtr<RegExpObject>> regexp_alloc(VM& vm, FunctionObjec
     regexp_object->set_realm(this_realm);
 
     // 4. If SameValue(newTarget, thisRealm.[[Intrinsics]].[[%RegExp%]]) is true, then
-    auto* regexp_constructor = this_realm.intrinsics().regexp_constructor();
-    if (same_value(&new_target, regexp_constructor)) {
+    if (same_value(&new_target, this_realm.intrinsics().regexp_constructor())) {
         // i. Set the value of obj’s [[LegacyFeaturesEnabled]] internal slot to true.
         regexp_object->set_legacy_features_enabled(true);
     }

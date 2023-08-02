@@ -8,7 +8,7 @@
 
 namespace Coredump {
 
-OwnPtr<Inspector> Inspector::create(DeprecatedString const& coredump_path, Function<void(float)> on_progress)
+OwnPtr<Inspector> Inspector::create(StringView coredump_path, Function<void(float)> on_progress)
 {
     auto reader = Reader::create(coredump_path);
     if (!reader)
@@ -73,7 +73,7 @@ void Inspector::set_registers(PtraceRegisters const&) {};
 void Inspector::for_each_loaded_library(Function<IterationDecision(Debug::LoadedLibrary const&)> func) const
 {
     for (auto& library : m_loaded_libraries) {
-        if (func(library) == IterationDecision::Break)
+        if (func(*library) == IterationDecision::Break)
             break;
     }
 }

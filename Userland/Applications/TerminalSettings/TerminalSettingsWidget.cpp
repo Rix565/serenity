@@ -12,7 +12,6 @@
 #include <Applications/TerminalSettings/TerminalSettingsViewGML.h>
 #include <LibConfig/Client.h>
 #include <LibCore/DirIterator.h>
-#include <LibCore/File.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/CheckBox.h>
@@ -30,9 +29,16 @@
 #include <LibVT/TerminalWidget.h>
 #include <spawn.h>
 
-TerminalSettingsMainWidget::TerminalSettingsMainWidget()
+ErrorOr<NonnullRefPtr<TerminalSettingsMainWidget>> TerminalSettingsMainWidget::try_create()
 {
-    load_from_gml(terminal_settings_main_gml).release_value_but_fixme_should_propagate_errors();
+    auto widget = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) TerminalSettingsMainWidget()));
+    TRY(widget->setup());
+    return widget;
+}
+
+ErrorOr<void> TerminalSettingsMainWidget::setup()
+{
+    TRY(load_from_gml(terminal_settings_main_gml));
 
     auto& beep_bell_radio = *find_descendant_of_type_named<GUI::RadioButton>("beep_bell_radio");
     auto& visual_bell_radio = *find_descendant_of_type_named<GUI::RadioButton>("visual_bell_radio");
@@ -69,26 +75,6 @@ TerminalSettingsMainWidget::TerminalSettingsMainWidget()
         set_modified(true);
     };
 
-    m_max_history_size = Config::read_i32("Terminal"sv, "Terminal"sv, "MaxHistorySize"sv);
-    m_original_max_history_size = m_max_history_size;
-    auto& history_size_spinbox = *find_descendant_of_type_named<GUI::SpinBox>("history_size_spinbox");
-    history_size_spinbox.set_value(m_max_history_size, GUI::AllowCallback::No);
-    history_size_spinbox.on_change = [this](int value) {
-        m_max_history_size = value;
-        Config::write_i32("Terminal"sv, "Terminal"sv, "MaxHistorySize"sv, static_cast<i32>(m_max_history_size));
-        set_modified(true);
-    };
-
-    m_show_scrollbar = Config::read_bool("Terminal"sv, "Terminal"sv, "ShowScrollBar"sv, true);
-    m_orignal_show_scrollbar = m_show_scrollbar;
-    auto& show_scrollbar_checkbox = *find_descendant_of_type_named<GUI::CheckBox>("terminal_show_scrollbar");
-    show_scrollbar_checkbox.on_checked = [&](bool show_scrollbar) {
-        m_show_scrollbar = show_scrollbar;
-        Config::write_bool("Terminal"sv, "Terminal"sv, "ShowScrollBar"sv, show_scrollbar);
-        set_modified(true);
-    };
-    show_scrollbar_checkbox.set_checked(m_show_scrollbar, GUI::AllowCallback::No);
-
     m_confirm_close = Config::read_bool("Terminal"sv, "Terminal"sv, "ConfirmClose"sv, true);
     m_orignal_confirm_close = m_confirm_close;
     auto& confirm_close_checkbox = *find_descendant_of_type_named<GUI::CheckBox>("terminal_confirm_close");
@@ -98,11 +84,19 @@ TerminalSettingsMainWidget::TerminalSettingsMainWidget()
         set_modified(true);
     };
     confirm_close_checkbox.set_checked(m_confirm_close, GUI::AllowCallback::No);
+    return {};
 }
 
-TerminalSettingsViewWidget::TerminalSettingsViewWidget()
+ErrorOr<NonnullRefPtr<TerminalSettingsViewWidget>> TerminalSettingsViewWidget::try_create()
 {
-    load_from_gml(terminal_settings_view_gml).release_value_but_fixme_should_propagate_errors();
+    auto widget = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) TerminalSettingsViewWidget()));
+    TRY(widget->setup());
+    return widget;
+}
+
+ErrorOr<void> TerminalSettingsViewWidget::setup()
+{
+    TRY(load_from_gml(terminal_settings_view_gml));
 
     auto& slider = *find_descendant_of_type_named<GUI::HorizontalOpacitySlider>("background_opacity_slider");
     m_opacity = Config::read_i32("Terminal"sv, "Window"sv, "Opacity"sv);
@@ -122,13 +116,13 @@ TerminalSettingsViewWidget::TerminalSettingsViewWidget()
     else
         m_font = Gfx::FontDatabase::the().get_by_name(font_name);
     m_original_font = m_font;
-    font_text.set_text(m_font->human_readable_name());
+    font_text.set_text(TRY(String::from_deprecated_string(m_font->human_readable_name())));
     font_text.set_font(m_font);
     font_button.on_click = [&](auto) {
         auto picker = GUI::FontPicker::construct(window(), m_font.ptr(), true);
         if (picker->exec() == GUI::Dialog::ExecResult::OK) {
             m_font = picker->font();
-            font_text.set_text(m_font->human_readable_name());
+            font_text.set_text(String::from_deprecated_string(m_font->human_readable_name()).release_value_but_fixme_should_propagate_errors());
             font_text.set_font(m_font);
             Config::write_string("Terminal"sv, "Text"sv, "Font"sv, m_font->qualified_name());
             set_modified(true);
@@ -141,7 +135,7 @@ TerminalSettingsViewWidget::TerminalSettingsViewWidget()
         if (use_default_font) {
             font_selection.set_enabled(false);
             m_font = Gfx::FontDatabase::the().default_fixed_width_font();
-            font_text.set_text(m_font->human_readable_name());
+            font_text.set_text(String::from_deprecated_string(m_font->human_readable_name()).release_value_but_fixme_should_propagate_errors());
             font_text.set_font(m_font);
             Config::write_string("Terminal"sv, "Text"sv, "Font"sv, m_font->qualified_name());
         } else {
@@ -208,6 +202,27 @@ TerminalSettingsViewWidget::TerminalSettingsViewWidget()
         Config::write_string("Terminal"sv, "Cursor"sv, "Shape"sv, "Bar"sv);
     };
     terminal_cursor_bar.set_checked(Config::read_string("Terminal"sv, "Cursor"sv, "Shape"sv) == "Bar"sv);
+
+    m_max_history_size = Config::read_i32("Terminal"sv, "Terminal"sv, "MaxHistorySize"sv);
+    m_original_max_history_size = m_max_history_size;
+    auto& history_size_spinbox = *find_descendant_of_type_named<GUI::SpinBox>("history_size_spinbox");
+    history_size_spinbox.set_value(m_max_history_size, GUI::AllowCallback::No);
+    history_size_spinbox.on_change = [this](int value) {
+        m_max_history_size = value;
+        Config::write_i32("Terminal"sv, "Terminal"sv, "MaxHistorySize"sv, static_cast<i32>(m_max_history_size));
+        set_modified(true);
+    };
+
+    m_show_scrollbar = Config::read_bool("Terminal"sv, "Terminal"sv, "ShowScrollBar"sv, true);
+    m_original_show_scrollbar = m_show_scrollbar;
+    auto& show_scrollbar_checkbox = *find_descendant_of_type_named<GUI::CheckBox>("terminal_show_scrollbar");
+    show_scrollbar_checkbox.on_checked = [&](bool show_scrollbar) {
+        m_show_scrollbar = show_scrollbar;
+        Config::write_bool("Terminal"sv, "Terminal"sv, "ShowScrollBar"sv, show_scrollbar);
+        set_modified(true);
+    };
+    show_scrollbar_checkbox.set_checked(m_show_scrollbar, GUI::AllowCallback::No);
+    return {};
 }
 
 VT::TerminalWidget::BellMode TerminalSettingsMainWidget::parse_bell(StringView bell_string)
@@ -234,16 +249,12 @@ DeprecatedString TerminalSettingsMainWidget::stringify_bell(VT::TerminalWidget::
 
 void TerminalSettingsMainWidget::apply_settings()
 {
-    m_original_max_history_size = m_max_history_size;
-    m_orignal_show_scrollbar = m_show_scrollbar;
     m_original_bell_mode = m_bell_mode;
     m_orignal_confirm_close = m_confirm_close;
     write_back_settings();
 }
 void TerminalSettingsMainWidget::write_back_settings() const
 {
-    Config::write_i32("Terminal"sv, "Terminal"sv, "MaxHistorySize"sv, static_cast<i32>(m_original_max_history_size));
-    Config::write_bool("Terminal"sv, "Terminal"sv, "ShowScrollBar"sv, m_orignal_show_scrollbar);
     Config::write_bool("Terminal"sv, "Terminal"sv, "ConfirmClose"sv, m_orignal_confirm_close);
     Config::write_string("Terminal"sv, "Window"sv, "Bell"sv, stringify_bell(m_original_bell_mode));
 }
@@ -259,6 +270,8 @@ void TerminalSettingsViewWidget::apply_settings()
     m_original_font = m_font;
     m_original_cursor_shape = m_cursor_shape;
     m_original_cursor_is_blinking_set = m_cursor_is_blinking_set;
+    m_original_max_history_size = m_max_history_size;
+    m_original_show_scrollbar = m_show_scrollbar;
     write_back_settings();
 }
 
@@ -268,6 +281,8 @@ void TerminalSettingsViewWidget::write_back_settings() const
     Config::write_string("Terminal"sv, "Text"sv, "Font"sv, m_original_font->qualified_name());
     Config::write_string("Terminal"sv, "Cursor"sv, "Shape"sv, VT::TerminalWidget::stringify_cursor_shape(m_original_cursor_shape));
     Config::write_bool("Terminal"sv, "Cursor"sv, "Blinking"sv, m_original_cursor_is_blinking_set);
+    Config::write_i32("Terminal"sv, "Terminal"sv, "MaxHistorySize"sv, static_cast<i32>(m_original_max_history_size));
+    Config::write_bool("Terminal"sv, "Terminal"sv, "ShowScrollBar"sv, m_original_show_scrollbar);
 }
 
 void TerminalSettingsViewWidget::cancel_settings()

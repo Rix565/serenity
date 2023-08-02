@@ -8,11 +8,11 @@
 
 #include <AK/IntrusiveList.h>
 #include <Kernel/Library/NonnullLockRefPtr.h>
+#include <Kernel/Library/UserOrKernelBuffer.h>
 #include <Kernel/Memory/ScopedAddressSpaceSwitcher.h>
-#include <Kernel/Process.h>
-#include <Kernel/Thread.h>
-#include <Kernel/UserOrKernelBuffer.h>
-#include <Kernel/WaitQueue.h>
+#include <Kernel/Tasks/Process.h>
+#include <Kernel/Tasks/Thread.h>
+#include <Kernel/Tasks/WaitQueue.h>
 
 namespace Kernel {
 
@@ -60,7 +60,7 @@ public:
 
     void add_sub_request(NonnullLockRefPtr<AsyncDeviceRequest>);
 
-    [[nodiscard]] RequestWaitResult wait(Time* = nullptr);
+    [[nodiscard]] RequestWaitResult wait(Duration* = nullptr);
 
     void do_start(SpinlockLocker<Spinlock<LockRank::None>>&& requests_lock)
     {
@@ -149,7 +149,7 @@ private:
     AsyncDeviceSubRequestList m_sub_requests_pending;
     AsyncDeviceSubRequestList m_sub_requests_complete;
     WaitQueue m_queue;
-    NonnullLockRefPtr<Process> m_process;
+    NonnullRefPtr<Process> const m_process;
     void* m_private { nullptr };
     mutable Spinlock<LockRank::None> m_lock {};
 };

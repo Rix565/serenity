@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -107,6 +108,9 @@ template<>
 ErrorOr<void> encode(Encoder&, double const&);
 
 template<>
+ErrorOr<void> encode(Encoder&, String const&);
+
+template<>
 ErrorOr<void> encode(Encoder&, StringView const&);
 
 template<>
@@ -119,10 +123,13 @@ template<>
 ErrorOr<void> encode(Encoder&, JsonValue const&);
 
 template<>
-ErrorOr<void> encode(Encoder&, URL const&);
+ErrorOr<void> encode(Encoder&, Duration const&);
 
 template<>
-ErrorOr<void> encode(Encoder&, Dictionary const&);
+ErrorOr<void> encode(Encoder&, UnixDateTime const&);
+
+template<>
+ErrorOr<void> encode(Encoder&, URL const&);
 
 template<>
 ErrorOr<void> encode(Encoder&, File const&);

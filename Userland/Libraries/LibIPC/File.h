@@ -9,7 +9,7 @@
 
 #include <AK/Noncopyable.h>
 #include <AK/StdLibExtras.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <unistd.h>
 
 namespace IPC {
@@ -40,9 +40,8 @@ public:
     {
     }
 
-    template<typename... Args>
-    File(Core::Stream::File& file, Args... args)
-        : File(file.leak_fd(Badge<File> {}), args...)
+    explicit File(Core::File& file)
+        : File(file.leak_fd(Badge<File> {}), CloseAfterSending)
     {
     }
 

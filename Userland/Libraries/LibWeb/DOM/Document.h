@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,7 +11,6 @@
 #include <AK/DeprecatedString.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <AK/URL.h>
 #include <AK/Vector.h>
@@ -18,7 +18,6 @@
 #include <LibCore/Forward.h>
 #include <LibJS/Forward.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
-#include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/CSS/StyleSheetList.h>
 #include <LibWeb/Cookie/Cookie.h>
 #include <LibWeb/DOM/NonElementParentNode.h>
@@ -70,6 +69,14 @@ struct DocumentUnloadTimingInfo {
     double unload_event_end_time { 0 };
 };
 
+struct ElementCreationOptions {
+    DeprecatedString is;
+};
+
+enum class PolicyControlledFeature {
+    Autoplay,
+};
+
 class Document
     : public ParentNode
     , public NonElementParentNode<Document>
@@ -82,17 +89,13 @@ public:
         HTML
     };
 
-    static JS::NonnullGCPtr<Document> create_and_initialize(Type, DeprecatedString content_type, HTML::NavigationParams);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> create_and_initialize(Type, DeprecatedString content_type, HTML::NavigationParams);
 
-    static JS::NonnullGCPtr<Document> create(JS::Realm&, AK::URL const& url = "about:blank"sv);
-    static JS::NonnullGCPtr<Document> construct_impl(JS::Realm&);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> create(JS::Realm&, AK::URL const& url = "about:blank"sv);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> construct_impl(JS::Realm&);
     virtual ~Document() override;
 
-    // https://w3c.github.io/selection-api/#dom-document-getselection
-    JS::GCPtr<Selection::Selection> get_selection();
-
-    size_t next_layout_node_serial_id(Badge<Layout::Node>) { return m_next_layout_node_serial_id++; }
-    size_t layout_node_count() const { return m_next_layout_node_serial_id; }
+    JS::GCPtr<Selection::Selection> get_selection() const;
 
     DeprecatedString cookie(Cookie::Source = Cookie::Source::NonHttp);
     void set_cookie(DeprecatedString const&, Cookie::Source = Cookie::Source::NonHttp);
@@ -106,7 +109,7 @@ public:
     AK::URL base_url() const;
 
     void update_base_element(Badge<HTML::HTMLBaseElement>);
-    JS::GCPtr<HTML::HTMLBaseElement> first_base_element_with_href_in_tree_order() const;
+    JS::GCPtr<HTML::HTMLBaseElement const> first_base_element_with_href_in_tree_order() const;
 
     DeprecatedString url_string() const { return m_url.to_deprecated_string(); }
     DeprecatedString document_uri() const { return m_url.to_deprecated_string(); }
@@ -117,7 +120,7 @@ public:
     HTML::CrossOriginOpenerPolicy const& cross_origin_opener_policy() const { return m_cross_origin_opener_policy; }
     void set_cross_origin_opener_policy(HTML::CrossOriginOpenerPolicy policy) { m_cross_origin_opener_policy = move(policy); }
 
-    AK::URL parse_url(DeprecatedString const&) const;
+    AK::URL parse_url(StringView) const;
 
     CSS::StyleComputer& style_computer() { return *m_style_computer; }
     const CSS::StyleComputer& style_computer() const { return *m_style_computer; }
@@ -133,28 +136,36 @@ public:
     Node* hovered_node() { return m_hovered_node.ptr(); }
     Node const* hovered_node() const { return m_hovered_node.ptr(); }
 
-    void set_inspected_node(Node*);
+    void set_inspected_node(Node*, Optional<CSS::Selector::PseudoElement>);
     Node* inspected_node() { return m_inspected_node.ptr(); }
     Node const* inspected_node() const { return m_inspected_node.ptr(); }
+    Layout::Node* inspected_layout_node();
+    Layout::Node const* inspected_layout_node() const { return const_cast<Document*>(this)->inspected_layout_node(); }
 
     Element* document_element();
     Element const* document_element() const;
 
     HTML::HTMLHtmlElement* html_element();
     HTML::HTMLHeadElement* head();
+    JS::GCPtr<HTML::HTMLTitleElement> title_element();
     HTML::HTMLElement* body();
 
-    const HTML::HTMLHtmlElement* html_element() const
+    HTML::HTMLHtmlElement const* html_element() const
     {
         return const_cast<Document*>(this)->html_element();
     }
 
-    const HTML::HTMLHeadElement* head() const
+    HTML::HTMLHeadElement const* head() const
     {
         return const_cast<Document*>(this)->head();
     }
 
-    const HTML::HTMLElement* body() const
+    JS::GCPtr<HTML::HTMLTitleElement const> title_element() const
+    {
+        return const_cast<Document*>(this)->title_element();
+    }
+
+    HTML::HTMLElement const* body() const
     {
         return const_cast<Document*>(this)->body();
     }
@@ -162,7 +173,7 @@ public:
     WebIDL::ExceptionOr<void> set_body(HTML::HTMLElement* new_body);
 
     DeprecatedString title() const;
-    void set_title(DeprecatedString const&);
+    WebIDL::ExceptionOr<void> set_title(DeprecatedString const&);
 
     HTML::BrowsingContext* browsing_context() { return m_browsing_context.ptr(); }
     HTML::BrowsingContext const* browsing_context() const { return m_browsing_context.ptr(); }
@@ -172,7 +183,7 @@ public:
     Page* page();
     Page const* page() const;
 
-    Color background_color(Gfx::Palette const&) const;
+    Color background_color() const;
     Vector<CSS::BackgroundLayerData> const* background_layers() const;
 
     Color link_color() const;
@@ -196,8 +207,8 @@ public:
 
     virtual bool is_child_allowed(Node const&) const override;
 
-    Layout::InitialContainingBlock const* layout_node() const;
-    Layout::InitialContainingBlock* layout_node();
+    Layout::Viewport const* layout_node() const;
+    Layout::Viewport* layout_node();
 
     void schedule_style_update();
     void schedule_layout_update();
@@ -220,14 +231,18 @@ public:
 
     HTML::EnvironmentSettingsObject& relevant_settings_object();
 
-    JS::Value run_javascript(StringView source, StringView filename = "(unknown)"sv);
+    void navigate_to_javascript_url(StringView url);
+    void evaluate_javascript_url(StringView url);
 
-    WebIDL::ExceptionOr<JS::NonnullGCPtr<Element>> create_element(DeprecatedFlyString const& local_name);
-    WebIDL::ExceptionOr<JS::NonnullGCPtr<Element>> create_element_ns(DeprecatedString const& namespace_, DeprecatedString const& qualified_name);
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<Element>> create_element(DeprecatedString const& local_name, Variant<DeprecatedString, ElementCreationOptions> const& options);
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<Element>> create_element_ns(DeprecatedString const& namespace_, DeprecatedString const& qualified_name, Variant<DeprecatedString, ElementCreationOptions> const& options);
     JS::NonnullGCPtr<DocumentFragment> create_document_fragment();
     JS::NonnullGCPtr<Text> create_text_node(DeprecatedString const& data);
     JS::NonnullGCPtr<Comment> create_comment(DeprecatedString const& data);
     WebIDL::ExceptionOr<JS::NonnullGCPtr<ProcessingInstruction>> create_processing_instruction(DeprecatedString const& target, DeprecatedString const& data);
+
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<Attr>> create_attribute(DeprecatedString const& local_name);
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<Attr>> create_attribute_ns(DeprecatedString const& namespace_, DeprecatedString const& qualified_name);
 
     WebIDL::ExceptionOr<JS::NonnullGCPtr<Event>> create_event(DeprecatedString const& interface);
     JS::NonnullGCPtr<Range> create_range();
@@ -285,11 +300,12 @@ public:
     JS::NonnullGCPtr<Document> appropriate_template_contents_owner_document();
 
     DeprecatedString ready_state() const;
+    HTML::DocumentReadyState readiness() const { return m_readiness; }
     void update_readiness(HTML::DocumentReadyState);
 
     HTML::Window& window() const { return const_cast<HTML::Window&>(*m_window); }
 
-    void set_window(Badge<HTML::BrowsingContext>, HTML::Window&);
+    void set_window(HTML::Window&);
 
     WebIDL::ExceptionOr<void> write(Vector<DeprecatedString> const& strings);
     WebIDL::ExceptionOr<void> writeln(Vector<DeprecatedString> const& strings);
@@ -338,8 +354,9 @@ public:
     bool is_active() const;
 
     JS::NonnullGCPtr<HTML::History> history();
+    JS::NonnullGCPtr<HTML::History> history() const;
 
-    HTML::Location* location();
+    WebIDL::ExceptionOr<JS::GCPtr<HTML::Location>> location();
 
     size_t number_of_things_delaying_the_load_event() { return m_number_of_things_delaying_the_load_event; }
     void increment_number_of_things_delaying_the_load_event(Badge<DocumentLoadEventDelayer>);
@@ -382,6 +399,9 @@ public:
     void register_node_iterator(Badge<NodeIterator>, NodeIterator&);
     void unregister_node_iterator(Badge<NodeIterator>, NodeIterator&);
 
+    void register_document_observer(Badge<DocumentObserver>, DocumentObserver&);
+    void unregister_document_observer(Badge<DocumentObserver>, DocumentObserver&);
+
     template<typename Callback>
     void for_each_node_iterator(Callback callback)
     {
@@ -394,6 +414,11 @@ public:
 
     bool has_active_favicon() const { return m_active_favicon; }
     void check_favicon_after_loading_link_resource();
+
+    JS::GCPtr<HTML::CustomElementDefinition> lookup_custom_element_definition(DeprecatedFlyString const& namespace_, DeprecatedFlyString const& local_name, Optional<String> const& is) const;
+
+    void increment_throw_on_dynamic_markup_insertion_counter(Badge<HTML::HTMLParser>);
+    void decrement_throw_on_dynamic_markup_insertion_counter(Badge<HTML::HTMLParser>);
 
     // https://html.spec.whatwg.org/multipage/dom.html#is-initial-about:blank
     bool is_initial_about_blank() const { return m_is_initial_about_blank; }
@@ -409,8 +434,8 @@ public:
     bool is_completely_loaded() const;
 
     // https://html.spec.whatwg.org/multipage/dom.html#concept-document-navigation-id
-    Optional<DeprecatedString> navigation_id() const;
-    void set_navigation_id(Optional<DeprecatedString>);
+    Optional<String> navigation_id() const;
+    void set_navigation_id(Optional<String>);
 
     // https://html.spec.whatwg.org/multipage/origin.html#active-sandboxing-flag-set
     HTML::SandboxingFlagSet active_sandboxing_flag_set() const;
@@ -420,6 +445,11 @@ public:
 
     // https://html.spec.whatwg.org/multipage/browsers.html#list-of-the-descendant-browsing-contexts
     Vector<JS::Handle<HTML::BrowsingContext>> list_of_descendant_browsing_contexts() const;
+
+    Vector<JS::Handle<HTML::Navigable>> descendant_navigables();
+    Vector<JS::Handle<HTML::Navigable>> inclusive_descendant_navigables();
+
+    void destroy();
 
     // https://html.spec.whatwg.org/multipage/window-object.html#discard-a-document
     void discard();
@@ -443,21 +473,39 @@ public:
     DocumentUnloadTimingInfo const& previous_document_unload_timing() const { return m_previous_document_unload_timing; }
     void set_previous_document_unload_timing(DocumentUnloadTimingInfo const& previous_document_unload_timing) { m_previous_document_unload_timing = previous_document_unload_timing; }
 
+    bool is_allowed_to_use_feature(PolicyControlledFeature) const;
+
     void did_stop_being_active_document_in_browsing_context(Badge<HTML::BrowsingContext>);
 
     bool query_command_supported(DeprecatedString const&) const;
 
     DeprecatedString dump_accessibility_tree_as_json();
 
+    void make_active();
+
+    void set_salvageable(bool value) { m_salvageable = value; }
+
+    HTML::ListOfAvailableImages& list_of_available_images();
+    HTML::ListOfAvailableImages const& list_of_available_images() const;
+
+    void register_intersection_observer(Badge<IntersectionObserver::IntersectionObserver>, IntersectionObserver::IntersectionObserver&);
+    void unregister_intersection_observer(Badge<IntersectionObserver::IntersectionObserver>, IntersectionObserver::IntersectionObserver&);
+
+    void run_the_update_intersection_observations_steps(HighResolutionTime::DOMHighResTimeStamp time);
+
+    void start_intersection_observing_a_lazy_loading_element(Element& element);
+
+    void shared_declarative_refresh_steps(StringView input, JS::GCPtr<HTML::HTMLMetaElement const> meta_element = nullptr);
+
 protected:
     virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-private:
     Document(JS::Realm&, AK::URL const&);
 
+private:
     // ^HTML::GlobalEventHandlers
-    virtual EventTarget& global_event_handlers_to_event_target(DeprecatedFlyString const&) final { return *this; }
+    virtual EventTarget& global_event_handlers_to_event_target(FlyString const&) final { return *this; }
 
     void tear_down_layout_tree();
 
@@ -465,26 +513,28 @@ private:
 
     WebIDL::ExceptionOr<void> run_the_document_write_steps(DeprecatedString);
 
-    size_t m_next_layout_node_serial_id { 0 };
+    void queue_intersection_observer_task();
+    void queue_an_intersection_observer_entry(IntersectionObserver::IntersectionObserver&, HighResolutionTime::DOMHighResTimeStamp time, JS::NonnullGCPtr<Geometry::DOMRectReadOnly> root_bounds, JS::NonnullGCPtr<Geometry::DOMRectReadOnly> bounding_client_rect, JS::NonnullGCPtr<Geometry::DOMRectReadOnly> intersection_rect, bool is_intersecting, double intersection_ratio, JS::NonnullGCPtr<Element> target);
 
     OwnPtr<CSS::StyleComputer> m_style_computer;
     JS::GCPtr<CSS::StyleSheetList> m_style_sheets;
     JS::GCPtr<Node> m_hovered_node;
     JS::GCPtr<Node> m_inspected_node;
+    Optional<CSS::Selector::PseudoElement> m_inspected_pseudo_element;
     JS::GCPtr<Node> m_active_favicon;
     WeakPtr<HTML::BrowsingContext> m_browsing_context;
     AK::URL m_url;
 
     JS::GCPtr<HTML::Window> m_window;
 
-    JS::GCPtr<Layout::InitialContainingBlock> m_layout_root;
+    JS::GCPtr<Layout::Viewport> m_layout_root;
 
     Optional<Color> m_link_color;
     Optional<Color> m_active_link_color;
     Optional<Color> m_visited_link_color;
 
-    RefPtr<Platform::Timer> m_style_update_timer;
-    RefPtr<Platform::Timer> m_layout_update_timer;
+    RefPtr<Core::Timer> m_style_update_timer;
+    RefPtr<Core::Timer> m_layout_update_timer;
 
     JS::GCPtr<HTML::HTMLParser> m_parser;
     bool m_active_parser_was_aborted { false };
@@ -563,7 +613,9 @@ private:
 
     bool m_needs_full_style_update { false };
 
-    HashTable<NodeIterator*> m_node_iterators;
+    HashTable<JS::GCPtr<NodeIterator>> m_node_iterators;
+
+    HashTable<JS::NonnullGCPtr<DocumentObserver>> m_document_observers;
 
     // https://html.spec.whatwg.org/multipage/dom.html#is-initial-about:blank
     bool m_is_initial_about_blank { false };
@@ -587,10 +639,10 @@ private:
     JS::GCPtr<HTMLCollection> m_all;
 
     // https://html.spec.whatwg.org/#completely-loaded-time
-    Optional<AK::Time> m_completely_loaded_time;
+    Optional<AK::UnixDateTime> m_completely_loaded_time;
 
     // https://html.spec.whatwg.org/multipage/dom.html#concept-document-navigation-id
-    Optional<DeprecatedString> m_navigation_id;
+    Optional<String> m_navigation_id;
 
     // https://html.spec.whatwg.org/multipage/origin.html#active-sandboxing-flag-set
     HTML::SandboxingFlagSet m_active_sandboxing_flag_set;
@@ -611,7 +663,30 @@ private:
     JS::GCPtr<Selection::Selection> m_selection;
 
     // NOTE: This is a cache to make finding the first <base href> element O(1).
-    JS::GCPtr<HTML::HTMLBaseElement> m_first_base_element_with_href_in_tree_order;
+    JS::GCPtr<HTML::HTMLBaseElement const> m_first_base_element_with_href_in_tree_order;
+
+    // https://html.spec.whatwg.org/multipage/images.html#list-of-available-images
+    OwnPtr<HTML::ListOfAvailableImages> m_list_of_available_images;
+
+    // NOTE: Not in the spec per say, but Document must be able to access all IntersectionObservers whose root is in the document.
+    OrderedHashTable<JS::NonnullGCPtr<IntersectionObserver::IntersectionObserver>> m_intersection_observers;
+
+    // https://www.w3.org/TR/intersection-observer/#document-intersectionobservertaskqueued
+    // Each document has an IntersectionObserverTaskQueued flag which is initialized to false.
+    bool m_intersection_observer_task_queued { false };
+
+    // https://html.spec.whatwg.org/multipage/urls-and-fetching.html#lazy-load-intersection-observer
+    // Each Document has a lazy load intersection observer, initially set to null but can be set to an IntersectionObserver instance.
+    JS::GCPtr<IntersectionObserver::IntersectionObserver> m_lazy_load_intersection_observer;
+
+    // https://html.spec.whatwg.org/multipage/semantics.html#will-declaratively-refresh
+    // A Document object has an associated will declaratively refresh (a boolean). It is initially false.
+    bool m_will_declaratively_refresh { false };
+
+    RefPtr<Core::Timer> m_active_refresh_timer;
 };
+
+template<>
+inline bool Node::fast_is<Document>() const { return is_document(); }
 
 }

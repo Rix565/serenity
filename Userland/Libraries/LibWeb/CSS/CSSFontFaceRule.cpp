@@ -1,20 +1,22 @@
 /*
- * Copyright (c) 2022, Sam Atkins <atkinssj@serenityos.org>
- * Copyright (c) 2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022-2023, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2022-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGfx/Font/FontStyleMapping.h>
 #include <LibWeb/Bindings/CSSFontFaceRulePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSFontFaceRule.h>
 #include <LibWeb/CSS/Serialize.h>
+#include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::CSS {
 
-CSSFontFaceRule* CSSFontFaceRule::create(JS::Realm& realm, FontFace&& font_face)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSFontFaceRule>> CSSFontFaceRule::create(JS::Realm& realm, FontFace&& font_face)
 {
-    return realm.heap().allocate<CSSFontFaceRule>(realm, realm, move(font_face)).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<CSSFontFaceRule>(realm, realm, move(font_face)));
 }
 
 CSSFontFaceRule::CSSFontFaceRule(JS::Realm& realm, FontFace&& font_face)
@@ -50,7 +52,7 @@ DeprecatedString CSSFontFaceRule::serialized() const
     builder.append("font-family: "sv);
 
     // 3. The result of performing serialize a string on the rule’s font family name.
-    serialize_a_string(builder, m_font_face.font_family());
+    serialize_a_string(builder, m_font_face.font_family()).release_value_but_fixme_should_propagate_errors();
 
     // 4. The string ";", i.e., SEMICOLON (U+003B).
     builder.append(';');
@@ -61,20 +63,18 @@ DeprecatedString CSSFontFaceRule::serialized() const
         builder.append(" src: "sv);
 
         // 2. The result of invoking serialize a comma-separated list on performing serialize a URL or serialize a LOCAL for each source on the source list.
-        serialize_a_comma_separated_list(builder, m_font_face.sources(), [&](FontFace::Source source) {
-            if (source.url.cannot_be_a_base_url()) {
-                serialize_a_url(builder, source.url.to_deprecated_string());
-            } else {
-                serialize_a_local(builder, source.url.to_deprecated_string());
-            }
+        serialize_a_comma_separated_list(builder, m_font_face.sources(), [&](StringBuilder& builder, FontFace::Source source) -> ErrorOr<void> {
+            // FIXME: Serialize locals once we support those
+            TRY(serialize_a_url(builder, source.url.to_deprecated_string()));
 
             // NOTE: No spec currently exists for format()
             if (source.format.has_value()) {
-                builder.append("format(\""sv);
-                serialize_a_string(builder, source.format.value());
-                builder.append("\")"sv);
+                TRY(builder.try_append(" format("sv));
+                TRY(serialize_a_string(builder, source.format.value()));
+                TRY(builder.try_append(")"sv));
             }
-        });
+            return {};
+        }).release_value_but_fixme_should_propagate_errors();
 
         // 3. The string ";", i.e., SEMICOLON (U+003B).
         builder.append(';');
@@ -82,7 +82,7 @@ DeprecatedString CSSFontFaceRule::serialized() const
 
     // 6. If rule’s associated unicode-range descriptor is present, a single SPACE (U+0020), followed by the string "unicode-range:", followed by a single SPACE (U+0020), followed by the result of performing serialize a <'unicode-range'>, followed by the string ";", i.e., SEMICOLON (U+003B).
     builder.append(" unicode-range: "sv);
-    serialize_unicode_ranges(builder, m_font_face.unicode_ranges());
+    serialize_unicode_ranges(builder, m_font_face.unicode_ranges()).release_value_but_fixme_should_propagate_errors();
     builder.append(';');
 
     // FIXME: 7. If rule’s associated font-variant descriptor is present, a single SPACE (U+0020),
@@ -100,15 +100,39 @@ DeprecatedString CSSFontFaceRule::serialized() const
     // followed by the result of performing serialize a <'font-stretch'>,
     // followed by the string ";", i.e., SEMICOLON (U+003B).
 
-    // FIXME: 10. If rule’s associated font-weight descriptor is present, a single SPACE (U+0020),
-    // followed by the string "font-weight:", followed by a single SPACE (U+0020),
-    // followed by the result of performing serialize a <'font-weight'>,
-    // followed by the string ";", i.e., SEMICOLON (U+003B).
+    // 10. If rule’s associated font-weight descriptor is present, a single SPACE (U+0020),
+    //     followed by the string "font-weight:", followed by a single SPACE (U+0020),
+    //     followed by the result of performing serialize a <'font-weight'>,
+    //     followed by the string ";", i.e., SEMICOLON (U+003B).
+    if (m_font_face.weight().has_value()) {
+        auto weight = m_font_face.weight().value();
+        builder.append(" font-weight: "sv);
+        if (weight == 400)
+            builder.append("normal"sv);
+        else if (weight == 700)
+            builder.append("bold"sv);
+        else
+            builder.appendff("{}", weight);
+        builder.append(";"sv);
+    }
 
-    // FIXME: 11. If rule’s associated font-style descriptor is present, a single SPACE (U+0020),
-    // followed by the string "font-style:", followed by a single SPACE (U+0020),
-    // followed by the result of performing serialize a <'font-style'>,
-    // followed by the string ";", i.e., SEMICOLON (U+003B).
+    // 11. If rule’s associated font-style descriptor is present, a single SPACE (U+0020),
+    //     followed by the string "font-style:", followed by a single SPACE (U+0020),
+    //     followed by the result of performing serialize a <'font-style'>,
+    //     followed by the string ";", i.e., SEMICOLON (U+003B).
+    if (m_font_face.slope().has_value()) {
+        auto slope = m_font_face.slope().value();
+        builder.append(" font-style: "sv);
+        if (slope == Gfx::name_to_slope("Normal"sv))
+            builder.append("normal"sv);
+        else if (slope == Gfx::name_to_slope("Italic"sv))
+            builder.append("italic"sv);
+        else {
+            dbgln("FIXME: CSSFontFaceRule::serialized() does not support slope {}", slope);
+            builder.append("italic"sv);
+        }
+        builder.append(";"sv);
+    }
 
     // 12. A single SPACE (U+0020), followed by the string "}", i.e., RIGHT CURLY BRACKET (U+007D).
     builder.append(" }"sv);

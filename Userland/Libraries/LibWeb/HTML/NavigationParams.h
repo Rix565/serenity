@@ -11,6 +11,7 @@
 #include <LibWeb/HTML/CrossOrigin/CrossOriginOpenerPolicy.h>
 #include <LibWeb/HTML/CrossOrigin/CrossOriginOpenerPolicyEnforcementResult.h>
 #include <LibWeb/HTML/HistoryHandlingBehavior.h>
+#include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/Origin.h>
 #include <LibWeb/HTML/PolicyContainers.h>
 #include <LibWeb/HTML/SandboxingFlagSet.h>
@@ -19,8 +20,8 @@ namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigation-params
 struct NavigationParams {
-    // a navigation id
-    DeprecatedString id;
+    // null or a navigation ID
+    Optional<String> id;
 
     // null or a request that started the navigation
     JS::GCPtr<Fetch::Infrastructure::Request> request;
@@ -49,6 +50,9 @@ struct NavigationParams {
     // the browsing context to be navigated (or discarded, if a browsing context group switch occurs)
     JS::Handle<HTML::BrowsingContext> browsing_context;
 
+    // the navigable to be navigated
+    JS::Handle<Navigable> navigable;
+
     // a history handling behavior
     HistoryHandlingBehavior history_handling { HistoryHandlingBehavior::Default };
 
@@ -57,6 +61,9 @@ struct NavigationParams {
 
     // FIXME: an algorithm expecting a response
     void* process_response_end_of_body { nullptr };
+
+    // null or a fetch controller
+    JS::GCPtr<Fetch::Infrastructure::FetchController> fetch_controller { nullptr };
 
     // FIXME: null or an algorithm accepting a Document, once it has been created
     void* commit_early_hints { nullptr };

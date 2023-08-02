@@ -60,7 +60,7 @@ static DeprecatedString s_last_menu_shadow_path;
 static DeprecatedString s_last_taskbar_shadow_path;
 static DeprecatedString s_last_tooltip_shadow_path;
 
-static Gfx::IntRect frame_rect_for_window(Window& window, Gfx::IntRect const& rect)
+Gfx::IntRect WindowFrame::frame_rect_for_window(Window& window, Gfx::IntRect const& rect)
 {
     if (window.is_frameless())
         return rect;
@@ -294,7 +294,7 @@ Gfx::WindowTheme::WindowState WindowFrame::window_state_for_theme() const
 void WindowFrame::paint_notification_frame(Gfx::Painter& painter)
 {
     auto palette = WindowManager::the().palette();
-    Gfx::WindowTheme::current().paint_notification_frame(painter, to_theme_window_mode(m_window.mode()), m_window.rect(), palette, m_buttons.last().relative_rect());
+    Gfx::WindowTheme::current().paint_notification_frame(painter, to_theme_window_mode(m_window.mode()), m_window.rect(), palette, m_buttons.last()->relative_rect());
 }
 
 void WindowFrame::paint_menubar(Gfx::Painter& painter)
@@ -358,14 +358,14 @@ void WindowFrame::PerScaleRenderedCache::paint(WindowFrame& frame, Gfx::Painter&
             // We have a top piece
             auto src_rect = rect.intersected(Gfx::Rect { frame_rect.location(), { frame_rect.width(), m_bottom_y } });
             if (!src_rect.is_empty())
-                painter.blit(src_rect.location(), *m_top_bottom, src_rect.translated(-frame_rect.location()), frame.opacity());
+                painter.blit(src_rect.location(), *m_top_bottom, src_rect.translated(-frame_rect.location()));
         }
         if (m_bottom_y < top_bottom_height) {
             // We have a bottom piece
-            Gfx::IntRect rect_in_frame { frame_rect.x(), window_rect.bottom() + 1, frame_rect.width(), top_bottom_height - m_bottom_y };
+            Gfx::IntRect rect_in_frame { frame_rect.x(), window_rect.bottom(), frame_rect.width(), top_bottom_height - m_bottom_y };
             auto src_rect = rect.intersected(rect_in_frame);
             if (!src_rect.is_empty())
-                painter.blit(src_rect.location(), *m_top_bottom, src_rect.translated(-rect_in_frame.x(), -rect_in_frame.y() + m_bottom_y), frame.opacity());
+                painter.blit(src_rect.location(), *m_top_bottom, src_rect.translated(-rect_in_frame.x(), -rect_in_frame.y() + m_bottom_y));
         }
     }
 
@@ -376,14 +376,14 @@ void WindowFrame::PerScaleRenderedCache::paint(WindowFrame& frame, Gfx::Painter&
             Gfx::IntRect rect_in_frame { frame_rect.x(), window_rect.y(), m_right_x, window_rect.height() };
             auto src_rect = rect.intersected(rect_in_frame);
             if (!src_rect.is_empty())
-                painter.blit(src_rect.location(), *m_left_right, src_rect.translated(-rect_in_frame.location()), frame.opacity());
+                painter.blit(src_rect.location(), *m_left_right, src_rect.translated(-rect_in_frame.location()));
         }
         if (m_right_x < left_right_width) {
             // We have a right piece
-            Gfx::IntRect rect_in_frame { window_rect.right() + 1, window_rect.y(), left_right_width - m_right_x, window_rect.height() };
+            Gfx::IntRect rect_in_frame { window_rect.right(), window_rect.y(), left_right_width - m_right_x, window_rect.height() };
             auto src_rect = rect.intersected(rect_in_frame);
             if (!src_rect.is_empty())
-                painter.blit(src_rect.location(), *m_left_right, src_rect.translated(-rect_in_frame.x() + m_right_x, -rect_in_frame.y()), frame.opacity());
+                painter.blit(src_rect.location(), *m_left_right, src_rect.translated(-rect_in_frame.x() + m_right_x, -rect_in_frame.y()));
         }
     }
 }
@@ -401,7 +401,7 @@ void WindowFrame::render(Screen& screen, Gfx::Painter& painter)
         return;
 
     for (auto& button : m_buttons)
-        button.paint(screen, painter);
+        button->paint(screen, painter);
 }
 
 void WindowFrame::theme_changed()
@@ -525,9 +525,9 @@ void WindowFrame::PerScaleRenderedCache::render(WindowFrame& frame, Screen& scre
         Gfx::Painter top_bottom_painter(*m_top_bottom);
         top_bottom_painter.add_clip_rect({ update_location, { frame_rect_to_update.width(), top_bottom_height - update_location.y() - (frame_rect_including_shadow.bottom() - frame_rect_to_update.bottom()) } });
         if (m_bottom_y > 0)
-            top_bottom_painter.blit({ 0, 0 }, *tmp_bitmap, { 0, 0, frame_rect_including_shadow.width(), m_bottom_y }, 1.0, false);
+            top_bottom_painter.blit({ 0, 0 }, *tmp_bitmap, { 0, 0, frame_rect_including_shadow.width(), m_bottom_y }, 1.f, false);
         if (m_bottom_y < top_bottom_height)
-            top_bottom_painter.blit({ 0, m_bottom_y }, *tmp_bitmap, { 0, frame_rect_including_shadow.height() - (frame_rect_including_shadow.bottom() - window_rect.bottom()), frame_rect_including_shadow.width(), top_bottom_height - m_bottom_y }, 1.0, false);
+            top_bottom_painter.blit({ 0, m_bottom_y }, *tmp_bitmap, { 0, frame_rect_including_shadow.height() - (frame_rect_including_shadow.bottom() - window_rect.bottom()), frame_rect_including_shadow.width(), top_bottom_height - m_bottom_y }, 1.f, false);
     } else {
         m_bottom_y = 0;
     }
@@ -541,24 +541,12 @@ void WindowFrame::PerScaleRenderedCache::render(WindowFrame& frame, Screen& scre
         if (m_right_x > 0)
             left_right_painter.blit({ 0, 0 }, *tmp_bitmap, { 0, m_bottom_y, m_right_x, window_rect.height() }, 1.0, false);
         if (m_right_x < left_right_width)
-            left_right_painter.blit({ m_right_x, 0 }, *tmp_bitmap, { (window_rect.right() - frame_rect_including_shadow.x()) + 1, m_bottom_y, frame_rect_including_shadow.width() - (frame_rect_including_shadow.right() - window_rect.right()), window_rect.height() }, 1.0, false);
+            left_right_painter.blit({ m_right_x, 0 }, *tmp_bitmap, { window_rect.right() - frame_rect_including_shadow.x(), m_bottom_y, frame_rect_including_shadow.width() - (frame_rect_including_shadow.right() - window_rect.right()), window_rect.height() }, 1.0, false);
     } else {
         m_right_x = 0;
     }
 
     m_shadow_dirty = false;
-}
-
-void WindowFrame::set_opacity(float opacity)
-{
-    if (m_opacity == opacity)
-        return;
-    bool was_opaque = is_opaque();
-    m_opacity = opacity;
-    if (was_opaque != is_opaque())
-        Compositor::the().invalidate_occlusions();
-    Compositor::the().invalidate_screen(render_rect());
-    WindowManager::the().notify_opacity_changed(m_window);
 }
 
 Gfx::IntRect WindowFrame::inflated_for_shadow(Gfx::IntRect const& frame_rect) const
@@ -585,7 +573,7 @@ Gfx::IntRect WindowFrame::constrained_render_rect_to_screen(Gfx::IntRect const& 
 Gfx::IntRect WindowFrame::leftmost_titlebar_button_rect() const
 {
     if (!m_buttons.is_empty())
-        return m_buttons.last().relative_rect();
+        return m_buttons.last()->relative_rect();
 
     auto rect = titlebar_rect();
     rect.translate_by(rect.width(), 0);
@@ -677,7 +665,7 @@ void WindowFrame::layout_buttons()
 {
     auto button_rects = Gfx::WindowTheme::current().layout_buttons(to_theme_window_type(m_window.type()), to_theme_window_mode(m_window.mode()), m_window.rect(), WindowManager::the().palette(), m_buttons.size());
     for (size_t i = 0; i < m_buttons.size(); i++)
-        m_buttons[i].set_relative_rect(button_rects[i]);
+        m_buttons[i]->set_relative_rect(button_rects[i]);
 }
 
 Optional<HitTestResult> WindowFrame::hit_test(Gfx::IntPoint position)
@@ -727,9 +715,9 @@ Optional<HitTestResult> WindowFrame::PerScaleRenderedCache::hit_test(WindowFrame
             if (m_top_bottom->rect().contains(scaled_relative_point))
                 alpha = m_top_bottom->get_pixel(scaled_relative_point).alpha();
         }
-    } else if (position.y() > window_rect.bottom()) {
+    } else if (position.y() >= window_rect.bottom()) {
         if (m_top_bottom) {
-            Gfx::IntPoint scaled_relative_point { window_relative_position.x() * m_top_bottom->scale(), m_bottom_y * m_top_bottom->scale() + position.y() - window_rect.bottom() - 1 };
+            Gfx::IntPoint scaled_relative_point { window_relative_position.x() * m_top_bottom->scale(), m_bottom_y * m_top_bottom->scale() + position.y() - window_rect.bottom() };
             if (m_top_bottom->rect().contains(scaled_relative_point))
                 alpha = m_top_bottom->get_pixel(scaled_relative_point).alpha();
         }
@@ -739,9 +727,9 @@ Optional<HitTestResult> WindowFrame::PerScaleRenderedCache::hit_test(WindowFrame
             if (m_left_right->rect().contains(scaled_relative_point))
                 alpha = m_left_right->get_pixel(scaled_relative_point).alpha();
         }
-    } else if (position.x() > window_rect.right()) {
+    } else if (position.x() >= window_rect.right()) {
         if (m_left_right) {
-            Gfx::IntPoint scaled_relative_point { m_right_x * m_left_right->scale() + position.x() - window_rect.right() - 1, (window_relative_position.y() - m_bottom_y) * m_left_right->scale() };
+            Gfx::IntPoint scaled_relative_point { m_right_x * m_left_right->scale() + position.x() - window_rect.right(), (window_relative_position.y() - m_bottom_y) * m_left_right->scale() };
             if (m_left_right->rect().contains(scaled_relative_point))
                 alpha = m_left_right->get_pixel(scaled_relative_point).alpha();
         }
@@ -769,7 +757,7 @@ bool WindowFrame::handle_titlebar_icon_mouse_event(MouseEvent const& event)
         // for the fact that we opened and closed a window in the meanwhile
         wm.system_menu_doubleclick(m_window, event);
 
-        m_window.popup_window_menu(titlebar_rect().bottom_left().translated(rect().location()), WindowMenuDefaultAction::Close);
+        m_window.popup_window_menu(titlebar_rect().bottom_left().moved_up(1).translated(rect().location()), WindowMenuDefaultAction::Close);
         return true;
     } else if (event.type() == Event::MouseUp && event.button() == MouseButton::Primary) {
         // Since the MouseDown event opened a menu, another MouseUp
@@ -795,8 +783,8 @@ void WindowFrame::handle_titlebar_mouse_event(MouseEvent const& event)
     }
 
     for (auto& button : m_buttons) {
-        if (button.relative_rect().contains(event.position()))
-            return button.on_mouse_event(event.translated(-button.relative_rect().location()));
+        if (button->relative_rect().contains(event.position()))
+            return button->on_mouse_event(event.translated(-button->relative_rect().location()));
     }
 
     if (event.type() == Event::MouseDown) {
@@ -909,7 +897,7 @@ void WindowFrame::open_menubar_menu(Menu& menu)
 {
     auto menubar_rect = this->menubar_rect();
     MenuManager::the().close_everyone();
-    auto position = menu.rect_in_window_menubar().bottom_left().translated(rect().location()).translated(menubar_rect.location());
+    auto position = menu.rect_in_window_menubar().bottom_left().moved_up(1).translated(rect().location()).translated(menubar_rect.location());
     menu.set_unadjusted_position(position);
     auto& window = menu.ensure_menu_window(position);
     auto window_rect = window.rect();
@@ -917,13 +905,12 @@ void WindowFrame::open_menubar_menu(Menu& menu)
     auto window_border_thickness = 1;
 
     // If the menu is off the right edge of the screen align its right edge with the edge of the screen.
-    if (window_rect.right() > screen.width()) {
-        position = position.translated(((window_rect.right() - screen.width()) * -1) - window_border_thickness, 0);
-    }
+    if (window_rect.right() - 1 > screen.width())
+        position = position.translated(((window_rect.right() - 1 - screen.width()) * -1) - window_border_thickness, 0);
+
     // If the menu is below the bottom of the screen move it to appear above the menubar.
-    if (window_rect.bottom() > screen.height()) {
+    if (window_rect.bottom() - 1 > screen.height())
         position = position.translated(0, (window_rect.height() * -1) - menubar_rect.height());
-    }
 
     window.set_rect(position.x(), position.y(), window_rect.width(), window_rect.height());
 

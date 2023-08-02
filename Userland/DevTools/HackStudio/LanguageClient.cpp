@@ -197,7 +197,7 @@ void ConnectionToServerWrapper::on_crash()
     show_crash_notification();
     m_connection.clear();
 
-    static constexpr Time max_crash_frequency = 10_sec;
+    static constexpr Duration max_crash_frequency = 10_sec;
     if (m_last_crash_timer.is_valid() && m_last_crash_timer.elapsed_time() < max_crash_frequency) {
         dbgln("LanguageServer crash frequency is too high");
         m_respawn_allowed = false;
@@ -226,7 +226,7 @@ void ConnectionToServerWrapper::show_crash_notification() const
 }
 
 ConnectionToServerWrapper::ConnectionToServerWrapper(DeprecatedString const& language_name, Function<NonnullRefPtr<ConnectionToServer>()> connection_creator)
-    : m_language(language_from_name(language_name))
+    : m_language(Syntax::language_from_name(language_name).value())
     , m_connection_creator(move(connection_creator))
 {
     create_connection();

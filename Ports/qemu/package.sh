@@ -1,21 +1,29 @@
 #!/usr/bin/env -S bash ../.port_include.sh
+
+source version.sh
+
 port='qemu'
-version='7.1.0'
+version="${QEMU_VERSION}"
 useconfigure='true'
 configopts=(
-    "--target-list=aarch64-softmmu,i386-softmmu,x86_64-softmmu"
+    '--target-list=aarch64-softmmu,i386-softmmu,x86_64-softmmu'
     "--cross-prefix=${SERENITY_ARCH}-pc-serenity-"
-    "--extra-ldflags=-lm"
-    "--without-default-features"
-    "--disable-strip"
-    "--enable-pie"
-    "--enable-sdl"
-    "--enable-tcg"
-    "--enable-tools"
+    '--extra-ldflags=-lm'
+    '--without-default-features'
+    '--disable-strip'
+    '--enable-pie'
+    '--enable-sdl'
+    '--enable-slirp'
+    '--enable-tcg'
+    '--enable-tools'
 )
-depends=("glib" "pixman" "SDL2")
-files="https://download.qemu.org/qemu-${version}.tar.xz qemu-${version}.tar.xz a0634e536bded57cf38ec8a751adb124b89c776fe0846f21ab6c6728f1cbbbe6"
-auth_type='sha256'
+depends=(
+  'glib'
+  'libslirp'
+  'pixman'
+  'SDL2'
+)
+files="${QEMU_ARCHIVE_URL} ${QEMU_ARCHIVE} ${QEMU_ARCHIVE_SHA256SUM}"
 
 pre_patch() {
     # Disable tests (those need way more stuff than QEMU itself) by clearing the respective meson file.

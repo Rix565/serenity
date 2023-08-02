@@ -64,8 +64,16 @@ public:
         , m_size(size)
     {
     }
+
     ALWAYS_INLINE Span(void* values, size_t size)
         : m_values(reinterpret_cast<u8*>(values))
+        , m_size(size)
+    {
+    }
+
+    template<size_t size>
+    ALWAYS_INLINE constexpr Span(u8 (&values)[size])
+        : m_values(values)
         , m_size(size)
     {
     }
@@ -85,13 +93,22 @@ public:
         , m_size(size)
     {
     }
+
     ALWAYS_INLINE Span(void const* values, size_t size)
         : m_values(reinterpret_cast<u8 const*>(values))
         , m_size(size)
     {
     }
+
     ALWAYS_INLINE Span(char const* values, size_t size)
         : m_values(reinterpret_cast<u8 const*>(values))
+        , m_size(size)
+    {
+    }
+
+    template<size_t size>
+    ALWAYS_INLINE constexpr Span(u8 const (&values)[size])
+        : m_values(values)
         , m_size(size)
     {
     }
@@ -150,6 +167,16 @@ public:
         return { this->m_values, min(size(), length) };
     }
 
+    [[nodiscard]] Span align_to(size_t alignment) const
+    {
+        auto* start = reinterpret_cast<T*>(align_up_to((FlatPtr)data(), alignment));
+        auto* end = reinterpret_cast<T*>(align_down_to((FlatPtr)(data() + size()), alignment));
+        if (end < start)
+            return {};
+        size_t length = end - start;
+        return { start, length };
+    }
+
     [[nodiscard]] ALWAYS_INLINE constexpr T* offset(size_t start) const
     {
         VERIFY(start < this->m_size);
@@ -192,12 +219,24 @@ public:
         return false;
     }
 
-    [[nodiscard]] bool constexpr starts_with(Span<T const> other) const
+    [[nodiscard]] bool constexpr starts_with(ReadonlySpan<T> other) const
     {
         if (size() < other.size())
             return false;
 
         return TypedTransfer<T>::compare(data(), other.data(), other.size());
+    }
+
+    [[nodiscard]] size_t constexpr matching_prefix_length(ReadonlySpan<T> other) const
+    {
+        auto maximum_length = min(size(), other.size());
+
+        for (size_t i = 0; i < maximum_length; i++) {
+            if (data()[i] != other.data()[i])
+                return i;
+        }
+
+        return maximum_length;
     }
 
     [[nodiscard]] ALWAYS_INLINE constexpr T const& at(size_t index) const
@@ -250,7 +289,7 @@ public:
         return TypedTransfer<T>::compare(data(), other.data(), size());
     }
 
-    ALWAYS_INLINE constexpr operator Span<T const>() const
+    ALWAYS_INLINE constexpr operator ReadonlySpan<T>() const
     {
         return { data(), size() };
     }
@@ -271,7 +310,10 @@ struct Traits<Span<T>> : public GenericTraits<Span<T>> {
     constexpr static bool is_trivial() { return true; }
 };
 
-using ReadonlyBytes = Span<u8 const>;
+template<typename T>
+using ReadonlySpan = Span<T const>;
+
+using ReadonlyBytes = ReadonlySpan<u8>;
 using Bytes = Span<u8>;
 
 }
@@ -279,5 +321,6 @@ using Bytes = Span<u8>;
 #if USING_AK_GLOBALLY
 using AK::Bytes;
 using AK::ReadonlyBytes;
+using AK::ReadonlySpan;
 using AK::Span;
 #endif

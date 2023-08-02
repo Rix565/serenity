@@ -15,7 +15,7 @@ class NodeFilter final : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(NodeFilter, Bindings::PlatformObject);
 
 public:
-    static JS::NonnullGCPtr<NodeFilter> create(JS::Realm&, WebIDL::CallbackType&);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<NodeFilter>> create(JS::Realm&, WebIDL::CallbackType&);
 
     virtual ~NodeFilter() = default;
 
@@ -46,7 +46,7 @@ private:
 
     virtual void visit_edges(Cell::Visitor&) override;
 
-    WebIDL::CallbackType& m_callback;
+    JS::NonnullGCPtr<WebIDL::CallbackType> m_callback;
 };
 
 AK_ENUM_BITWISE_OPERATORS(NodeFilter::WhatToShow);

@@ -125,7 +125,7 @@ public:
         return DigitConsumeDecision::Consumed;
     }
 
-    T number() const { return m_num; };
+    T number() const { return m_num; }
 
 private:
     bool can_append_digit(int digit)
@@ -399,8 +399,8 @@ static void free_environment_variable_if_needed(char const* var)
 {
     if (!s_malloced_environment_variables.contains((FlatPtr)var))
         return;
-    free(const_cast<char*>(var));
     s_malloced_environment_variables.remove((FlatPtr)var);
+    free(const_cast<char*>(var));
 }
 
 char* getenv(char const* name)
@@ -414,9 +414,8 @@ char* getenv(char const* name)
         size_t varLength = eq - decl;
         if (vl != varLength)
             continue;
-        if (strncmp(decl, name, varLength) == 0) {
+        if (strncmp(decl, name, varLength) == 0)
             return eq + 1;
-        }
     }
     return nullptr;
 }
@@ -432,6 +431,11 @@ char* secure_getenv(char const* name)
 int unsetenv(char const* name)
 {
     auto new_var_len = strlen(name);
+    if (new_var_len == 0 || strchr(name, '=')) {
+        errno = EINVAL;
+        return -1;
+    }
+
     size_t environ_size = 0;
     int skip = -1;
 
@@ -472,16 +476,19 @@ int clearenv()
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/setenv.html
 int setenv(char const* name, char const* value, int overwrite)
 {
-    return serenity_setenv(name, strlen(name), value, strlen(value), overwrite);
-}
-
-int serenity_setenv(char const* name, ssize_t name_length, char const* value, ssize_t value_length, int overwrite)
-{
     if (!overwrite && getenv(name))
         return 0;
-    auto const total_length = name_length + value_length + 2;
+    auto const total_length = strlen(name) + strlen(value) + 2;
     auto* var = (char*)malloc(total_length);
     snprintf(var, total_length, "%s=%s", name, value);
+    s_malloced_environment_variables.set((FlatPtr)var);
+    return putenv(var);
+}
+
+// A non-evil version of putenv that will strdup the env (and free it later)
+int serenity_putenv(char const* new_var, size_t length)
+{
+    auto* var = strndup(new_var, length);
     s_malloced_environment_variables.set((FlatPtr)var);
     return putenv(var);
 }
@@ -490,22 +497,23 @@ int serenity_setenv(char const* name, ssize_t name_length, char const* value, ss
 int putenv(char* new_var)
 {
     char* new_eq = strchr(new_var, '=');
-
     if (!new_eq)
         return unsetenv(new_var);
 
-    auto new_var_len = new_eq - new_var;
+    auto new_var_name_len = new_eq - new_var;
     int environ_size = 0;
     for (; environ[environ_size]; ++environ_size) {
         char* old_var = environ[environ_size];
-        char* old_eq = strchr(old_var, '=');
-        VERIFY(old_eq);
-        auto old_var_len = old_eq - old_var;
+        auto old_var_name_max_length = strnlen(old_var, new_var_name_len);
+        char* old_eq = static_cast<char*>(memchr(old_var, '=', old_var_name_max_length + 1));
+        if (!old_eq)
+            continue; // name is longer, or possibly freed or overwritten value
 
-        if (new_var_len != old_var_len)
+        auto old_var_name_len = old_eq - old_var;
+        if (new_var_name_len != old_var_name_len)
             continue; // can't match
 
-        if (strncmp(new_var, old_var, new_var_len) == 0) {
+        if (strncmp(new_var, old_var, new_var_name_len) == 0) {
             free_environment_variable_if_needed(old_var);
             environ[environ_size] = new_var;
             return 0;
@@ -520,9 +528,8 @@ int putenv(char* new_var)
         return -1;
     }
 
-    for (int i = 0; environ[i]; ++i) {
+    for (int i = 0; environ[i]; ++i)
         new_environ[i] = environ[i];
-    }
 
     new_environ[environ_size] = new_var;
     new_environ[environ_size + 1] = nullptr;

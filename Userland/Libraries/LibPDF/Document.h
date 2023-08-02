@@ -15,27 +15,9 @@
 #include <LibPDF/Encryption.h>
 #include <LibPDF/Error.h>
 #include <LibPDF/ObjectDerivatives.h>
+#include <LibPDF/Page.h>
 
 namespace PDF {
-
-struct Rectangle {
-    float lower_left_x;
-    float lower_left_y;
-    float upper_right_x;
-    float upper_right_y;
-
-    float width() const { return upper_right_x - lower_left_x; }
-    float height() const { return upper_right_y - lower_left_y; }
-};
-
-struct Page {
-    NonnullRefPtr<DictObject> resources;
-    NonnullRefPtr<Object> contents;
-    Rectangle media_box;
-    Rectangle crop_box;
-    float user_unit;
-    int rotate;
-};
 
 struct Destination {
     enum class Type {
@@ -56,7 +38,7 @@ struct Destination {
 
 struct OutlineItem final : public RefCounted<OutlineItem> {
     RefPtr<OutlineItem> parent;
-    NonnullRefPtrVector<OutlineItem> children;
+    Vector<NonnullRefPtr<OutlineItem>> children;
     DeprecatedString title;
     i32 count { 0 };
     Destination dest;
@@ -70,10 +52,45 @@ struct OutlineItem final : public RefCounted<OutlineItem> {
 };
 
 struct OutlineDict final : public RefCounted<OutlineDict> {
-    NonnullRefPtrVector<OutlineItem> children;
+    Vector<NonnullRefPtr<OutlineItem>> children;
     u32 count { 0 };
 
     OutlineDict() = default;
+};
+
+class InfoDict {
+public:
+    InfoDict(Document* document, NonnullRefPtr<DictObject> dict)
+        : m_document(document)
+        , m_info_dict(move(dict))
+    {
+    }
+
+    PDFErrorOr<Optional<DeprecatedString>> title() const;
+    PDFErrorOr<Optional<DeprecatedString>> author() const;
+    PDFErrorOr<Optional<DeprecatedString>> subject() const;
+    PDFErrorOr<Optional<DeprecatedString>> keywords() const;
+
+    // Name of the program that created the original, non-PDF file.
+    PDFErrorOr<Optional<DeprecatedString>> creator() const;
+
+    // Name of the program that converted the file to PDF.
+    PDFErrorOr<Optional<DeprecatedString>> producer() const;
+
+    // FIXME: Provide some helper for parsing the date strings returned by these two methods.
+    PDFErrorOr<Optional<DeprecatedString>> creation_date() const;
+    PDFErrorOr<Optional<DeprecatedString>> modification_date() const;
+
+private:
+    PDFErrorOr<Optional<DeprecatedString>> get(DeprecatedFlyString const& name) const
+    {
+        if (!m_info_dict->contains(name))
+            return OptionalNone {};
+        return TRY(m_info_dict->get_string(m_document, name))->string();
+    }
+
+    WeakPtr<Document> m_document;
+    NonnullRefPtr<DictObject> m_info_dict;
 };
 
 class Document final
@@ -87,6 +104,8 @@ public:
     // need to handle the case where the user password is the empty string.
     PDFErrorOr<void> initialize();
 
+    Version version() const { return m_version; }
+
     ALWAYS_INLINE RefPtr<SecurityHandler> const& security_handler() const { return m_security_handler; }
 
     ALWAYS_INLINE RefPtr<OutlineDict> const& outline() const { return m_outline; }
@@ -99,6 +118,7 @@ public:
 
     [[nodiscard]] u32 get_page_count() const;
 
+    PDFErrorOr<void> dump_page(u32 index);
     [[nodiscard]] PDFErrorOr<Page> get_page(u32 index);
 
     ALWAYS_INLINE Value get_value(u32 index) const
@@ -119,6 +139,15 @@ public:
         return cast_to<T>(TRY(resolve(value)));
     }
 
+    /// Whether this Document is ready to resolve references, which is usually
+    /// true, except just before the XRef table is parsed (and while the linearization
+    /// dict is being read).
+    bool can_resolve_references() { return m_parser->can_resolve_references(); }
+
+    PDFErrorOr<Optional<InfoDict>> info_dict();
+
+    PDFErrorOr<Vector<DeprecatedFlyString>> read_filters(NonnullRefPtr<DictObject>);
+
 private:
     explicit Document(NonnullRefPtr<DocumentParser> const& parser);
 
@@ -133,18 +162,20 @@ private:
 
     PDFErrorOr<void> build_outline();
     PDFErrorOr<NonnullRefPtr<OutlineItem>> build_outline_item(NonnullRefPtr<DictObject> const& outline_item_dict, HashMap<u32, u32> const&);
-    PDFErrorOr<NonnullRefPtrVector<OutlineItem>> build_outline_item_chain(Value const& first_ref, HashMap<u32, u32> const&);
+    PDFErrorOr<Vector<NonnullRefPtr<OutlineItem>>> build_outline_item_chain(Value const& first_ref, HashMap<u32, u32> const&);
 
     PDFErrorOr<Destination> create_destination_from_parameters(NonnullRefPtr<ArrayObject>, HashMap<u32, u32> const&);
     PDFErrorOr<Destination> create_destination_from_dictionary_entry(NonnullRefPtr<Object> const& entry, HashMap<u32, u32> const& page_number_by_index_ref);
 
-    PDFErrorOr<NonnullRefPtr<Object>> get_inheritable_object(DeprecatedFlyString const& name, NonnullRefPtr<DictObject>);
+    PDFErrorOr<Optional<NonnullRefPtr<Object>>> get_inheritable_object(DeprecatedFlyString const& name, NonnullRefPtr<DictObject>);
+    PDFErrorOr<Optional<Value>> get_inheritable_value(DeprecatedFlyString const& name, NonnullRefPtr<DictObject>);
 
     PDFErrorOr<NonnullRefPtr<Object>> find_in_name_tree(NonnullRefPtr<DictObject> root, DeprecatedFlyString name);
     PDFErrorOr<NonnullRefPtr<Object>> find_in_name_tree_nodes(NonnullRefPtr<ArrayObject> siblings, DeprecatedFlyString name);
     PDFErrorOr<NonnullRefPtr<Object>> find_in_key_value_array(NonnullRefPtr<ArrayObject> key_value_array, DeprecatedFlyString name);
 
     NonnullRefPtr<DocumentParser> m_parser;
+    Version m_version;
     RefPtr<DictObject> m_catalog;
     RefPtr<DictObject> m_trailer;
     Vector<u32> m_page_object_indices;
@@ -157,34 +188,6 @@ private:
 }
 
 namespace AK {
-
-template<>
-struct Formatter<PDF::Rectangle> : Formatter<FormatString> {
-    ErrorOr<void> format(FormatBuilder& builder, PDF::Rectangle const& rectangle)
-    {
-        return Formatter<FormatString>::format(builder,
-            "Rectangle {{ ll=({}, {}), ur=({}, {}) }}"sv,
-            rectangle.lower_left_x,
-            rectangle.lower_left_y,
-            rectangle.upper_right_x,
-            rectangle.upper_right_y);
-    }
-};
-
-template<>
-struct Formatter<PDF::Page> : Formatter<FormatString> {
-    ErrorOr<void> format(FormatBuilder& builder, PDF::Page const& page)
-    {
-        return Formatter<FormatString>::format(builder,
-            "Page {{\n  resources={}\n  contents={}\n  media_box={}\n  crop_box={}\n  user_unit={}\n  rotate={}\n}}"sv,
-            page.resources->to_deprecated_string(1),
-            page.contents->to_deprecated_string(1),
-            page.media_box,
-            page.crop_box,
-            page.user_unit,
-            page.rotate);
-    }
-};
 
 template<>
 struct Formatter<PDF::Destination> : Formatter<FormatString> {
@@ -253,7 +256,7 @@ struct Formatter<PDF::OutlineDict> : Formatter<FormatString> {
         StringBuilder child_builder;
         child_builder.append('[');
         for (auto& child : dict.children)
-            child_builder.appendff("{}\n", child.to_deprecated_string(2));
+            child_builder.appendff("{}\n", child->to_deprecated_string(2));
         child_builder.append("  ]"sv);
 
         return Formatter<FormatString>::format(builder,

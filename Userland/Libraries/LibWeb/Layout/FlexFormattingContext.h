@@ -19,6 +19,7 @@ public:
     virtual bool inhibits_floating() const override { return true; }
 
     virtual void run(Box const&, LayoutMode, AvailableSpace const&) override;
+    virtual CSSPixels automatic_content_width() const override;
     virtual CSSPixels automatic_content_height() const override;
 
     Box const& flex_container() const { return context_box(); }
@@ -32,6 +33,10 @@ public:
 private:
     [[nodiscard]] bool should_treat_main_size_as_auto(Box const&) const;
     [[nodiscard]] bool should_treat_cross_size_as_auto(Box const&) const;
+
+    [[nodiscard]] CSSPixels adjust_main_size_through_aspect_ratio_for_cross_size_min_max_constraints(Box const&, CSSPixels main_size, CSS::Size const& min_cross_size, CSS::Size const& max_cross_size) const;
+    [[nodiscard]] CSSPixels calculate_main_size_from_cross_size_and_aspect_ratio(CSSPixels cross_size, double aspect_ratio) const;
+    [[nodiscard]] CSSPixels calculate_cross_size_from_main_size_and_aspect_ratio(CSSPixels main_size, double aspect_ratio) const;
 
     void dump_items() const;
 
@@ -48,8 +53,8 @@ private:
     };
 
     struct FlexItem {
-        Box& box;
-        CSS::FlexBasisData used_flex_basis {};
+        JS::NonnullGCPtr<Box> box;
+        Optional<CSS::FlexBasis> used_flex_basis {};
         bool used_flex_basis_is_definite { false };
         CSSPixels flex_base_size { 0 };
         CSSPixels hypothetical_main_size { 0 };
@@ -57,9 +62,24 @@ private:
         CSSPixels hypothetical_cross_size_with_margins() { return hypothetical_cross_size + margins.cross_before + margins.cross_after + borders.cross_after + borders.cross_before + padding.cross_after + padding.cross_before; }
         CSSPixels target_main_size { 0 };
         bool frozen { false };
-        Optional<float> flex_factor {};
-        float scaled_flex_shrink_factor { 0 };
-        float desired_flex_fraction { 0 };
+        Optional<double> flex_factor {};
+        double scaled_flex_shrink_factor { 0 };
+        double desired_flex_fraction { 0 };
+
+        CSSPixels outer_hypothetical_main_size() const
+        {
+            return hypothetical_main_size + margins.main_before + margins.main_after + borders.main_before + borders.main_after + padding.main_before + padding.main_after;
+        }
+
+        CSSPixels outer_target_main_size() const
+        {
+            return target_main_size + margins.main_before + margins.main_after + borders.main_before + borders.main_after + padding.main_before + padding.main_after;
+        }
+
+        CSSPixels outer_flex_base_size() const
+        {
+            return flex_base_size + margins.main_before + margins.main_after + borders.main_before + borders.main_after + padding.main_before + padding.main_after;
+        }
 
         // The used main size of this flex item. Empty until determined.
         Optional<CSSPixels> main_size {};
@@ -87,18 +107,21 @@ private:
     };
 
     struct FlexLine {
-        Vector<FlexItem*> items;
+        Vector<FlexItem&> items;
         CSSPixels cross_size { 0 };
-        CSSPixels remaining_free_space { 0 };
-        float chosen_flex_fraction { 0 };
+        Optional<CSSPixels> remaining_free_space;
+        double chosen_flex_fraction { 0 };
+
+        double sum_of_flex_factor_of_unfrozen_items() const;
+        double sum_of_scaled_flex_shrink_factor_of_unfrozen_items() const;
     };
 
+    CSSPixels main_gap() const;
+    CSSPixels cross_gap() const;
     bool has_definite_main_size(Box const&) const;
     bool has_definite_cross_size(Box const&) const;
-    CSSPixels specified_main_size(Box const&) const;
-    CSSPixels specified_cross_size(Box const&) const;
-    CSSPixels resolved_definite_main_size(FlexItem const&) const;
-    CSSPixels resolved_definite_cross_size(FlexItem const&) const;
+    CSSPixels inner_main_size(Box const&) const;
+    CSSPixels inner_cross_size(Box const&) const;
     bool has_main_min_size(Box const&) const;
     bool has_cross_min_size(Box const&) const;
     CSSPixels specified_main_max_size(Box const&) const;
@@ -120,8 +143,8 @@ private:
     CSS::Size const& computed_cross_min_size(Box const&) const;
     CSS::Size const& computed_cross_max_size(Box const&) const;
 
-    CSSPixels get_pixel_width(Box const& box, Optional<CSS::Size> const& length_percentage) const;
-    CSSPixels get_pixel_height(Box const& box, Optional<CSS::Size> const& length_percentage) const;
+    CSSPixels get_pixel_width(Box const&, CSS::Size const&) const;
+    CSSPixels get_pixel_height(Box const&, CSS::Size const&) const;
 
     bool flex_item_is_stretched(FlexItem const&) const;
 
@@ -137,7 +160,6 @@ private:
 
     void determine_available_space_for_items(AvailableSpace const&);
 
-    CSSPixels calculate_indefinite_main_size(FlexItem const&);
     void determine_flex_base_size_and_hypothetical_main_size(FlexItem&);
 
     void determine_main_size_of_flex_container();
@@ -145,6 +167,7 @@ private:
     void collect_flex_items_into_flex_lines();
 
     void resolve_flexible_lengths();
+    void resolve_flexible_lengths_for_line(FlexLine&);
 
     void resolve_cross_axis_auto_margins();
 
@@ -188,9 +211,11 @@ private:
     [[nodiscard]] CSSPixels calculate_fit_content_main_size(FlexItem const&) const;
     [[nodiscard]] CSSPixels calculate_fit_content_cross_size(FlexItem const&) const;
 
+    CSSPixels calculate_clamped_fit_content_width(Box const&, AvailableSpace const&) const;
+
     virtual void parent_context_did_dimension_child_root_box() override;
 
-    CSS::FlexBasisData used_flex_basis_for_item(FlexItem const&) const;
+    CSS::FlexBasis used_flex_basis_for_item(FlexItem const&) const;
 
     LayoutState::UsedValues& m_flex_container_state;
 

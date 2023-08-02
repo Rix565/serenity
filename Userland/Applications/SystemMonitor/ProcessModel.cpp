@@ -10,9 +10,7 @@
 #include <AK/JsonValue.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/NumberFormat.h>
-#include <LibCore/File.h>
 #include <LibCore/ProcessStatisticsReader.h>
-#include <LibCore/Stream.h>
 #include <LibGUI/FileIconProvider.h>
 #include <LibGUI/Icon.h>
 #include <LibGUI/ModelIndex.h>
@@ -32,16 +30,18 @@ ProcessModel::ProcessModel()
     VERIFY(!s_the);
     s_the = this;
 
-    auto file = Core::File::construct("/sys/kernel/cpuinfo");
-    if (file->open(Core::OpenMode::ReadOnly)) {
-        auto buffer = file->read_all();
-        auto json = JsonValue::from_string({ buffer });
-        auto cpuinfo_array = json.value().as_array();
-        cpuinfo_array.for_each([&](auto& value) {
-            auto& cpu_object = value.as_object();
-            auto cpu_id = cpu_object.get_u32("processor"sv).value();
-            m_cpus.append(make<CpuInfo>(cpu_id));
-        });
+    auto file_or_error = Core::File::open("/sys/kernel/cpuinfo"sv, Core::File::OpenMode::Read);
+    if (!file_or_error.is_error()) {
+        auto buffer_or_error = file_or_error.value()->read_until_eof();
+        if (!buffer_or_error.is_error()) {
+            auto json = JsonValue::from_string({ buffer_or_error.value() });
+            auto cpuinfo_array = json.value().as_array();
+            cpuinfo_array.for_each([&](auto& value) {
+                auto& cpu_object = value.as_object();
+                auto cpu_id = cpu_object.get_u32("processor"sv).value();
+                m_cpus.append(make<CpuInfo>(cpu_id));
+            });
+        }
     }
 
     if (m_cpus.is_empty())
@@ -71,71 +71,71 @@ int ProcessModel::column_count(GUI::ModelIndex const&) const
     return Column::__Count;
 }
 
-DeprecatedString ProcessModel::column_name(int column) const
+ErrorOr<String> ProcessModel::column_name(int column) const
 {
     switch (column) {
     case Column::Icon:
-        return "";
+        return String {};
     case Column::PID:
-        return "PID";
+        return "PID"_short_string;
     case Column::TID:
-        return "TID";
+        return "TID"_short_string;
     case Column::PPID:
-        return "PPID";
+        return "PPID"_short_string;
     case Column::PGID:
-        return "PGID";
+        return "PGID"_short_string;
     case Column::SID:
-        return "SID";
+        return "SID"_short_string;
     case Column::State:
-        return "State";
+        return "State"_short_string;
     case Column::User:
-        return "User";
+        return "User"_short_string;
     case Column::Priority:
-        return "Pr";
+        return "Pr"_short_string;
     case Column::Virtual:
-        return "Virtual";
+        return "Virtual"_short_string;
     case Column::Physical:
-        return "Physical";
+        return TRY("Physical"_string);
     case Column::DirtyPrivate:
-        return "Private";
+        return "Private"_short_string;
     case Column::CleanInode:
-        return "CleanI";
+        return "CleanI"_short_string;
     case Column::PurgeableVolatile:
-        return "Purg:V";
+        return "Purg:V"_short_string;
     case Column::PurgeableNonvolatile:
-        return "Purg:N";
+        return "Purg:N"_short_string;
     case Column::CPU:
-        return "CPU";
+        return "CPU"_short_string;
     case Column::Processor:
-        return "Processor";
+        return TRY("Processor"_string);
     case Column::Name:
-        return "Name";
+        return "Name"_short_string;
     case Column::Syscalls:
-        return "Syscalls";
+        return TRY("Syscalls"_string);
     case Column::InodeFaults:
-        return "F:Inode";
+        return "F:Inode"_short_string;
     case Column::ZeroFaults:
-        return "F:Zero";
+        return "F:Zero"_short_string;
     case Column::CowFaults:
-        return "F:CoW";
+        return "F:CoW"_short_string;
     case Column::IPv4SocketReadBytes:
-        return "IPv4 In";
+        return "IPv4 In"_short_string;
     case Column::IPv4SocketWriteBytes:
-        return "IPv4 Out";
+        return TRY("IPv4 Out"_string);
     case Column::UnixSocketReadBytes:
-        return "Unix In";
+        return "Unix In"_short_string;
     case Column::UnixSocketWriteBytes:
-        return "Unix Out";
+        return TRY("Unix Out"_string);
     case Column::FileReadBytes:
-        return "File In";
+        return "File In"_short_string;
     case Column::FileWriteBytes:
-        return "File Out";
+        return TRY("File Out"_string);
     case Column::Pledge:
-        return "Pledge";
+        return "Pledge"_short_string;
     case Column::Veil:
-        return "Veil";
+        return "Veil"_short_string;
     case Column::Command:
-        return "Command";
+        return "Command"_short_string;
     default:
         VERIFY_NOT_REACHED();
     }
@@ -226,7 +226,7 @@ GUI::Variant ProcessModel::data(GUI::ModelIndex const& index, GUI::ModelRole rol
         case Column::Name:
             return thread.current_state.name;
         case Column::Command:
-            return thread.current_state.command;
+            return thread.current_state.command.visit([](String const& cmdline) { return cmdline; }, [](auto const&) { return ""_short_string; });
         case Column::Syscalls:
             return thread.current_state.syscall_count;
         case Column::InodeFaults:
@@ -296,7 +296,7 @@ GUI::Variant ProcessModel::data(GUI::ModelIndex const& index, GUI::ModelRole rol
                 return DeprecatedString::formatted("{} (*)", thread.current_state.name);
             return thread.current_state.name;
         case Column::Command:
-            return thread.current_state.command;
+            return thread.current_state.command.visit([](String const& cmdline) { return cmdline; }, [](auto const&) { return ""_short_string; });
         case Column::Syscalls:
             return thread.current_state.syscall_count;
         case Column::InodeFaults:
@@ -306,17 +306,17 @@ GUI::Variant ProcessModel::data(GUI::ModelIndex const& index, GUI::ModelRole rol
         case Column::CowFaults:
             return thread.current_state.cow_faults;
         case Column::IPv4SocketReadBytes:
-            return thread.current_state.ipv4_socket_read_bytes;
+            return human_readable_size_long(thread.current_state.ipv4_socket_read_bytes, UseThousandsSeparator::Yes);
         case Column::IPv4SocketWriteBytes:
-            return thread.current_state.ipv4_socket_write_bytes;
+            return human_readable_size_long(thread.current_state.ipv4_socket_write_bytes, UseThousandsSeparator::Yes);
         case Column::UnixSocketReadBytes:
-            return thread.current_state.unix_socket_read_bytes;
+            return human_readable_size_long(thread.current_state.unix_socket_read_bytes, UseThousandsSeparator::Yes);
         case Column::UnixSocketWriteBytes:
-            return thread.current_state.unix_socket_write_bytes;
+            return human_readable_size_long(thread.current_state.unix_socket_write_bytes, UseThousandsSeparator::Yes);
         case Column::FileReadBytes:
-            return thread.current_state.file_read_bytes;
+            return human_readable_size_long(thread.current_state.file_read_bytes, UseThousandsSeparator::Yes);
         case Column::FileWriteBytes:
-            return thread.current_state.file_write_bytes;
+            return human_readable_size_long(thread.current_state.file_write_bytes, UseThousandsSeparator::Yes);
         case Column::Pledge:
             return thread.current_state.pledge;
         case Column::Veil:
@@ -351,7 +351,7 @@ GUI::ModelIndex ProcessModel::index(int row, int column, GUI::ModelIndex const& 
     if (!parent.is_valid()) {
         if (row >= static_cast<int>(m_processes.size()))
             return {};
-        auto corresponding_thread = m_processes[row].main_thread();
+        auto corresponding_thread = m_processes[row]->main_thread();
         if (!corresponding_thread.has_value())
             return {};
         return create_index(row, column, corresponding_thread.release_value().ptr());
@@ -369,8 +369,14 @@ int ProcessModel::thread_model_row(Thread const& thread) const
 {
     auto const& process = thread.current_state.process;
     // A process's main thread uses the global process index.
-    if (process.pid == thread.current_state.pid)
-        return m_processes.find_first_index(process).value_or(0);
+    if (process.pid == thread.current_state.pid) {
+        auto it = m_processes.find_if([&](auto& entry) {
+            return entry.ptr() == &process;
+        });
+        if (it == m_processes.end())
+            return 0;
+        return it.index();
+    }
 
     return process.threads.find_first_index(thread).value_or(0);
 }
@@ -388,7 +394,15 @@ GUI::ModelIndex ProcessModel::parent_index(GUI::ModelIndex const& index) const
     if (!parent.main_thread().has_value())
         return {};
 
-    return create_index(m_processes.find_first_index(parent).release_value(), index.column(), parent.main_thread().value().ptr());
+    auto process_index = [&]() -> size_t {
+        auto it = m_processes.find_if([&](auto& entry) {
+            return entry.ptr() == &parent;
+        });
+        if (it == m_processes.end())
+            return 0;
+        return it.index();
+    }();
+    return create_index(process_index, index.column(), parent.main_thread().value().ptr());
 }
 
 Vector<GUI::ModelIndex> ProcessModel::matches(StringView searching, unsigned flags, GUI::ModelIndex const&)
@@ -408,28 +422,34 @@ Vector<GUI::ModelIndex> ProcessModel::matches(StringView searching, unsigned fla
     return found_indices;
 }
 
-static ErrorOr<DeprecatedString> try_read_command_line(pid_t pid)
+ErrorOr<String> ProcessModel::read_command_line(pid_t pid)
 {
-    auto file = TRY(Core::Stream::File::open(DeprecatedString::formatted("/proc/{}/cmdline", pid), Core::Stream::OpenMode::Read));
+    auto file = TRY(Core::File::open(TRY(String::formatted("/proc/{}/cmdline", pid)), Core::File::OpenMode::Read));
     auto data = TRY(file->read_until_eof());
     auto json = TRY(JsonValue::from_string(StringView { data.bytes() }));
     auto array = json.as_array().values();
-    return DeprecatedString::join(" "sv, array);
+    return String::join(" "sv, array);
 }
 
-static DeprecatedString read_command_line(pid_t pid)
+ErrorOr<void> ProcessModel::ensure_process_statistics_file()
 {
-    auto string_or_error = try_read_command_line(pid);
-    if (string_or_error.is_error()) {
-        return "";
-    }
-    return string_or_error.release_value();
+    if (!m_process_statistics_file || !m_process_statistics_file->is_open())
+        m_process_statistics_file = TRY(Core::File::open("/sys/kernel/processes"sv, Core::File::OpenMode::Read));
+
+    return {};
 }
 
 void ProcessModel::update()
 {
+    auto result = ensure_process_statistics_file();
+    if (result.is_error()) {
+        dbgln("Process model couldn't be updated: {}", result.release_error());
+        return;
+    }
+
+    auto all_processes = Core::ProcessStatisticsReader::get_all(*m_process_statistics_file, true);
+
     auto previous_tid_count = m_threads.size();
-    auto all_processes = Core::ProcessStatisticsReader::get_all(m_proc_all);
 
     HashTable<int> live_tids;
     u64 total_time_scheduled_diff = 0;
@@ -445,7 +465,7 @@ void ProcessModel::update()
             auto const& process = all_processes.value().processes[i];
             NonnullOwnPtr<Process>* process_state = nullptr;
             for (size_t i = 0; i < m_processes.size(); ++i) {
-                auto* other_process = &m_processes.ptr_at(i);
+                auto* other_process = &m_processes[i];
                 if ((*other_process)->pid == process.pid) {
                     process_state = other_process;
                     break;
@@ -453,70 +473,108 @@ void ProcessModel::update()
             }
             if (!process_state) {
                 m_processes.append(make<Process>());
-                process_state = &m_processes.ptr_at(m_processes.size() - 1);
+                process_state = &m_processes.last();
             }
+
+            auto add_thread_data = [&live_tids, this](int tid, Process& process_state, ThreadState state) {
+                auto thread_data = m_threads.ensure(tid, [&] { return make_ref_counted<Thread>(process_state); });
+                thread_data->previous_state = move(thread_data->current_state);
+                thread_data->current_state = move(state);
+                thread_data->read_command_line_if_necessary();
+
+                if (auto maybe_thread_index = process_state.threads.find_first_index(thread_data); maybe_thread_index.has_value()) {
+                    process_state.threads[maybe_thread_index.value()] = thread_data;
+                } else {
+                    process_state.threads.append(thread_data);
+                }
+                live_tids.set(tid);
+            };
+
             (*process_state)->pid = process.pid;
-            for (auto& thread : process.threads) {
+            if (!process.threads.is_empty()) {
+                for (auto& thread : process.threads) {
+                    ThreadState state(**process_state);
+                    state.tid = thread.tid;
+                    state.pid = process.pid;
+                    state.ppid = process.ppid;
+                    state.pgid = process.pgid;
+                    state.sid = process.sid;
+                    state.time_user = thread.time_user;
+                    state.time_kernel = thread.time_kernel;
+                    state.kernel = process.kernel;
+                    state.executable = process.executable;
+                    state.name = thread.name;
+                    state.uid = process.uid;
+                    state.state = thread.state;
+                    state.user = process.username;
+                    state.pledge = process.pledge;
+                    state.veil = process.veil;
+                    state.cpu = thread.cpu;
+                    state.priority = thread.priority;
+                    state.amount_virtual = process.amount_virtual;
+                    state.amount_resident = process.amount_resident;
+                    state.amount_dirty_private = process.amount_dirty_private;
+                    state.amount_clean_inode = process.amount_clean_inode;
+                    state.amount_purgeable_volatile = process.amount_purgeable_volatile;
+                    state.amount_purgeable_nonvolatile = process.amount_purgeable_nonvolatile;
+                    state.syscall_count = thread.syscall_count;
+                    state.inode_faults = thread.inode_faults;
+                    state.zero_faults = thread.zero_faults;
+                    state.cow_faults = thread.cow_faults;
+                    state.unix_socket_read_bytes = thread.unix_socket_read_bytes;
+                    state.unix_socket_write_bytes = thread.unix_socket_write_bytes;
+                    state.ipv4_socket_read_bytes = thread.ipv4_socket_read_bytes;
+                    state.ipv4_socket_write_bytes = thread.ipv4_socket_write_bytes;
+                    state.file_read_bytes = thread.file_read_bytes;
+                    state.file_write_bytes = thread.file_write_bytes;
+                    state.cpu_percent = 0;
+
+                    add_thread_data(thread.tid, **process_state, move(state));
+                }
+            } else {
+                // FIXME: If there are no threads left in a process this is an indication
+                // for a zombie process, so it should be handled differently - we add a mock thread
+                // just to simulate a process with a single thread.
+                // Find a way to untie the process representation from a main thread so we can
+                // just represent a zombie process without creating a mock thread.
                 ThreadState state(**process_state);
-                state.tid = thread.tid;
+                state.tid = process.pid;
                 state.pid = process.pid;
                 state.ppid = process.ppid;
                 state.pgid = process.pgid;
                 state.sid = process.sid;
-                state.time_user = thread.time_user;
-                state.time_kernel = thread.time_kernel;
                 state.kernel = process.kernel;
                 state.executable = process.executable;
-                state.name = thread.name;
-                state.command = read_command_line(process.pid);
+                state.name = process.name;
                 state.uid = process.uid;
-                state.state = thread.state;
+                state.state = "Zombie";
                 state.user = process.username;
                 state.pledge = process.pledge;
                 state.veil = process.veil;
-                state.cpu = thread.cpu;
-                state.priority = thread.priority;
                 state.amount_virtual = process.amount_virtual;
                 state.amount_resident = process.amount_resident;
                 state.amount_dirty_private = process.amount_dirty_private;
                 state.amount_clean_inode = process.amount_clean_inode;
                 state.amount_purgeable_volatile = process.amount_purgeable_volatile;
                 state.amount_purgeable_nonvolatile = process.amount_purgeable_nonvolatile;
-                state.syscall_count = thread.syscall_count;
-                state.inode_faults = thread.inode_faults;
-                state.zero_faults = thread.zero_faults;
-                state.cow_faults = thread.cow_faults;
-                state.unix_socket_read_bytes = thread.unix_socket_read_bytes;
-                state.unix_socket_write_bytes = thread.unix_socket_write_bytes;
-                state.ipv4_socket_read_bytes = thread.ipv4_socket_read_bytes;
-                state.ipv4_socket_write_bytes = thread.ipv4_socket_write_bytes;
-                state.file_read_bytes = thread.file_read_bytes;
-                state.file_write_bytes = thread.file_write_bytes;
-                state.cpu_percent = 0;
 
-                auto thread_data = m_threads.ensure(thread.tid, [&] { return make_ref_counted<Thread>(**process_state); });
-                thread_data->previous_state = move(thread_data->current_state);
-                thread_data->current_state = move(state);
-                if (auto maybe_thread_index = (*process_state)->threads.find_first_index(thread_data); maybe_thread_index.has_value()) {
-                    (*process_state)->threads.ptr_at(maybe_thread_index.value()) = thread_data;
-                } else {
-                    (*process_state)->threads.append(thread_data);
-                }
-
-                live_tids.set(thread.tid);
+                add_thread_data(process.pid, **process_state, move(state));
             }
         }
     }
 
     for (auto& c : m_cpus) {
-        c.total_cpu_percent = 0.0;
-        c.total_cpu_percent_kernel = 0.0;
+        c->total_cpu_percent = 0.0;
+        c->total_cpu_percent_kernel = 0.0;
     }
 
     Vector<int, 16> tids_to_remove;
     for (auto& it : m_threads) {
         if (!live_tids.contains(it.key)) {
             tids_to_remove.append(it.key);
+            continue;
+        }
+        if (it.value->current_state.state == "Zombie") {
             continue;
         }
         auto& thread = *it.value;
@@ -527,8 +585,8 @@ void ProcessModel::update()
         thread.current_state.cpu_percent_kernel = total_time_scheduled_diff > 0 ? (float)((time_scheduled_diff_kernel * 1000) / total_time_scheduled_diff) / 10.0f : 0;
         if (it.value->current_state.pid != 0) {
             auto& cpu_info = m_cpus[thread.current_state.cpu];
-            cpu_info.total_cpu_percent += thread.current_state.cpu_percent;
-            cpu_info.total_cpu_percent_kernel += thread.current_state.cpu_percent_kernel;
+            cpu_info->total_cpu_percent += thread.current_state.cpu_percent;
+            cpu_info->total_cpu_percent_kernel += thread.current_state.cpu_percent_kernel;
         }
     }
 
@@ -537,8 +595,8 @@ void ProcessModel::update()
         m_threads.remove(tid);
         for (size_t i = 0; i < m_processes.size(); ++i) {
             auto& process = m_processes[i];
-            process.threads.remove_all_matching([&](auto const& thread) { return thread->current_state.tid == tid; });
-            if (process.threads.size() == 0) {
+            process->threads.remove_all_matching([&](auto const& thread) { return thread->current_state.tid == tid; });
+            if (process->threads.size() == 0) {
                 m_processes.remove(i);
                 --i;
             }

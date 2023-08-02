@@ -8,23 +8,22 @@
 #include <AK/Error.h>
 #include <AK/String.h>
 #include <AK/Utf8View.h>
-#include <LibCore/Stream.h>
 #include <LibGemini/GeminiResponse.h>
 #include <LibGemini/Job.h>
 #include <unistd.h>
 
 namespace Gemini {
 
-Job::Job(GeminiRequest const& request, Core::Stream::Stream& output_stream)
+Job::Job(GeminiRequest const& request, Stream& output_stream)
     : Core::NetworkJob(output_stream)
     , m_request(request)
 {
 }
 
-void Job::start(Core::Stream::Socket& socket)
+void Job::start(Core::BufferedSocketBase& socket)
 {
     VERIFY(!m_socket);
-    m_socket = verify_cast<Core::Stream::BufferedSocketBase>(&socket);
+    m_socket = &socket;
     on_socket_connected();
 }
 
@@ -66,7 +65,7 @@ ErrorOr<String> Job::read_line(size_t size)
 ErrorOr<ByteBuffer> Job::receive(size_t size)
 {
     ByteBuffer buffer = TRY(ByteBuffer::create_uninitialized(size));
-    auto nread = TRY(m_socket->read(buffer)).size();
+    auto nread = TRY(m_socket->read_some(buffer)).size();
     return buffer.slice(0, nread);
 }
 
@@ -77,7 +76,7 @@ bool Job::can_read() const
 
 bool Job::write(ReadonlyBytes bytes)
 {
-    return !m_socket->write_entire_buffer(bytes).is_error();
+    return !m_socket->write_until_depleted(bytes).is_error();
 }
 
 void Job::flush_received_buffers()
@@ -112,7 +111,7 @@ void Job::flush_received_buffers()
 
 void Job::on_socket_connected()
 {
-    auto raw_request = m_request.to_raw_request();
+    auto raw_request = m_request.to_raw_request().release_value_but_fixme_should_propagate_errors();
 
     if constexpr (JOB_DEBUG) {
         dbgln("Job: raw_request:");

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -17,6 +17,15 @@ namespace JS {
 // 10.4.3.4 StringCreate ( value, prototype ), https://tc39.es/ecma262/#sec-stringcreate
 ThrowCompletionOr<NonnullGCPtr<StringObject>> StringObject::create(Realm& realm, PrimitiveString& primitive_string, Object& prototype)
 {
+    // 1. Let S be MakeBasicObject(« [[Prototype]], [[Extensible]], [[StringData]] »).
+    // 2. Set S.[[Prototype]] to prototype.
+    // 3. Set S.[[StringData]] to value.
+    // 4. Set S.[[GetOwnProperty]] as specified in 10.4.3.1.
+    // 5. Set S.[[DefineOwnProperty]] as specified in 10.4.3.2.
+    // 6. Set S.[[OwnPropertyKeys]] as specified in 10.4.3.3.
+    // 7. Let length be the length of value.
+    // 8. Perform ! DefinePropertyOrThrow(S, "length", PropertyDescriptor { [[Value]]: 𝔽(length), [[Writable]]: false, [[Enumerable]]: false, [[Configurable]]: false }).
+    // 9. Return S.
     return MUST_OR_THROW_OOM(realm.heap().allocate<StringObject>(realm, primitive_string, prototype));
 }
 
@@ -31,7 +40,7 @@ ThrowCompletionOr<void> StringObject::initialize(Realm& realm)
     auto& vm = this->vm();
     MUST_OR_THROW_OOM(Base::initialize(realm));
 
-    define_direct_property(vm.names.length, Value(MUST_OR_THROW_OOM(m_string.utf16_string_view()).length_in_code_units()), 0);
+    define_direct_property(vm.names.length, Value(MUST_OR_THROW_OOM(m_string->utf16_string_view()).length_in_code_units()), 0);
 
     return {};
 }
@@ -39,13 +48,15 @@ ThrowCompletionOr<void> StringObject::initialize(Realm& realm)
 void StringObject::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(&m_string);
+    visitor.visit(m_string);
 }
 
 // 10.4.3.5 StringGetOwnProperty ( S, P ), https://tc39.es/ecma262/#sec-stringgetownproperty
 static ThrowCompletionOr<Optional<PropertyDescriptor>> string_get_own_property(StringObject const& string, PropertyKey const& property_key)
 {
     VERIFY(property_key.is_valid());
+
+    auto& vm = string.vm();
 
     // 1. If Type(P) is not String, return undefined.
     // NOTE: The spec only uses string and symbol keys, and later coerces to numbers -
@@ -54,7 +65,7 @@ static ThrowCompletionOr<Optional<PropertyDescriptor>> string_get_own_property(S
         return Optional<PropertyDescriptor> {};
 
     // 2. Let index be CanonicalNumericIndexString(P).
-    auto index = canonical_numeric_index_string(property_key, CanonicalIndexMode::IgnoreNumericRoundtrip);
+    auto index = MUST_OR_THROW_OOM(canonical_numeric_index_string(vm, property_key, CanonicalIndexMode::IgnoreNumericRoundtrip));
 
     // 3. If index is undefined, return undefined.
     // 4. If IsIntegralNumber(index) is false, return undefined.
@@ -74,7 +85,7 @@ static ThrowCompletionOr<Optional<PropertyDescriptor>> string_get_own_property(S
         return Optional<PropertyDescriptor> {};
 
     // 10. Let resultStr be the String value of length 1, containing one code unit from str, specifically the code unit at index ℝ(index).
-    auto result_str = PrimitiveString::create(string.vm(), TRY(Utf16String::create(string.vm(), str.substring_view(index.as_index(), 1))));
+    auto result_str = PrimitiveString::create(vm, TRY(Utf16String::create(vm, str.substring_view(index.as_index(), 1))));
 
     // 11. Return the PropertyDescriptor { [[Value]]: resultStr, [[Writable]]: false, [[Enumerable]]: true, [[Configurable]]: false }.
     return PropertyDescriptor {
@@ -131,7 +142,7 @@ ThrowCompletionOr<MarkedVector<Value>> StringObject::internal_own_property_keys(
     auto keys = MarkedVector<Value> { heap() };
 
     // 2. Let str be O.[[StringData]].
-    auto str = TRY(m_string.utf16_string_view());
+    auto str = TRY(m_string->utf16_string_view());
 
     // 3. Assert: Type(str) is String.
 

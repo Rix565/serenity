@@ -14,24 +14,24 @@
 
 namespace Web::DOM {
 
-JS::NonnullGCPtr<Event> Event::create(JS::Realm& realm, DeprecatedFlyString const& event_name, EventInit const& event_init)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Event>> Event::create(JS::Realm& realm, FlyString const& event_name, EventInit const& event_init)
 {
-    return realm.heap().allocate<Event>(realm, realm, event_name, event_init).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<Event>(realm, realm, event_name, event_init));
 }
 
-JS::NonnullGCPtr<Event> Event::construct_impl(JS::Realm& realm, DeprecatedFlyString const& event_name, EventInit const& event_init)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Event>> Event::construct_impl(JS::Realm& realm, FlyString const& event_name, EventInit const& event_init)
 {
     return create(realm, event_name, event_init);
 }
 
-Event::Event(JS::Realm& realm, DeprecatedFlyString const& type)
+Event::Event(JS::Realm& realm, FlyString const& type)
     : PlatformObject(realm)
     , m_type(type)
     , m_initialized(true)
 {
 }
 
-Event::Event(JS::Realm& realm, DeprecatedFlyString const& type, EventInit const& event_init)
+Event::Event(JS::Realm& realm, FlyString const& type, EventInit const& event_init)
     : PlatformObject(realm)
     , m_type(type)
     , m_bubbles(event_init.bubbles)
@@ -83,7 +83,7 @@ void Event::append_to_path(EventTarget& invocation_target, JS::GCPtr<EventTarget
         if (is<ShadowRoot>(invocation_target_node)) {
             auto& invocation_target_shadow_root = verify_cast<ShadowRoot>(invocation_target_node);
             // 4. If invocationTarget is a shadow root whose mode is "closed", then set root-of-closed-tree to true.
-            root_of_closed_tree = invocation_target_shadow_root.closed();
+            root_of_closed_tree = invocation_target_shadow_root.mode() == Bindings::ShadowRootMode::Closed;
         }
     }
 
@@ -100,7 +100,7 @@ void Event::set_cancelled_flag()
 }
 
 // https://dom.spec.whatwg.org/#concept-event-initialize
-void Event::initialize_event(DeprecatedString const& type, bool bubbles, bool cancelable)
+void Event::initialize_event(String const& type, bool bubbles, bool cancelable)
 {
     // 1. Set event’s initialized flag.
     m_initialized = true;
@@ -127,7 +127,7 @@ void Event::initialize_event(DeprecatedString const& type, bool bubbles, bool ca
 }
 
 // https://dom.spec.whatwg.org/#dom-event-initevent
-void Event::init_event(DeprecatedString const& type, bool bubbles, bool cancelable)
+void Event::init_event(String const& type, bool bubbles, bool cancelable)
 {
     // 1. If this’s dispatch flag is set, then return.
     if (m_dispatch)

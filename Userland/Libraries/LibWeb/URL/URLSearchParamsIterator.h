@@ -15,7 +15,7 @@ class URLSearchParamsIterator : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(URLSearchParamsIterator, Bindings::PlatformObject);
 
 public:
-    static JS::NonnullGCPtr<URLSearchParamsIterator> create(URLSearchParams const&, JS::Object::PropertyKind iteration_kind);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<URLSearchParamsIterator>> create(URLSearchParams const&, JS::Object::PropertyKind iteration_kind);
 
     virtual ~URLSearchParamsIterator() override;
 
@@ -27,7 +27,7 @@ private:
     virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    URLSearchParams const& m_url_search_params;
+    JS::NonnullGCPtr<URLSearchParams const> m_url_search_params;
     JS::Object::PropertyKind m_iteration_kind;
     size_t m_index { 0 };
 };

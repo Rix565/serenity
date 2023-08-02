@@ -17,10 +17,10 @@ template<typename T, typename Container = Vector<T>, typename ColumnNameListType
 class ItemListModel : public Model {
 public:
     static constexpr auto IsTwoDimensional = requires(Container data) {
-                                                 requires !IsVoid<ColumnNameListType>;
-                                                 data.at(0).at(0);
-                                                 data.at(0).size();
-                                             };
+        requires !IsVoid<ColumnNameListType>;
+        data.at(0).at(0);
+        data.at(0).size();
+    };
 
     // Substitute 'void' for a dummy u8.
     using ColumnNamesT = Conditional<IsVoid<ColumnNameListType>, u8, ColumnNameListType>;
@@ -34,6 +34,17 @@ public:
     requires(!IsTwoDimensional)
     {
         return adopt_ref(*new ItemListModel<T, Container>(data, row_count));
+    }
+
+    static ErrorOr<NonnullRefPtr<ItemListModel>> try_create(Container const& data, ColumnNamesT const& column_names, Optional<size_t> const& row_count = {})
+    requires(IsTwoDimensional)
+    {
+        return adopt_nonnull_ref_or_enomem(new (nothrow) ItemListModel<T, Container, ColumnNameListType>(data, column_names, row_count));
+    }
+    static ErrorOr<NonnullRefPtr<ItemListModel>> try_create(Container const& data, Optional<size_t> const& row_count = {})
+    requires(!IsTwoDimensional)
+    {
+        return adopt_nonnull_ref_or_enomem(new (nothrow) ItemListModel<T, Container>(data, row_count));
     }
 
     virtual ~ItemListModel() override = default;
@@ -60,11 +71,11 @@ public:
         return 1;
     }
 
-    virtual DeprecatedString column_name(int index) const override
+    virtual ErrorOr<String> column_name(int index) const override
     {
         if constexpr (IsTwoDimensional)
             return m_column_names[index];
-        return "Data";
+        return "Data"_short_string;
     }
 
     virtual Variant data(ModelIndex const& index, ModelRole role) const override
@@ -81,11 +92,11 @@ public:
         return {};
     }
 
-    virtual TriState data_matches(GUI::ModelIndex const& index, GUI::Variant const& term) const override
+    virtual GUI::Model::MatchResult data_matches(GUI::ModelIndex const& index, GUI::Variant const& term) const override
     {
         if (index.data().as_string().contains(term.as_string(), CaseSensitivity::CaseInsensitive))
-            return TriState::True;
-        return TriState::False;
+            return { TriState::True };
+        return { TriState::False };
     }
 
     virtual bool is_searchable() const override { return true; }

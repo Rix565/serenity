@@ -11,10 +11,12 @@
 #include <AK/Function.h>
 #include <AK/Types.h>
 
+#include <Kernel/Arch/DeferredCallEntry.h>
+#include <Kernel/Arch/DeferredCallPool.h>
 #include <Kernel/Arch/ProcessorSpecificDataID.h>
 #include <Kernel/Arch/aarch64/CPUID.h>
 #include <Kernel/Arch/aarch64/Registers.h>
-#include <Kernel/VirtualAddress.h>
+#include <Kernel/Memory/VirtualAddress.h>
 
 namespace Kernel {
 
@@ -25,11 +27,11 @@ class PageDirectory;
 class Thread;
 class Processor;
 struct TrapFrame;
+enum class InterruptsState;
 
 // FIXME This needs to go behind some sort of platform abstraction
 //       it is used between Thread and Processor.
-struct [[gnu::aligned(16)]] FPUState
-{
+struct [[gnu::aligned(16)]] FPUState {
     u8 buffer[512];
 };
 
@@ -44,8 +46,8 @@ class Processor {
 public:
     Processor() = default;
 
-    void install(u32 cpu);
-    void initialize();
+    void early_initialize(u32 cpu);
+    void initialize(u32 cpu);
 
     template<typename T>
     T* get_specific()
@@ -188,12 +190,7 @@ public:
         current_processor.m_in_critical = current_processor.m_in_critical + 1;
     }
 
-    ALWAYS_INLINE static void leave_critical()
-    {
-        auto& current_processor = current();
-        current_processor.m_in_critical = current_processor.m_in_critical - 1;
-    }
-
+    static void leave_critical();
     static u32 clear_critical();
 
     ALWAYS_INLINE static void restore_critical(u32 prev_critical)
@@ -213,8 +210,6 @@ public:
 
     ALWAYS_INLINE static FPUState const& clean_fpu_state()
     {
-        static FPUState s_clean_fpu_state {};
-        dbgln("FIXME: Processor: Actually return correct FPUState.");
         return s_clean_fpu_state;
     }
 
@@ -234,20 +229,20 @@ public:
     }
 
     template<IteratorFunction<Processor&> Callback>
-    static inline IterationDecision for_each(Callback)
+    static inline IterationDecision for_each(Callback callback)
     {
-        TODO_AARCH64();
+        // FIXME: Once we support SMP for aarch64, make sure to call the callback for every processor.
+        if (callback(*g_current_processor) == IterationDecision::Break)
+            return IterationDecision::Break;
+        return IterationDecision::Continue;
     }
 
     template<VoidFunction<Processor&> Callback>
-    static inline IterationDecision for_each(Callback)
+    static inline IterationDecision for_each(Callback callback)
     {
-        TODO_AARCH64();
-    }
-
-    u64 time_spent_idle() const
-    {
-        TODO_AARCH64();
+        // FIXME: Once we support SMP for aarch64, make sure to call the callback for every processor.
+        callback(*g_current_processor);
+        return IterationDecision::Continue;
     }
 
     static u32 count()
@@ -261,10 +256,9 @@ public:
         return Processor::current_id() == 0;
     }
 
-    static void deferred_call_queue(Function<void()> /* callback */)
-    {
-        TODO_AARCH64();
-    }
+    static void deferred_call_queue(Function<void()>);
+
+    u64 time_spent_idle() const;
 
     static u32 smp_wake_n_idle_processors(u32 wake_count);
 
@@ -272,7 +266,7 @@ public:
 
     [[noreturn]] void initialize_context_switching(Thread& initial_thread);
     NEVER_INLINE void switch_context(Thread*& from_thread, Thread*& to_thread);
-    [[noreturn]] static void assume_context(Thread& thread, FlatPtr flags);
+    [[noreturn]] static void assume_context(Thread& thread, InterruptsState new_interrupts_state);
     FlatPtr init_context(Thread& thread, bool leave_crit);
     static ErrorOr<Vector<FlatPtr, 32>> capture_stack_trace(Thread& thread, size_t max_frames = 0);
 
@@ -281,8 +275,16 @@ public:
 
     static StringView platform_string();
 
+    static void set_thread_specific_data(VirtualAddress thread_specific_data);
+
+    static void flush_entire_tlb_local();
+
 private:
     Processor(Processor const&) = delete;
+
+    void do_leave_critical();
+
+    DeferredCallPool m_deferred_call_pool {};
 
     u32 m_cpu;
     CPUFeature::Type m_features;
@@ -292,6 +294,8 @@ private:
     Thread* m_current_thread;
     Thread* m_idle_thread;
     u32 m_in_critical { 0 };
+
+    static FPUState s_clean_fpu_state;
 
     // FIXME: Once there is code in place to differentiate IRQs from synchronous exceptions (syscalls),
     //        this member should be incremented. Also this member shouldn't be a FlatPtr.

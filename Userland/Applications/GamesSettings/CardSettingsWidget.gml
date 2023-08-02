@@ -4,14 +4,14 @@
         margins: [8]
     }
 
-    @GamesSettings::Preview {
+    @GamesSettings::CardGamePreview {
         name: "cards_preview"
         fill_with_background_color: true
         fixed_height: 160
     }
 
     @GUI::GroupBox {
-        title: "Background Color"
+        title: "Background color"
         max_height: "shrink"
         layout: @GUI::VerticalBoxLayout {
             margins: [8]
@@ -24,7 +24,7 @@
     }
 
     @GUI::GroupBox {
-        title: "Card Back"
+        title: "Card back"
         layout: @GUI::VerticalBoxLayout {
             margins: [8]
         }

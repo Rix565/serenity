@@ -33,27 +33,22 @@ JS::ThrowCompletionOr<void> HTMLOptionElement::initialize(JS::Realm& realm)
     return {};
 }
 
-void HTMLOptionElement::parse_attribute(DeprecatedFlyString const& name, DeprecatedString const& value)
+void HTMLOptionElement::attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value)
 {
-    HTMLElement::parse_attribute(name, value);
+    HTMLElement::attribute_changed(name, value);
 
     if (name == HTML::AttributeNames::selected) {
-        // Except where otherwise specified, when the element is created, its selectedness must be set to true
-        // if the element has a selected attribute. Whenever an option element's selected attribute is added,
-        // if its dirtiness is false, its selectedness must be set to true.
-        if (!m_dirty)
-            m_selected = true;
-    }
-}
-
-void HTMLOptionElement::did_remove_attribute(DeprecatedFlyString const& name)
-{
-    HTMLElement::did_remove_attribute(name);
-
-    if (name == HTML::AttributeNames::selected) {
-        // Whenever an option element's selected attribute is removed, if its dirtiness is false, its selectedness must be set to false.
-        if (!m_dirty)
-            m_selected = false;
+        if (value.is_null()) {
+            // Whenever an option element's selected attribute is removed, if its dirtiness is false, its selectedness must be set to false.
+            if (!m_dirty)
+                m_selected = false;
+        } else {
+            // Except where otherwise specified, when the element is created, its selectedness must be set to true
+            // if the element has a selected attribute. Whenever an option element's selected attribute is added,
+            // if its dirtiness is false, its selectedness must be set to true.
+            if (!m_dirty)
+                m_selected = true;
+        }
     }
 }
 
@@ -78,9 +73,9 @@ DeprecatedString HTMLOptionElement::value() const
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-option-value
-void HTMLOptionElement::set_value(DeprecatedString value)
+WebIDL::ExceptionOr<void> HTMLOptionElement::set_value(DeprecatedString value)
 {
-    MUST(set_attribute(HTML::AttributeNames::value, value));
+    return set_attribute(HTML::AttributeNames::value, value);
 }
 
 static void concatenate_descendants_text_content(DOM::Node const* node, StringBuilder& builder)
@@ -108,7 +103,7 @@ DeprecatedString HTMLOptionElement::text() const
     });
 
     // Return the result of stripping and collapsing ASCII whitespace from the above concatenation.
-    return Infra::strip_and_collapse_whitespace(builder.string_view());
+    return Infra::strip_and_collapse_whitespace(builder.string_view()).release_value_but_fixme_should_propagate_errors().to_deprecated_string();
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-option-text

@@ -21,7 +21,7 @@ CardPainter& CardPainter::the()
 
 CardPainter::CardPainter()
 {
-    m_background_image_path = Config::read_string("Games"sv, "Cards"sv, "CardBackImage"sv, "/res/icons/cards/buggie-deck.png"sv);
+    m_background_image_path = MUST(String::from_deprecated_string(Config::read_string("Games"sv, "Cards"sv, "CardBackImage"sv, "/res/graphics/cards/backs/buggie-deck.png"sv)));
 }
 
 static constexpr Gfx::CharacterBitmap s_diamond {
@@ -143,12 +143,12 @@ NonnullRefPtr<Gfx::Bitmap> CardPainter::card_back_inverted()
     return *m_card_back_inverted;
 }
 
-void CardPainter::set_background_image_path(DeprecatedString path)
+void CardPainter::set_background_image_path(StringView path)
 {
     if (m_background_image_path == path)
         return;
 
-    m_background_image_path = path;
+    m_background_image_path = MUST(String::from_utf8(path));
     if (!m_card_back.is_null())
         paint_card_back(*m_card_back);
     if (!m_card_back_inverted.is_null())
@@ -201,17 +201,16 @@ void CardPainter::paint_card_front(Gfx::Bitmap& bitmap, Cards::Suit suit, Cards:
     paint_rect.set_height(paint_rect.height() / 2);
     paint_rect.shrink(10, 6);
 
-    auto text_rect = Gfx::IntRect { 4, 6, static_cast<int>(ceilf(font.width("10"sv))), font.glyph_height() };
+    auto text_rect = Gfx::IntRect { 4, 6, font.width_rounded_up("10"sv), font.pixel_size_rounded_up() };
     painter.draw_text(text_rect, card_rank_label(rank), font, Gfx::TextAlignment::Center, suit_color);
 
     painter.draw_bitmap(
-        { text_rect.x() + (text_rect.width() - suit_symbol.size().width()) / 2, text_rect.bottom() + 5 },
+        { text_rect.x() + (text_rect.width() - suit_symbol.size().width()) / 2, text_rect.bottom() + 4 },
         suit_symbol, suit_color);
 
     for (int y = Card::height / 2; y < Card::height; ++y) {
-        for (int x = 0; x < Card::width; ++x) {
+        for (int x = 0; x < Card::width; ++x)
             bitmap.set_pixel(x, y, bitmap.get_pixel(Card::width - x - 1, Card::height - y - 1));
-        }
     }
 }
 

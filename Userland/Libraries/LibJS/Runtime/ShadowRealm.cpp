@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibJS/Bytecode/Executable.h>
+#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Lexer.h>
 #include <LibJS/Parser.h>
@@ -30,7 +32,7 @@ void ShadowRealm::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
 
-    visitor.visit(&m_shadow_realm);
+    visitor.visit(m_shadow_realm);
 }
 
 // 3.1.2 CopyNameAndLength ( F: a function object, Target: a function object, optional prefix: a String, optional argCount: a Number, ), https://tc39.es/proposal-shadowrealm/#sec-copynameandlength
@@ -101,13 +103,13 @@ ThrowCompletionOr<Value> perform_shadow_realm_eval(VM& vm, StringView source_tex
     // 2. Perform the following substeps in an implementation-defined order, possibly interleaving parsing and error detection:
 
     // a. Let script be ParseText(StringToCodePoints(sourceText), Script).
-    auto parser = Parser(Lexer(source_text));
+    auto parser = Parser(Lexer(source_text), Program::Type::Script, Parser::EvalInitialState {});
     auto program = parser.parse_program();
 
     // b. If script is a List of errors, throw a SyntaxError exception.
     if (parser.has_errors()) {
         auto& error = parser.errors()[0];
-        return vm.throw_completion<SyntaxError>(error.to_deprecated_string());
+        return vm.throw_completion<SyntaxError>(TRY_OR_THROW_OOM(vm, error.to_string()));
     }
 
     // c. If script Contains ScriptBody is false, return undefined.
@@ -170,12 +172,28 @@ ThrowCompletionOr<Value> perform_shadow_realm_eval(VM& vm, StringView source_tex
 
     // 17. If result.[[Type]] is normal, then
     if (!eval_result.is_throw_completion()) {
-        // FIXME: Remove once everything uses the VM's current realm.
-        auto eval_realm_interpreter = Interpreter::create_with_existing_realm(eval_realm);
-
-        // TODO: Optionally use bytecode interpreter?
         // a. Set result to the result of evaluating body.
-        result = program->execute(*eval_realm_interpreter);
+        if (auto* bytecode_interpreter = vm.bytecode_interpreter_if_exists()) {
+            auto maybe_executable = Bytecode::compile(vm, program, FunctionKind::Normal, "ShadowRealmEval"sv);
+            if (maybe_executable.is_error())
+                result = maybe_executable.release_error();
+            else {
+                auto executable = maybe_executable.release_value();
+
+                auto value_and_frame = bytecode_interpreter->run_and_return_frame(eval_realm, *executable, nullptr);
+                if (value_and_frame.value.is_error()) {
+                    result = value_and_frame.value.release_error();
+                } else {
+                    // Resulting value is in the accumulator.
+                    result = value_and_frame.frame->registers.at(0).value_or(js_undefined());
+                }
+            }
+        } else {
+            // FIXME: Remove once everything uses the VM's current realm.
+            auto eval_realm_interpreter = Interpreter::create_with_existing_realm(eval_realm);
+
+            result = program->execute(*eval_realm_interpreter);
+        }
     }
 
     // 18. If result.[[Type]] is normal and result.[[Value]] is empty, then
@@ -222,7 +240,7 @@ ThrowCompletionOr<Value> shadow_realm_import_value(VM& vm, DeprecatedString spec
     TRY(vm.push_execution_context(eval_context, {}));
 
     // 6. Perform HostImportModuleDynamically(null, specifierString, innerCapability).
-    vm.host_import_module_dynamically(Empty {}, ModuleRequest { move(specifier_string) }, inner_capability);
+    MUST_OR_THROW_OOM(vm.host_import_module_dynamically(Empty {}, ModuleRequest { move(specifier_string) }, inner_capability));
 
     // 7. Suspend evalContext and remove it from the execution context stack.
     // NOTE: We don't support this concept yet.
@@ -239,7 +257,7 @@ ThrowCompletionOr<Value> shadow_realm_import_value(VM& vm, DeprecatedString spec
         VERIFY(is<ModuleNamespaceObject>(exports));
 
         // 2. Let f be the active function object.
-        auto* function = vm.running_execution_context().function;
+        auto function = vm.running_execution_context().function;
 
         // 3. Let string be f.[[ExportNameString]].
         // 4. Assert: Type(string) is String.
@@ -272,7 +290,7 @@ ThrowCompletionOr<Value> shadow_realm_import_value(VM& vm, DeprecatedString spec
     // NOTE: Even though the spec tells us to use %ThrowTypeError%, it's not observable if we actually do.
     // Throw a nicer TypeError forwarding the import error message instead (we know the argument is an Error object).
     auto throw_type_error = NativeFunction::create(realm, {}, [](auto& vm) -> ThrowCompletionOr<Value> {
-        return vm.template throw_completion<TypeError>(TRY(vm.argument(0).as_object().get_without_side_effects(vm.names.message).as_string().deprecated_string()));
+        return vm.template throw_completion<TypeError>(TRY(vm.argument(0).as_object().get_without_side_effects(vm.names.message).as_string().utf8_string()));
     });
 
     // 13. Return PerformPromiseThen(innerCapability.[[Promise]], onFulfilled, callerRealm.[[Intrinsics]].[[%ThrowTypeError%]], promiseCapability).

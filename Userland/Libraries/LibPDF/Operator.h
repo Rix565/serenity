@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/DeprecatedString.h>
 #include <AK/Format.h>
 #include <AK/StringBuilder.h>
 #include <AK/Vector.h>
@@ -107,7 +106,7 @@ public:
 
         if (symbol_string == "'")
             return OperatorType::TextNextLineShowString;
-        if (symbol_string == "''")
+        if (symbol_string == "\"")
             return OperatorType::TextNextLineShowStringSetSpacing;
 
         dbgln("unsupported graphics symbol {}", symbol_string);
@@ -141,7 +140,7 @@ public:
         if (operator_type == OperatorType::TextNextLineShowString)
             return "'";
         if (operator_type == OperatorType::TextNextLineShowStringSetSpacing)
-            return "''";
+            return "\"";
 
         VERIFY_NOT_REACHED();
     }

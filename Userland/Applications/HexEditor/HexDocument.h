@@ -6,14 +6,16 @@
 
 #pragma once
 
+#include <AK/HashMap.h>
+#include <AK/NonnullOwnPtr.h>
 #include <AK/StringView.h>
 #include <AK/Time.h>
 #include <AK/Types.h>
 #include <AK/WeakPtr.h>
-#include <LibCore/File.h>
+#include <LibCore/Forward.h>
 #include <LibGUI/Command.h>
 
-constexpr Time COMMAND_COMMIT_TIME = Time::from_milliseconds(400);
+constexpr Duration COMMAND_COMMIT_TIME = Duration::from_milliseconds(400);
 
 class HexDocument : public Weakable<HexDocument> {
 public:
@@ -50,7 +52,7 @@ public:
     size_t size() const override;
     Type type() const override;
     void clear_changes() override;
-    bool write_to_file(NonnullRefPtr<Core::File> file);
+    ErrorOr<void> write_to_file(Core::File& file);
 
 private:
     ByteBuffer m_buffer;
@@ -58,15 +60,16 @@ private:
 
 class HexDocumentFile final : public HexDocument {
 public:
-    explicit HexDocumentFile(NonnullRefPtr<Core::File> file);
+    static ErrorOr<NonnullOwnPtr<HexDocumentFile>> create(NonnullOwnPtr<Core::File> file);
     virtual ~HexDocumentFile() = default;
 
+    HexDocumentFile(HexDocumentFile&&) = default;
     HexDocumentFile(HexDocumentFile const&) = delete;
 
-    void set_file(NonnullRefPtr<Core::File> file);
-    NonnullRefPtr<Core::File> file() const;
-    void write_to_file();
-    bool write_to_file(NonnullRefPtr<Core::File> file);
+    ErrorOr<void> set_file(NonnullOwnPtr<Core::File> file);
+    NonnullOwnPtr<Core::File> const& file() const;
+    ErrorOr<void> write_to_file();
+    ErrorOr<void> write_to_file(Core::File& file);
     Cell get(size_t position) override;
     u8 get_unchanged(size_t position) override;
     size_t size() const override;
@@ -74,9 +77,12 @@ public:
     void clear_changes() override;
 
 private:
+    explicit HexDocumentFile(NonnullOwnPtr<Core::File> file);
+    ErrorOr<void> initialize_internal_state();
+
     void ensure_position_in_buffer(size_t position);
 
-    NonnullRefPtr<Core::File> m_file;
+    NonnullOwnPtr<Core::File> m_file;
     size_t m_file_size;
 
     Array<u8, 2048> m_buffer;
@@ -97,9 +103,9 @@ public:
     ErrorOr<void> try_add_changed_bytes(ByteBuffer old_values, ByteBuffer new_values);
 
 private:
-    bool commit_time_expired() const { return Time::now_monotonic() - m_timestamp >= COMMAND_COMMIT_TIME; }
+    bool commit_time_expired() const { return MonotonicTime::now() - m_timestamp >= COMMAND_COMMIT_TIME; }
 
-    Time m_timestamp = Time::now_monotonic();
+    MonotonicTime m_timestamp = MonotonicTime::now();
     WeakPtr<HexDocument> m_document;
     size_t m_position;
     ByteBuffer m_old;

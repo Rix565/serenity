@@ -162,7 +162,14 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
             auxiliary_instance.globals().append(*ptr);
     }
 
-    BytecodeInterpreter interpreter;
+    for (auto& func : module.functions()) {
+        auto address = m_store.allocate(main_module_instance, func);
+        VERIFY(address.has_value());
+        auxiliary_instance.functions().append(*address);
+        main_module_instance.functions().append(*address);
+    }
+
+    BytecodeInterpreter interpreter(m_stack_info);
 
     module.for_each_section_of_type<GlobalSection>([&](auto& global_section) {
         for (auto& entry : global_section.entries()) {
@@ -175,7 +182,7 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                 entry.expression(),
                 1,
             });
-            auto result = config.execute(interpreter);
+            auto result = config.execute(interpreter).assert_wasm_result();
             if (result.is_trap())
                 instantiation_result = InstantiationError { DeprecatedString::formatted("Global value construction trapped: {}", result.trap().reason) };
             else
@@ -202,7 +209,7 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                     entry,
                     entry.instructions().size(),
                 });
-                auto result = config.execute(interpreter);
+                auto result = config.execute(interpreter).assert_wasm_result();
                 if (result.is_trap()) {
                     instantiation_result = InstantiationError { DeprecatedString::formatted("Element construction trapped: {}", result.trap().reason) };
                     return IterationDecision::Continue;
@@ -255,7 +262,7 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                 active_ptr->expression,
                 1,
             });
-            auto result = config.execute(interpreter);
+            auto result = config.execute(interpreter).assert_wasm_result();
             if (result.is_trap()) {
                 instantiation_result = InstantiationError { DeprecatedString::formatted("Element section initialisation trapped: {}", result.trap().reason) };
                 return IterationDecision::Break;
@@ -315,7 +322,7 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                         data.offset,
                         1,
                     });
-                    auto result = config.execute(interpreter);
+                    auto result = config.execute(interpreter).assert_wasm_result();
                     if (result.is_trap()) {
                         instantiation_result = InstantiationError { DeprecatedString::formatted("Data section initialisation trapped: {}", result.trap().reason) };
                         return;
@@ -398,12 +405,6 @@ Optional<InstantiationError> AbstractMachine::allocate_all_initial_phase(Module 
     }
 
     // FIXME: What if this fails?
-
-    for (auto& func : module.functions()) {
-        auto address = m_store.allocate(module_instance, func);
-        VERIFY(address.has_value());
-        module_instance.functions().append(*address);
-    }
 
     module.for_each_section_of_type<TableSection>([&](TableSection const& section) {
         for (auto& table : section.tables()) {
@@ -491,7 +492,7 @@ Optional<InstantiationError> AbstractMachine::allocate_all_final_phase(Module co
 
 Result AbstractMachine::invoke(FunctionAddress address, Vector<Value> arguments)
 {
-    BytecodeInterpreter interpreter;
+    BytecodeInterpreter interpreter(m_stack_info);
     return invoke(interpreter, address, move(arguments));
 }
 

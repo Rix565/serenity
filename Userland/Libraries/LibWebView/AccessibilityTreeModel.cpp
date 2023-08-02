@@ -93,8 +93,12 @@ GUI::Variant AccessibilityTreeModel::data(GUI::ModelIndex const& index, GUI::Mod
         if (type != "element")
             return node_role;
 
+        auto name = node.get_deprecated_string("name"sv).value_or("");
+        auto description = node.get_deprecated_string("description"sv).value_or("");
+
         StringBuilder builder;
         builder.append(node_role.to_lowercase());
+        builder.appendff(" name: \"{}\", description: \"{}\"", name, description);
         return builder.to_deprecated_string();
     }
     return {};

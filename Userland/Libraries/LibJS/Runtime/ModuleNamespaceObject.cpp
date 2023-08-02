@@ -11,7 +11,7 @@
 namespace JS {
 
 ModuleNamespaceObject::ModuleNamespaceObject(Realm& realm, Module* module, Vector<DeprecatedFlyString> exports)
-    : Object(ConstructWithPrototypeTag::Tag, *realm.intrinsics().object_prototype())
+    : Object(ConstructWithPrototypeTag::Tag, realm.intrinsics().object_prototype())
     , m_module(module)
     , m_exports(move(exports))
 {
@@ -24,10 +24,11 @@ ModuleNamespaceObject::ModuleNamespaceObject(Realm& realm, Module* module, Vecto
 
 ThrowCompletionOr<void> ModuleNamespaceObject::initialize(Realm& realm)
 {
+    auto& vm = this->vm();
     MUST_OR_THROW_OOM(Base::initialize(realm));
 
     // 28.3.1 @@toStringTag, https://tc39.es/ecma262/#sec-@@tostringtag
-    define_direct_property(*vm().well_known_symbol_to_string_tag(), PrimitiveString::create(vm(), "Module"sv), 0);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Module"sv)), 0);
 
     return {};
 }
@@ -136,14 +137,14 @@ ThrowCompletionOr<bool> ModuleNamespaceObject::internal_has_property(PropertyKey
 }
 
 // 10.4.6.8 [[Get]] ( P, Receiver ), https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-get-p-receiver
-ThrowCompletionOr<Value> ModuleNamespaceObject::internal_get(PropertyKey const& property_key, Value receiver) const
+ThrowCompletionOr<Value> ModuleNamespaceObject::internal_get(PropertyKey const& property_key, Value receiver, CacheablePropertyMetadata* cacheable_metadata) const
 {
     auto& vm = this->vm();
 
     // 1. If Type(P) is Symbol, then
     if (property_key.is_symbol()) {
         // a. Return ! OrdinaryGet(O, P, Receiver).
-        return MUST(Object::internal_get(property_key, receiver));
+        return MUST(Object::internal_get(property_key, receiver, cacheable_metadata));
     }
 
     // 2. Let exports be O.[[Exports]].
@@ -160,7 +161,7 @@ ThrowCompletionOr<Value> ModuleNamespaceObject::internal_get(PropertyKey const& 
     VERIFY(binding.is_valid());
 
     // 7. Let targetModule be binding.[[Module]].
-    auto* target_module = binding.module;
+    auto target_module = binding.module;
 
     // 8. Assert: targetModule is not undefined.
     VERIFY(target_module);

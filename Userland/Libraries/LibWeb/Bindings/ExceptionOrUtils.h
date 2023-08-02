@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, the SerenityOS developers.
+ * Copyright (c) 2021-2023, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -56,14 +56,17 @@ struct ExtractExceptionOrValueType<WebIDL::ExceptionOr<void>> {
     using Type = JS::Value;
 };
 
+}
+
 ALWAYS_INLINE JS::Completion dom_exception_to_throw_completion(JS::VM& vm, auto&& exception)
 {
     return exception.visit(
         [&](WebIDL::SimpleException const& exception) {
+            auto message = exception.message.visit([](auto const& s) -> StringView { return s; });
             switch (exception.type) {
 #define E(x)                             \
     case WebIDL::SimpleExceptionType::x: \
-        return vm.template throw_completion<JS::x>(exception.message);
+        return vm.template throw_completion<JS::x>(message);
 
                 ENUMERATE_SIMPLE_WEBIDL_EXCEPTION_TYPES(E)
 
@@ -80,8 +83,6 @@ ALWAYS_INLINE JS::Completion dom_exception_to_throw_completion(JS::VM& vm, auto&
         });
 }
 
-}
-
 template<typename T>
 using ExtractExceptionOrValueType = typename Detail::ExtractExceptionOrValueType<T>::Type;
 
@@ -96,7 +97,7 @@ JS::ThrowCompletionOr<Ret> throw_dom_exception_if_needed(JS::VM& vm, F&& fn)
         auto&& result = fn();
 
         if (result.is_exception())
-            return Detail::dom_exception_to_throw_completion(vm, result.exception());
+            return dom_exception_to_throw_completion(vm, result.exception());
 
         if constexpr (requires(T v) { v.value(); })
             return result.value();

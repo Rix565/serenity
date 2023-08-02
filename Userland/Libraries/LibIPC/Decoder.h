@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,14 +10,14 @@
 #include <AK/Concepts.h>
 #include <AK/DeprecatedString.h>
 #include <AK/Forward.h>
-#include <AK/MemoryStream.h>
 #include <AK/NumericLimits.h>
 #include <AK/StdLibExtras.h>
+#include <AK/String.h>
 #include <AK/Try.h>
 #include <AK/TypeList.h>
 #include <AK/Variant.h>
 #include <LibCore/SharedCircularQueue.h>
-#include <LibCore/Stream.h>
+#include <LibCore/Socket.h>
 #include <LibIPC/Concepts.h>
 #include <LibIPC/File.h>
 #include <LibIPC/Forward.h>
@@ -33,7 +34,7 @@ inline ErrorOr<T> decode(Decoder&)
 
 class Decoder {
 public:
-    Decoder(Core::Stream::Stream& stream, Core::Stream::LocalSocket& socket)
+    Decoder(Stream& stream, Core::LocalSocket& socket)
         : m_stream(stream)
         , m_socket(socket)
     {
@@ -51,17 +52,18 @@ public:
 
     ErrorOr<void> decode_into(Bytes bytes)
     {
-        TRY(m_stream.read_entire_buffer(bytes));
+        TRY(m_stream.read_until_filled(bytes));
         return {};
     }
 
     ErrorOr<size_t> decode_size();
 
-    Core::Stream::LocalSocket& socket() { return m_socket; }
+    Stream& stream() { return m_stream; }
+    Core::LocalSocket& socket() { return m_socket; }
 
 private:
-    Core::Stream::Stream& m_stream;
-    Core::Stream::LocalSocket& m_socket;
+    Stream& m_stream;
+    Core::LocalSocket& m_socket;
 };
 
 template<Arithmetic T>
@@ -80,6 +82,9 @@ ErrorOr<T> decode(Decoder& decoder)
 }
 
 template<>
+ErrorOr<String> decode(Decoder&);
+
+template<>
 ErrorOr<DeprecatedString> decode(Decoder&);
 
 template<>
@@ -89,10 +94,13 @@ template<>
 ErrorOr<JsonValue> decode(Decoder&);
 
 template<>
-ErrorOr<URL> decode(Decoder&);
+ErrorOr<Duration> decode(Decoder&);
 
 template<>
-ErrorOr<Dictionary> decode(Decoder&);
+ErrorOr<UnixDateTime> decode(Decoder&);
+
+template<>
+ErrorOr<URL> decode(Decoder&);
 
 template<>
 ErrorOr<File> decode(Decoder&);

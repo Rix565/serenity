@@ -15,6 +15,7 @@
 #include <LibGfx/ShareableBitmap.h>
 #include <LibHTTP/Job.h>
 #include <LibWeb/Forward.h>
+#include <LibWebView/ViewImplementation.h>
 
 namespace WebView {
 class OutOfProcessWebView;
@@ -52,6 +53,7 @@ public:
     void did_become_active();
     void context_menu_requested(Gfx::IntPoint screen_position);
     void content_filters_changed();
+    void autoplay_allowlist_changed();
     void proxy_mappings_changed();
 
     void action_entered(GUI::Action&);
@@ -62,6 +64,7 @@ public:
 
     Function<void(DeprecatedString const&)> on_title_change;
     Function<void(const URL&)> on_tab_open_request;
+    Function<void(Tab&)> on_activate_tab_request;
     Function<void(Tab&)> on_tab_close_request;
     Function<void(Tab&)> on_tab_close_other_request;
     Function<void(const URL&)> on_window_open_request;
@@ -75,7 +78,6 @@ public:
     Function<Vector<Web::Cookie::Cookie>()> on_get_cookies_entries;
     Function<OrderedHashMap<DeprecatedString, DeprecatedString>()> on_get_local_storage_entries;
     Function<OrderedHashMap<DeprecatedString, DeprecatedString>()> on_get_session_storage_entries;
-    Function<Gfx::ShareableBitmap()> on_take_screenshot;
 
     void enable_webdriver_mode();
 
@@ -89,13 +91,15 @@ public:
     void show_storage_inspector();
     void show_history_inspector();
 
+    void update_reset_zoom_button();
+
     DeprecatedString const& title() const { return m_title; }
     Gfx::Bitmap const* icon() const { return m_icon; }
 
     WebView::OutOfProcessWebView& view() { return *m_web_content_view; }
 
 private:
-    explicit Tab(BrowserWindow&);
+    Tab(BrowserWindow&, WebView::UseJavaScriptBytecode);
 
     virtual void show_event(GUI::ShowEvent&) override;
     virtual void hide_event(GUI::HideEvent&) override;
@@ -104,11 +108,11 @@ private:
     BrowserWindow& window();
 
     void update_actions();
-    void bookmark_current_url();
-    void update_bookmark_button(DeprecatedString const& url);
+    ErrorOr<void> bookmark_current_url();
+    void update_bookmark_button(StringView url);
     void start_download(const URL& url);
     void view_source(const URL& url, DeprecatedString const& source);
-    void update_status(Optional<DeprecatedString> text_override = {}, i32 count_waiting = 0);
+    void update_status(Optional<String> text_override = {}, i32 count_waiting = 0);
     void close_sub_widgets();
 
     enum class MayAppendTLD {
@@ -123,6 +127,7 @@ private:
     RefPtr<WebView::OutOfProcessWebView> m_web_content_view;
 
     RefPtr<GUI::UrlBox> m_location_box;
+    RefPtr<GUI::Button> m_reset_zoom_button;
     RefPtr<GUI::Button> m_bookmark_button;
     RefPtr<InspectorWidget> m_dom_inspector_widget;
     RefPtr<ConsoleWidget> m_console_widget;
@@ -138,6 +143,14 @@ private:
     RefPtr<GUI::Menu> m_image_context_menu;
     Gfx::ShareableBitmap m_image_context_menu_bitmap;
     URL m_image_context_menu_url;
+
+    RefPtr<GUI::Menu> m_audio_context_menu;
+    RefPtr<GUI::Menu> m_video_context_menu;
+    RefPtr<GUI::Action> m_media_context_menu_play_pause_action;
+    RefPtr<GUI::Action> m_media_context_menu_mute_unmute_action;
+    RefPtr<GUI::Action> m_media_context_menu_controls_action;
+    RefPtr<GUI::Action> m_media_context_menu_loop_action;
+    URL m_media_context_menu_url;
 
     RefPtr<GUI::Menu> m_tab_context_menu;
     RefPtr<GUI::Menu> m_page_context_menu;

@@ -8,20 +8,20 @@
 
 #include <AK/LexicalPath.h>
 #include <Applications/MouseSettings/ThemeWidgetGML.h>
-#include <LibCore/DirIterator.h>
+#include <LibCore/Directory.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/ComboBox.h>
 #include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/SortingProxyModel.h>
 #include <LibGUI/TableView.h>
 
-DeprecatedString MouseCursorModel::column_name(int column_index) const
+ErrorOr<String> MouseCursorModel::column_name(int column_index) const
 {
     switch (column_index) {
     case Column::Bitmap:
-        return {};
+        return String {};
     case Column::Name:
-        return "Name";
+        return "Name"_short_string;
     }
     VERIFY_NOT_REACHED();
 }
@@ -50,18 +50,17 @@ void MouseCursorModel::invalidate()
         return;
 
     m_cursors.clear();
-    Core::DirIterator iterator(DeprecatedString::formatted("/res/cursor-themes/{}", m_theme_name), Core::DirIterator::Flags::SkipDots);
-
-    while (iterator.has_next()) {
-        auto path = iterator.next_full_path();
-        if (path.ends_with(".ini"sv))
-            continue;
-        if (path.contains("2x"sv))
-            continue;
+    // FIXME: Propagate errors.
+    (void)Core::Directory::for_each_entry(DeprecatedString::formatted("/res/cursor-themes/{}", m_theme_name), Core::DirIterator::Flags::SkipDots, [&](auto const& entry, auto const& directory) -> ErrorOr<IterationDecision> {
+        auto path = LexicalPath::join(directory.path().string(), entry.name);
+        if (path.has_extension(".ini"sv))
+            return IterationDecision::Continue;
+        if (path.title().contains("2x"sv))
+            return IterationDecision::Continue;
 
         Cursor cursor;
-        cursor.path = move(path);
-        cursor.name = LexicalPath::basename(cursor.path);
+        cursor.path = path.string();
+        cursor.name = path.basename();
 
         // FIXME: Animated cursor bitmaps
         auto cursor_bitmap = Gfx::Bitmap::load_from_file(cursor.path).release_value_but_fixme_should_propagate_errors();
@@ -70,7 +69,9 @@ void MouseCursorModel::invalidate()
         cursor.bitmap = cursor_bitmap->cropped(Gfx::IntRect(Gfx::FloatRect(cursor_bitmap_rect).scaled(1.0 / cursor.params.frames(), 1.0))).release_value_but_fixme_should_propagate_errors();
 
         m_cursors.append(move(cursor));
-    }
+        return IterationDecision::Continue;
+    });
+
     Model::invalidate();
 }
 
@@ -86,19 +87,26 @@ void ThemeModel::invalidate()
 {
     m_themes.clear();
 
-    Core::DirIterator iterator("/res/cursor-themes", Core::DirIterator::Flags::SkipDots);
+    // FIXME: Propagate errors.
+    (void)Core::Directory::for_each_entry("/res/cursor-themes"sv, Core::DirIterator::Flags::SkipDots, [&](auto const& entry, auto&) -> ErrorOr<IterationDecision> {
+        if (access(DeprecatedString::formatted("/res/cursor-themes/{}/Config.ini", entry.name).characters(), R_OK) == 0)
+            m_themes.append(entry.name);
+        return IterationDecision::Continue;
+    });
 
-    while (iterator.has_next()) {
-        auto path = iterator.next_path();
-        if (access(DeprecatedString::formatted("/res/cursor-themes/{}/Config.ini", path).characters(), R_OK) == 0)
-            m_themes.append(path);
-    }
     Model::invalidate();
 }
 
-ThemeWidget::ThemeWidget()
+ErrorOr<NonnullRefPtr<ThemeWidget>> ThemeWidget::try_create()
 {
-    load_from_gml(theme_widget_gml).release_value_but_fixme_should_propagate_errors();
+    auto widget = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) ThemeWidget()));
+    TRY(widget->setup());
+    return widget;
+}
+
+ErrorOr<void> ThemeWidget::setup()
+{
+    TRY(load_from_gml(theme_widget_gml));
     m_cursors_tableview = find_descendant_of_type_named<GUI::TableView>("cursors_tableview");
     m_cursors_tableview->set_highlight_selected_rows(true);
     m_cursors_tableview->set_alternating_row_colors(false);
@@ -107,7 +115,7 @@ ThemeWidget::ThemeWidget()
     m_cursors_tableview->set_highlight_key_column(false);
 
     m_mouse_cursor_model = MouseCursorModel::create();
-    auto sorting_proxy_model = MUST(GUI::SortingProxyModel::create(*m_mouse_cursor_model));
+    auto sorting_proxy_model = TRY(GUI::SortingProxyModel::create(*m_mouse_cursor_model));
     sorting_proxy_model->set_sort_role(GUI::ModelRole::Display);
 
     m_cursors_tableview->set_model(sorting_proxy_model);
@@ -126,6 +134,7 @@ ThemeWidget::ThemeWidget()
     m_theme_name_box->set_model(ThemeModel::create());
     m_theme_name_box->model()->invalidate();
     m_theme_name_box->set_text(theme_name, GUI::AllowCallback::No);
+    return {};
 }
 
 void ThemeWidget::apply_settings()

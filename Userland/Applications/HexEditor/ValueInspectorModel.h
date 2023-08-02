@@ -30,6 +30,9 @@ public:
         ASCII,
         UTF8,
         UTF16,
+        ASCIIString,
+        UTF8String,
+        UTF16String,
         __Count
     };
 
@@ -60,13 +63,13 @@ public:
         return 2;
     }
 
-    DeprecatedString column_name(int column) const override
+    ErrorOr<String> column_name(int column) const override
     {
         switch (column) {
         case Column::Type:
-            return "Type";
+            return "Type"_short_string;
         case Column::Value:
-            return m_is_little_endian ? "Value (Little Endian)" : "Value (Big Endian)";
+            return m_is_little_endian ? TRY("Value (Little Endian)"_string) : TRY("Value (Big Endian)"_string);
         }
         VERIFY_NOT_REACHED();
     }
@@ -100,6 +103,12 @@ public:
             return "UTF-8";
         case UTF16:
             return "UTF-16";
+        case ASCIIString:
+            return "ASCII String";
+        case UTF8String:
+            return "UTF-8 String";
+        case UTF16String:
+            return "UTF-16 String";
         default:
             return "";
         }

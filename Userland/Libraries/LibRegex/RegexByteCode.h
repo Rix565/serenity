@@ -185,6 +185,23 @@ public:
         Base::first_chunk().prepend(forward<T>(value));
     }
 
+    void append(Span<ByteCodeValueType const> value)
+    {
+        if (is_empty())
+            Base::append({});
+        auto& last = Base::last_chunk();
+        last.ensure_capacity(value.size());
+        for (auto v : value)
+            last.unchecked_append(v);
+    }
+
+    void ensure_capacity(size_t capacity)
+    {
+        if (is_empty())
+            Base::append({});
+        Base::last_chunk().ensure_capacity(capacity);
+    }
+
     void last_chunk() const = delete;
     void first_chunk() const = delete;
 
@@ -210,20 +227,11 @@ public:
 
     void insert_bytecode_compare_string(StringView view)
     {
-        ByteCode bytecode;
-
-        bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::Compare));
-        bytecode.empend(static_cast<u64>(1)); // number of arguments
-
-        ByteCode arguments;
-
-        arguments.empend(static_cast<ByteCodeValueType>(CharacterCompareType::String));
-        arguments.insert_string(view);
-
-        bytecode.empend(arguments.size()); // size of arguments
-        bytecode.extend(move(arguments));
-
-        extend(move(bytecode));
+        empend(static_cast<ByteCodeValueType>(OpCodeId::Compare));
+        empend(static_cast<u64>(1)); // number of arguments
+        empend(2 + view.length());   // size of arguments
+        empend(static_cast<ByteCodeValueType>(CharacterCompareType::String));
+        insert_string(view);
     }
 
     void insert_bytecode_group_capture_left(size_t capture_groups_count)
@@ -397,12 +405,14 @@ public:
             // JUMP_NONEMPTY _C _START FORK
 
             // Note: This is only safe because REPEAT will leave one iteration outside (see repetition_n)
+            auto checkpoint = s_next_checkpoint_serial_id++;
             new_bytecode.insert(new_bytecode.size() - bytecode_to_repeat.size(), (ByteCodeValueType)OpCodeId::Checkpoint);
+            new_bytecode.insert(new_bytecode.size() - bytecode_to_repeat.size(), (ByteCodeValueType)checkpoint);
 
             auto jump_kind = static_cast<ByteCodeValueType>(greedy ? OpCodeId::ForkJump : OpCodeId::ForkStay);
             new_bytecode.empend((ByteCodeValueType)OpCodeId::JumpNonEmpty);
-            new_bytecode.empend(-bytecode_to_repeat.size() - 4 - 1); // Jump to the last iteration
-            new_bytecode.empend(-bytecode_to_repeat.size() - 4 - 1); // if _C is not empty.
+            new_bytecode.empend(-bytecode_to_repeat.size() - 4 - 2); // Jump to the last iteration
+            new_bytecode.empend(checkpoint);                         // if _C is not empty.
             new_bytecode.empend(jump_kind);
         }
 
@@ -440,11 +450,13 @@ public:
         // REGEXP
         // JUMP_NONEMPTY _C _START FORKSTAY (FORKJUMP -> Greedy)
 
+        auto checkpoint = s_next_checkpoint_serial_id++;
+        bytecode_to_repeat.prepend((ByteCodeValueType)checkpoint);
         bytecode_to_repeat.prepend((ByteCodeValueType)OpCodeId::Checkpoint);
 
         bytecode_to_repeat.empend((ByteCodeValueType)OpCodeId::JumpNonEmpty);
         bytecode_to_repeat.empend(-bytecode_to_repeat.size() - 3); // Jump to the _START label...
-        bytecode_to_repeat.empend(-bytecode_to_repeat.size() - 2); // ...if _C is not empty
+        bytecode_to_repeat.empend(checkpoint);                     // ...if _C is not empty
 
         if (greedy)
             bytecode_to_repeat.empend(static_cast<ByteCodeValueType>(OpCodeId::ForkJump));
@@ -469,16 +481,17 @@ public:
         else
             bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::ForkJump));
 
-        bytecode.empend(bytecode_to_repeat.size() + 1 + 4); // Jump to the _END label
+        bytecode.empend(bytecode_to_repeat.size() + 2 + 4); // Jump to the _END label
 
-        auto c_label = bytecode.size();
+        auto checkpoint = s_next_checkpoint_serial_id++;
         bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::Checkpoint));
+        bytecode.empend(static_cast<ByteCodeValueType>(checkpoint));
 
         bytecode.extend(bytecode_to_repeat);
 
         bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::JumpNonEmpty));
-        bytecode.empend(-bytecode.size() - 3);          // Jump(...) to the _START label...
-        bytecode.empend(c_label - bytecode.size() - 2); // ...only if _C passes.
+        bytecode.empend(-bytecode.size() - 3); // Jump(...) to the _START label...
+        bytecode.empend(checkpoint);           // ...only if _C passes.
         bytecode.empend((ByteCodeValueType)OpCodeId::Jump);
         // LABEL _END = bytecode.size()
 
@@ -507,6 +520,8 @@ public:
 
     OpCode& get_opcode(MatchState& state) const;
 
+    static void reset_checkpoint_serial_id() { s_next_checkpoint_serial_id = 0; }
+
 private:
     void insert_string(StringView view)
     {
@@ -519,6 +534,7 @@ private:
     ALWAYS_INLINE OpCode& get_opcode_by_id(OpCodeId id) const;
     static OwnPtr<OpCode> s_opcodes[(size_t)OpCodeId::Last + 1];
     static bool s_opcodes_initialized;
+    static size_t s_next_checkpoint_serial_id;
 };
 
 #define ENUMERATE_EXECUTION_RESULTS                          \
@@ -551,7 +567,6 @@ public:
 
     ALWAYS_INLINE ByteCodeValueType argument(size_t offset) const
     {
-        VERIFY(state().instruction_position + offset <= m_bytecode->size());
         return m_bytecode->at(state().instruction_position + 1 + offset);
     }
 
@@ -793,8 +808,9 @@ class OpCode_Checkpoint final : public OpCode {
 public:
     ExecutionResult execute(MatchInput const& input, MatchState& state) const override;
     ALWAYS_INLINE OpCodeId opcode_id() const override { return OpCodeId::Checkpoint; }
-    ALWAYS_INLINE size_t size() const override { return 1; }
-    DeprecatedString arguments_string() const override { return DeprecatedString::empty(); }
+    ALWAYS_INLINE size_t size() const override { return 2; }
+    ALWAYS_INLINE size_t id() const { return argument(0); }
+    DeprecatedString arguments_string() const override { return DeprecatedString::formatted("id={}", id()); }
 };
 
 class OpCode_JumpNonEmpty final : public OpCode {
@@ -807,12 +823,34 @@ public:
     ALWAYS_INLINE OpCodeId form() const { return (OpCodeId)argument(2); }
     DeprecatedString arguments_string() const override
     {
-        return DeprecatedString::formatted("{} offset={} [&{}], cp={} [&{}]",
+        return DeprecatedString::formatted("{} offset={} [&{}], cp={}",
             opcode_id_name(form()),
             offset(), state().instruction_position + size() + offset(),
-            checkpoint(), state().instruction_position + size() + checkpoint());
+            checkpoint());
     }
 };
+
+ALWAYS_INLINE OpCode& ByteCode::get_opcode(regex::MatchState& state) const
+{
+    OpCodeId opcode_id;
+    if (auto opcode_ptr = static_cast<DisjointChunks<ByteCodeValueType> const&>(*this).find(state.instruction_position))
+        opcode_id = (OpCodeId)*opcode_ptr;
+    else
+        opcode_id = OpCodeId::Exit;
+
+    auto& opcode = get_opcode_by_id(opcode_id);
+    opcode.set_state(state);
+    return opcode;
+}
+
+ALWAYS_INLINE OpCode& ByteCode::get_opcode_by_id(OpCodeId id) const
+{
+    VERIFY(id >= OpCodeId::First && id <= OpCodeId::Last);
+
+    auto& opcode = s_opcodes[(u32)id];
+    opcode->set_bytecode(*const_cast<ByteCode*>(this));
+    return *opcode;
+}
 
 template<typename T>
 bool is(OpCode const&);

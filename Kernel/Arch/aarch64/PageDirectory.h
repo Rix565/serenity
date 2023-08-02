@@ -15,8 +15,8 @@
 #include <AK/Types.h>
 #include <Kernel/Forward.h>
 #include <Kernel/Locking/Spinlock.h>
+#include <Kernel/Memory/PhysicalAddress.h>
 #include <Kernel/Memory/PhysicalPage.h>
-#include <Kernel/PhysicalAddress.h>
 
 namespace Kernel::Memory {
 
@@ -40,10 +40,8 @@ constexpr u32 INNER_SHAREABLE = (3 << 8);
 constexpr u32 NORMAL_MEMORY = (0 << 2);
 constexpr u32 DEVICE_MEMORY = (1 << 2);
 
-constexpr u32 ACCESS_PERMISSION_READWRITE = (0b00 << 6);
-constexpr u32 ACCESS_PERMISSION_READWRITE_EL0 = (0b01 << 6);
-constexpr u32 ACCESS_PERMISSION_READONLY = (0b10 << 6);
-constexpr u32 ACCESS_PERMISSION_READONLY_EL0 = (0b11 << 6);
+constexpr u32 ACCESS_PERMISSION_EL0 = (1 << 6);
+constexpr u32 ACCESS_PERMISSION_READONLY = (1 << 7);
 
 // Figure D5-15 of Arm Architecture Reference Manual Armv8 - page D5-2588
 class PageDirectoryEntry {
@@ -127,8 +125,8 @@ public:
     bool is_present() const { return (raw() & Present) == Present; }
     void set_present(bool b) { set_bit(Present, b); }
 
-    bool is_user_allowed() const { TODO_AARCH64(); }
-    void set_user_allowed(bool) { }
+    bool is_user_allowed() const { return (raw() & ACCESS_PERMISSION_EL0) == ACCESS_PERMISSION_EL0; }
+    void set_user_allowed(bool b) { set_bit(ACCESS_PERMISSION_EL0, b); }
 
     bool is_writable() const { return !((raw() & ACCESS_PERMISSION_READONLY) == ACCESS_PERMISSION_READONLY); }
     void set_writable(bool b) { set_bit(ACCESS_PERMISSION_READONLY, !b); }
@@ -181,7 +179,7 @@ class PageDirectory final : public AtomicRefCounted<PageDirectory> {
     friend class MemoryManager;
 
 public:
-    static ErrorOr<NonnullLockRefPtr<PageDirectory>> try_create_for_userspace();
+    static ErrorOr<NonnullLockRefPtr<PageDirectory>> try_create_for_userspace(Process&);
     static NonnullLockRefPtr<PageDirectory> must_create_kernel_page_directory();
     static LockRefPtr<PageDirectory> find_current();
 
@@ -199,10 +197,7 @@ public:
         return m_root_table;
     }
 
-    AddressSpace* address_space() { return m_space; }
-    AddressSpace const* address_space() const { return m_space; }
-
-    void set_space(Badge<AddressSpace>, AddressSpace& space) { m_space = &space; }
+    Process* process() { return m_process; }
 
     RecursiveSpinlock<LockRank::None>& get_lock() { return m_lock; }
 
@@ -214,7 +209,7 @@ private:
     static void register_page_directory(PageDirectory* directory);
     static void deregister_page_directory(PageDirectory* directory);
 
-    AddressSpace* m_space { nullptr };
+    Process* m_process { nullptr };
     RefPtr<PhysicalPage> m_root_table;
     RefPtr<PhysicalPage> m_directory_table;
     RefPtr<PhysicalPage> m_directory_pages[512];

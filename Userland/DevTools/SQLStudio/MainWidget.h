@@ -17,19 +17,20 @@ namespace SQLStudio {
 class ScriptEditor;
 
 class MainWidget : public GUI::Widget {
-    C_OBJECT(MainWidget)
+    C_OBJECT_ABSTRACT(MainWidget)
 
 public:
     virtual ~MainWidget() = default;
+    static ErrorOr<NonnullRefPtr<MainWidget>> create();
 
-    void initialize_menu(GUI::Window*);
+    ErrorOr<void> initialize_menu(GUI::Window*);
     void open_new_script();
     void open_script_from_file(LexicalPath const&);
 
     bool request_close();
 
 private:
-    MainWidget();
+    ErrorOr<void> setup();
 
     ScriptEditor* active_editor();
 
@@ -64,6 +65,7 @@ private:
 
     RefPtr<SQL::SQLClient> m_sql_client;
     Optional<SQL::ConnectionID> m_connection_id;
+    Vector<DeprecatedString> m_result_column_names;
     Vector<Vector<DeprecatedString>> m_results;
 
     void read_next_sql_statement_of_editor();

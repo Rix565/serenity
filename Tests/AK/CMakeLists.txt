@@ -10,6 +10,7 @@ set(AK_TEST_SOURCES
     TestBinarySearch.cpp
     TestBitCast.cpp
     TestBitmap.cpp
+    TestBitStream.cpp
     TestBuiltinWrappers.cpp
     TestByteBuffer.cpp
     TestCharacterTypes.cpp
@@ -50,26 +51,30 @@ set(AK_TEST_SOURCES
     TestMemory.cpp
     TestMemoryStream.cpp
     TestNeverDestroyed.cpp
+    TestNonnullOwnPtr.cpp
     TestNonnullRefPtr.cpp
     TestNumberFormat.cpp
     TestOptional.cpp
     TestOwnPtr.cpp
     TestPrint.cpp
     TestQueue.cpp
+    TestQuickSelect.cpp
     TestQuickSort.cpp
     TestRedBlackTree.cpp
     TestRefPtr.cpp
+    TestSIMD.cpp
     TestSinglyLinkedList.cpp
     TestSourceGenerator.cpp
     TestSourceLocation.cpp
     TestSpan.cpp
     TestStack.cpp
+    TestStatistics.cpp
     TestStdLibExtras.cpp
     TestString.cpp
     TestStringFloatingPointConversions.cpp
     TestStringUtils.cpp
     TestStringView.cpp
-    TestTime.cpp
+    TestDuration.cpp
     TestTrie.cpp
     TestTuple.cpp
     TestTypeTraits.cpp

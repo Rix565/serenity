@@ -7,24 +7,22 @@
 #pragma once
 
 #include <AK/Vector.h>
-#include <LibWeb/CSS/Length.h>
-#include <LibWeb/CSS/Percentage.h>
+#include <LibWeb/CSS/PercentageOr.h>
+#include <LibWeb/Layout/AvailableSpace.h>
 
 namespace Web::CSS {
 
 class GridSize {
 public:
     enum class Type {
-        Length,
-        Percentage,
+        LengthPercentage,
         FlexibleLength,
         MaxContent,
         MinContent,
     };
 
-    GridSize(Length);
-    GridSize(Percentage);
-    GridSize(float);
+    GridSize(LengthPercentage);
+    GridSize(double);
     GridSize(Type);
     GridSize();
     ~GridSize();
@@ -33,45 +31,39 @@ public:
 
     Type type() const { return m_type; }
 
-    bool is_length() const { return m_type == Type::Length; }
-    bool is_percentage() const { return m_type == Type::Percentage; }
+    bool is_auto(Layout::AvailableSize const&) const;
+    bool is_fixed(Layout::AvailableSize const&) const;
     bool is_flexible_length() const { return m_type == Type::FlexibleLength; }
     bool is_max_content() const { return m_type == Type::MaxContent; }
     bool is_min_content() const { return m_type == Type::MinContent; }
 
-    Length length() const;
-    Percentage percentage() const { return m_percentage; }
-    float flexible_length() const { return m_flexible_length; }
+    LengthPercentage length_percentage() const { return m_length_percentage; }
+    double flex_factor() const { return m_flex_factor; }
 
     // https://www.w3.org/TR/css-grid-2/#layout-algorithm
     // An intrinsic sizing function (min-content, max-content, auto, fit-content()).
     // FIXME: Add missing properties once implemented.
-    bool is_intrinsic_track_sizing() const
-    {
-        return (m_type == Type::Length && m_length.is_auto()) || m_type == Type::MaxContent || m_type == Type::MinContent;
-    }
+    bool is_intrinsic(Layout::AvailableSize const&) const;
 
     bool is_definite() const
     {
-        return (m_type == Type::Length && !m_length.is_auto()) || is_percentage();
+        return type() == Type::LengthPercentage && !m_length_percentage.is_auto();
     }
+
+    Size css_size() const;
 
     ErrorOr<String> to_string() const;
     bool operator==(GridSize const& other) const
     {
         return m_type == other.type()
-            && m_length == other.length()
-            && m_percentage == other.percentage()
-            && m_flexible_length == other.flexible_length();
+            && m_length_percentage == other.length_percentage()
+            && m_flex_factor == other.flex_factor();
     }
 
 private:
     Type m_type;
-    // Length includes a RefPtr<CalculatedStyleValue> member, but we can't include the header StyleValue.h as it includes
-    // this file already. To break the cyclic dependency, we must initialize m_length in the constructor.
-    Length m_length;
-    Percentage m_percentage { Percentage(0) };
-    float m_flexible_length { 0 };
+    LengthPercentage m_length_percentage;
+    double m_flex_factor { 0 };
 };
 
 class GridMinMax {
@@ -99,7 +91,7 @@ public:
     GridTrackSizeList(Vector<CSS::ExplicitGridTrack> track_list, Vector<Vector<String>> line_names);
     GridTrackSizeList();
 
-    static GridTrackSizeList make_auto();
+    static GridTrackSizeList make_none();
 
     Vector<CSS::ExplicitGridTrack> track_list() const { return m_track_list; }
     Vector<Vector<String>> line_names() const { return m_line_names; }

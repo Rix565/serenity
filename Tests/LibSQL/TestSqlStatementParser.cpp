@@ -66,12 +66,7 @@ TEST_CASE(create_table)
     };
 
     auto validate = [](StringView sql, StringView expected_schema, StringView expected_table, Vector<Column> expected_columns, bool expected_is_temporary = false, bool expected_is_error_if_table_exists = true) {
-        auto result = parse(sql);
-        if (result.is_error())
-            outln("{}: {}", sql, result.error());
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::CreateTable>(*statement));
 
         const auto& table = static_cast<const SQL::AST::CreateTable&>(*statement);
@@ -93,16 +88,16 @@ TEST_CASE(create_table)
         for (size_t i = 0; i < columns.size(); ++i) {
             const auto& column = columns[i];
             const auto& expected_column = expected_columns[i];
-            EXPECT_EQ(column.name(), expected_column.name);
+            EXPECT_EQ(column->name(), expected_column.name);
 
-            const auto& type_name = column.type_name();
+            const auto& type_name = column->type_name();
             EXPECT_EQ(type_name->name(), expected_column.type);
 
             const auto& signed_numbers = type_name->signed_numbers();
             EXPECT_EQ(signed_numbers.size(), expected_column.signed_numbers.size());
 
             for (size_t j = 0; j < signed_numbers.size(); ++j) {
-                double signed_number = signed_numbers[j].value();
+                double signed_number = signed_numbers[j]->value();
                 double expected_signed_number = expected_column.signed_numbers[j];
                 EXPECT_EQ(signed_number, expected_signed_number);
             }
@@ -147,10 +142,7 @@ TEST_CASE(alter_table_rename_table)
     EXPECT(parse("ALTER TABLE table_name RENAME TO new_table"sv).is_error());
 
     auto validate = [](StringView sql, StringView expected_schema, StringView expected_table, StringView expected_new_table) {
-        auto result = parse(sql);
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::RenameTable>(*statement));
 
         const auto& alter = static_cast<const SQL::AST::RenameTable&>(*statement);
@@ -175,10 +167,7 @@ TEST_CASE(alter_table_rename_column)
     EXPECT(parse("ALTER TABLE table_name RENAME column_name TO new_column"sv).is_error());
 
     auto validate = [](StringView sql, StringView expected_schema, StringView expected_table, StringView expected_column, StringView expected_new_column) {
-        auto result = parse(sql);
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::RenameColumn>(*statement));
 
         const auto& alter = static_cast<const SQL::AST::RenameColumn&>(*statement);
@@ -207,10 +196,7 @@ TEST_CASE(alter_table_add_column)
     };
 
     auto validate = [](StringView sql, StringView expected_schema, StringView expected_table, Column expected_column) {
-        auto result = parse(sql);
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::AddColumn>(*statement));
 
         const auto& alter = static_cast<const SQL::AST::AddColumn&>(*statement);
@@ -227,7 +213,7 @@ TEST_CASE(alter_table_add_column)
         EXPECT_EQ(signed_numbers.size(), expected_column.signed_numbers.size());
 
         for (size_t j = 0; j < signed_numbers.size(); ++j) {
-            double signed_number = signed_numbers[j].value();
+            double signed_number = signed_numbers[j]->value();
             double expected_signed_number = expected_column.signed_numbers[j];
             EXPECT_EQ(signed_number, expected_signed_number);
         }
@@ -254,10 +240,7 @@ TEST_CASE(alter_table_drop_column)
     EXPECT(parse("ALTER TABLE table_name DROP COLUMN column_name"sv).is_error());
 
     auto validate = [](StringView sql, StringView expected_schema, StringView expected_table, StringView expected_column) {
-        auto result = parse(sql);
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::DropColumn>(*statement));
 
         const auto& alter = static_cast<const SQL::AST::DropColumn&>(*statement);
@@ -280,10 +263,7 @@ TEST_CASE(drop_table)
     EXPECT(parse("DROP TABLE IF test;"sv).is_error());
 
     auto validate = [](StringView sql, StringView expected_schema, StringView expected_table, bool expected_is_error_if_table_does_not_exist = true) {
-        auto result = parse(sql);
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::DropTable>(*statement));
 
         const auto& table = static_cast<const SQL::AST::DropTable&>(*statement);
@@ -307,16 +287,21 @@ TEST_CASE(insert)
     EXPECT(parse("INSERT INTO table_name VALUES"sv).is_error());
     EXPECT(parse("INSERT INTO table_name VALUES ();"sv).is_error());
     EXPECT(parse("INSERT INTO table_name VALUES (1)"sv).is_error());
+    EXPECT(parse("INSERT INTO table_name VALUES SELECT"sv).is_error());
+    EXPECT(parse("INSERT INTO table_name VALUES EXISTS"sv).is_error());
+    EXPECT(parse("INSERT INTO table_name VALUES NOT"sv).is_error());
+    EXPECT(parse("INSERT INTO table_name VALUES EXISTS (SELECT 1)"sv).is_error());
+    EXPECT(parse("INSERT INTO table_name VALUES (SELECT)"sv).is_error());
+    EXPECT(parse("INSERT INTO table_name VALUES (EXISTS SELECT)"sv).is_error());
+    EXPECT(parse("INSERT INTO table_name VALUES ((SELECT))"sv).is_error());
+    EXPECT(parse("INSERT INTO table_name VALUES (EXISTS (SELECT))"sv).is_error());
     EXPECT(parse("INSERT INTO table_name SELECT"sv).is_error());
     EXPECT(parse("INSERT INTO table_name SELECT * from table_name"sv).is_error());
     EXPECT(parse("INSERT OR INTO table_name DEFAULT VALUES;"sv).is_error());
     EXPECT(parse("INSERT OR foo INTO table_name DEFAULT VALUES;"sv).is_error());
 
     auto validate = [](StringView sql, SQL::AST::ConflictResolution expected_conflict_resolution, StringView expected_schema, StringView expected_table, StringView expected_alias, Vector<StringView> expected_column_names, Vector<size_t> expected_chain_sizes, bool expect_select_statement) {
-        auto result = parse(sql);
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::Insert>(*statement));
 
         const auto& insert = static_cast<const SQL::AST::Insert&>(*statement);
@@ -337,7 +322,7 @@ TEST_CASE(insert)
 
             for (size_t i = 0; i < chained_expressions.size(); ++i) {
                 const auto& chained_expression = chained_expressions[i];
-                const auto& expressions = chained_expression.expressions();
+                const auto& expressions = chained_expression->expressions();
                 EXPECT_EQ(expressions.size(), expected_chain_sizes[i]);
 
                 for (const auto& expression : expressions)
@@ -367,6 +352,12 @@ TEST_CASE(insert)
     validate("INSERT INTO table_name VALUES (1, 2);"sv, resolution, {}, "TABLE_NAME"sv, {}, {}, { 2 }, false);
     validate("INSERT INTO table_name VALUES (1, 2), (3, 4, 5);"sv, resolution, {}, "TABLE_NAME"sv, {}, {}, { 2, 3 }, false);
 
+    validate("INSERT INTO table_name VALUES ((SELECT 1));"sv, resolution, {}, "TABLE_NAME"sv, {}, {}, { 1 }, false);
+    validate("INSERT INTO table_name VALUES (EXISTS (SELECT 1));"sv, resolution, {}, "TABLE_NAME"sv, {}, {}, { 1 }, false);
+    validate("INSERT INTO table_name VALUES (NOT EXISTS (SELECT 1));"sv, resolution, {}, "TABLE_NAME"sv, {}, {}, { 1 }, false);
+    validate("INSERT INTO table_name VALUES ((SELECT 1), (SELECT 1));"sv, resolution, {}, "TABLE_NAME"sv, {}, {}, { 2 }, false);
+    validate("INSERT INTO table_name VALUES ((SELECT 1), (SELECT 1)), ((SELECT 1), (SELECT 1), (SELECT 1));"sv, resolution, {}, "TABLE_NAME"sv, {}, {}, { 2, 3 }, false);
+
     validate("INSERT INTO table_name SELECT * FROM table_name;"sv, resolution, {}, "TABLE_NAME"sv, {}, {}, {}, true);
 }
 
@@ -379,11 +370,21 @@ TEST_CASE(update)
     EXPECT(parse("UPDATE table_name SET column_name=4"sv).is_error());
     EXPECT(parse("UPDATE table_name SET column_name=4, ;"sv).is_error());
     EXPECT(parse("UPDATE table_name SET (column_name)=4"sv).is_error());
+    EXPECT(parse("UPDATE table_name SET (column_name)=EXISTS"sv).is_error());
+    EXPECT(parse("UPDATE table_name SET (column_name)=SELECT"sv).is_error());
+    EXPECT(parse("UPDATE table_name SET (column_name)=(SELECT)"sv).is_error());
+    EXPECT(parse("UPDATE table_name SET (column_name)=NOT (SELECT 1)"sv).is_error());
     EXPECT(parse("UPDATE table_name SET (column_name)=4, ;"sv).is_error());
     EXPECT(parse("UPDATE table_name SET (column_name, )=4;"sv).is_error());
     EXPECT(parse("UPDATE table_name SET column_name=4 FROM"sv).is_error());
     EXPECT(parse("UPDATE table_name SET column_name=4 FROM table_name"sv).is_error());
     EXPECT(parse("UPDATE table_name SET column_name=4 WHERE"sv).is_error());
+    EXPECT(parse("UPDATE table_name SET column_name=4 WHERE EXISTS"sv).is_error());
+    EXPECT(parse("UPDATE table_name SET column_name=4 WHERE NOT"sv).is_error());
+    EXPECT(parse("UPDATE table_name SET column_name=4 WHERE NOT EXISTS"sv).is_error());
+    EXPECT(parse("UPDATE table_name SET column_name=4 WHERE SELECT"sv).is_error());
+    EXPECT(parse("UPDATE table_name SET column_name=4 WHERE (SELECT)"sv).is_error());
+    EXPECT(parse("UPDATE table_name SET column_name=4 WHERE NOT (SELECT)"sv).is_error());
     EXPECT(parse("UPDATE table_name SET column_name=4 WHERE 1==1"sv).is_error());
     EXPECT(parse("UPDATE table_name SET column_name=4 RETURNING"sv).is_error());
     EXPECT(parse("UPDATE table_name SET column_name=4 RETURNING *"sv).is_error());
@@ -393,10 +394,7 @@ TEST_CASE(update)
     EXPECT(parse("UPDATE OR foo table_name SET column_name=4;"sv).is_error());
 
     auto validate = [](StringView sql, SQL::AST::ConflictResolution expected_conflict_resolution, StringView expected_schema, StringView expected_table, StringView expected_alias, Vector<Vector<DeprecatedString>> expected_update_columns, bool expect_where_clause, bool expect_returning_clause, Vector<StringView> expected_returned_column_aliases) {
-        auto result = parse(sql);
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::Update>(*statement));
 
         const auto& update = static_cast<const SQL::AST::Update&>(*statement);
@@ -452,10 +450,17 @@ TEST_CASE(update)
     validate("UPDATE table_name AS foo SET column_name=1;"sv, resolution, {}, "TABLE_NAME"sv, "FOO"sv, update_columns, false, false, {});
 
     validate("UPDATE table_name SET column_name=1;"sv, resolution, {}, "TABLE_NAME"sv, {}, { { "COLUMN_NAME"sv } }, false, false, {});
+    validate("UPDATE table_name SET column_name=(SELECT 1);"sv, resolution, {}, "TABLE_NAME"sv, {}, { { "COLUMN_NAME"sv } }, false, false, {});
+    validate("UPDATE table_name SET column_name=EXISTS (SELECT 1);"sv, resolution, {}, "TABLE_NAME"sv, {}, { { "COLUMN_NAME"sv } }, false, false, {});
+    validate("UPDATE table_name SET column_name=NOT EXISTS (SELECT 1);"sv, resolution, {}, "TABLE_NAME"sv, {}, { { "COLUMN_NAME"sv } }, false, false, {});
     validate("UPDATE table_name SET column1=1, column2=2;"sv, resolution, {}, "TABLE_NAME"sv, {}, { { "COLUMN1"sv }, { "COLUMN2"sv } }, false, false, {});
     validate("UPDATE table_name SET (column1, column2)=1, column3=2;"sv, resolution, {}, "TABLE_NAME"sv, {}, { { "COLUMN1"sv, "COLUMN2"sv }, { "COLUMN3"sv } }, false, false, {});
 
     validate("UPDATE table_name SET column_name=1 WHERE 1==1;"sv, resolution, {}, "TABLE_NAME"sv, {}, update_columns, true, false, {});
+
+    validate("UPDATE table_name SET column_name=1 WHERE (SELECT 1);"sv, resolution, {}, "TABLE_NAME"sv, {}, { { "COLUMN_NAME"sv } }, true, false, {});
+    validate("UPDATE table_name SET column_name=1 WHERE EXISTS (SELECT 1);"sv, resolution, {}, "TABLE_NAME"sv, {}, { { "COLUMN_NAME"sv } }, true, false, {});
+    validate("UPDATE table_name SET column_name=1 WHERE NOT EXISTS (SELECT 1);"sv, resolution, {}, "TABLE_NAME"sv, {}, { { "COLUMN_NAME"sv } }, true, false, {});
 
     validate("UPDATE table_name SET column_name=1 RETURNING *;"sv, resolution, {}, "TABLE_NAME"sv, {}, update_columns, false, true, {});
     validate("UPDATE table_name SET column_name=1 RETURNING column_name;"sv, resolution, {}, "TABLE_NAME"sv, {}, update_columns, false, true, { {} });
@@ -469,6 +474,12 @@ TEST_CASE(delete_)
     EXPECT(parse("DELETE FROM"sv).is_error());
     EXPECT(parse("DELETE FROM table_name"sv).is_error());
     EXPECT(parse("DELETE FROM table_name WHERE"sv).is_error());
+    EXPECT(parse("DELETE FROM table_name WHERE EXISTS"sv).is_error());
+    EXPECT(parse("DELETE FROM table_name WHERE NOT"sv).is_error());
+    EXPECT(parse("DELETE FROM table_name WHERE NOT (SELECT 1)"sv).is_error());
+    EXPECT(parse("DELETE FROM table_name WHERE NOT EXISTS"sv).is_error());
+    EXPECT(parse("DELETE FROM table_name WHERE SELECT"sv).is_error());
+    EXPECT(parse("DELETE FROM table_name WHERE (SELECT)"sv).is_error());
     EXPECT(parse("DELETE FROM table_name WHERE 15"sv).is_error());
     EXPECT(parse("DELETE FROM table_name WHERE 15 RETURNING"sv).is_error());
     EXPECT(parse("DELETE FROM table_name WHERE 15 RETURNING *"sv).is_error());
@@ -477,10 +488,7 @@ TEST_CASE(delete_)
     EXPECT(parse("DELETE FROM table_name WHERE (');"sv).is_error());
 
     auto validate = [](StringView sql, StringView expected_schema, StringView expected_table, StringView expected_alias, bool expect_where_clause, bool expect_returning_clause, Vector<StringView> expected_returned_column_aliases) {
-        auto result = parse(sql);
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::Delete>(*statement));
 
         const auto& delete_ = static_cast<const SQL::AST::Delete&>(*statement);
@@ -514,6 +522,9 @@ TEST_CASE(delete_)
     validate("DELETE FROM schema_name.table_name;"sv, "SCHEMA_NAME"sv, "TABLE_NAME"sv, {}, false, false, {});
     validate("DELETE FROM schema_name.table_name AS alias;"sv, "SCHEMA_NAME"sv, "TABLE_NAME"sv, "ALIAS"sv, false, false, {});
     validate("DELETE FROM table_name WHERE (1 == 1);"sv, {}, "TABLE_NAME"sv, {}, true, false, {});
+    validate("DELETE FROM table_name WHERE EXISTS (SELECT 1);"sv, {}, "TABLE_NAME"sv, {}, true, false, {});
+    validate("DELETE FROM table_name WHERE NOT EXISTS (SELECT 1);"sv, {}, "TABLE_NAME"sv, {}, true, false, {});
+    validate("DELETE FROM table_name WHERE (SELECT 1);"sv, {}, "TABLE_NAME"sv, {}, true, false, {});
     validate("DELETE FROM table_name RETURNING *;"sv, {}, "TABLE_NAME"sv, {}, false, true, {});
     validate("DELETE FROM table_name RETURNING column_name;"sv, {}, "TABLE_NAME"sv, {}, false, true, { {} });
     validate("DELETE FROM table_name RETURNING column_name AS alias;"sv, {}, "TABLE_NAME"sv, {}, false, true, { "ALIAS"sv });
@@ -573,10 +584,7 @@ TEST_CASE(select)
     };
 
     auto validate = [](StringView sql, Vector<Type> expected_columns, Vector<From> expected_from_list, bool expect_where_clause, size_t expected_group_by_size, bool expect_having_clause, Vector<Ordering> expected_ordering, bool expect_limit_clause, bool expect_offset_clause) {
-        auto result = parse(sql);
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::Select>(*statement));
 
         const auto& select = static_cast<const SQL::AST::Select&>(*statement);
@@ -586,17 +594,17 @@ TEST_CASE(select)
         for (size_t i = 0; i < result_column_list.size(); ++i) {
             const auto& result_column = result_column_list[i];
             const auto& expected_column = expected_columns[i];
-            EXPECT_EQ(result_column.type(), expected_column.type);
+            EXPECT_EQ(result_column->type(), expected_column.type);
 
-            switch (result_column.type()) {
+            switch (result_column->type()) {
             case SQL::AST::ResultType::All:
                 EXPECT(expected_column.table_name_or_column_alias.is_null());
                 break;
             case SQL::AST::ResultType::Table:
-                EXPECT_EQ(result_column.table_name(), expected_column.table_name_or_column_alias);
+                EXPECT_EQ(result_column->table_name(), expected_column.table_name_or_column_alias);
                 break;
             case SQL::AST::ResultType::Expression:
-                EXPECT_EQ(result_column.column_alias(), expected_column.table_name_or_column_alias);
+                EXPECT_EQ(result_column->column_alias(), expected_column.table_name_or_column_alias);
                 break;
             }
         }
@@ -606,9 +614,9 @@ TEST_CASE(select)
         for (size_t i = 0; i < table_or_subquery_list.size(); ++i) {
             const auto& result_from = table_or_subquery_list[i];
             const auto& expected_from = expected_from_list[i];
-            EXPECT_EQ(result_from.schema_name(), expected_from.schema_name);
-            EXPECT_EQ(result_from.table_name(), expected_from.table_name);
-            EXPECT_EQ(result_from.table_alias(), expected_from.table_alias);
+            EXPECT_EQ(result_from->schema_name(), expected_from.schema_name);
+            EXPECT_EQ(result_from->table_name(), expected_from.table_name);
+            EXPECT_EQ(result_from->table_alias(), expected_from.table_alias);
         }
 
         const auto& where_clause = select.where_clause();
@@ -635,10 +643,10 @@ TEST_CASE(select)
         for (size_t i = 0; i < ordering_term_list.size(); ++i) {
             const auto& result_order = ordering_term_list[i];
             const auto& expected_order = expected_ordering[i];
-            EXPECT(!is<SQL::AST::ErrorExpression>(*result_order.expression()));
-            EXPECT_EQ(result_order.collation_name(), expected_order.collation_name);
-            EXPECT_EQ(result_order.order(), expected_order.order);
-            EXPECT_EQ(result_order.nulls(), expected_order.nulls);
+            EXPECT(!is<SQL::AST::ErrorExpression>(*result_order->expression()));
+            EXPECT_EQ(result_order->collation_name(), expected_order.collation_name);
+            EXPECT_EQ(result_order->order(), expected_order.order);
+            EXPECT_EQ(result_order->nulls(), expected_order.nulls);
         }
 
         const auto& limit_clause = select.limit_clause();
@@ -712,10 +720,7 @@ TEST_CASE(common_table_expression)
     };
 
     auto validate = [](StringView sql, SelectedTableList expected_selected_tables) {
-        auto result = parse(sql);
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::Delete>(*statement));
 
         const auto& delete_ = static_cast<const SQL::AST::Delete&>(*statement);
@@ -731,11 +736,11 @@ TEST_CASE(common_table_expression)
         for (size_t i = 0; i < common_table_expressions.size(); ++i) {
             const auto& common_table_expression = common_table_expressions[i];
             const auto& expected_common_table_expression = expected_selected_tables.selected_tables[i];
-            EXPECT_EQ(common_table_expression.table_name(), expected_common_table_expression.table_name);
-            EXPECT_EQ(common_table_expression.column_names().size(), expected_common_table_expression.column_names.size());
+            EXPECT_EQ(common_table_expression->table_name(), expected_common_table_expression.table_name);
+            EXPECT_EQ(common_table_expression->column_names().size(), expected_common_table_expression.column_names.size());
 
-            for (size_t j = 0; j < common_table_expression.column_names().size(); ++j)
-                EXPECT_EQ(common_table_expression.column_names()[j], expected_common_table_expression.column_names[j]);
+            for (size_t j = 0; j < common_table_expression->column_names().size(); ++j)
+                EXPECT_EQ(common_table_expression->column_names()[j], expected_common_table_expression.column_names[j]);
         }
     };
 
@@ -767,12 +772,7 @@ TEST_CASE(describe_table)
     EXPECT(parse("DESCRIBE table_name;"sv).is_error());
 
     auto validate = [](StringView sql, StringView expected_schema, StringView expected_table) {
-        auto result = parse(sql);
-        if (result.is_error())
-            outln("{}: {}", sql, result.error());
-        EXPECT(!result.is_error());
-
-        auto statement = result.release_value();
+        auto statement = TRY_OR_FAIL(parse(sql));
         EXPECT(is<SQL::AST::DescribeTable>(*statement));
 
         const auto& describe_table_statement = static_cast<const SQL::AST::DescribeTable&>(*statement);

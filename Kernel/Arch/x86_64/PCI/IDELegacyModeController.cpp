@@ -8,16 +8,16 @@
 #include <AK/Types.h>
 #include <Kernel/Arch/x86_64/PCI/IDELegacyModeController.h>
 #include <Kernel/Bus/PCI/API.h>
+#include <Kernel/Devices/Storage/ATA/ATADiskDevice.h>
+#include <Kernel/Devices/Storage/ATA/GenericIDE/Channel.h>
 #include <Kernel/Library/LockRefPtr.h>
 #include <Kernel/Sections.h>
-#include <Kernel/Storage/ATA/ATADiskDevice.h>
-#include <Kernel/Storage/ATA/GenericIDE/Channel.h>
 
 namespace Kernel {
 
-UNMAP_AFTER_INIT ErrorOr<NonnullLockRefPtr<PCIIDELegacyModeController>> PCIIDELegacyModeController::initialize(PCI::DeviceIdentifier const& device_identifier, bool force_pio)
+UNMAP_AFTER_INIT ErrorOr<NonnullRefPtr<PCIIDELegacyModeController>> PCIIDELegacyModeController::initialize(PCI::DeviceIdentifier const& device_identifier, bool force_pio)
 {
-    auto controller = TRY(adopt_nonnull_lock_ref_or_enomem(new (nothrow) PCIIDELegacyModeController(device_identifier)));
+    auto controller = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) PCIIDELegacyModeController(device_identifier)));
     PCI::enable_io_space(device_identifier);
     PCI::enable_memory_space(device_identifier);
     PCI::enable_bus_mastering(device_identifier);
@@ -106,7 +106,7 @@ UNMAP_AFTER_INIT ErrorOr<void> PCIIDELegacyModeController::initialize_and_enumer
         primary_base_io_window = TRY(IOWindow::create_for_io_space(IOAddress(0x1F0), 8));
         primary_control_io_window = TRY(IOWindow::create_for_io_space(IOAddress(0x3F6), 4));
     } else {
-        auto primary_base_io_window = TRY(IOWindow::create_for_pci_device_bar(device_identifier(), PCI::HeaderType0BaseRegister::BAR0));
+        primary_base_io_window = TRY(IOWindow::create_for_pci_device_bar(device_identifier(), PCI::HeaderType0BaseRegister::BAR0));
         auto pci_primary_control_io_window = TRY(IOWindow::create_for_pci_device_bar(device_identifier(), PCI::HeaderType0BaseRegister::BAR1));
         // Note: the PCI IDE specification says we should access the IO address with an offset of 2
         // on native PCI IDE controllers.
@@ -147,20 +147,20 @@ UNMAP_AFTER_INIT ErrorOr<void> PCIIDELegacyModeController::initialize_and_enumer
     auto secondary_channel_io_window_group = IDEChannel::IOWindowGroup { secondary_base_io_window.release_nonnull(), secondary_control_io_window.release_nonnull(), move(secondary_bus_master_io) };
 
     if (is_pci_native_mode_enabled_on_primary_channel()) {
-        TRY(m_channels.try_append(IDEChannel::create(*this, irq_line, move(primary_channel_io_window_group), IDEChannel::ChannelType::Primary)));
+        m_channels[0] = TRY(IDEChannel::create(*this, irq_line, move(primary_channel_io_window_group), IDEChannel::ChannelType::Primary));
     } else {
-        TRY(m_channels.try_append(IDEChannel::create(*this, move(primary_channel_io_window_group), IDEChannel::ChannelType::Primary)));
+        m_channels[0] = TRY(IDEChannel::create(*this, move(primary_channel_io_window_group), IDEChannel::ChannelType::Primary));
     }
-    TRY(initialize_and_enumerate(m_channels[0]));
-    m_channels[0].enable_irq();
+    TRY(initialize_and_enumerate(*m_channels[0]));
+    m_channels[0]->enable_irq();
 
     if (is_pci_native_mode_enabled_on_secondary_channel()) {
-        TRY(m_channels.try_append(IDEChannel::create(*this, irq_line, move(secondary_channel_io_window_group), IDEChannel::ChannelType::Secondary)));
+        m_channels[1] = TRY(IDEChannel::create(*this, irq_line, move(secondary_channel_io_window_group), IDEChannel::ChannelType::Secondary));
     } else {
-        TRY(m_channels.try_append(IDEChannel::create(*this, move(secondary_channel_io_window_group), IDEChannel::ChannelType::Secondary)));
+        m_channels[1] = TRY(IDEChannel::create(*this, move(secondary_channel_io_window_group), IDEChannel::ChannelType::Secondary));
     }
-    TRY(initialize_and_enumerate(m_channels[1]));
-    m_channels[1].enable_irq();
+    TRY(initialize_and_enumerate(*m_channels[1]));
+    m_channels[1]->enable_irq();
     return {};
 }
 

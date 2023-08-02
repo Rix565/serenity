@@ -16,6 +16,7 @@
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWebView/AccessibilityTreeModel.h>
+#include <LibWebView/AriaPropertiesStateModel.h>
 #include <LibWebView/DOMTreeModel.h>
 #include <LibWebView/OutOfProcessWebView.h>
 #include <LibWebView/StylePropertiesModel.h>
@@ -67,6 +68,7 @@ void InspectorWidget::set_selection(GUI::ModelIndex const index)
         auto inspected_node_properties = maybe_inspected_node_properties.release_value();
         load_style_json(inspected_node_properties.computed_style_json, inspected_node_properties.resolved_style_json, inspected_node_properties.custom_properties_json);
         update_node_box_model(inspected_node_properties.node_box_sizing_json);
+        update_aria_properties_state_model(inspected_node_properties.aria_properties_state_json);
     } else {
         clear_style_json();
         clear_node_box_model();
@@ -77,48 +79,49 @@ InspectorWidget::InspectorWidget()
 {
     set_fill_with_background_color(true);
 
-    auto& layout = set_layout<GUI::VerticalBoxLayout>();
-    layout.set_margins({ 4, 4, 4, 4 });
+    set_layout<GUI::VerticalBoxLayout>(4);
     auto& splitter = add<GUI::VerticalSplitter>();
 
     auto& top_tab_widget = splitter.add<GUI::TabWidget>();
 
-    auto& dom_tree_container = top_tab_widget.add_tab<GUI::Widget>("DOM");
-    dom_tree_container.set_layout<GUI::VerticalBoxLayout>();
-    dom_tree_container.layout()->set_margins({ 4, 4, 4, 4 });
+    auto& dom_tree_container = top_tab_widget.add_tab<GUI::Widget>("DOM"_short_string);
+    dom_tree_container.set_layout<GUI::VerticalBoxLayout>(4);
     m_dom_tree_view = dom_tree_container.add<GUI::TreeView>();
     m_dom_tree_view->on_selection_change = [this] {
         const auto& index = m_dom_tree_view->selection().first();
         set_selection(index);
     };
 
-    auto& accessibility_tree_container = top_tab_widget.add_tab<GUI::Widget>("Accessibility");
-    accessibility_tree_container.set_layout<GUI::VerticalBoxLayout>();
-    accessibility_tree_container.layout()->set_margins({ 4, 4, 4, 4 });
+    auto& accessibility_tree_container = top_tab_widget.add_tab<GUI::Widget>("Accessibility"_string.release_value_but_fixme_should_propagate_errors());
+    accessibility_tree_container.set_layout<GUI::VerticalBoxLayout>(4);
     m_accessibility_tree_view = accessibility_tree_container.add<GUI::TreeView>();
+    m_accessibility_tree_view->on_selection_change = [this] {
+        const auto& index = m_accessibility_tree_view->selection().first();
+        set_selection(index);
+    };
 
     auto& bottom_tab_widget = splitter.add<GUI::TabWidget>();
 
-    auto& computed_style_table_container = bottom_tab_widget.add_tab<GUI::Widget>("Computed");
-    computed_style_table_container.set_layout<GUI::VerticalBoxLayout>();
-    computed_style_table_container.layout()->set_margins({ 4, 4, 4, 4 });
+    auto& computed_style_table_container = bottom_tab_widget.add_tab<GUI::Widget>("Computed"_string.release_value_but_fixme_should_propagate_errors());
+    computed_style_table_container.set_layout<GUI::VerticalBoxLayout>(4);
     m_computed_style_table_view = computed_style_table_container.add<GUI::TableView>();
 
-    auto& resolved_style_table_container = bottom_tab_widget.add_tab<GUI::Widget>("Resolved");
-    resolved_style_table_container.set_layout<GUI::VerticalBoxLayout>();
-    resolved_style_table_container.layout()->set_margins({ 4, 4, 4, 4 });
+    auto& resolved_style_table_container = bottom_tab_widget.add_tab<GUI::Widget>("Resolved"_string.release_value_but_fixme_should_propagate_errors());
+    resolved_style_table_container.set_layout<GUI::VerticalBoxLayout>(4);
     m_resolved_style_table_view = resolved_style_table_container.add<GUI::TableView>();
 
-    auto& custom_properties_table_container = bottom_tab_widget.add_tab<GUI::Widget>("Variables");
-    custom_properties_table_container.set_layout<GUI::VerticalBoxLayout>();
-    custom_properties_table_container.layout()->set_margins({ 4, 4, 4, 4 });
+    auto& custom_properties_table_container = bottom_tab_widget.add_tab<GUI::Widget>("Variables"_string.release_value_but_fixme_should_propagate_errors());
+    custom_properties_table_container.set_layout<GUI::VerticalBoxLayout>(4);
     m_custom_properties_table_view = custom_properties_table_container.add<GUI::TableView>();
 
-    auto& box_model_widget = bottom_tab_widget.add_tab<GUI::Widget>("Box Model");
-    box_model_widget.set_layout<GUI::VerticalBoxLayout>();
-    box_model_widget.layout()->set_margins({ 4, 4, 4, 4 });
+    auto& box_model_widget = bottom_tab_widget.add_tab<GUI::Widget>("Box Model"_string.release_value_but_fixme_should_propagate_errors());
+    box_model_widget.set_layout<GUI::VerticalBoxLayout>(4);
     m_element_size_view = box_model_widget.add<ElementSizePreviewWidget>();
     m_element_size_view->set_should_hide_unnecessary_scrollbars(true);
+
+    auto& aria_properties_state_widget = bottom_tab_widget.add_tab<GUI::Widget>("ARIA"_string.release_value_but_fixme_should_propagate_errors());
+    aria_properties_state_widget.set_layout<GUI::VerticalBoxLayout>(4);
+    m_aria_properties_state_view = aria_properties_state_widget.add<GUI::TableView>();
 
     m_dom_tree_view->set_focus(true);
 }
@@ -149,7 +152,7 @@ void InspectorWidget::clear_dom_json()
     m_dom_loaded = false;
 }
 
-void InspectorWidget::set_dom_node_properties_json(Selection selection, StringView computed_values_json, StringView resolved_values_json, StringView custom_properties_json, StringView node_box_sizing_json)
+void InspectorWidget::set_dom_node_properties_json(Selection selection, StringView computed_values_json, StringView resolved_values_json, StringView custom_properties_json, StringView node_box_sizing_json, StringView aria_properties_state_json)
 {
     if (selection != m_selection) {
         dbgln("Got data for the wrong node id! Wanted ({}), got ({})", m_selection.to_string(), selection.to_string());
@@ -158,6 +161,7 @@ void InspectorWidget::set_dom_node_properties_json(Selection selection, StringVi
 
     load_style_json(computed_values_json, resolved_values_json, custom_properties_json);
     update_node_box_model(node_box_sizing_json);
+    update_aria_properties_state_model(aria_properties_state_json);
 }
 
 void InspectorWidget::load_style_json(StringView computed_values_json, StringView resolved_values_json, StringView custom_properties_json)
@@ -199,6 +203,12 @@ void InspectorWidget::update_node_box_model(StringView node_box_sizing_json)
     m_element_size_view->set_box_model(m_node_box_sizing);
 }
 
+void InspectorWidget::update_aria_properties_state_model(StringView aria_properties_state_json)
+{
+    m_aria_properties_state_view->set_model(WebView::AriaPropertiesStateModel::create(aria_properties_state_json).release_value_but_fixme_should_propagate_errors());
+    m_aria_properties_state_view->set_searchable(true);
+}
+
 void InspectorWidget::clear_node_box_model()
 {
     m_node_box_sizing = Web::Layout::BoxModelMetrics {};
@@ -212,6 +222,7 @@ void InspectorWidget::clear_style_json()
     m_computed_style_table_view->set_model(nullptr);
     m_resolved_style_table_view->set_model(nullptr);
     m_custom_properties_table_view->set_model(nullptr);
+    m_aria_properties_state_view->set_model(nullptr);
 
     m_element_size_view->set_box_model({});
     m_element_size_view->set_node_content_width(0);
@@ -221,8 +232,6 @@ void InspectorWidget::clear_style_json()
 void InspectorWidget::set_accessibility_json(StringView json)
 {
     m_accessibility_tree_view->set_model(WebView::AccessibilityTreeModel::create(json, *m_accessibility_tree_view));
-
-    // TODO: Support selections from accessibility tab
 }
 
 }

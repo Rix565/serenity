@@ -11,16 +11,15 @@
 #include <AK/URL.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/DateTime.h>
-#include <LibCore/File.h>
 #include <LibCore/Process.h>
-#include <LibCore/Stream.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Clipboard.h>
 #include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
-#include <LibGfx/PNGWriter.h>
+#include <LibGfx/ImageFormats/PNGWriter.h>
 #include <LibGfx/Palette.h>
 #include <LibMain/Main.h>
 #include <unistd.h>
@@ -47,7 +46,7 @@ private:
     {
         if (event.button() == GUI::MouseButton::Primary)
             m_anchor_point = event.position();
-    };
+    }
 
     virtual void mousemove_event(GUI::MouseEvent& event) override
     {
@@ -55,13 +54,13 @@ private:
             m_region = Gfx::IntRect::from_two_points(*m_anchor_point, event.position());
             update();
         }
-    };
+    }
 
     virtual void mouseup_event(GUI::MouseEvent& event) override
     {
         if (event.button() == GUI::MouseButton::Primary)
             m_window->close();
-    };
+    }
 
     virtual void paint_event(GUI::PaintEvent&) override
     {
@@ -113,7 +112,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         output_path = Core::DateTime::now().to_deprecated_string("screenshot-%Y-%m-%d-%H-%M-%S.png"sv);
     }
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
     Optional<Gfx::IntRect> crop_region;
     if (select_region) {
         auto window = GUI::Window::construct();
@@ -161,26 +160,26 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     if (edit_image)
         output_path = Core::DateTime::now().to_deprecated_string("/tmp/screenshot-%Y-%m-%d-%H-%M-%S.png"sv);
 
-    auto file_or_error = Core::Stream::File::open(output_path, Core::Stream::OpenMode::ReadWrite);
+    auto file_or_error = Core::File::open(output_path, Core::File::OpenMode::ReadWrite);
     if (file_or_error.is_error()) {
         warnln("Could not open '{}' for writing: {}", output_path, file_or_error.error());
         return 1;
     }
 
     auto& file = *file_or_error.value();
-    TRY(file.write(encoded_bitmap.bytes()));
+    TRY(file.write_until_depleted(encoded_bitmap.bytes()));
 
     if (edit_image)
         TRY(Core::Process::spawn("/bin/PixelPaint"sv, Array { output_path }));
 
     bool printed_hyperlink = false;
     if (isatty(STDOUT_FILENO)) {
-        auto full_path = Core::File::real_path_for(output_path);
-        if (!full_path.is_null()) {
+        auto full_path_or_error = FileSystem::real_path(output_path);
+        if (!full_path_or_error.is_error()) {
             char hostname[HOST_NAME_MAX];
             VERIFY(gethostname(hostname, sizeof(hostname)) == 0);
 
-            auto url = URL::create_with_file_scheme(full_path, {}, hostname);
+            auto url = URL::create_with_file_scheme(full_path_or_error.value().to_deprecated_string(), {}, hostname);
             out("\033]8;;{}\033\\", url.serialize());
             printed_hyperlink = true;
         }

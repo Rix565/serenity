@@ -12,16 +12,17 @@
 #include <Kernel/Memory/AnonymousVMObject.h>
 #include <Kernel/Memory/InodeVMObject.h>
 #include <Kernel/Memory/MemoryManager.h>
-#include <Kernel/PerformanceManager.h>
-#include <Kernel/Process.h>
-#include <Kernel/Random.h>
-#include <Kernel/Scheduler.h>
+#include <Kernel/Security/Random.h>
+#include <Kernel/Tasks/PerformanceManager.h>
+#include <Kernel/Tasks/PowerStateSwitchTask.h>
+#include <Kernel/Tasks/Process.h>
+#include <Kernel/Tasks/Scheduler.h>
 
 namespace Kernel::Memory {
 
-ErrorOr<NonnullOwnPtr<AddressSpace>> AddressSpace::try_create(AddressSpace const* parent)
+ErrorOr<NonnullOwnPtr<AddressSpace>> AddressSpace::try_create(Process& process, AddressSpace const* parent)
 {
-    auto page_directory = TRY(PageDirectory::try_create_for_userspace());
+    auto page_directory = TRY(PageDirectory::try_create_for_userspace(process));
 
     VirtualRange total_range = [&]() -> VirtualRange {
         if (parent)
@@ -33,9 +34,7 @@ ErrorOr<NonnullOwnPtr<AddressSpace>> AddressSpace::try_create(AddressSpace const
         return VirtualRange(VirtualAddress { base }, userspace_range_ceiling - base);
     }();
 
-    auto space = TRY(adopt_nonnull_own_or_enomem(new (nothrow) AddressSpace(move(page_directory), total_range)));
-    space->page_directory().set_space({}, *space);
-    return space;
+    return adopt_nonnull_own_or_enomem(new (nothrow) AddressSpace(move(page_directory), total_range));
 }
 
 AddressSpace::AddressSpace(NonnullLockRefPtr<PageDirectory> page_directory, VirtualRange total_range)
@@ -325,7 +324,9 @@ void AddressSpace::dump_regions()
 
 void AddressSpace::remove_all_regions(Badge<Process>)
 {
-    VERIFY(Thread::current() == g_finalizer);
+    if (!g_in_system_shutdown)
+        VERIFY(Thread::current() == g_finalizer);
+
     {
         SpinlockLocker pd_locker(m_page_directory->get_lock());
         for (auto& region : m_region_tree.regions())

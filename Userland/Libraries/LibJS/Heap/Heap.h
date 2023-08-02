@@ -19,12 +19,14 @@
 #include <LibJS/Heap/Cell.h>
 #include <LibJS/Heap/CellAllocator.h>
 #include <LibJS/Heap/Handle.h>
+#include <LibJS/Heap/Internals.h>
 #include <LibJS/Heap/MarkedVector.h>
+#include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/WeakContainer.h>
 
 namespace JS {
 
-class Heap {
+class Heap : public HeapBase {
     AK_MAKE_NONCOPYABLE(Heap);
     AK_MAKE_NONMOVABLE(Heap);
 
@@ -57,8 +59,6 @@ public:
 
     void collect_garbage(CollectionType = CollectionType::CollectGarbage, bool print_report = false);
 
-    VM& vm() { return m_vm; }
-
     bool should_collect_on_every_allocation() const { return m_should_collect_on_every_allocation; }
     void set_should_collect_on_every_allocation(bool b) { m_should_collect_on_every_allocation = b; }
 
@@ -85,6 +85,7 @@ private:
 
     void gather_roots(HashTable<Cell*>&);
     void gather_conservative_roots(HashTable<Cell*>&);
+    void gather_asan_fake_stack_roots(HashTable<FlatPtr>&, FlatPtr);
     void mark_live_cells(HashTable<Cell*> const& live_cells);
     void finalize_unmarked_cells();
     void sweep_dead_cells(bool print_report, Core::ElapsedTimer const&);
@@ -105,15 +106,13 @@ private:
 
     bool m_should_collect_on_every_allocation { false };
 
-    VM& m_vm;
-
     Vector<NonnullOwnPtr<CellAllocator>> m_allocators;
 
     HandleImpl::List m_handles;
     MarkedVectorBase::List m_marked_vectors;
     WeakContainer::List m_weak_containers;
 
-    Vector<Cell*> m_uprooted_cells;
+    Vector<GCPtr<Cell>> m_uprooted_cells;
 
     BlockAllocator m_block_allocator;
 

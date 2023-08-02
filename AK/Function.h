@@ -65,14 +65,14 @@ public:
 
     template<typename CallableType>
     Function(CallableType&& callable)
-    requires((IsFunctionObject<CallableType> && IsCallableWithArguments<CallableType, In...> && !IsSame<RemoveCVReference<CallableType>, Function>))
+    requires((IsFunctionObject<CallableType> && IsCallableWithArguments<CallableType, Out, In...> && !IsSame<RemoveCVReference<CallableType>, Function>))
     {
         init_with_callable(forward<CallableType>(callable));
     }
 
     template<typename FunctionType>
     Function(FunctionType f)
-    requires((IsFunctionPointer<FunctionType> && IsCallableWithArguments<RemovePointer<FunctionType>, In...> && !IsSame<RemoveCVReference<FunctionType>, Function>))
+    requires((IsFunctionPointer<FunctionType> && IsCallableWithArguments<RemovePointer<FunctionType>, Out, In...> && !IsSame<RemoveCVReference<FunctionType>, Function>))
     {
         init_with_callable(move(f));
     }
@@ -99,7 +99,7 @@ public:
 
     template<typename CallableType>
     Function& operator=(CallableType&& callable)
-    requires((IsFunctionObject<CallableType> && IsCallableWithArguments<CallableType, In...>))
+    requires((IsFunctionObject<CallableType> && IsCallableWithArguments<CallableType, Out, In...>))
     {
         clear();
         init_with_callable(forward<CallableType>(callable));
@@ -108,7 +108,7 @@ public:
 
     template<typename FunctionType>
     Function& operator=(FunctionType f)
-    requires((IsFunctionPointer<FunctionType> && IsCallableWithArguments<RemovePointer<FunctionType>, In...>))
+    requires((IsFunctionPointer<FunctionType> && IsCallableWithArguments<RemovePointer<FunctionType>, Out, In...>))
     {
         clear();
         if (f)
@@ -260,15 +260,18 @@ private:
 #ifndef KERNEL
     // Empirically determined to fit most lambdas and functions.
     static constexpr size_t inline_capacity = 4 * sizeof(void*);
+    alignas(__BIGGEST_ALIGNMENT__) u8 m_storage[inline_capacity];
 #else
     // FIXME: Try to decrease this.
     static constexpr size_t inline_capacity = 6 * sizeof(void*);
+    // In the Kernel nothing has an alignment > alignof(void*).
+    alignas(alignof(void*)) u8 m_storage[inline_capacity];
 #endif
-    alignas(max(alignof(CallableWrapperBase), alignof(CallableWrapperBase*))) u8 m_storage[inline_capacity];
 };
 
 }
 
 #if USING_AK_GLOBALLY
 using AK::Function;
+using AK::IsCallableWithArguments;
 #endif

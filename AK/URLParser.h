@@ -55,10 +55,14 @@ public:
         VERIFY_NOT_REACHED();
     }
 
-    static URL parse(StringView input, URL const* base_url = nullptr, Optional<URL> url = {}, Optional<State> state_override = {});
+    // https://url.spec.whatwg.org/#concept-basic-url-parser
+    static URL basic_parse(StringView input, Optional<URL> const& base_url = {}, Optional<URL> url = {}, Optional<State> state_override = {});
 
-private:
-    static Optional<URL> parse_data_url(StringView raw_input);
+    // https://url.spec.whatwg.org/#string-percent-encode-after-encoding
+    static DeprecatedString percent_encode_after_encoding(StringView input, URL::PercentEncodeSet percent_encode_set, bool space_as_plus = false);
+
+    // https://url.spec.whatwg.org/#concept-host-serializer
+    static ErrorOr<String> serialize_host(URL::Host const&);
 };
 
 #undef ENUMERATE_STATES

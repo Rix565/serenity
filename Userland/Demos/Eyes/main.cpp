@@ -38,7 +38,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     TRY(Core::System::pledge("stdio recvfd sendfd rpath unix cpath wpath thread"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
     TRY(Core::System::unveil("/tmp/session/%sid/portal/launch", "rw"));
     TRY(Core::System::unveil("/res", "r"));
@@ -84,15 +84,15 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     set_window_frame_enabled(!hide_window_frame);
     show_window_frame_action->set_checked(window_frame_enabled);
 
-    auto file_menu = TRY(window->try_add_menu("&File"));
+    auto file_menu = TRY(window->try_add_menu("&File"_short_string));
     TRY(file_menu->try_add_action(move(show_window_frame_action)));
     TRY(file_menu->try_add_separator());
     TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); })));
 
-    auto help_menu = TRY(window->try_add_menu("&Help"));
+    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
-        Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Eyes.md"), "/bin/Help");
+        Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Applications/Eyes.md"), "/bin/Help");
     })));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Eyes Demo", app_icon, window)));
 

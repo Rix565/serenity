@@ -8,8 +8,8 @@
 
 #include <AK/Badge.h>
 #include <AK/DeprecatedString.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <LibJS/Forward.h>
+#include <LibJS/Heap/Handle.h>
 
 namespace JS::Bytecode {
 
@@ -17,6 +17,10 @@ struct UnwindInfo {
     Executable const* executable;
     BasicBlock const* handler;
     BasicBlock const* finalizer;
+
+    JS::GCPtr<Environment> lexical_environment;
+
+    bool handler_called { false };
 };
 
 class BasicBlock {

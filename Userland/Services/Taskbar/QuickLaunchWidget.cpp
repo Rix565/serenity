@@ -105,9 +105,8 @@ ErrorOr<NonnullRefPtr<QuickLaunchWidget>> QuickLaunchWidget::create()
 QuickLaunchWidget::QuickLaunchWidget()
 {
     set_shrink_to_fit(true);
-    set_layout<GUI::HorizontalBoxLayout>();
-    layout()->set_spacing(0);
-    set_frame_thickness(0);
+    set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 0);
+    set_frame_style(Gfx::FrameStyle::NoFrame);
     set_fixed_height(24);
 }
 
@@ -209,7 +208,7 @@ ErrorOr<void> QuickLaunchWidget::add_or_adjust_button(DeprecatedString const& bu
     return {};
 }
 
-void QuickLaunchWidget::config_key_was_removed(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key)
+void QuickLaunchWidget::config_key_was_removed(StringView domain, StringView group, StringView key)
 {
     if (domain == "Taskbar" && group == quick_launch) {
         auto button = find_child_of_type_named<GUI::Button>(key);
@@ -218,7 +217,7 @@ void QuickLaunchWidget::config_key_was_removed(DeprecatedString const& domain, D
     }
 }
 
-void QuickLaunchWidget::config_string_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, DeprecatedString const& value)
+void QuickLaunchWidget::config_string_did_change(StringView domain, StringView group, StringView key, StringView value)
 {
     if (domain == "Taskbar" && group == quick_launch) {
         auto entry = QuickLaunchEntry::create_from_config_value(value);
@@ -244,13 +243,14 @@ void QuickLaunchWidget::drop_event(GUI::DropEvent& event)
     if (event.mime_data().has_urls()) {
         auto urls = event.mime_data().urls();
         for (auto& url : urls) {
-            auto entry = QuickLaunchEntry::create_from_path(url.path());
+            auto path = url.serialize_path();
+            auto entry = QuickLaunchEntry::create_from_path(path);
             if (entry) {
                 auto item_name = sanitize_entry_name(entry->name());
                 auto result = add_or_adjust_button(item_name, entry.release_nonnull());
                 if (result.is_error())
                     GUI::MessageBox::show_error(window(), DeprecatedString::formatted("Failed to add quick launch entry: {}", result.release_error()));
-                Config::write_string("Taskbar"sv, quick_launch, item_name, url.path());
+                Config::write_string("Taskbar"sv, quick_launch, item_name, path);
             }
         }
     }

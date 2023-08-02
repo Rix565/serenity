@@ -19,7 +19,7 @@ class SVGPathElement final : public SVGGeometryElement {
 public:
     virtual ~SVGPathElement() override = default;
 
-    virtual void parse_attribute(DeprecatedFlyString const& name, DeprecatedString const& value) override;
+    virtual void attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value) override;
 
     virtual Gfx::Path& get_path() override;
 
@@ -32,6 +32,6 @@ private:
     Optional<Gfx::Path> m_path;
 };
 
-Gfx::Path path_from_path_instructions(Span<PathInstruction const>);
+Gfx::Path path_from_path_instructions(ReadonlySpan<PathInstruction>);
 
 }

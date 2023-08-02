@@ -15,8 +15,8 @@ namespace Video::VP9 {
 
 static constexpr InterpolationFilter literal_to_type[4] = { EightTapSmooth, EightTap, EightTapSharp, Bilinear };
 static constexpr TransformSize tx_mode_to_biggest_tx_size[TX_MODES] = { Transform_4x4, Transform_8x8, Transform_16x16, Transform_32x32, Transform_32x32 };
-static constexpr u8 segmentation_feature_bits[SEG_LVL_MAX] = { 8, 6, 2, 0 };
-static constexpr bool segmentation_feature_signed[SEG_LVL_MAX] = { true, true, false, false };
+static constexpr u8 segmentation_feature_bits[to_underlying(SegmentFeature::Sentinel)] = { 8, 6, 2, 0 };
+static constexpr bool segmentation_feature_signed[to_underlying(SegmentFeature::Sentinel)] = { true, true, false, false };
 static constexpr u8 inv_map_table[MAX_PROB] = {
     7, 20, 33, 46, 59, 72, 85, 98, 111, 124, 137, 150, 163, 176, 189, 202, 215, 228, 241, 254,
     1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27,
@@ -132,10 +132,14 @@ static constexpr int tx_size_16_tree[4] = {
     -Transform_8x8, -Transform_16x16
 };
 static constexpr int tx_size_8_tree[2] = { -Transform_4x4, -Transform_8x8 };
+inline constexpr int inter_mode(PredictionMode mode)
+{
+    return to_underlying(mode) - to_underlying(PredictionMode::NearestMv);
+}
 static constexpr int inter_mode_tree[6] = {
-    -to_underlying(PredictionMode::ZeroMv), 2,
-    -to_underlying(PredictionMode::NearestMv), 4,
-    -to_underlying(PredictionMode::NearMv), -to_underlying(PredictionMode::NewMv)
+    -inter_mode(PredictionMode::ZeroMv), 2,
+    -inter_mode(PredictionMode::NearestMv), 4,
+    -inter_mode(PredictionMode::NearMv), -inter_mode(PredictionMode::NewMv)
 };
 static constexpr int interp_filter_tree[4] = {
     -EightTap, 2,
@@ -291,7 +295,7 @@ static constexpr u8 cat_probs[7][14] = {
     { 254, 254, 254, 252, 249, 243, 230, 196, 177, 153, 140, 133, 130, 129 }
 };
 
-static constexpr MotionVector mv_ref_blocks[BLOCK_SIZES][MVREF_NEIGHBOURS] = {
+static constexpr MotionVector mv_ref_blocks[BLOCK_SIZES][MVREF_NEIGHBORS] = {
     { { -1, 0 }, { 0, -1 }, { -1, -1 }, { -2, 0 }, { 0, -2 }, { -2, -1 }, { -1, -2 }, { -2, -2 } },
     { { -1, 0 }, { 0, -1 }, { -1, -1 }, { -2, 0 }, { 0, -2 }, { -2, -1 }, { -1, -2 }, { -2, -2 } },
     { { -1, 0 }, { 0, -1 }, { -1, -1 }, { -2, 0 }, { 0, -2 }, { -2, -1 }, { -1, -2 }, { -2, -2 } },
@@ -332,7 +336,7 @@ static constexpr u8 counter_to_context[19] = {
 };
 
 // Coefficients used by predict_inter
-static constexpr i32 subpel_filters[4][16][8] = {
+static constexpr i16 subpel_filters[4][16][8] = {
     { { 0, 0, 0, 128, 0, 0, 0, 0 },
         { 0, 1, -5, 126, 8, -3, 1, 0 },
         { -1, 3, -10, 122, 18, -6, 2, 0 },

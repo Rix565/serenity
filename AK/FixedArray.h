@@ -89,8 +89,13 @@ public:
         : m_storage(exchange(other.m_storage, nullptr))
     {
     }
-    // This function would violate the contract, as it would need to deallocate this FixedArray. As it also has no use case, we delete it.
-    FixedArray<T>& operator=(FixedArray<T>&&) = delete;
+
+    FixedArray<T>& operator=(FixedArray<T>&& other)
+    {
+        m_storage = other.m_storage;
+        other.m_storage = nullptr;
+        return *this;
+    }
 
     ~FixedArray()
     {
@@ -110,6 +115,11 @@ public:
     T& at(size_t index)
     {
         VERIFY(index < m_storage->size);
+        return m_storage->elements[index];
+    }
+
+    T& unchecked_at(size_t index)
+    {
         return m_storage->elements[index];
     }
 
@@ -142,7 +152,7 @@ public:
 
     void swap(FixedArray<T>& other)
     {
-        ::swap(m_storage, other.m_storage);
+        AK::swap(m_storage, other.m_storage);
     }
 
     void fill_with(T const& value)
@@ -163,7 +173,7 @@ public:
     ConstIterator end() const { return ConstIterator::end(*this); }
 
     Span<T> span() { return { data(), size() }; }
-    Span<T const> span() const { return { data(), size() }; }
+    ReadonlySpan<T> span() const { return { data(), size() }; }
 
 private:
     struct Storage {

@@ -40,14 +40,11 @@ void WaveEditor::paint_event(GUI::PaintEvent& event)
 SamplerWidget::SamplerWidget(TrackManager& track_manager)
     : m_track_manager(track_manager)
 {
-    set_layout<GUI::VerticalBoxLayout>();
-    layout()->set_margins(10);
-    layout()->set_spacing(10);
+    set_layout<GUI::VerticalBoxLayout>(10, 10);
     set_fill_with_background_color(true);
 
     m_open_button_and_recorded_sample_name_container = add<GUI::Widget>();
-    m_open_button_and_recorded_sample_name_container->set_layout<GUI::HorizontalBoxLayout>();
-    m_open_button_and_recorded_sample_name_container->layout()->set_spacing(10);
+    m_open_button_and_recorded_sample_name_container->set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 10);
     m_open_button_and_recorded_sample_name_container->set_fixed_height(24);
 
     m_open_button = m_open_button_and_recorded_sample_name_container->add<GUI::Button>();
@@ -59,11 +56,11 @@ SamplerWidget::SamplerWidget(TrackManager& track_manager)
         if (!open_path.has_value())
             return;
         // TODO: We don't actually load the sample.
-        m_recorded_sample_name->set_text(open_path.value());
+        m_recorded_sample_name->set_text(String::from_deprecated_string(open_path.value()).release_value_but_fixme_should_propagate_errors());
         m_wave_editor->update();
     };
 
-    m_recorded_sample_name = m_open_button_and_recorded_sample_name_container->add<GUI::Label>("No sample loaded");
+    m_recorded_sample_name = m_open_button_and_recorded_sample_name_container->add<GUI::Label>("No sample loaded"_string.release_value_but_fixme_should_propagate_errors());
     m_recorded_sample_name->set_text_alignment(Gfx::TextAlignment::CenterLeft);
 
     m_wave_editor = add<WaveEditor>(m_track_manager);

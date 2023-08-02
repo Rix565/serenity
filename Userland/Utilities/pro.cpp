@@ -6,15 +6,17 @@
  */
 
 #include <AK/Base64.h>
+#include <AK/CharacterTypes.h>
 #include <AK/GenericLexer.h>
 #include <AK/LexicalPath.h>
+#include <AK/MaybeOwned.h>
 #include <AK/NumberFormat.h>
 #include <AK/String.h>
 #include <AK/URL.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/EventLoop.h>
-#include <LibCore/File.h>
 #include <LibCore/System.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibHTTP/HttpResponse.h>
 #include <LibMain/Main.h>
 #include <LibProtocol/Request.h>
@@ -29,7 +31,7 @@ public:
     {
         GenericLexer lexer(value);
 
-        lexer.ignore_while(isspace);
+        lexer.ignore_while(is_ascii_space);
 
         if (lexer.consume_specific("inline")) {
             m_kind = Kind::Inline;
@@ -41,7 +43,7 @@ public:
         if (lexer.consume_specific("attachment")) {
             m_kind = Kind::Attachment;
             if (lexer.consume_specific(";")) {
-                lexer.ignore_while(isspace);
+                lexer.ignore_while(is_ascii_space);
                 if (lexer.consume_specific("filename=")) {
                     // RFC 2183: "A short (length <= 78 characters)
                     //            parameter value containing only non-`tspecials' characters SHOULD be
@@ -63,7 +65,7 @@ public:
         if (lexer.consume_specific("form-data")) {
             m_kind = Kind::FormData;
             while (lexer.consume_specific(";")) {
-                lexer.ignore_while(isspace);
+                lexer.ignore_while(is_ascii_space);
                 if (lexer.consume_specific("name=")) {
                     m_name = lexer.consume_quoted_string();
                 } else if (lexer.consume_specific("filename=")) {
@@ -103,26 +105,26 @@ private:
 
 /// Wraps a stream to silently ignore writes when the condition isn't true.
 template<typename ConditionT>
-class ConditionalOutputStream final : public Core::Stream::Stream {
+class ConditionalOutputStream final : public Stream {
 public:
-    ConditionalOutputStream(ConditionT&& condition, Core::Stream::Handle<Core::Stream::Stream> stream)
+    ConditionalOutputStream(ConditionT&& condition, MaybeOwned<Stream> stream)
         : m_stream(move(stream))
         , m_condition(condition)
     {
     }
 
-    virtual ErrorOr<Bytes> read(Bytes) override
+    virtual ErrorOr<Bytes> read_some(Bytes) override
     {
         return Error::from_errno(EBADF);
     }
 
-    virtual ErrorOr<size_t> write(ReadonlyBytes bytes) override
+    virtual ErrorOr<size_t> write_some(ReadonlyBytes bytes) override
     {
         // Pretend that we wrote the whole buffer if the condition is untrue.
         if (!m_condition())
             return bytes.size();
 
-        return m_stream->write(bytes);
+        return m_stream->write_some(bytes);
     }
 
     virtual bool is_eof() const override
@@ -140,7 +142,7 @@ public:
     }
 
 private:
-    Core::Stream::Handle<Core::Stream::Stream> m_stream;
+    MaybeOwned<Stream> m_stream;
     ConditionT m_condition;
 };
 
@@ -150,7 +152,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     bool save_at_provided_name = false;
     bool should_follow_url = false;
     bool verbose_output = false;
-    char const* data = nullptr;
+    StringView data;
     StringView proxy_spec;
     DeprecatedString method = "GET";
     StringView method_override;
@@ -171,8 +173,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         .long_name = "header",
         .short_name = 'H',
         .value_name = "key:value",
-        .accept_value = [&](auto* s) {
-            StringView header { s, strlen(s) };
+        .accept_value = [&](StringView header) {
             auto split = header.find(':');
             if (!split.has_value())
                 return false;
@@ -185,8 +186,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         .long_name = "auth",
         .short_name = 'u',
         .value_name = "username:password",
-        .accept_value = [&](auto* s) {
-            StringView input { s, strlen(s) };
+        .accept_value = [&](StringView input) {
             if (!input.contains(':'))
                 return false;
 
@@ -210,7 +210,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     if (!method_override.is_empty()) {
         method = method_override;
-    } else if (data) {
+    } else if (!data.is_empty()) {
         method = "POST";
         // FIXME: Content-Type?
     }
@@ -232,16 +232,17 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     bool should_save_stream_data = false;
     bool following_url = false;
 
-    u32 previous_downloaded_size = 0;
+    u64 previous_downloaded_size = 0;
+    u64 current_bytes_per_second_speed = 0;
     u32 const report_time_in_ms = 100;
-    u32 const speed_update_time_in_ms = 4000;
+    u32 const speed_update_time_in_ms = 1000;
 
-    timeval previous_time, current_time, time_diff;
-    gettimeofday(&previous_time, nullptr);
+    auto previous_report_time = MonotonicTime::now();
+    auto previous_speed_update_time = previous_report_time;
 
     RefPtr<Protocol::Request> request;
     auto protocol_client = TRY(Protocol::RequestClient::try_create());
-    auto output_stream = ConditionalOutputStream { [&] { return should_save_stream_data; }, TRY(Core::Stream::File::adopt_fd(output_fd, Core::Stream::OpenMode::Write)) };
+    auto output_stream = ConditionalOutputStream { [&] { return should_save_stream_data; }, TRY(Core::File::adopt_fd(output_fd, Core::File::OpenMode::Write)) };
 
     // https://httpwg.org/specs/rfc9110.html#authentication
     auto const has_credentials = !credentials.is_empty();
@@ -260,6 +261,34 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             warnln("* Skipping adding Authorization header, request was not for the HTTP protocol.");
     }
 
+    auto update_progress = [&](Optional<u64> maybe_total_size, u64 downloaded_size, bool force_update) {
+        auto current_time = MonotonicTime::now();
+        if (!force_update && (current_time - previous_report_time).to_milliseconds() < report_time_in_ms)
+            return;
+
+        previous_report_time = current_time;
+        warn("\r\033[2K");
+        if (maybe_total_size.has_value()) {
+            warn("\033]9;{};{};\033\\", downloaded_size, maybe_total_size.value());
+            warn("Download progress: {} / {}", human_readable_size(downloaded_size), human_readable_size(maybe_total_size.value()));
+        } else {
+            warn("Download progress: {} / ???", human_readable_size(downloaded_size));
+        }
+
+        auto time_diff_ms = (current_time - previous_speed_update_time).to_milliseconds();
+        if ((force_update && previous_downloaded_size == 0) || time_diff_ms > speed_update_time_in_ms) {
+            auto size_diff = downloaded_size - previous_downloaded_size;
+            previous_speed_update_time = current_time;
+            previous_downloaded_size = downloaded_size;
+            current_bytes_per_second_speed = size_diff * 1000 / time_diff_ms;
+        }
+
+        if (previous_downloaded_size == 0)
+            warn(" at --.-B/s");
+        else
+            warn(" at {}/s", human_readable_size(current_bytes_per_second_speed));
+    };
+
     Function<void()> setup_request = [&] {
         if (!request) {
             warnln("Failed to start request for '{}'", url_str);
@@ -274,28 +303,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             }
         }
 
-        request->on_progress = [&](Optional<u32> maybe_total_size, u32 downloaded_size) {
-            gettimeofday(&current_time, nullptr);
-            timersub(&current_time, &previous_time, &time_diff);
-            auto time_diff_ms = time_diff.tv_sec * 1000 + time_diff.tv_usec / 1000;
-            if (time_diff_ms < report_time_in_ms)
-                return;
-
-            warn("\r\033[2K");
-            if (maybe_total_size.has_value()) {
-                warn("\033]9;{};{};\033\\", downloaded_size, maybe_total_size.value());
-                warn("Download progress: {} / {}", human_readable_size(downloaded_size), human_readable_size(maybe_total_size.value()));
-            } else {
-                warn("Download progress: {} / ???", human_readable_size(downloaded_size));
-            }
-
-            auto size_diff = downloaded_size - previous_downloaded_size;
-            if (time_diff_ms > speed_update_time_in_ms) {
-                previous_time = current_time;
-                previous_downloaded_size = downloaded_size;
-            }
-
-            warn(" at {}/s", human_readable_size(((float)size_diff / (float)time_diff_ms) * 1000));
+        request->on_progress = [&](Optional<u64> maybe_total_size, u64 downloaded_size) {
+            update_progress(move(maybe_total_size), downloaded_size, false);
         };
         request->on_headers_received = [&](auto& response_headers, auto status_code) {
             if (received_actual_headers)
@@ -325,7 +334,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                 }
 
                 if (output_name.is_empty())
-                    output_name = url.path();
+                    output_name = url.serialize_path();
 
                 LexicalPath path { output_name };
                 output_name = path.basename();
@@ -334,11 +343,11 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                 if (output_name.is_empty() || output_name == "/") {
                     int i = -1;
                     do {
-                        output_name = url.host();
+                        output_name = url.serialized_host().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
                         if (i > -1)
                             output_name = DeprecatedString::formatted("{}.{}", output_name, i);
                         ++i;
-                    } while (Core::File::exists(output_name));
+                    } while (FileSystem::exists(output_name));
                 }
 
                 int target_file_fd = open(output_name.characters(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -386,9 +395,12 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                     warnln("Request returned error {}", status_code_value);
             }
         };
-        request->on_finish = [&](bool success, auto) {
+        request->on_finish = [&](bool success, u64 total_size) {
             if (following_url)
                 return;
+
+            if (success)
+                update_progress(total_size, total_size, true);
 
             warn("\033]9;-1;\033\\");
             warnln();
@@ -400,7 +412,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         request->stream_into(output_stream);
     };
 
-    request = protocol_client->start_request(method, url, request_headers, data ? StringView { data, strlen(data) }.bytes() : ReadonlyBytes {}, proxy_data);
+    request = protocol_client->start_request(method, url, request_headers, data.bytes(), proxy_data);
     setup_request();
 
     dbgln("started request with id {}", request->id());

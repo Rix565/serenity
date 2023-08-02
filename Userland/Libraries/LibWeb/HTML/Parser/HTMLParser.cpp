@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
+ * Copyright (c) 2023, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,6 +11,8 @@
 #include <AK/Utf32View.h>
 #include <LibTextCodec/Decoder.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
+#include <LibWeb/CSS/StyleValues/LengthStyleValue.h>
+#include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
 #include <LibWeb/DOM/Comment.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentType.h>
@@ -17,6 +20,7 @@
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/ProcessingInstruction.h>
 #include <LibWeb/DOM/Text.h>
+#include <LibWeb/HTML/CustomElements/CustomElementDefinition.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/HTMLFormElement.h>
@@ -30,6 +34,7 @@
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/Infra/CharacterTypes.h>
+#include <LibWeb/Infra/Strings.h>
 #include <LibWeb/Namespace.h>
 #include <LibWeb/SVG/TagNames.h>
 
@@ -219,6 +224,28 @@ void HTMLParser::the_end()
 {
     // Once the user agent stops parsing the document, the user agent must run the following steps:
 
+    // The entirety of "the end" should be a no-op for HTML fragment parsers, because:
+    // - the temporary document is not accessible, making the DOMContentLoaded event and "ready for post load tasks" do
+    //   nothing, making the parser not re-entrant from document.{open,write,close} and document.readyState inaccessible
+    // - there is no Window associated with it and no associated browsing context with the temporary document (meaning
+    //   the Window load event is skipped and making the load timing info inaccessible)
+    // - scripts are not able to be prepared, meaning the script queues are empty.
+    // However, the unconditional "spin the event loop" invocations cause two issues:
+    // - Microtask timing is changed, as "spin the event loop" performs an unconditional microtask checkpoint, causing
+    //   things to happen out of order. For example, YouTube sets the innerHTML of a <template> element in the constructor
+    //   of the ytd-app custom element _before_ setting up class attributes. Since custom elements use microtasks to run
+    //   callbacks, this causes custom element callbacks that rely on attributes setup by the constructor to run before
+    //   the attributes are set up, causing unhandled exceptions.
+    // - Load event delaying can spin forever, e.g. if the fragment contains an <img> element which stops delaying the
+    //   load event from an element task. Since tasks are not considered runnable if they're from a document with no
+    //   browsing context (i.e. the temporary document made for innerHTML), the <img> element will forever delay the load
+    //   event and cause an infinite loop.
+    // We can avoid these issues and also avoid doing unnecessary work by simply skipping "the end" for HTML fragment
+    // parsers.
+    // See the message of the commit that added this for more details.
+    if (m_parsing_fragment)
+        return;
+
     // FIXME: 1. If the active speculative HTML parser is not null, then stop the speculative HTML parser and return.
 
     // 2. Set the insertion point to undefined.
@@ -253,9 +280,9 @@ void HTMLParser::the_end()
         document->load_timing_info().dom_content_loaded_event_start_time = HighResolutionTime::unsafe_shared_current_time();
 
         // 2. Fire an event named DOMContentLoaded at the Document object, with its bubbles attribute initialized to true.
-        auto content_loaded_event = DOM::Event::create(document->realm(), HTML::EventNames::DOMContentLoaded);
+        auto content_loaded_event = DOM::Event::create(document->realm(), HTML::EventNames::DOMContentLoaded).release_value_but_fixme_should_propagate_errors();
         content_loaded_event->set_bubbles(true);
-        document->dispatch_event(*content_loaded_event);
+        document->dispatch_event(content_loaded_event);
 
         // 3. Set the Document's load timing info's DOM content loaded event end time to the current high resolution time given the Document's relevant global object.
         document->load_timing_info().dom_content_loaded_event_end_time = HighResolutionTime::unsafe_shared_current_time();
@@ -294,7 +321,7 @@ void HTMLParser::the_end()
         // 5. Fire an event named load at window, with legacy target override flag set.
         // FIXME: The legacy target override flag is currently set by a virtual override of dispatch_event()
         //        We should reorganize this so that the flag appears explicitly here instead.
-        window->dispatch_event(*DOM::Event::create(document->realm(), HTML::EventNames::load));
+        window->dispatch_event(DOM::Event::create(document->realm(), HTML::EventNames::load).release_value_but_fixme_should_propagate_errors());
 
         // FIXME: 6. Invoke WebDriver BiDi load complete with the Document's browsing context, and a new WebDriver BiDi navigation status whose id is the Document object's navigation id, status is "complete", and url is the Document object's URL.
 
@@ -413,16 +440,16 @@ DOM::QuirksMode HTMLParser::which_quirks_mode(HTMLToken const& doctype_token) co
     auto const& public_identifier = doctype_token.doctype_data().public_identifier;
     auto const& system_identifier = doctype_token.doctype_data().system_identifier;
 
-    if (public_identifier.equals_ignoring_case("-//W3O//DTD W3 HTML Strict 3.0//EN//"sv))
+    if (public_identifier.equals_ignoring_ascii_case("-//W3O//DTD W3 HTML Strict 3.0//EN//"sv))
         return DOM::QuirksMode::Yes;
 
-    if (public_identifier.equals_ignoring_case("-/W3C/DTD HTML 4.0 Transitional/EN"sv))
+    if (public_identifier.equals_ignoring_ascii_case("-/W3C/DTD HTML 4.0 Transitional/EN"sv))
         return DOM::QuirksMode::Yes;
 
-    if (public_identifier.equals_ignoring_case("HTML"sv))
+    if (public_identifier.equals_ignoring_ascii_case("HTML"sv))
         return DOM::QuirksMode::Yes;
 
-    if (system_identifier.equals_ignoring_case("http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd"sv))
+    if (system_identifier.equals_ignoring_ascii_case("http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd"sv))
         return DOM::QuirksMode::Yes;
 
     for (auto& public_id : s_quirks_public_ids) {
@@ -536,8 +563,8 @@ void HTMLParser::handle_before_html(HTMLToken& token)
     // -> Anything else
 AnythingElse:
     // Create an html element whose node document is the Document object. Append it to the Document object. Put this element in the stack of open elements.
-    auto element = create_element(document(), HTML::TagNames::html, Namespace::HTML);
-    MUST(document().append_child(*element));
+    auto element = create_element(document(), HTML::TagNames::html, Namespace::HTML).release_value_but_fixme_should_propagate_errors();
+    MUST(document().append_child(element));
     m_stack_of_open_elements.push(element);
 
     // Switch the insertion mode to "before head", then reprocess the token.
@@ -616,7 +643,7 @@ HTMLParser::AdjustedInsertionLocation HTMLParser::find_appropriate_place_for_ins
     return adjusted_insertion_location;
 }
 
-JS::NonnullGCPtr<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, DeprecatedFlyString const& namespace_, DOM::Node const& intended_parent)
+JS::NonnullGCPtr<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, DeprecatedFlyString const& namespace_, DOM::Node& intended_parent)
 {
     // FIXME: 1. If the active speculative HTML parser is not null, then return the result of creating a speculative mock element given given namespace, the tag name of the given token, and the attributes of the given token.
     // FIXME: 2. Otherwise, optionally create a speculative mock element given given namespace, the tag name of the given token, and the attributes of the given token.
@@ -627,18 +654,36 @@ JS::NonnullGCPtr<DOM::Element> HTMLParser::create_element_for(HTMLToken const& t
     // 4. Let local name be the tag name of the token.
     auto local_name = token.tag_name();
 
-    // FIXME: 5. Let is be the value of the "is" attribute in the given token, if such an attribute exists, or null otherwise.
-    // FIXME: 6. Let definition be the result of looking up a custom element definition given document, given namespace, local name, and is.
-    // FIXME: 7. If definition is non-null and the parser was not created as part of the HTML fragment parsing algorithm, then let will execute script be true. Otherwise, let it be false.
-    // FIXME: 8. If will execute script is true, then:
-    // FIXME:    1. Increment document's throw-on-dynamic-markup-insertion counter.
-    // FIXME:    2. If the JavaScript execution context stack is empty, then perform a microtask checkpoint.
-    // FIXME:    3. Push a new element queue onto document's relevant agent's custom element reactions stack.
+    // 5. Let is be the value of the "is" attribute in the given token, if such an attribute exists, or null otherwise.
+    auto is_value_deprecated_string = token.attribute(AttributeNames::is);
+    Optional<String> is_value;
+    if (!is_value_deprecated_string.is_null())
+        is_value = String::from_utf8(is_value_deprecated_string).release_value_but_fixme_should_propagate_errors();
+
+    // 6. Let definition be the result of looking up a custom element definition given document, given namespace, local name, and is.
+    auto definition = document->lookup_custom_element_definition(namespace_, local_name, is_value);
+
+    // 7. If definition is non-null and the parser was not created as part of the HTML fragment parsing algorithm, then let will execute script be true. Otherwise, let it be false.
+    bool will_execute_script = definition && !m_parsing_fragment;
+
+    // 8. If will execute script is true, then:
+    if (will_execute_script) {
+        // 1. Increment document's throw-on-dynamic-markup-insertion counter.
+        document->increment_throw_on_dynamic_markup_insertion_counter({});
+
+        // 2. If the JavaScript execution context stack is empty, then perform a microtask checkpoint.
+        auto& vm = main_thread_event_loop().vm();
+        if (vm.execution_context_stack().is_empty())
+            perform_a_microtask_checkpoint();
+
+        // 3. Push a new element queue onto document's relevant agent's custom element reactions stack.
+        auto& custom_data = verify_cast<Bindings::WebEngineCustomData>(*vm.custom_data());
+        custom_data.custom_element_reactions_stack.element_queue_stack.append({});
+    }
 
     // 9. Let element be the result of creating an element given document, localName, given namespace, null, and is.
-    // FIXME: If will execute script is true, set the synchronous custom elements flag; otherwise, leave it unset.
-    // FIXME: Pass in `null` and `is`.
-    auto element = create_element(*document, local_name, namespace_);
+    //    If will execute script is true, set the synchronous custom elements flag; otherwise, leave it unset.
+    auto element = create_element(*document, local_name, namespace_, {}, is_value, will_execute_script).release_value_but_fixme_should_propagate_errors();
 
     // 10. Append each attribute in the given token to element.
     // FIXME: This isn't the exact `append` the spec is talking about.
@@ -647,10 +692,19 @@ JS::NonnullGCPtr<DOM::Element> HTMLParser::create_element_for(HTMLToken const& t
         return IterationDecision::Continue;
     });
 
-    // FIXME: 11. If will execute script is true, then:
-    // FIXME:     1. Let queue be the result of popping from document's relevant agent's custom element reactions stack. (This will be the same element queue as was pushed above.)
-    // FIXME:     2. Invoke custom element reactions in queue.
-    // FIXME:     3. Decrement document's throw-on-dynamic-markup-insertion counter.
+    // 11. If will execute script is true, then:
+    if (will_execute_script) {
+        // 1. Let queue be the result of popping from document's relevant agent's custom element reactions stack. (This will be the same element queue as was pushed above.)
+        auto& vm = main_thread_event_loop().vm();
+        auto& custom_data = verify_cast<Bindings::WebEngineCustomData>(*vm.custom_data());
+        auto queue = custom_data.custom_element_reactions_stack.element_queue_stack.take_last();
+
+        // 2. Invoke custom element reactions in queue.
+        Bindings::invoke_custom_element_reactions(queue);
+
+        // 3. Decrement document's throw-on-dynamic-markup-insertion counter.
+        document->decrement_throw_on_dynamic_markup_insertion_counter({});
+    }
 
     // FIXME: 12. If element has an xmlns attribute in the XMLNS namespace whose value is not exactly the same as the element's namespace, that is a parse error.
     //            Similarly, if element has an xmlns:xlink attribute in the XMLNS namespace whose value is not the XLink Namespace, that is a parse error.
@@ -692,14 +746,22 @@ JS::NonnullGCPtr<DOM::Element> HTMLParser::insert_foreign_element(HTMLToken cons
 
     // NOTE: If it's not possible to insert the element at the adjusted insertion location, the element is simply dropped.
     if (!pre_insertion_validity.is_exception()) {
+        // 1. If the parser was not created as part of the HTML fragment parsing algorithm, then push a new element queue onto element's relevant agent's custom element reactions stack.
         if (!m_parsing_fragment) {
-            // FIXME: push a new element queue onto element's relevant agent's custom element reactions stack.
+            auto& vm = main_thread_event_loop().vm();
+            auto& custom_data = verify_cast<Bindings::WebEngineCustomData>(*vm.custom_data());
+            custom_data.custom_element_reactions_stack.element_queue_stack.append({});
         }
 
+        // 2. Insert element at the adjusted insertion location.
         adjusted_insertion_location.parent->insert_before(*element, adjusted_insertion_location.insert_before_sibling);
 
+        // 3. If the parser was not created as part of the HTML fragment parsing algorithm, then pop the element queue from element's relevant agent's custom element reactions stack, and invoke custom element reactions in that queue.
         if (!m_parsing_fragment) {
-            // FIXME: pop the element queue from element's relevant agent's custom element reactions stack, and invoke custom element reactions in that queue.
+            auto& vm = main_thread_event_loop().vm();
+            auto& custom_data = verify_cast<Bindings::WebEngineCustomData>(*vm.custom_data());
+            auto queue = custom_data.custom_element_reactions_stack.element_queue_stack.take_last();
+            Bindings::invoke_custom_element_reactions(queue);
         }
     }
 
@@ -939,7 +1001,11 @@ DOM::Text* HTMLParser::find_character_insertion_node()
 {
     auto adjusted_insertion_location = find_appropriate_place_for_inserting_node();
     if (adjusted_insertion_location.insert_before_sibling) {
-        TODO();
+        if (adjusted_insertion_location.insert_before_sibling->previous_sibling() && adjusted_insertion_location.insert_before_sibling->previous_sibling()->is_text())
+            return static_cast<DOM::Text*>(adjusted_insertion_location.insert_before_sibling->previous_sibling());
+        auto new_text_node = realm().heap().allocate<DOM::Text>(realm(), document(), "").release_allocated_value_but_fixme_should_propagate_errors();
+        adjusted_insertion_location.parent->insert_before(*new_text_node, *adjusted_insertion_location.insert_before_sibling);
+        return new_text_node;
     }
     if (adjusted_insertion_location.parent->is_document())
         return nullptr;
@@ -955,7 +1021,6 @@ void HTMLParser::flush_character_insertions()
     if (m_character_insertion_builder.is_empty())
         return;
     m_character_insertion_node->set_data(m_character_insertion_builder.to_deprecated_string());
-    m_character_insertion_node->parent()->children_changed();
     m_character_insertion_builder.clear();
 }
 
@@ -1922,7 +1987,7 @@ void HTMLParser::handle_in_body(HTMLToken& token)
         (void)m_stack_of_open_elements.pop();
         token.acknowledge_self_closing_flag_if_set();
         auto type_attribute = token.attribute(HTML::AttributeNames::type);
-        if (type_attribute.is_null() || !type_attribute.equals_ignoring_case("hidden"sv)) {
+        if (type_attribute.is_null() || !type_attribute.equals_ignoring_ascii_case("hidden"sv)) {
             m_frameset_ok = false;
         }
         return;
@@ -2268,6 +2333,12 @@ void HTMLParser::handle_text(HTMLToken& token)
         // Non-standard: Make sure the <script> element has up-to-date text content before preparing the script.
         flush_character_insertions();
 
+        // If the active speculative HTML parser is null and the JavaScript execution context stack is empty, then perform a microtask checkpoint.
+        // FIXME: If the active speculative HTML parser is null
+        auto& vm = main_thread_event_loop().vm();
+        if (vm.execution_context_stack().is_empty())
+            perform_a_microtask_checkpoint();
+
         // Let script be the current node (which will be a script element).
         JS::NonnullGCPtr<HTMLScriptElement> script = verify_cast<HTMLScriptElement>(current_node());
 
@@ -2308,9 +2379,9 @@ void HTMLParser::handle_text(HTMLToken& token)
             if (script_nesting_level() != 0) {
                 // Set the parser pause flag to true,
                 m_parser_pause_flag = true;
-                // FIXME: and abort the processing of any nested invocations of the tokenizer, yielding control back to the caller.
-                //        (Tokenization will resume when the caller returns to the "outer" tree construction stage.)
-                TODO();
+                // and abort the processing of any nested invocations of the tokenizer, yielding control back to the caller.
+                // (Tokenization will resume when the caller returns to the "outer" tree construction stage.)
+                return;
             }
 
             // Otherwise:
@@ -2328,11 +2399,11 @@ void HTMLParser::handle_text(HTMLToken& token)
 
                     // 5. If the parser's Document has a style sheet that is blocking scripts
                     //    or the script's ready to be parser-executed is false:
-                    if (m_document->has_a_style_sheet_that_is_blocking_scripts() || script->is_ready_to_be_parser_executed() == false) {
+                    if (m_document->has_a_style_sheet_that_is_blocking_scripts() || the_script->is_ready_to_be_parser_executed() == false) {
                         // spin the event loop until the parser's Document has no style sheet that is blocking scripts
                         // and the script's ready to be parser-executed becomes true.
                         main_thread_event_loop().spin_until([&] {
-                            return !m_document->has_a_style_sheet_that_is_blocking_scripts() && script->is_ready_to_be_parser_executed();
+                            return !m_document->has_a_style_sheet_that_is_blocking_scripts() && the_script->is_ready_to_be_parser_executed();
                         });
                     }
 
@@ -2406,60 +2477,106 @@ void HTMLParser::clear_the_stack_back_to_a_table_body_context()
         VERIFY(m_parsing_fragment);
 }
 
+// https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intr
 void HTMLParser::handle_in_row(HTMLToken& token)
 {
+    // A start tag whose tag name is one of: "th", "td"
     if (token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::th, HTML::TagNames::td)) {
+        // Clear the stack back to a table row context.
         clear_the_stack_back_to_a_table_row_context();
+
+        // Insert an HTML element for the token, then switch the insertion mode to "in cell".
         (void)insert_html_element(token);
         m_insertion_mode = InsertionMode::InCell;
+
+        // Insert a marker at the end of the list of active formatting elements.
         m_list_of_active_formatting_elements.add_marker();
         return;
     }
 
+    // An end tag whose tag name is "tr"
     if (token.is_end_tag() && token.tag_name() == HTML::TagNames::tr) {
+        // If the stack of open elements does not have a tr element in table scope, this is a parse error; ignore the token.
         if (!m_stack_of_open_elements.has_in_table_scope(HTML::TagNames::tr)) {
             log_parse_error();
             return;
         }
+
+        // Otherwise:
+        // Clear the stack back to a table row context.
         clear_the_stack_back_to_a_table_row_context();
+
+        // Pop the current node (which will be a tr element) from the stack of open elements.
         (void)m_stack_of_open_elements.pop();
+
+        // Switch the insertion mode to "in table body".
         m_insertion_mode = InsertionMode::InTableBody;
         return;
     }
 
+    // A start tag whose tag name is one of: "caption", "col", "colgroup", "tbody", "tfoot", "thead", "tr"
+    // An end tag whose tag name is "table"
     if ((token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::caption, HTML::TagNames::col, HTML::TagNames::colgroup, HTML::TagNames::tbody, HTML::TagNames::tfoot, HTML::TagNames::thead, HTML::TagNames::tr))
         || (token.is_end_tag() && token.tag_name() == HTML::TagNames::table)) {
+
+        // If the stack of open elements does not have a tr element in table scope, this is a parse error; ignore the token.
         if (!m_stack_of_open_elements.has_in_table_scope(HTML::TagNames::tr)) {
             log_parse_error();
             return;
         }
+
+        // Otherwise:
+        // Clear the stack back to a table row context.
         clear_the_stack_back_to_a_table_row_context();
+
+        // Pop the current node (which will be a tr element) from the stack of open elements.
         (void)m_stack_of_open_elements.pop();
+
+        // Switch the insertion mode to "in table body".
         m_insertion_mode = InsertionMode::InTableBody;
+
+        // Reprocess the token.
         process_using_the_rules_for(m_insertion_mode, token);
         return;
     }
 
+    // An end tag whose tag name is one of: "tbody", "tfoot", "thead"
     if (token.is_end_tag() && token.tag_name().is_one_of(HTML::TagNames::tbody, HTML::TagNames::tfoot, HTML::TagNames::thead)) {
+        // If the stack of open elements does not have an element in table scope that is an HTML element with the same tag name as the token, this is a parse error; ignore the token.
         if (!m_stack_of_open_elements.has_in_table_scope(token.tag_name())) {
             log_parse_error();
             return;
         }
+
+        // If the stack of open elements does not have a tr element in table scope, ignore the token.
         if (!m_stack_of_open_elements.has_in_table_scope(HTML::TagNames::tr)) {
             return;
         }
+
+        // Otherwise:
+        // Clear the stack back to a table row context.
         clear_the_stack_back_to_a_table_row_context();
+
+        // Pop the current node (which will be a tr element) from the stack of open elements.
         (void)m_stack_of_open_elements.pop();
+
+        // Switch the insertion mode to "in table body".
         m_insertion_mode = InsertionMode::InTableBody;
+
+        // Reprocess the token.
         process_using_the_rules_for(m_insertion_mode, token);
         return;
     }
 
+    // An end tag whose tag name is one of: "body", "caption", "col", "colgroup", "html", "td", "th"
     if (token.is_end_tag() && token.tag_name().is_one_of(HTML::TagNames::body, HTML::TagNames::caption, HTML::TagNames::col, HTML::TagNames::colgroup, HTML::TagNames::html, HTML::TagNames::td, HTML::TagNames::th)) {
+        // Parse error. Ignore the token.
         log_parse_error();
         return;
     }
 
+    // Anything else:
+    // Process the token using the rules for the "in table" insertion mode.
     process_using_the_rules_for(InsertionMode::InTable, token);
 }
 
@@ -2526,37 +2643,43 @@ void HTMLParser::handle_in_cell(HTMLToken& token)
     process_using_the_rules_for(InsertionMode::InBody, token);
 }
 
+// https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intabletext
 void HTMLParser::handle_in_table_text(HTMLToken& token)
 {
     if (token.is_character()) {
+        // A character token that is U+0000 NULL
         if (token.code_point() == 0) {
+            // Parse error. Ignore the token.
             log_parse_error();
             return;
         }
-
+        // Any other character token
+        // Append the character token to the pending table character tokens list.
         m_pending_table_character_tokens.append(move(token));
         return;
     }
 
-    for (auto& pending_token : m_pending_table_character_tokens) {
-        VERIFY(pending_token.is_character());
-        if (!pending_token.is_parser_whitespace()) {
-            // If any of the tokens in the pending table character tokens list
-            // are character tokens that are not ASCII whitespace, then this is a parse error:
-            // reprocess the character tokens in the pending table character tokens list using
-            // the rules given in the "anything else" entry in the "in table" insertion mode.
-            log_parse_error();
+    // Anything else
+
+    // If any of the tokens in the pending table character tokens list
+    // are character tokens that are not ASCII whitespace, then this is a parse error:
+    // reprocess the character tokens in the pending table character tokens list using
+    // the rules given in the "anything else" entry in the "in table" insertion mode.
+    if (any_of(m_pending_table_character_tokens, [](auto const& token) { return !token.is_parser_whitespace(); })) {
+        log_parse_error();
+        for (auto& pending_token : m_pending_table_character_tokens) {
             m_foster_parenting = true;
-            process_using_the_rules_for(InsertionMode::InBody, token);
+            process_using_the_rules_for(InsertionMode::InBody, pending_token);
             m_foster_parenting = false;
-            return;
+        }
+    } else {
+        // Otherwise, insert the characters given by the pending table character tokens list.
+        for (auto& pending_token : m_pending_table_character_tokens) {
+            insert_character(pending_token.code_point());
         }
     }
 
-    for (auto& pending_token : m_pending_table_character_tokens) {
-        insert_character(pending_token.code_point());
-    }
-
+    // Switch the insertion mode to the original insertion mode and reprocess the token.
     m_insertion_mode = m_original_insertion_mode;
     process_using_the_rules_for(m_insertion_mode, token);
 }
@@ -2615,122 +2738,213 @@ void HTMLParser::handle_in_table_body(HTMLToken& token)
     process_using_the_rules_for(InsertionMode::InTable, token);
 }
 
+// https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-intable
 void HTMLParser::handle_in_table(HTMLToken& token)
 {
+    // A character token, if the current node is table, tbody, template, tfoot, thead, or tr element
     if (token.is_character() && current_node().local_name().is_one_of(HTML::TagNames::table, HTML::TagNames::tbody, HTML::TagNames::tfoot, HTML::TagNames::thead, HTML::TagNames::tr)) {
+        // Let the pending table character tokens be an empty list of tokens.
         m_pending_table_character_tokens.clear();
+
+        // Let the original insertion mode be the current insertion mode.
         m_original_insertion_mode = m_insertion_mode;
+
+        // Switch the insertion mode to "in table text" and reprocess the token.
         m_insertion_mode = InsertionMode::InTableText;
         process_using_the_rules_for(InsertionMode::InTableText, token);
         return;
     }
+
+    // A comment token
     if (token.is_comment()) {
+        // Insert a comment.
         insert_comment(token);
         return;
     }
+    // A DOCTYPE token
     if (token.is_doctype()) {
+        // Parse error. Ignore the token.
         log_parse_error();
         return;
     }
+
+    // A start tag whose tag name is "caption"
     if (token.is_start_tag() && token.tag_name() == HTML::TagNames::caption) {
+        // Clear the stack back to a table context.
         clear_the_stack_back_to_a_table_context();
+
+        // Insert a marker at the end of the list of active formatting elements.
         m_list_of_active_formatting_elements.add_marker();
+
+        // Insert an HTML element for the token, then switch the insertion mode to "in caption".
         (void)insert_html_element(token);
         m_insertion_mode = InsertionMode::InCaption;
         return;
     }
+
+    // A start tag whose tag name is "colgroup"
     if (token.is_start_tag() && token.tag_name() == HTML::TagNames::colgroup) {
+        // Clear the stack back to a table context.
         clear_the_stack_back_to_a_table_context();
+
+        // Insert an HTML element for the token, then switch the insertion mode to "in column group".
         (void)insert_html_element(token);
         m_insertion_mode = InsertionMode::InColumnGroup;
         return;
     }
+
+    // A start tag whose tag name is "col"
     if (token.is_start_tag() && token.tag_name() == HTML::TagNames::col) {
+        // Clear the stack back to a table context.
         clear_the_stack_back_to_a_table_context();
+
+        // Insert an HTML element for a "colgroup" start tag token with no attributes, then switch the insertion mode to "in column group".
         (void)insert_html_element(HTMLToken::make_start_tag(HTML::TagNames::colgroup));
         m_insertion_mode = InsertionMode::InColumnGroup;
+
+        // Reprocess the current token.
         process_using_the_rules_for(m_insertion_mode, token);
         return;
     }
+
+    // A start tag whose tag name is one of: "tbody", "tfoot", "thead"
     if (token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::tbody, HTML::TagNames::tfoot, HTML::TagNames::thead)) {
+        // Clear the stack back to a table context.
         clear_the_stack_back_to_a_table_context();
+
+        // Insert an HTML element for the token, then switch the insertion mode to "in table body".
         (void)insert_html_element(token);
         m_insertion_mode = InsertionMode::InTableBody;
         return;
     }
+
+    // A start tag whose tag name is one of: "td", "th", "tr"
     if (token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::td, HTML::TagNames::th, HTML::TagNames::tr)) {
+        // Clear the stack back to a table context.
         clear_the_stack_back_to_a_table_context();
+
+        // Insert an HTML element for a "tbody" start tag token with no attributes, then switch the insertion mode to "in table body".
         (void)insert_html_element(HTMLToken::make_start_tag(HTML::TagNames::tbody));
         m_insertion_mode = InsertionMode::InTableBody;
+
+        // Reprocess the current token.
         process_using_the_rules_for(m_insertion_mode, token);
         return;
     }
+
+    // A start tag whose tag name is "table"
     if (token.is_start_tag() && token.tag_name() == HTML::TagNames::table) {
+        // Parse error.
         log_parse_error();
+
+        // If the stack of open elements does not have a table element in table scope, ignore the token.
         if (!m_stack_of_open_elements.has_in_table_scope(HTML::TagNames::table))
             return;
 
+        // Otherwise:
+        // Pop elements from this stack until a table element has been popped from the stack.
         m_stack_of_open_elements.pop_until_an_element_with_tag_name_has_been_popped(HTML::TagNames::table);
 
+        // Reset the insertion mode appropriately.
         reset_the_insertion_mode_appropriately();
+
+        // Reprocess the token.
         process_using_the_rules_for(m_insertion_mode, token);
         return;
     }
+
+    // An end tag whose tag name is "table"
     if (token.is_end_tag() && token.tag_name() == HTML::TagNames::table) {
+        // If the stack of open elements does not have a table element in table scope, this is a parse error; ignore the token.
         if (!m_stack_of_open_elements.has_in_table_scope(HTML::TagNames::table)) {
             log_parse_error();
             return;
         }
 
+        // Otherwise:
+        // Pop elements from this stack until a table element has been popped from the stack.
         m_stack_of_open_elements.pop_until_an_element_with_tag_name_has_been_popped(HTML::TagNames::table);
 
+        // Reset the insertion mode appropriately.
         reset_the_insertion_mode_appropriately();
         return;
     }
+
+    // An end tag whose tag name is one of: "body", "caption", "col", "colgroup", "html", "tbody", "td", "tfoot", "th", "thead", "tr"
     if (token.is_end_tag() && token.tag_name().is_one_of(HTML::TagNames::body, HTML::TagNames::caption, HTML::TagNames::col, HTML::TagNames::colgroup, HTML::TagNames::html, HTML::TagNames::tbody, HTML::TagNames::td, HTML::TagNames::tfoot, HTML::TagNames::th, HTML::TagNames::thead, HTML::TagNames::tr)) {
+        // Parse error. Ignore the token.
         log_parse_error();
         return;
     }
+
+    // A start tag whose tag name is one of: "style", "script", "template"
+    // An end tag whose tag name is "template"
     if ((token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::style, HTML::TagNames::script, HTML::TagNames::template_))
         || (token.is_end_tag() && token.tag_name() == HTML::TagNames::template_)) {
+        // Process the token using the rules for the "in head" insertion mode.
         process_using_the_rules_for(InsertionMode::InHead, token);
         return;
     }
+
+    // A start tag whose tag name is "input"
     if (token.is_start_tag() && token.tag_name() == HTML::TagNames::input) {
+        // If the token does not have an attribute with the name "type",
+        // or if it does, but that attribute's value is not an ASCII case-insensitive match for the string "hidden",
+        // then: act as described in the "anything else" entry below.
         auto type_attribute = token.attribute(HTML::AttributeNames::type);
-        if (type_attribute.is_null() || !type_attribute.equals_ignoring_case("hidden"sv)) {
+        if (type_attribute.is_null() || !type_attribute.equals_ignoring_ascii_case("hidden"sv)) {
             goto AnythingElse;
         }
 
+        // Otherwise:
+        // Parse error.
         log_parse_error();
+
+        // Insert an HTML element for the token.
         (void)insert_html_element(token);
 
-        // FIXME: Is this the correct interpretation of "Pop that input element off the stack of open elements."?
-        //        Because this wording is the first time it's seen in the spec.
-        //        Other times it's worded as: "Immediately pop the current node off the stack of open elements."
+        // Pop that input element off the stack of open elements.
         (void)m_stack_of_open_elements.pop();
+
+        // Acknowledge the token's self-closing flag, if it is set.
         token.acknowledge_self_closing_flag_if_set();
         return;
     }
+
+    // A start tag whose tag name is "form"
     if (token.is_start_tag() && token.tag_name() == HTML::TagNames::form) {
+        // Parse error.
         log_parse_error();
+
+        // If there is a template element on the stack of open elements,
+        // or if the form element pointer is not null, ignore the token.
         if (m_form_element.ptr() || m_stack_of_open_elements.contains(HTML::TagNames::template_)) {
             return;
         }
 
+        // Otherwise:
+        // Insert an HTML element for the token, and set the form element pointer to point to the element created.
         m_form_element = JS::make_handle(verify_cast<HTMLFormElement>(*insert_html_element(token)));
 
-        // FIXME: See previous FIXME, as this is the same situation but for form.
+        // Pop that form element off the stack of open elements.
         (void)m_stack_of_open_elements.pop();
         return;
     }
+
+    // An end-of-file token
     if (token.is_end_of_file()) {
+        // Process the token using the rules for the "in body" insertion mode.
         process_using_the_rules_for(InsertionMode::InBody, token);
         return;
     }
 
 AnythingElse:
+    // Anything else
+
+    // Parse error.
     log_parse_error();
+
+    // Enable foster parenting, process the token using the rules for the "in body" insertion mode, and then disable foster parenting.
     m_foster_parenting = true;
     process_using_the_rules_for(InsertionMode::InBody, token);
     m_foster_parenting = false;
@@ -3448,7 +3662,7 @@ DOM::Document& HTMLParser::document()
 Vector<JS::Handle<DOM::Node>> HTMLParser::parse_html_fragment(DOM::Element& context_element, StringView markup)
 {
     // 1. Create a new Document node, and mark it as being an HTML document.
-    auto temp_document = DOM::Document::create(context_element.realm());
+    auto temp_document = DOM::Document::create(context_element.realm()).release_value_but_fixme_should_propagate_errors();
     temp_document->set_document_type(DOM::Document::Type::HTML);
 
     // 2. If the node document of the context element is in quirks mode, then let the Document be in quirks mode.
@@ -3499,7 +3713,7 @@ Vector<JS::Handle<DOM::Node>> HTMLParser::parse_html_fragment(DOM::Element& cont
     }
 
     // 5. Let root be a new html element with no attributes.
-    auto root = create_element(context_element.document(), HTML::TagNames::html, Namespace::HTML);
+    auto root = create_element(context_element.document(), HTML::TagNames::html, Namespace::HTML).release_value_but_fixme_should_propagate_errors();
 
     // 6. Append the element root to the Document node created above.
     MUST(temp_document->append_child(root));
@@ -3562,7 +3776,7 @@ DeprecatedString HTMLParser::serialize_html_fragment(DOM::Node const& node)
 {
     // The algorithm takes as input a DOM Element, Document, or DocumentFragment referred to as the node.
     VERIFY(node.is_element() || node.is_document() || node.is_document_fragment());
-    JS::NonnullGCPtr<DOM::Node> actual_node = node;
+    JS::NonnullGCPtr<DOM::Node const> actual_node = node;
 
     if (is<DOM::Element>(node)) {
         auto& element = verify_cast<DOM::Element>(node);
@@ -3586,23 +3800,23 @@ DeprecatedString HTMLParser::serialize_html_fragment(DOM::Node const& node)
     auto escape_string = [](StringView string, AttributeMode attribute_mode) -> DeprecatedString {
         // https://html.spec.whatwg.org/multipage/parsing.html#escapingString
         StringBuilder builder;
-        for (auto& ch : string) {
+        for (auto code_point : Utf8View { string }) {
             // 1. Replace any occurrence of the "&" character by the string "&amp;".
-            if (ch == '&')
+            if (code_point == '&')
                 builder.append("&amp;"sv);
             // 2. Replace any occurrences of the U+00A0 NO-BREAK SPACE character by the string "&nbsp;".
-            else if (ch == '\xA0')
+            else if (code_point == 0xA0)
                 builder.append("&nbsp;"sv);
             // 3. If the algorithm was invoked in the attribute mode, replace any occurrences of the """ character by the string "&quot;".
-            else if (ch == '"' && attribute_mode == AttributeMode::Yes)
+            else if (code_point == '"' && attribute_mode == AttributeMode::Yes)
                 builder.append("&quot;"sv);
             // 4. If the algorithm was not invoked in the attribute mode, replace any occurrences of the "<" character by the string "&lt;", and any occurrences of the ">" character by the string "&gt;".
-            else if (ch == '<' && attribute_mode == AttributeMode::No)
+            else if (code_point == '<' && attribute_mode == AttributeMode::No)
                 builder.append("&lt;"sv);
-            else if (ch == '>' && attribute_mode == AttributeMode::No)
+            else if (code_point == '>' && attribute_mode == AttributeMode::No)
                 builder.append("&gt;"sv);
             else
-                builder.append(ch);
+                builder.append_code_point(code_point);
         }
         return builder.to_deprecated_string();
     };
@@ -3633,9 +3847,14 @@ DeprecatedString HTMLParser::serialize_html_fragment(DOM::Node const& node)
             builder.append('<');
             builder.append(tag_name);
 
-            // FIXME: 3. If current node's is value is not null, and the element does not have an is attribute in its attribute list,
-            //           then append the string " is="", followed by current node's is value escaped as described below in attribute mode,
-            //           followed by a U+0022 QUOTATION MARK character (").
+            // 3. If current node's is value is not null, and the element does not have an is attribute in its attribute list,
+            //    then append the string " is="", followed by current node's is value escaped as described below in attribute mode,
+            //    followed by a U+0022 QUOTATION MARK character (").
+            if (element.is_value().has_value() && !element.has_attribute(AttributeNames::is)) {
+                builder.append(" is=\""sv);
+                builder.append(escape_string(element.is_value().value(), AttributeMode::Yes));
+                builder.append('"');
+            }
 
             // 4. For each attribute that the element has, append a U+0020 SPACE character, the attribute's serialized name as described below, a U+003D EQUALS SIGN character (=),
             //    a U+0022 QUOTATION MARK character ("), the attribute's value, escaped as described below in attribute mode, and a second U+0022 QUOTATION MARK character (").
@@ -3760,14 +3979,14 @@ static RefPtr<CSS::StyleValue> parse_current_dimension_value(float value, Utf8Vi
 {
     // 1. If position is past the end of input, then return value as a length.
     if (position == input.end())
-        return CSS::LengthStyleValue::create(CSS::Length::make_px(value));
+        return CSS::LengthStyleValue::create(CSS::Length::make_px(value)).release_value_but_fixme_should_propagate_errors();
 
     // 2. If the code point at position within input is U+0025 (%), then return value as a percentage.
     if (*position == '%')
-        return CSS::PercentageStyleValue::create(CSS::Percentage(value));
+        return CSS::PercentageStyleValue::create(CSS::Percentage(value)).release_value_but_fixme_should_propagate_errors();
 
     // 3. Return value as a length.
-    return CSS::LengthStyleValue::create(CSS::Length::make_px(value));
+    return CSS::LengthStyleValue::create(CSS::Length::make_px(value)).release_value_but_fixme_should_propagate_errors();
 }
 
 // https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-dimension-values
@@ -3801,7 +4020,7 @@ RefPtr<CSS::StyleValue> parse_dimension_value(StringView string)
 
     // 6. If position is past the end of input, then return value as a length.
     if (position == input.end())
-        return CSS::LengthStyleValue::create(CSS::Length::make_px(*integer_value));
+        return CSS::LengthStyleValue::create(CSS::Length::make_px(*integer_value)).release_value_but_fixme_should_propagate_errors();
 
     float value = *integer_value;
 
@@ -3832,7 +4051,7 @@ RefPtr<CSS::StyleValue> parse_dimension_value(StringView string)
 
             // 4. If position is past the end of input, then return value as a length.
             if (position == input.end())
-                return CSS::LengthStyleValue::create(CSS::Length::make_px(value));
+                return CSS::LengthStyleValue::create(CSS::Length::make_px(value)).release_value_but_fixme_should_propagate_errors();
 
             // 5. If the code point at position within input is not an ASCII digit, then break.
             if (!is_ascii_digit(*position))
@@ -3864,6 +4083,145 @@ RefPtr<CSS::StyleValue> parse_nonzero_dimension_value(StringView string)
     // 5. If value is a percentage, return value as a percentage.
     // 6. Return value as a length.
     return value;
+}
+
+// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-a-legacy-colour-value
+Optional<Color> parse_legacy_color_value(DeprecatedString input)
+{
+    // 1. Let input be the string being parsed
+    // 2. If input is the empty string, then return an error.
+    if (input.is_empty())
+        return {};
+
+    // 3. Strip leading and trailing ASCII whitespace from input.
+    input = input.trim(Infra::ASCII_WHITESPACE);
+
+    // 4. If input is an ASCII case-insensitive match for the string "transparent", then return an error.
+    if (Infra::is_ascii_case_insensitive_match(input, "transparent"sv))
+        return {};
+
+    // 5. If input is an ASCII case-insensitive match for one of the named colors, then return the simple color corresponding to that keyword. [CSSCOLOR]
+    if (auto const color = Color::from_named_css_color_string(input); color.has_value())
+        return color;
+
+    auto hex_nibble_to_u8 = [](char nibble) -> u8 {
+        if (nibble >= '0' && nibble <= '9')
+            return nibble - '0';
+        if (nibble >= 'a' && nibble <= 'f')
+            return nibble - 'a' + 10;
+        return nibble - 'A' + 10;
+    };
+
+    // 6. If input's code point length is four, and the first character in input is U+0023 (#), and the last three characters of input are all ASCII hex digits, then:
+    if (input.length() == 4 && input[0] == '#' && is_ascii_hex_digit(input[1]) && is_ascii_hex_digit(input[2]) && is_ascii_hex_digit(input[3])) {
+        // 1. Let result be a simple color.
+        Color result;
+        result.set_alpha(0xFF);
+
+        // 2. Interpret the second character of input as a hexadecimal digit; let the red component of result be the resulting number multiplied by 17.
+        result.set_red(hex_nibble_to_u8(input[1]) * 17);
+
+        // 3. Interpret the third character of input as a hexadecimal digit; let the green component of result be the resulting number multiplied by 17.
+        result.set_green(hex_nibble_to_u8(input[2]) * 17);
+
+        // 4. Interpret the fourth character of input as a hexadecimal digit; let the blue component of result be the resulting number multiplied by 17.
+        result.set_blue(hex_nibble_to_u8(input[3]) * 17);
+
+        // 5. Return result.
+        return result;
+    }
+
+    // 7. Replace any code points greater than U+FFFF in input (i.e., any characters that are not in the basic multilingual plane) with the two-character string "00".
+    auto replace_non_basic_multilingual_code_points = [](StringView string) -> DeprecatedString {
+        StringBuilder builder;
+        for (auto code_point : Utf8View { string }) {
+            if (code_point > 0xFFFF)
+                builder.append("00"sv);
+            else
+                builder.append_code_point(code_point);
+        }
+        return builder.to_deprecated_string();
+    };
+    input = replace_non_basic_multilingual_code_points(input);
+
+    // 8. If input's code point length is greater than 128, truncate input, leaving only the first 128 characters.
+    if (input.length() > 128)
+        input = input.substring(0, 128);
+
+    // 9. If the first character in input is a U+0023 NUMBER SIGN character (#), remove it.
+    if (input[0] == '#')
+        input = input.substring(1);
+
+    // 10. Replace any character in input that is not an ASCII hex digit with the character U+0030 DIGIT ZERO (0).
+    auto replace_non_ascii_hex = [](StringView string) -> DeprecatedString {
+        StringBuilder builder;
+        for (auto code_point : Utf8View { string }) {
+            if (is_ascii_hex_digit(code_point))
+                builder.append_code_point(code_point);
+            else
+                builder.append_code_point('0');
+        }
+        return builder.to_deprecated_string();
+    };
+    input = replace_non_ascii_hex(input);
+
+    // 11. While input's code point length is zero or not a multiple of three, append a U+0030 DIGIT ZERO (0) character to input.
+    StringBuilder builder;
+    builder.append(input);
+    while (builder.length() == 0 || (builder.length() % 3 != 0))
+        builder.append_code_point('0');
+    input = builder.to_deprecated_string();
+
+    // 12. Split input into three strings of equal code point length, to obtain three components. Let length be the code point length that all of those components have (one third the code point length of input).
+    auto length = input.length() / 3;
+    auto first_component = input.substring_view(0, length);
+    auto second_component = input.substring_view(length, length);
+    auto third_component = input.substring_view(length * 2, length);
+
+    // 13. If length is greater than 8, then remove the leading length-8 characters in each component, and let length be 8.
+    if (length > 8) {
+        first_component = first_component.substring_view(length - 8);
+        second_component = second_component.substring_view(length - 8);
+        third_component = third_component.substring_view(length - 8);
+        length = 8;
+    }
+
+    // 14. While length is greater than two and the first character in each component is a U+0030 DIGIT ZERO (0) character, remove that character and reduce length by one.
+    while (length > 2 && first_component[0] == '0' && second_component[0] == '0' && third_component[0] == '0') {
+        --length;
+        first_component = first_component.substring_view(1);
+        second_component = second_component.substring_view(1);
+        third_component = third_component.substring_view(1);
+    }
+
+    // 15. If length is still greater than two, truncate each component, leaving only the first two characters in each.
+    if (length > 2) {
+        first_component = first_component.substring_view(0, 2);
+        second_component = second_component.substring_view(0, 2);
+        third_component = third_component.substring_view(0, 2);
+    }
+
+    auto to_hex = [&](StringView string) -> u8 {
+        auto nib1 = hex_nibble_to_u8(string[0]);
+        auto nib2 = hex_nibble_to_u8(string[1]);
+        return nib1 << 4 | nib2;
+    };
+
+    // 16. Let result be a simple color.
+    Color result;
+    result.set_alpha(0xFF);
+
+    // 17. Interpret the first component as a hexadecimal number; let the red component of result be the resulting number.
+    result.set_red(to_hex(first_component));
+
+    // 18. Interpret the second component as a hexadecimal number; let the green component of result be the resulting number.
+    result.set_green(to_hex(second_component));
+
+    // 19. Interpret the third component as a hexadecimal number; let the blue component of result be the resulting number.
+    result.set_blue(to_hex(third_component));
+
+    // 20. Return result.
+    return result;
 }
 
 JS::Realm& HTMLParser::realm()

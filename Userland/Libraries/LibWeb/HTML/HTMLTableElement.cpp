@@ -7,6 +7,8 @@
 
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/Parser/Parser.h>
+#include <LibWeb/CSS/StyleProperties.h>
+#include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
 #include <LibWeb/DOM/ElementFactory.h>
 #include <LibWeb/DOM/HTMLCollection.h>
 #include <LibWeb/HTML/HTMLTableColElement.h>
@@ -53,9 +55,15 @@ void HTMLTableElement::apply_presentational_hints(CSS::StyleProperties& style) c
             return;
         }
         if (name == HTML::AttributeNames::bgcolor) {
-            auto color = Color::from_string(value);
+            // https://html.spec.whatwg.org/multipage/rendering.html#tables-2:rules-for-parsing-a-legacy-colour-value
+            auto color = parse_legacy_color_value(value);
             if (color.has_value())
-                style.set_property(CSS::PropertyID::BackgroundColor, CSS::ColorStyleValue::create(color.value()));
+                style.set_property(CSS::PropertyID::BackgroundColor, CSS::ColorStyleValue::create(color.value()).release_value_but_fixme_should_propagate_errors());
+            return;
+        }
+        if (name == HTML::AttributeNames::cellspacing) {
+            if (auto parsed_value = parse_dimension_value(value))
+                style.set_property(CSS::PropertyID::BorderSpacing, parsed_value.release_nonnull());
             return;
         }
     });
@@ -70,14 +78,16 @@ JS::GCPtr<HTMLTableCaptionElement> HTMLTableElement::caption()
 }
 
 // https://html.spec.whatwg.org/multipage/tables.html#dom-table-caption
-void HTMLTableElement::set_caption(HTMLTableCaptionElement* caption)
+WebIDL::ExceptionOr<void> HTMLTableElement::set_caption(HTMLTableCaptionElement* caption)
 {
     // On setting, the first caption element child of the table element, if any, must be removed,
     // and the new value, if not null, must be inserted as the first node of the table element.
     delete_caption();
 
     if (caption)
-        MUST(pre_insert(*caption, first_child()));
+        TRY(pre_insert(*caption, first_child()));
+
+    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/tables.html#dom-table-createcaption
@@ -88,7 +98,7 @@ JS::NonnullGCPtr<HTMLTableCaptionElement> HTMLTableElement::create_caption()
         return *maybe_caption;
     }
 
-    auto caption = DOM::create_element(document(), TagNames::caption, Namespace::HTML);
+    auto caption = DOM::create_element(document(), TagNames::caption, Namespace::HTML).release_value_but_fixme_should_propagate_errors();
     MUST(pre_insert(caption, first_child()));
     return static_cast<HTMLTableCaptionElement&>(*caption);
 }
@@ -166,7 +176,7 @@ JS::NonnullGCPtr<HTMLTableSectionElement> HTMLTableElement::create_t_head()
     if (maybe_thead)
         return *maybe_thead;
 
-    auto thead = DOM::create_element(document(), TagNames::thead, Namespace::HTML);
+    auto thead = DOM::create_element(document(), TagNames::thead, Namespace::HTML).release_value_but_fixme_should_propagate_errors();
 
     // We insert the new thead after any <caption> or <colgroup> elements
     DOM::Node* child_to_insert_before = nullptr;
@@ -242,7 +252,7 @@ JS::NonnullGCPtr<HTMLTableSectionElement> HTMLTableElement::create_t_foot()
     if (maybe_tfoot)
         return *maybe_tfoot;
 
-    auto tfoot = DOM::create_element(document(), TagNames::tfoot, Namespace::HTML);
+    auto tfoot = DOM::create_element(document(), TagNames::tfoot, Namespace::HTML).release_value_but_fixme_should_propagate_errors();
     MUST(append_child(tfoot));
     return static_cast<HTMLTableSectionElement&>(*tfoot);
 }
@@ -262,9 +272,9 @@ JS::NonnullGCPtr<DOM::HTMLCollection> HTMLTableElement::t_bodies()
     // The tBodies attribute must return an HTMLCollection rooted at the table node,
     // whose filter matches only tbody elements that are children of the table element.
     if (!m_t_bodies) {
-        m_t_bodies = DOM::HTMLCollection::create(*this, [](DOM::Element const& element) {
+        m_t_bodies = DOM::HTMLCollection::create(*this, DOM::HTMLCollection::Scope::Children, [](DOM::Element const& element) {
             return element.local_name() == TagNames::tbody;
-        });
+        }).release_value_but_fixme_should_propagate_errors();
     }
     return *m_t_bodies;
 }
@@ -272,7 +282,7 @@ JS::NonnullGCPtr<DOM::HTMLCollection> HTMLTableElement::t_bodies()
 // https://html.spec.whatwg.org/multipage/tables.html#dom-table-createtbody
 JS::NonnullGCPtr<HTMLTableSectionElement> HTMLTableElement::create_t_body()
 {
-    auto tbody = DOM::create_element(document(), TagNames::tbody, Namespace::HTML);
+    auto tbody = DOM::create_element(document(), TagNames::tbody, Namespace::HTML).release_value_but_fixme_should_propagate_errors();
 
     // We insert the new tbody after the last <tbody> element
     DOM::Node* child_to_insert_before = nullptr;
@@ -305,7 +315,7 @@ JS::NonnullGCPtr<DOM::HTMLCollection> HTMLTableElement::rows()
     // How do you sort HTMLCollection?
 
     if (!m_rows) {
-        m_rows = DOM::HTMLCollection::create(*this, [table_node](DOM::Element const& element) {
+        m_rows = DOM::HTMLCollection::create(*this, DOM::HTMLCollection::Scope::Descendants, [table_node](DOM::Element const& element) {
             // Only match TR elements which are:
             // * children of the table element
             // * children of the thead, tbody, or tfoot elements that are themselves children of the table element
@@ -321,7 +331,7 @@ JS::NonnullGCPtr<DOM::HTMLCollection> HTMLTableElement::rows()
             }
 
             return false;
-        });
+        }).release_value_but_fixme_should_propagate_errors();
     }
     return *m_rows;
 }
@@ -335,9 +345,9 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<HTMLTableRowElement>> HTMLTableElement::ins
     if (index < -1 || index > (long)rows_length) {
         return WebIDL::IndexSizeError::create(realm(), "Index is negative or greater than the number of rows");
     }
-    auto& tr = static_cast<HTMLTableRowElement&>(*DOM::create_element(document(), TagNames::tr, Namespace::HTML));
+    auto& tr = static_cast<HTMLTableRowElement&>(*TRY(DOM::create_element(document(), TagNames::tr, Namespace::HTML)));
     if (rows_length == 0 && !has_child_of_type<HTMLTableRowElement>()) {
-        auto tbody = DOM::create_element(document(), TagNames::tbody, Namespace::HTML);
+        auto tbody = TRY(DOM::create_element(document(), TagNames::tbody, Namespace::HTML));
         TRY(tbody->append_child(tr));
         TRY(append_child(tbody));
     } else if (rows_length == 0) {

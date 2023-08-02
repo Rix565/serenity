@@ -81,6 +81,8 @@ public:
     void add_property_to_unique_shape(StringOrSymbol const&, PropertyAttributes attributes);
     void reconfigure_property_in_unique_shape(StringOrSymbol const& property_key, PropertyAttributes attributes);
 
+    [[nodiscard]] u64 unique_shape_serial_number() const { return m_unique_shape_serial_number; }
+
 private:
     explicit Shape(Realm&);
     Shape(Shape& previous_shape, StringOrSymbol const& property_key, PropertyAttributes attributes, TransitionType);
@@ -93,20 +95,24 @@ private:
 
     void ensure_property_table() const;
 
-    Realm& m_realm;
+    NonnullGCPtr<Realm> m_realm;
 
     mutable OwnPtr<HashMap<StringOrSymbol, PropertyMetadata>> m_property_table;
 
     OwnPtr<HashMap<TransitionKey, WeakPtr<Shape>>> m_forward_transitions;
-    OwnPtr<HashMap<Object*, WeakPtr<Shape>>> m_prototype_transitions;
-    Shape* m_previous { nullptr };
+    OwnPtr<HashMap<GCPtr<Object>, WeakPtr<Shape>>> m_prototype_transitions;
+    GCPtr<Shape> m_previous;
     StringOrSymbol m_property_key;
-    Object* m_prototype { nullptr };
+    GCPtr<Object> m_prototype;
     u32 m_property_count { 0 };
 
     PropertyAttributes m_attributes { 0 };
     TransitionType m_transition_type : 6 { TransitionType::Invalid };
     bool m_unique : 1 { false };
+
+    // Since unique shapes never change identity, inline caches use this incrementing serial number
+    // to know whether its property table has been modified since last time we checked.
+    u64 m_unique_shape_serial_number { 0 };
 };
 
 }

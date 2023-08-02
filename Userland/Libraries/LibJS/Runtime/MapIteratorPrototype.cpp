@@ -8,13 +8,13 @@
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/Iterator.h>
 #include <LibJS/Runtime/MapIteratorPrototype.h>
 
 namespace JS {
 
 MapIteratorPrototype::MapIteratorPrototype(Realm& realm)
-    : PrototypeObject(*realm.intrinsics().iterator_prototype())
+    : PrototypeObject(realm.intrinsics().iterator_prototype())
 {
 }
 
@@ -24,7 +24,7 @@ ThrowCompletionOr<void> MapIteratorPrototype::initialize(Realm& realm)
     MUST_OR_THROW_OOM(Base::initialize(realm));
 
     define_native_function(realm, vm.names.next, next, 0, Attribute::Configurable | Attribute::Writable);
-    define_direct_property(*vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Map Iterator"), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Map Iterator"sv)), Attribute::Configurable);
 
     return {};
 }
@@ -34,7 +34,7 @@ JS_DEFINE_NATIVE_FUNCTION(MapIteratorPrototype::next)
 {
     auto& realm = *vm.current_realm();
 
-    auto* map_iterator = TRY(typed_this_value(vm));
+    auto map_iterator = TRY(typed_this_value(vm));
     if (map_iterator->done())
         return create_iterator_result_object(vm, js_undefined(), true);
 

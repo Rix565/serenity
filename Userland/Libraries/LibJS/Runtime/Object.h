@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,7 +8,6 @@
 #pragma once
 
 #include <AK/Badge.h>
-#include <AK/DeprecatedString.h>
 #include <AK/HashMap.h>
 #include <AK/StringView.h>
 #include <LibJS/Forward.h>
@@ -37,7 +36,19 @@ struct PrivateElement {
 
     PrivateName key;
     Kind kind { Kind::Field };
-    Value value;
+    Handle<Value> value;
+};
+
+// Non-standard: This is information optionally returned by object property access functions.
+//               It can be used to implement inline caches for property lookup.
+struct CacheablePropertyMetadata {
+    enum class Type {
+        NotCacheable,
+        OwnProperty,
+    };
+    Type type { Type::NotCacheable };
+    Optional<u32> property_offset;
+    u64 unique_shape_serial_number { 0 };
 };
 
 class Object : public Cell {
@@ -90,7 +101,7 @@ public:
     ThrowCompletionOr<Value> get(PropertyKey const&) const;
     ThrowCompletionOr<void> set(PropertyKey const&, Value, ShouldThrowExceptions);
     ThrowCompletionOr<bool> create_data_property(PropertyKey const&, Value);
-    ThrowCompletionOr<void> create_method_property(PropertyKey const&, Value);
+    void create_method_property(PropertyKey const&, Value);
     ThrowCompletionOr<bool> create_data_property_or_throw(PropertyKey const&, Value);
     void create_non_enumerable_data_property_or_throw(PropertyKey const&, Value);
     ThrowCompletionOr<void> define_property_or_throw(PropertyKey const&, PropertyDescriptor const&);
@@ -119,7 +130,7 @@ public:
     virtual ThrowCompletionOr<Optional<PropertyDescriptor>> internal_get_own_property(PropertyKey const&) const;
     virtual ThrowCompletionOr<bool> internal_define_own_property(PropertyKey const&, PropertyDescriptor const&);
     virtual ThrowCompletionOr<bool> internal_has_property(PropertyKey const&) const;
-    virtual ThrowCompletionOr<Value> internal_get(PropertyKey const&, Value receiver) const;
+    virtual ThrowCompletionOr<Value> internal_get(PropertyKey const&, Value receiver, CacheablePropertyMetadata* = nullptr) const;
     virtual ThrowCompletionOr<bool> internal_set(PropertyKey const&, Value value, Value receiver);
     virtual ThrowCompletionOr<bool> internal_delete(PropertyKey const&);
     virtual ThrowCompletionOr<MarkedVector<Value>> internal_own_property_keys() const;
@@ -149,7 +160,7 @@ public:
 
     Value get_without_side_effects(PropertyKey const&) const;
 
-    void define_direct_property(PropertyKey const& property_key, Value value, PropertyAttributes attributes) { storage_set(property_key, { value, attributes }); };
+    void define_direct_property(PropertyKey const& property_key, Value value, PropertyAttributes attributes) { storage_set(property_key, { value, attributes }); }
     void define_direct_accessor(PropertyKey const&, FunctionObject* getter, FunctionObject* setter, PropertyAttributes attributes);
 
     using IntrinsicAccessor = Value (*)(Realm&);
@@ -158,6 +169,7 @@ public:
     void define_native_function(Realm&, PropertyKey const&, SafeFunction<ThrowCompletionOr<Value>(VM&)>, i32 length, PropertyAttributes attributes);
     void define_native_accessor(Realm&, PropertyKey const&, SafeFunction<ThrowCompletionOr<Value>(VM&)> getter, SafeFunction<ThrowCompletionOr<Value>(VM&)> setter, PropertyAttributes attributes);
 
+    virtual bool is_dom_node() const { return false; }
     virtual bool is_function() const { return false; }
     virtual bool is_typed_array() const { return false; }
     virtual bool is_string_object() const { return false; }
@@ -188,6 +200,8 @@ public:
     template<typename T>
     bool fast_is() const = delete;
 
+    void set_prototype(Object*);
+
 protected:
     enum class GlobalObjectTag { Tag };
     enum class ConstructWithoutPrototypeTag { Tag };
@@ -198,8 +212,6 @@ protected:
     Object(Realm&, Object* prototype);
     Object(ConstructWithPrototypeTag, Object& prototype);
     explicit Object(Shape&);
-
-    void set_prototype(Object*);
 
     // [[Extensible]]
     bool m_is_extensible { true };
@@ -213,7 +225,10 @@ private:
     Object* prototype() { return shape().prototype(); }
     Object const* prototype() const { return shape().prototype(); }
 
-    Shape* m_shape { nullptr };
+    // True if this object has lazily allocated intrinsic properties.
+    bool m_has_intrinsic_accessors { false };
+
+    GCPtr<Shape> m_shape;
     Vector<Value> m_storage;
     IndexedProperties m_indexed_properties;
     OwnPtr<Vector<PrivateElement>> m_private_elements; // [[PrivateElements]]

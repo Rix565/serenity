@@ -18,6 +18,8 @@ public:
     // FIXME: We should instead accept some abstract data streaming type so that the demuxer
     //        can work with non-contiguous data.
     static DecoderErrorOr<NonnullOwnPtr<MatroskaDemuxer>> from_file(StringView filename);
+    static DecoderErrorOr<NonnullOwnPtr<MatroskaDemuxer>> from_mapped_file(NonnullRefPtr<Core::MappedFile> mapped_file);
+
     static DecoderErrorOr<NonnullOwnPtr<MatroskaDemuxer>> from_data(ReadonlyBytes data);
 
     MatroskaDemuxer(Reader&& reader)
@@ -27,9 +29,9 @@ public:
 
     DecoderErrorOr<Vector<Track>> get_tracks_for_type(TrackType type) override;
 
-    DecoderErrorOr<Time> seek_to_most_recent_keyframe(Track track, Time timestamp) override;
+    DecoderErrorOr<Optional<Duration>> seek_to_most_recent_keyframe(Track track, Duration timestamp, Optional<Duration> earliest_available_sample = OptionalNone()) override;
 
-    DecoderErrorOr<Time> duration() override;
+    DecoderErrorOr<Duration> duration() override;
 
 protected:
     DecoderErrorOr<NonnullOwnPtr<Sample>> get_next_sample_for_track(Track track) override;

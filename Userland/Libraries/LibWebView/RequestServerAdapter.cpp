@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibCore/File.h>
 #include <LibProtocol/Request.h>
 #include <LibProtocol/RequestClient.h>
 #include <LibWebView/RequestServerAdapter.h>
@@ -25,13 +24,13 @@ RequestServerRequestAdapter::RequestServerRequestAdapter(NonnullRefPtr<Protocol:
                 strong_this->on_buffered_request_finish(success, total_size, response_headers, response_code, move(payload));
     };
 
-    request->on_finish = [weak_this = make_weak_ptr()](bool success, u32 total_size) {
+    request->on_finish = [weak_this = make_weak_ptr()](bool success, u64 total_size) {
         if (auto strong_this = weak_this.strong_ref())
             if (strong_this->on_finish)
                 strong_this->on_finish(success, total_size);
     };
 
-    request->on_progress = [weak_this = make_weak_ptr()](Optional<u32> total_size, u32 downloaded_size) {
+    request->on_progress = [weak_this = make_weak_ptr()](Optional<u64> total_size, u64 downloaded_size) {
         if (auto strong_this = weak_this.strong_ref())
             if (strong_this->on_progress)
                 strong_this->on_progress(total_size, downloaded_size);
@@ -64,15 +63,20 @@ bool RequestServerRequestAdapter::stop()
     return m_request->stop();
 }
 
-void RequestServerRequestAdapter::stream_into(Core::Stream::Stream& stream)
+void RequestServerRequestAdapter::stream_into(Stream& stream)
 {
     m_request->stream_into(stream);
+}
+
+ErrorOr<NonnullRefPtr<RequestServerAdapter>> RequestServerAdapter::try_create(NonnullRefPtr<Protocol::RequestClient> protocol_client)
+{
+    return try_make_ref_counted<RequestServerAdapter>(move(protocol_client));
 }
 
 ErrorOr<NonnullRefPtr<RequestServerAdapter>> RequestServerAdapter::try_create()
 {
     auto protocol_client = TRY(Protocol::RequestClient::try_create());
-    return adopt_nonnull_ref_or_enomem(new (nothrow) RequestServerAdapter(move(protocol_client)));
+    return try_make_ref_counted<RequestServerAdapter>(move(protocol_client));
 }
 
 RequestServerAdapter::RequestServerAdapter(NonnullRefPtr<Protocol::RequestClient> protocol_client)

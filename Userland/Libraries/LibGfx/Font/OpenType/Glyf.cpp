@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGfx/AntiAliasingPainter.h>
 #include <LibGfx/Font/OpenType/Glyf.h>
+#include <LibGfx/Painter.h>
 #include <LibGfx/Path.h>
 #include <LibGfx/Point.h>
 
@@ -208,7 +210,8 @@ Optional<Loca> Loca::from_slice(ReadonlyBytes slice, u32 num_glyphs, IndexToLocF
 
 u32 Loca::get_glyph_offset(u32 glyph_id) const
 {
-    VERIFY(glyph_id < m_num_glyphs);
+    // NOTE: The value of n is numGlyphs + 1.
+    VERIFY(glyph_id <= m_num_glyphs);
     switch (m_index_to_loc_format) {
     case IndexToLocFormat::Offset16:
         return ((u32)be_u16(m_slice.offset_pointer(glyph_id * 2))) * 2;
@@ -257,7 +260,7 @@ ReadonlyBytes Glyf::Glyph::program() const
     return m_slice.slice(instructions_start + 2, num_instructions);
 }
 
-void Glyf::Glyph::rasterize_impl(Gfx::PathRasterizer& rasterizer, Gfx::AffineTransform const& transform) const
+void Glyf::Glyph::rasterize_impl(Gfx::Painter& painter, Gfx::AffineTransform const& transform) const
 {
     // Get offset for flags, x, and y.
     u16 num_points = be_u16(m_slice.offset_pointer((m_num_contours - 1) * 2)) + 1;
@@ -271,103 +274,89 @@ void Glyf::Glyph::rasterize_impl(Gfx::PathRasterizer& rasterizer, Gfx::AffineTra
     Gfx::Path path;
     PointIterator point_iterator(m_slice, num_points, flags_offset, x_offset, y_offset, transform);
 
-    int last_contour_end = -1;
-    i32 contour_index = 0;
-    u32 contour_size = 0;
-    Optional<Gfx::FloatPoint> contour_start = {};
-    Optional<Gfx::FloatPoint> last_offcurve_point = {};
-
-    // Render glyph
-    while (true) {
-        if (!contour_start.has_value()) {
-            if (contour_index >= m_num_contours) {
+    u32 current_point_index = 0;
+    for (u16 contour_index = 0; contour_index < m_num_contours; contour_index++) {
+        u32 current_contour_last_point_index = be_u16(m_slice.offset_pointer(contour_index * 2));
+        Optional<Gfx::FloatPoint> start_off_curve_point;
+        Optional<Gfx::FloatPoint> start_on_curve_point;
+        Optional<Gfx::FloatPoint> unprocessed_off_curve_point;
+        while (current_point_index <= current_contour_last_point_index) {
+            auto current_point = point_iterator.next();
+            current_point_index++;
+            if (!current_point.has_value())
                 break;
-            }
-            int current_contour_end = be_u16(m_slice.offset_pointer(contour_index++ * 2));
-            contour_size = current_contour_end - last_contour_end;
-            last_contour_end = current_contour_end;
-            auto opt_item = point_iterator.next();
-            VERIFY(opt_item.has_value());
-            contour_start = opt_item.value().point;
-            path.move_to(contour_start.value());
-            contour_size--;
-        } else if (!last_offcurve_point.has_value()) {
-            if (contour_size > 0) {
-                auto opt_item = point_iterator.next();
-                // FIXME: Should we draw a line to the first point here?
-                if (!opt_item.has_value()) {
-                    break;
+
+            if (current_point->on_curve) {
+                if (!start_on_curve_point.has_value()) {
+                    start_on_curve_point = current_point->point;
+                    path.move_to(current_point->point);
                 }
-                auto item = opt_item.value();
-                contour_size--;
-                if (item.on_curve) {
-                    path.line_to(item.point);
-                } else if (contour_size > 0) {
-                    auto opt_next_item = point_iterator.next();
-                    // FIXME: Should we draw a quadratic bezier to the first point here?
-                    if (!opt_next_item.has_value()) {
-                        break;
-                    }
-                    auto next_item = opt_next_item.value();
-                    contour_size--;
-                    if (next_item.on_curve) {
-                        path.quadratic_bezier_curve_to(item.point, next_item.point);
-                    } else {
-                        auto mid_point = (item.point + next_item.point) * 0.5f;
-                        path.quadratic_bezier_curve_to(item.point, mid_point);
-                        last_offcurve_point = next_item.point;
-                    }
+
+                if (unprocessed_off_curve_point.has_value()) {
+                    path.quadratic_bezier_curve_to(unprocessed_off_curve_point.value(), current_point->point);
+                    unprocessed_off_curve_point = {};
                 } else {
-                    path.quadratic_bezier_curve_to(item.point, contour_start.value());
-                    contour_start = {};
+                    path.line_to(current_point->point);
                 }
             } else {
-                path.line_to(contour_start.value());
-                contour_start = {};
+                if (!start_on_curve_point.has_value() && !start_off_curve_point.has_value()) {
+                    // If "off curve" point comes first it needs to be saved to use while closing the path
+                    start_off_curve_point = current_point->point;
+                }
+
+                if (unprocessed_off_curve_point.has_value()) {
+                    // Two subsequent "off curve" points create implied "on-curve" point lying between them
+                    auto implied_point = (unprocessed_off_curve_point.value() + current_point->point) * 0.5f;
+                    if (!start_on_curve_point.has_value()) {
+                        start_on_curve_point = implied_point;
+                        path.move_to(implied_point);
+                    }
+                    path.quadratic_bezier_curve_to(unprocessed_off_curve_point.value(), implied_point);
+                }
+                unprocessed_off_curve_point = current_point->point;
             }
+        }
+
+        if (start_off_curve_point.has_value()) {
+            // Close the path creating "implied" point if both first and last points were "off curve"
+            if (unprocessed_off_curve_point.has_value()) {
+                auto implied_point = (start_off_curve_point.value() + unprocessed_off_curve_point.value()) * 0.5f;
+                path.quadratic_bezier_curve_to(unprocessed_off_curve_point.value(), implied_point);
+            }
+
+            // Add bezier curve from new "implied point" to first "on curve" point in the path
+            path.quadratic_bezier_curve_to(start_off_curve_point.value(), start_on_curve_point.value());
+        } else if (unprocessed_off_curve_point.has_value()) {
+            // Add bezier curve to first "on curve" point using last "off curve" point
+            path.quadratic_bezier_curve_to(unprocessed_off_curve_point.value(), start_on_curve_point.value());
         } else {
-            auto point0 = last_offcurve_point.value();
-            last_offcurve_point = {};
-            if (contour_size > 0) {
-                auto opt_item = point_iterator.next();
-                // FIXME: Should we draw a quadratic bezier to the first point here?
-                if (!opt_item.has_value()) {
-                    break;
-                }
-                auto item = opt_item.value();
-                contour_size--;
-                if (item.on_curve) {
-                    path.quadratic_bezier_curve_to(point0, item.point);
-                } else {
-                    auto mid_point = (point0 + item.point) * 0.5f;
-                    path.quadratic_bezier_curve_to(point0, mid_point);
-                    last_offcurve_point = item.point;
-                }
-            } else {
-                path.quadratic_bezier_curve_to(point0, contour_start.value());
-                contour_start = {};
-            }
+            path.line_to(start_on_curve_point.value());
         }
     }
 
-    rasterizer.draw_path(path);
+    constexpr auto base_color = Color::White;
+    Gfx::AntiAliasingPainter aa_painter { painter };
+    aa_painter.fill_path(path, base_color);
 }
 
 RefPtr<Gfx::Bitmap> Glyf::Glyph::rasterize_simple(i16 font_ascender, i16 font_descender, float x_scale, float y_scale, Gfx::GlyphSubpixelOffset subpixel_offset) const
 {
     u32 width = (u32)(ceilf((m_xmax - m_xmin) * x_scale)) + 2;
     u32 height = (u32)(ceilf((font_ascender - font_descender) * y_scale)) + 2;
-    Gfx::PathRasterizer rasterizer(Gfx::IntSize(width, height));
+    auto bitmap = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, { width, height }).release_value_but_fixme_should_propagate_errors();
     auto affine = Gfx::AffineTransform()
                       .translate(subpixel_offset.to_float_point())
                       .scale(x_scale, -y_scale)
                       .translate(-m_xmin, -font_ascender);
-    rasterize_impl(rasterizer, affine);
-    return rasterizer.accumulate();
+    Gfx::Painter painter { bitmap };
+    rasterize_impl(painter, affine);
+    return bitmap;
 }
 
-Glyf::Glyph Glyf::glyph(u32 offset) const
+Optional<Glyf::Glyph> Glyf::glyph(u32 offset) const
 {
+    if (offset + sizeof(GlyphHeader) > m_slice.size())
+        return {};
     VERIFY(m_slice.size() >= offset + sizeof(GlyphHeader));
     auto const& glyph_header = *bit_cast<GlyphHeader const*>(m_slice.offset_pointer(offset));
     i16 num_contours = glyph_header.number_of_contours;

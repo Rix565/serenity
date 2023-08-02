@@ -13,8 +13,8 @@
 #include <Kernel/Arch/aarch64/RPi/MMIO.h>
 #include <Kernel/Arch/aarch64/RPi/UART.h>
 #include <Kernel/Arch/aarch64/Registers.h>
-#include <Kernel/BootInfo.h>
-#include <Kernel/Panic.h>
+#include <Kernel/Boot/BootInfo.h>
+#include <Kernel/Library/Panic.h>
 #include <Kernel/Sections.h>
 
 // Documentation here for Aarch64 Address Translations
@@ -31,11 +31,6 @@ namespace Kernel::Memory {
 // physical memory
 constexpr u32 START_OF_NORMAL_MEMORY = 0x00000000;
 constexpr u32 END_OF_NORMAL_MEMORY = 0x3EFFFFFF;
-
-// TODO: We should change the RPi drivers to use the MemoryManager to map physical memory,
-//       instead of mapping the complete MMIO region beforehand.
-constexpr u32 START_OF_MMIO_MEMORY = 0x3F000000;
-constexpr u32 END_OF_MMIO_MEMORY = 0x3F000000 + 0x00FFFFFF;
 
 ALWAYS_INLINE static u64* descriptor_to_pointer(FlatPtr descriptor)
 {
@@ -160,11 +155,16 @@ static void build_mappings(PageBumpAllocator& allocator, u64* root_table)
     u64 normal_memory_flags = ACCESS_FLAG | PAGE_DESCRIPTOR | INNER_SHAREABLE | NORMAL_MEMORY;
     u64 device_memory_flags = ACCESS_FLAG | PAGE_DESCRIPTOR | OUTER_SHAREABLE | DEVICE_MEMORY;
 
+    // TODO: We should change the RPi drivers to use the MemoryManager to map physical memory,
+    //       instead of mapping the complete MMIO region beforehand.
+    auto mmio_base = RPi::MMIO::the().peripheral_base_address().get();
+    auto mmio_end = RPi::MMIO::the().peripheral_end_address().get();
+
     // Align the identity mapping of the kernel image to 2 MiB, the rest of the memory is initially not mapped.
     auto start_of_kernel_range = VirtualAddress((FlatPtr)start_of_kernel_image & ~(FlatPtr)0x1fffff);
     auto end_of_kernel_range = VirtualAddress(((FlatPtr)end_of_kernel_image & ~(FlatPtr)0x1fffff) + 0x200000 - 1);
-    auto start_of_mmio_range = VirtualAddress(START_OF_MMIO_MEMORY + KERNEL_MAPPING_BASE);
-    auto end_of_mmio_range = VirtualAddress(END_OF_MMIO_MEMORY + KERNEL_MAPPING_BASE);
+    auto start_of_mmio_range = VirtualAddress(mmio_base + KERNEL_MAPPING_BASE);
+    auto end_of_mmio_range = VirtualAddress(mmio_end + KERNEL_MAPPING_BASE);
 
     auto start_of_physical_kernel_range = PhysicalAddress(start_of_kernel_range.get()).offset(-KERNEL_MAPPING_BASE);
     auto start_of_physical_mmio_range = PhysicalAddress(start_of_mmio_range.get()).offset(-KERNEL_MAPPING_BASE);
@@ -214,8 +214,10 @@ static void activate_mmu()
     Aarch64::TCR_EL1::write(tcr_el1);
 
     // Enable MMU in the system control register
-    Aarch64::SCTLR_EL1 sctlr_el1 = Aarch64::SCTLR_EL1::read();
+    Aarch64::SCTLR_EL1 sctlr_el1 = Aarch64::SCTLR_EL1::reset_value();
     sctlr_el1.M = 1; // Enable MMU
+    sctlr_el1.C = 1; // Enable data cache
+    sctlr_el1.I = 1; // Enable instruction cache
     Aarch64::SCTLR_EL1::write(sctlr_el1);
 
     Aarch64::Asm::flush();
@@ -269,6 +271,7 @@ void init_page_tables()
 {
     *adjust_by_mapping_base(&physical_to_virtual_offset) = KERNEL_MAPPING_BASE;
     *adjust_by_mapping_base(&kernel_mapping_base) = KERNEL_MAPPING_BASE;
+    *adjust_by_mapping_base(&kernel_load_base) = KERNEL_MAPPING_BASE;
 
     PageBumpAllocator allocator(adjust_by_mapping_base((u64*)page_tables_phys_start), adjust_by_mapping_base((u64*)page_tables_phys_end));
     auto root_table = allocator.take_page();

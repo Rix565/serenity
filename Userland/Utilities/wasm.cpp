@@ -5,25 +5,29 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/MemoryStream.h>
+#include <AK/StackInfo.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
 #include <LibCore/MappedFile.h>
-#include <LibCore/MemoryStream.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibLine/Editor.h>
 #include <LibMain/Main.h>
 #include <LibWasm/AbstractMachine/AbstractMachine.h>
 #include <LibWasm/AbstractMachine/BytecodeInterpreter.h>
 #include <LibWasm/Printer/Printer.h>
 #include <LibWasm/Types.h>
+#include <LibWasm/Wasi.h>
 #include <signal.h>
 #include <unistd.h>
 
 RefPtr<Line::Editor> g_line_editor;
-static OwnPtr<Core::Stream::Stream> g_stdout {};
+static OwnPtr<Stream> g_stdout {};
 static OwnPtr<Wasm::Printer> g_printer {};
 static bool g_continue { false };
 static void (*old_signal)(int);
-static Wasm::DebuggerBytecodeInterpreter g_interpreter;
+static StackInfo g_stack_info;
+static Wasm::DebuggerBytecodeInterpreter g_interpreter(g_stack_info);
 
 static void sigint_handler(int)
 {
@@ -53,12 +57,12 @@ static bool pre_interpret_hook(Wasm::Configuration& config, Wasm::InstructionPoi
     if (always_print_stack)
         config.dump_stack();
     if (always_print_instruction) {
-        g_stdout->write(DeprecatedString::formatted("{:0>4} ", ip.value()).bytes()).release_value_but_fixme_should_propagate_errors();
+        g_stdout->write_until_depleted(DeprecatedString::formatted("{:0>4} ", ip.value()).bytes()).release_value_but_fixme_should_propagate_errors();
         g_printer->print(instr);
     }
     if (g_continue)
         return true;
-    g_stdout->write(DeprecatedString::formatted("{:0>4} ", ip.value()).bytes()).release_value_but_fixme_should_propagate_errors();
+    g_stdout->write_until_depleted(DeprecatedString::formatted("{:0>4} ", ip.value()).bytes()).release_value_but_fixme_should_propagate_errors();
     g_printer->print(instr);
     DeprecatedString last_command = "";
     for (;;) {
@@ -206,15 +210,17 @@ static bool pre_interpret_hook(Wasm::Configuration& config, Wasm::InstructionPoi
             Wasm::Result result { Wasm::Trap {} };
             {
                 Wasm::BytecodeInterpreter::CallFrameHandle handle { g_interpreter, config };
-                result = config.call(g_interpreter, *address, move(values));
+                result = config.call(g_interpreter, *address, move(values)).assert_wasm_result();
             }
-            if (result.is_trap())
+            if (result.is_trap()) {
                 warnln("Execution trapped: {}", result.trap().reason);
-            if (!result.values().is_empty())
-                warnln("Returned:");
-            for (auto& value : result.values()) {
-                g_stdout->write("  -> "sv.bytes()).release_value_but_fixme_should_propagate_errors();
-                g_printer->print(value);
+            } else {
+                if (!result.values().is_empty())
+                    warnln("Returned:");
+                for (auto& value : result.values()) {
+                    g_stdout->write_until_depleted("  -> "sv.bytes()).release_value_but_fixme_should_propagate_errors();
+                    g_printer->print(value);
+                }
             }
             continue;
         }
@@ -252,8 +258,8 @@ static Optional<Wasm::Module> parse(StringView filename)
         return {};
     }
 
-    auto stream = Core::Stream::FixedMemoryStream::construct(ReadonlyBytes { result.value()->data(), result.value()->size() }).release_value_but_fixme_should_propagate_errors();
-    auto parse_result = Wasm::Module::parse(*stream);
+    FixedMemoryStream stream { ReadonlyBytes { result.value()->data(), result.value()->size() } };
+    auto parse_result = Wasm::Module::parse(stream);
     if (parse_result.is_error()) {
         warnln("Something went wrong, either the file is invalid, or there's a bug with LibWasm!");
         warnln("The parse error was {}", Wasm::parse_error_to_deprecated_string(parse_result.error()));
@@ -276,9 +282,12 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     bool debug = false;
     bool export_all_imports = false;
     bool shell_mode = false;
+    bool wasi = false;
     DeprecatedString exported_function_to_execute;
     Vector<u64> values_to_push;
     Vector<DeprecatedString> modules_to_link_in;
+    Vector<StringView> args_if_wasi;
+    Vector<StringView> wasi_preopened_mappings;
 
     Core::ArgsParser parser;
     parser.add_positional_argument(filename, "File name to parse", "file");
@@ -288,15 +297,30 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     parser.add_option(exported_function_to_execute, "Attempt to execute the named exported function from the module (implies -i)", "execute", 'e', "name");
     parser.add_option(export_all_imports, "Export noop functions corresponding to imports", "export-noop", 0);
     parser.add_option(shell_mode, "Launch a REPL in the module's context (implies -i)", "shell", 's');
+    parser.add_option(wasi, "Enable WASI", "wasi", 'w');
+    parser.add_option(Core::ArgsParser::Option {
+        .argument_mode = Core::ArgsParser::OptionArgumentMode::Required,
+        .help_string = "Directory mappings to expose via WASI",
+        .long_name = "wasi-map-dir",
+        .short_name = 0,
+        .value_name = "path[:path]",
+        .accept_value = [&](StringView str) {
+            if (!str.is_empty()) {
+                wasi_preopened_mappings.append(str);
+                return true;
+            }
+            return false;
+        },
+    });
     parser.add_option(Core::ArgsParser::Option {
         .argument_mode = Core::ArgsParser::OptionArgumentMode::Required,
         .help_string = "Extra modules to link with, use to resolve imports",
         .long_name = "link",
         .short_name = 'l',
         .value_name = "file",
-        .accept_value = [&](char const* str) {
-            if (auto v = StringView { str, strlen(str) }; !v.is_empty()) {
-                modules_to_link_in.append(v);
+        .accept_value = [&](StringView str) {
+            if (!str.is_empty()) {
+                modules_to_link_in.append(str);
                 return true;
             }
             return false;
@@ -308,14 +332,15 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         .long_name = "arg",
         .short_name = 0,
         .value_name = "u64",
-        .accept_value = [&](char const* str) -> bool {
-            if (auto v = StringView { str, strlen(str) }.to_uint<u64>(); v.has_value()) {
+        .accept_value = [&](StringView str) -> bool {
+            if (auto v = str.to_uint<u64>(); v.has_value()) {
                 values_to_push.append(v.value());
                 return true;
             }
             return false;
         },
     });
+    parser.add_positional_argument(args_if_wasi, "Arguments to pass to the WASI module", "args", Core::ArgsParser::Required::No);
     parser.parse(arguments);
 
     if (shell_mode) {
@@ -339,7 +364,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     if (!parse_result.has_value())
         return 1;
 
-    g_stdout = TRY(Core::Stream::File::standard_output());
+    g_stdout = TRY(Core::File::standard_output());
     g_printer = TRY(try_make<Wasm::Printer>(*g_stdout));
 
     if (print && !attempt_instantiate) {
@@ -349,6 +374,34 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     if (attempt_instantiate) {
         Wasm::AbstractMachine machine;
+        Optional<Wasm::Wasi::Implementation> wasi_impl;
+
+        if (wasi) {
+            wasi_impl.emplace(Wasm::Wasi::Implementation::Details {
+                .provide_arguments = [&] {
+                    Vector<String> strings;
+                    for (auto& string : args_if_wasi)
+                        strings.append(String::from_utf8(string).release_value_but_fixme_should_propagate_errors());
+                    return strings; },
+                .provide_environment = {},
+                .provide_preopened_directories = [&] {
+                    Vector<Wasm::Wasi::Implementation::MappedPath> paths;
+                    for (auto& string : wasi_preopened_mappings) {
+                        auto split_index = string.find(':');
+                        if (split_index.has_value()) {
+                            LexicalPath host_path { FileSystem::real_path(string.substring_view(0, *split_index)).release_value_but_fixme_should_propagate_errors().to_deprecated_string() };
+                            LexicalPath mapped_path { string.substring_view(*split_index + 1) };
+                            paths.append({move(host_path), move(mapped_path)});
+                        } else {
+                            LexicalPath host_path { FileSystem::real_path(string).release_value_but_fixme_should_propagate_errors().to_deprecated_string() };
+                            LexicalPath mapped_path { string };
+                            paths.append({move(host_path), move(mapped_path)});
+                        }
+                    }
+                    return paths; },
+            });
+        }
+
         Core::EventLoop main_loop;
         if (debug) {
             g_line_editor = Line::Editor::construct();
@@ -357,7 +410,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         }
 
         // First, resolve the linked modules
-        NonnullOwnPtrVector<Wasm::ModuleInstance> linked_instances;
+        Vector<NonnullOwnPtr<Wasm::ModuleInstance>> linked_instances;
         Vector<Wasm::Module> linked_modules;
         for (auto& name : modules_to_link_in) {
             auto parse_result = parse(name);
@@ -368,7 +421,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             linked_modules.append(parse_result.release_value());
             Wasm::Linker linker { linked_modules.last() };
             for (auto& instance : linked_instances)
-                linker.link(instance);
+                linker.link(*instance);
             auto link_result = linker.finish();
             if (link_result.is_error()) {
                 warnln("Linking imported module '{}' failed", name);
@@ -385,7 +438,24 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
         Wasm::Linker linker { parse_result.value() };
         for (auto& instance : linked_instances)
-            linker.link(instance);
+            linker.link(*instance);
+
+        if (wasi) {
+            HashMap<Wasm::Linker::Name, Wasm::ExternValue> wasi_exports;
+            for (auto& entry : linker.unresolved_imports()) {
+                if (entry.module != "wasi_snapshot_preview1"sv)
+                    continue;
+                auto function = wasi_impl->function_by_name(entry.name);
+                if (function.is_error()) {
+                    dbgln("wasi function {} not implemented :(", entry.name);
+                    continue;
+                }
+                auto address = machine.store().allocate(function.release_value());
+                wasi_exports.set(entry, *address);
+            }
+
+            linker.link(wasi_exports);
+        }
 
         if (export_all_imports) {
             HashMap<Wasm::Linker::Name, Wasm::ExternValue> exports;
@@ -398,14 +468,14 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                         StringBuilder argument_builder;
                         bool first = true;
                         for (auto& argument : arguments) {
-                            Core::Stream::AllocatingMemoryStream stream;
+                            AllocatingMemoryStream stream;
                             Wasm::Printer { stream }.print(argument);
                             if (first)
                                 first = false;
                             else
                                 argument_builder.append(", "sv);
                             auto buffer = ByteBuffer::create_uninitialized(stream.used_buffer_size()).release_value_but_fixme_should_propagate_errors();
-                            stream.read_entire_buffer(buffer).release_value_but_fixme_should_propagate_errors();
+                            stream.read_until_filled(buffer).release_value_but_fixme_should_propagate_errors();
                             argument_builder.append(StringView(buffer).trim_whitespace());
                         }
                         dbgln("[wasm runtime] Stub function {} was called with the following arguments: {}", name, argument_builder.to_deprecated_string());
@@ -452,15 +522,15 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
         auto print_func = [&](auto const& address) {
             Wasm::FunctionInstance* fn = machine.store().get(address);
-            g_stdout->write(DeprecatedString::formatted("- Function with address {}, ptr = {}\n", address.value(), fn).bytes()).release_value_but_fixme_should_propagate_errors();
+            g_stdout->write_until_depleted(DeprecatedString::formatted("- Function with address {}, ptr = {}\n", address.value(), fn).bytes()).release_value_but_fixme_should_propagate_errors();
             if (fn) {
-                g_stdout->write(DeprecatedString::formatted("    wasm function? {}\n", fn->has<Wasm::WasmFunction>()).bytes()).release_value_but_fixme_should_propagate_errors();
+                g_stdout->write_until_depleted(DeprecatedString::formatted("    wasm function? {}\n", fn->has<Wasm::WasmFunction>()).bytes()).release_value_but_fixme_should_propagate_errors();
                 fn->visit(
                     [&](Wasm::WasmFunction const& func) {
                         Wasm::Printer printer { *g_stdout, 3 };
-                        g_stdout->write("    type:\n"sv.bytes()).release_value_but_fixme_should_propagate_errors();
+                        g_stdout->write_until_depleted("    type:\n"sv.bytes()).release_value_but_fixme_should_propagate_errors();
                         printer.print(func.type());
-                        g_stdout->write("    code:\n"sv.bytes()).release_value_but_fixme_should_propagate_errors();
+                        g_stdout->write_until_depleted("    code:\n"sv.bytes()).release_value_but_fixme_should_propagate_errors();
                         printer.print(func.code());
                     },
                     [](Wasm::HostFunction const&) {});
@@ -513,7 +583,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                 outln();
             }
 
-            auto result = machine.invoke(g_interpreter, run_address.value(), move(values));
+            auto result = machine.invoke(g_interpreter, run_address.value(), move(values)).assert_wasm_result();
 
             if (debug)
                 launch_repl();
@@ -524,7 +594,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                 if (!result.values().is_empty())
                     warnln("Returned:");
                 for (auto& value : result.values()) {
-                    g_stdout->write("  -> "sv.bytes()).release_value_but_fixme_should_propagate_errors();
+                    g_stdout->write_until_depleted("  -> "sv.bytes()).release_value_but_fixme_should_propagate_errors();
                     g_printer->print(value);
                 }
             }

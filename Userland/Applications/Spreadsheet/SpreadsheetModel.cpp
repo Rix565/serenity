@@ -33,7 +33,7 @@ GUI::Variant SheetModel::data(const GUI::ModelIndex& index, GUI::ModelRole role)
                     auto message = object.get_without_side_effects("message");
                     auto error = message.to_deprecated_string(vm);
                     if (error.is_throw_completion())
-                        builder.append(message.to_string_without_side_effects());
+                        builder.append(message.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors());
                     else
                         builder.append(error.release_value());
                     return builder.to_deprecated_string();
@@ -120,15 +120,15 @@ GUI::Variant SheetModel::data(const GUI::ModelIndex& index, GUI::ModelRole role)
         auto& error = static_cast<JS::Error&>(object);
         auto const& trace = error.traceback();
         StringBuilder builder;
-        builder.appendff("{}\n", error.get_without_side_effects(object.vm().names.message).to_string_without_side_effects());
+        builder.appendff("{}\n", error.get_without_side_effects(object.vm().names.message).to_string_without_side_effects().release_value_but_fixme_should_propagate_errors());
         for (auto const& frame : trace.in_reverse()) {
-            if (frame.source_range.filename().contains("runtime.js"sv)) {
+            if (frame.source_range().filename().contains("runtime.js"sv)) {
                 if (frame.function_name == "<unknown>")
-                    builder.appendff("  in a builtin function at line {}, column {}\n", frame.source_range.start.line, frame.source_range.start.column);
+                    builder.appendff("  in a builtin function at line {}, column {}\n", frame.source_range().start.line, frame.source_range().start.column);
                 else
                     builder.appendff("  while evaluating builtin '{}'\n", frame.function_name);
-            } else if (frame.source_range.filename().starts_with("cell "sv)) {
-                builder.appendff("  in cell '{}', at line {}, column {}\n", frame.source_range.filename().substring_view(5), frame.source_range.start.line, frame.source_range.start.column);
+            } else if (frame.source_range().filename().starts_with("cell "sv)) {
+                builder.appendff("  in cell '{}', at line {}, column {}\n", frame.source_range().filename().substring_view(5), frame.source_range().start.line, frame.source_range().start.column);
             }
         }
         return builder.to_deprecated_string();
@@ -162,12 +162,12 @@ RefPtr<Core::MimeData> SheetModel::mime_data(const GUI::ModelSelection& selectio
     return mime_data;
 }
 
-DeprecatedString SheetModel::column_name(int index) const
+ErrorOr<String> SheetModel::column_name(int index) const
 {
     if (index < 0)
-        return {};
+        return String {};
 
-    return m_sheet->column(index);
+    return TRY(String::from_deprecated_string(m_sheet->column(index)));
 }
 
 bool SheetModel::is_editable(const GUI::ModelIndex& index) const
@@ -194,7 +194,7 @@ void SheetModel::set_data(const GUI::ModelIndex& index, const GUI::Variant& valu
 void SheetModel::update()
 {
     m_sheet->update();
-    did_update(UpdateFlag::DontInvalidateIndices);
+    did_update(UpdateFlag::DontInvalidateIndices | Model::UpdateFlag::DontResizeColumns);
 }
 
 CellsUndoCommand::CellsUndoCommand(Vector<CellChange> cell_changes)
@@ -218,6 +218,25 @@ void CellsUndoCommand::redo()
 {
     for (size_t i = 0; i < m_cell_changes.size(); ++i) {
         m_cell_changes[i].cell().set_data(m_cell_changes[i].new_data());
+    }
+}
+
+CellsUndoMetadataCommand::CellsUndoMetadataCommand(Vector<CellChange> cell_changes)
+{
+    m_cell_changes = move(cell_changes);
+}
+
+void CellsUndoMetadataCommand::undo()
+{
+    for (size_t i = 0; i < m_cell_changes.size(); ++i) {
+        m_cell_changes[i].cell().set_type_metadata(m_cell_changes[i].previous_type_metadata());
+    }
+}
+
+void CellsUndoMetadataCommand::redo()
+{
+    for (size_t i = 0; i < m_cell_changes.size(); ++i) {
+        m_cell_changes[i].cell().set_type_metadata(m_cell_changes[i].new_type_metadata());
     }
 }
 

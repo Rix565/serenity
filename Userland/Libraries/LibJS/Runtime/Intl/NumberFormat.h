@@ -210,7 +210,7 @@ public:
     void set_unit_display(StringView unit_display) { m_unit_display = ::Locale::style_from_string(unit_display); }
 
     UseGrouping use_grouping() const { return m_use_grouping; }
-    Value use_grouping_to_value(VM&) const;
+    ThrowCompletionOr<Value> use_grouping_to_value(VM&) const;
     void set_use_grouping(StringOrBoolean const& use_grouping);
 
     Notation notation() const { return m_notation; }
@@ -251,7 +251,7 @@ private:
     Notation m_notation { Notation::Invalid };           // [[Notation]]
     Optional<CompactDisplay> m_compact_display {};       // [[CompactDisplay]]
     SignDisplay m_sign_display { SignDisplay::Invalid }; // [[SignDisplay]]
-    NativeFunction* m_bound_format { nullptr };          // [[BoundFormat]]
+    GCPtr<NativeFunction> m_bound_format;                // [[BoundFormat]]
 
     // Non-standard. Stores the resolved currency display string based on [[Locale]], [[Currency]], and [[CurrencyDisplay]].
     Optional<StringView> m_resolved_currency_display;
@@ -281,15 +281,15 @@ ThrowCompletionOr<Vector<PatternPartition>> partition_number_pattern(VM&, Number
 ThrowCompletionOr<Vector<PatternPartition>> partition_notation_sub_pattern(VM&, NumberFormat&, MathematicalValue const& number, String formatted_string, int exponent);
 ThrowCompletionOr<String> format_numeric(VM&, NumberFormat&, MathematicalValue number);
 ThrowCompletionOr<Array*> format_numeric_to_parts(VM&, NumberFormat&, MathematicalValue number);
-ThrowCompletionOr<RawFormatResult> to_raw_precision(VM&, MathematicalValue const& number, int min_precision, int max_precision, Optional<NumberFormat::UnsignedRoundingMode> const& unsigned_rounding_mode);
-ThrowCompletionOr<RawFormatResult> to_raw_fixed(VM&, MathematicalValue const& number, int min_fraction, int max_fraction, int rounding_increment, Optional<NumberFormat::UnsignedRoundingMode> const& unsigned_rounding_mode);
+ThrowCompletionOr<RawFormatResult> to_raw_precision(VM&, MathematicalValue const& number, int min_precision, int max_precision, NumberFormat::UnsignedRoundingMode unsigned_rounding_mode);
+ThrowCompletionOr<RawFormatResult> to_raw_fixed(VM&, MathematicalValue const& number, int min_fraction, int max_fraction, int rounding_increment, NumberFormat::UnsignedRoundingMode unsigned_rounding_mode);
 ThrowCompletionOr<Optional<Variant<StringView, String>>> get_number_format_pattern(VM&, NumberFormat&, MathematicalValue const& number, ::Locale::NumberFormat& found_pattern);
 ThrowCompletionOr<Optional<StringView>> get_notation_sub_pattern(VM&, NumberFormat&, int exponent);
 ThrowCompletionOr<int> compute_exponent(VM&, NumberFormat&, MathematicalValue number);
 ThrowCompletionOr<int> compute_exponent_for_magnitude(VM&, NumberFormat&, int magnitude);
 ThrowCompletionOr<MathematicalValue> to_intl_mathematical_value(VM&, Value value);
 NumberFormat::UnsignedRoundingMode get_unsigned_rounding_mode(NumberFormat::RoundingMode, bool is_negative);
-RoundingDecision apply_unsigned_rounding_mode(MathematicalValue const& x, MathematicalValue const& r1, MathematicalValue const& r2, Optional<NumberFormat::UnsignedRoundingMode> const& unsigned_rounding_mode);
+RoundingDecision apply_unsigned_rounding_mode(MathematicalValue const& x, MathematicalValue const& r1, MathematicalValue const& r2, NumberFormat::UnsignedRoundingMode unsigned_rounding_mode);
 ThrowCompletionOr<Vector<PatternPartitionWithSource>> partition_number_range_pattern(VM&, NumberFormat&, MathematicalValue start, MathematicalValue end);
 ThrowCompletionOr<Vector<PatternPartitionWithSource>> format_approximately(VM&, NumberFormat&, Vector<PatternPartitionWithSource> result);
 Vector<PatternPartitionWithSource> collapse_number_range(Vector<PatternPartitionWithSource> result);

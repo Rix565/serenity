@@ -27,6 +27,9 @@ public:
         Import = 3,
         Media = 4,
         FontFace = 5,
+        Keyframes = 7,
+        Keyframe = 8,
+        Namespace = 10,
         Supports = 12,
     };
 

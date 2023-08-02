@@ -31,6 +31,7 @@
 #include <LibGUI/FileIconProvider.h>
 #include <LibGUI/GroupBox.h>
 #include <LibGUI/Icon.h>
+#include <LibGUI/ImageWidget.h>
 #include <LibGUI/JsonArrayModel.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/LazyWidget.h>
@@ -58,7 +59,7 @@
 #include <unistd.h>
 
 static ErrorOr<NonnullRefPtr<GUI::Window>> build_process_window(pid_t);
-static void build_performance_tab(GUI::Widget&);
+static ErrorOr<void> build_performance_tab(GUI::Widget&);
 
 static RefPtr<GUI::Statusbar> statusbar;
 
@@ -87,8 +88,8 @@ class UnavailableProcessWidget final : public GUI::Frame {
 public:
     virtual ~UnavailableProcessWidget() override = default;
 
-    DeprecatedString const& text() const { return m_text; }
-    void set_text(DeprecatedString text)
+    String const& text() const { return m_text; }
+    void set_text(String text)
     {
         m_text = move(text);
         update();
@@ -110,7 +111,7 @@ private:
         painter.draw_text(frame_inner_rect(), text(), Gfx::TextAlignment::Center, palette().window_text(), Gfx::TextElision::Right);
     }
 
-    DeprecatedString m_text;
+    String m_text;
 };
 
 class StorageTabWidget final : public GUI::LazyWidget {
@@ -122,11 +123,11 @@ public:
             auto& fs_table_view = *self.find_child_of_type_named<GUI::TableView>("storage_table");
 
             Vector<GUI::JsonArrayModel::FieldSpec> df_fields;
-            df_fields.empend("mount_point", "Mount point", Gfx::TextAlignment::CenterLeft);
-            df_fields.empend("class_name", "Class", Gfx::TextAlignment::CenterLeft);
-            df_fields.empend("source", "Source", Gfx::TextAlignment::CenterLeft);
+            df_fields.empend("mount_point", "Mount point"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterLeft);
+            df_fields.empend("class_name", "Class"_short_string, Gfx::TextAlignment::CenterLeft);
+            df_fields.empend("source", "Source"_short_string, Gfx::TextAlignment::CenterLeft);
             df_fields.empend(
-                "Size", Gfx::TextAlignment::CenterRight,
+                "Size"_short_string, Gfx::TextAlignment::CenterRight,
                 [](JsonObject const& object) {
                     StringBuilder size_builder;
                     size_builder.append(' ');
@@ -147,7 +148,7 @@ public:
                     return percentage;
                 });
             df_fields.empend(
-                "Used", Gfx::TextAlignment::CenterRight,
+                "Used"_short_string, Gfx::TextAlignment::CenterRight,
                 [](JsonObject const& object) {
             auto total_blocks = object.get_u64("total_block_count"sv).value_or(0);
             auto free_blocks = object.get_u64("free_block_count"sv).value_or(0);
@@ -160,19 +161,19 @@ public:
                     return used_blocks * object.get_u64("block_size"sv).value_or(0);
                 });
             df_fields.empend(
-                "Available", Gfx::TextAlignment::CenterRight,
+                "Available"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight,
                 [](JsonObject const& object) {
                     return human_readable_size(object.get_u64("free_block_count"sv).value_or(0) * object.get_u64("block_size"sv).value_or(0));
                 },
                 [](JsonObject const& object) {
                     return object.get_u64("free_block_count"sv).value_or(0) * object.get_u64("block_size"sv).value_or(0);
                 });
-            df_fields.empend("Access", Gfx::TextAlignment::CenterLeft, [](JsonObject const& object) {
+            df_fields.empend("Access"_short_string, Gfx::TextAlignment::CenterLeft, [](JsonObject const& object) {
                 bool readonly = object.get_bool("readonly"sv).value_or(false);
                 int mount_flags = object.get_i32("mount_flags"sv).value_or(0);
                 return readonly || (mount_flags & MS_RDONLY) ? "Read-only" : "Read/Write";
             });
-            df_fields.empend("Mount flags", Gfx::TextAlignment::CenterLeft, [](JsonObject const& object) {
+            df_fields.empend("Mount flags"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterLeft, [](JsonObject const& object) {
                 int mount_flags = object.get_i32("mount_flags"sv).value_or(0);
                 StringBuilder builder;
                 bool first = true;
@@ -196,11 +197,11 @@ public:
                     return DeprecatedString("defaults");
                 return builder.to_deprecated_string();
             });
-            df_fields.empend("free_block_count", "Free blocks", Gfx::TextAlignment::CenterRight);
-            df_fields.empend("total_block_count", "Total blocks", Gfx::TextAlignment::CenterRight);
-            df_fields.empend("free_inode_count", "Free inodes", Gfx::TextAlignment::CenterRight);
-            df_fields.empend("total_inode_count", "Total inodes", Gfx::TextAlignment::CenterRight);
-            df_fields.empend("block_size", "Block size", Gfx::TextAlignment::CenterRight);
+            df_fields.empend("free_block_count", "Free blocks"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight);
+            df_fields.empend("total_block_count", "Total blocks"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight);
+            df_fields.empend("free_inode_count", "Free inodes"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight);
+            df_fields.empend("total_inode_count", "Total inodes"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight);
+            df_fields.empend("block_size", "Block size"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight);
 
             fs_table_view.set_model(MUST(GUI::SortingProxyModel::create(GUI::JsonArrayModel::create("/sys/kernel/df", move(df_fields)))));
 
@@ -236,7 +237,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     TRY(Core::System::pledge("stdio thread proc recvfd sendfd rpath exec unix"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
     Config::pledge_domain("SystemMonitor");
 
@@ -247,6 +248,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::unveil("/dev", "r"));
     TRY(Core::System::unveil("/bin", "r"));
     TRY(Core::System::unveil("/bin/Escalator", "x"));
+    TRY(Core::System::unveil("/bin/NetworkSettings", "x"));
     TRY(Core::System::unveil("/usr/lib", "r"));
 
     // This directory only exists if ports are installed
@@ -263,7 +265,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         return result.release_error();
 
     TRY(Core::System::unveil("/bin/Profiler", "rx"));
-    TRY(Core::System::unveil("/bin/Inspector", "rx"));
+    // HackStudio doesn't exist in the minimal build configuration.
+    if (auto result = Core::System::unveil("/bin/HackStudio", "rx"); result.is_error() && result.error().code() != ENOENT)
+        return result.release_error();
     TRY(Core::System::unveil(nullptr, nullptr));
 
     StringView args_tab = "processes"sv;
@@ -272,9 +276,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     parser.parse(arguments);
     StringView args_tab_view = args_tab;
 
-    auto app_icon = GUI::Icon::default_icon("app-system-monitor"sv);
+    auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-system-monitor"sv));
 
-    auto window = GUI::Window::construct();
+    auto window = TRY(GUI::Window::try_create());
     window->set_title("System Monitor");
     window->resize(560, 430);
 
@@ -287,19 +291,19 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto process_model = ProcessModel::create();
     process_model->on_state_update = [&](int process_count, int thread_count) {
-        statusbar->set_text(0, DeprecatedString::formatted("Processes: {}", process_count));
-        statusbar->set_text(1, DeprecatedString::formatted("Threads: {}", thread_count));
+        statusbar->set_text(0, String::formatted("Processes: {}", process_count).release_value_but_fixme_should_propagate_errors());
+        statusbar->set_text(1, String::formatted("Threads: {}", thread_count).release_value_but_fixme_should_propagate_errors());
     };
 
     auto& performance_widget = *tabwidget.find_descendant_of_type_named<GUI::Widget>("performance");
-    build_performance_tab(performance_widget);
+    TRY(build_performance_tab(performance_widget));
 
     auto& process_table_view = *process_table_container.find_child_of_type_named<GUI::TreeView>("process_table");
     process_table_view.set_model(TRY(GUI::SortingProxyModel::create(process_model)));
 
     for (auto column = 0; column < ProcessModel::Column::__Count; ++column) {
         process_table_view.set_column_visible(column,
-            Config::read_bool("SystemMonitor"sv, "ProcessTableColumns"sv, process_model->column_name(column),
+            Config::read_bool("SystemMonitor"sv, "ProcessTableColumns"sv, TRY(process_model->column_name(column)),
                 process_model->is_default_column(column)));
     }
 
@@ -327,8 +331,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             memory_stats_widget->refresh();
     };
     update_stats();
-    auto& refresh_timer = window->add<Core::Timer>(frequency * 1000, move(update_stats));
-    refresh_timer.start();
+    auto refresh_timer = TRY(window->try_add<Core::Timer>(frequency * 1000, move(update_stats)));
+    refresh_timer->start();
 
     auto selected_id = [&](ProcessModel::Column column) -> pid_t {
         if (process_table_view.selection().is_empty())
@@ -385,6 +389,16 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         },
         &process_table_view);
 
+    auto debug_action = GUI::Action::create(
+        "Debug in HackStudio", { Mod_Ctrl, Key_D }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-hack-studio.png"sv)), [&](const GUI::Action&) {
+            pid_t pid = selected_id(ProcessModel::Column::PID);
+            if (pid == -1)
+                return;
+            auto pid_string = DeprecatedString::number(pid);
+            GUI::Process::spawn_or_show_error(window, "/bin/HackStudio"sv, Array { "--pid", pid_string.characters() });
+        },
+        &process_table_view);
+
     HashMap<pid_t, NonnullRefPtr<GUI::Window>> process_windows;
 
     auto process_properties_action = GUI::CommonActions::make_properties_action(
@@ -413,46 +427,48 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         },
         &process_table_view);
 
-    auto& file_menu = window->add_menu("&File");
-    file_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    auto file_menu = TRY(window->try_add_menu("&File"_short_string));
+    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
-    }));
+    })));
 
-    auto process_context_menu = GUI::Menu::construct();
-    process_context_menu->add_action(kill_action);
-    process_context_menu->add_action(stop_action);
-    process_context_menu->add_action(continue_action);
-    process_context_menu->add_separator();
-    process_context_menu->add_action(profile_action);
-    process_context_menu->add_separator();
-    process_context_menu->add_action(process_properties_action);
+    auto process_context_menu = TRY(GUI::Menu::try_create());
+    TRY(process_context_menu->try_add_action(kill_action));
+    TRY(process_context_menu->try_add_action(stop_action));
+    TRY(process_context_menu->try_add_action(continue_action));
+    TRY(process_context_menu->try_add_separator());
+    TRY(process_context_menu->try_add_action(profile_action));
+    TRY(process_context_menu->try_add_action(debug_action));
+    TRY(process_context_menu->try_add_separator());
+    TRY(process_context_menu->try_add_action(process_properties_action));
     process_table_view.on_context_menu_request = [&]([[maybe_unused]] const GUI::ModelIndex& index, const GUI::ContextMenuEvent& event) {
         if (index.is_valid())
             process_context_menu->popup(event.screen_position(), process_properties_action);
     };
 
-    auto& frequency_menu = window->add_menu("F&requency");
+    auto frequency_menu = TRY(window->try_add_menu(TRY("F&requency"_string)));
     GUI::ActionGroup frequency_action_group;
     frequency_action_group.set_exclusive(true);
 
-    auto make_frequency_action = [&](int seconds) {
+    auto make_frequency_action = [&](int seconds) -> ErrorOr<void> {
         auto action = GUI::Action::create_checkable(DeprecatedString::formatted("&{} Sec", seconds), [&refresh_timer, seconds](auto&) {
             Config::write_i32("SystemMonitor"sv, "Monitor"sv, "Frequency"sv, seconds);
-            refresh_timer.restart(seconds * 1000);
+            refresh_timer->restart(seconds * 1000);
         });
-        action->set_status_tip(DeprecatedString::formatted("Refresh every {} seconds", seconds));
+        action->set_status_tip(TRY(String::formatted("Refresh every {} seconds", seconds)));
         action->set_checked(frequency == seconds);
         frequency_action_group.add_action(*action);
-        frequency_menu.add_action(*action);
+        TRY(frequency_menu->try_add_action(*action));
+        return {};
     };
 
-    make_frequency_action(1);
-    make_frequency_action(3);
-    make_frequency_action(5);
+    TRY(make_frequency_action(1));
+    TRY(make_frequency_action(3));
+    TRY(make_frequency_action(5));
 
-    auto& help_menu = window->add_menu("&Help");
-    help_menu.add_action(GUI::CommonActions::make_command_palette_action(window));
-    help_menu.add_action(GUI::CommonActions::make_about_action("System Monitor", app_icon, window));
+    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
+    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
+    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("System Monitor", app_icon, window)));
 
     process_table_view.on_activation = [&](auto&) {
         if (process_properties_action->is_enabled())
@@ -471,6 +487,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         stop_action->set_enabled(has_access);
         continue_action->set_enabled(has_access);
         profile_action->set_enabled(has_access);
+        debug_action->set_enabled(has_access);
         process_properties_action->set_enabled(has_access);
     };
 
@@ -499,18 +516,18 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     // to be loaded the next time the application is opened.
     auto& process_table_header = process_table_view.column_header();
     for (auto column = 0; column < ProcessModel::Column::__Count; ++column)
-        Config::write_bool("SystemMonitor"sv, "ProcessTableColumns"sv, process_model->column_name(column), process_table_header.is_section_visible(column));
+        Config::write_bool("SystemMonitor"sv, "ProcessTableColumns"sv, TRY(process_model->column_name(column)), process_table_header.is_section_visible(column));
 
     return exec;
 }
 
 ErrorOr<NonnullRefPtr<GUI::Window>> build_process_window(pid_t pid)
 {
-    auto window = GUI::Window::construct();
+    auto window = TRY(GUI::Window::try_create());
     window->resize(480, 360);
     window->set_title(DeprecatedString::formatted("PID {} - System Monitor", pid));
 
-    auto app_icon = GUI::Icon::default_icon("app-system-monitor"sv);
+    auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-system-monitor"sv));
     window->set_icon(app_icon.bitmap_for_size(16));
 
     auto main_widget = TRY(window->set_main_widget<GUI::Widget>());
@@ -527,10 +544,10 @@ ErrorOr<NonnullRefPtr<GUI::Window>> build_process_window(pid_t pid)
 
     VERIFY(process_index.is_valid());
     if (auto icon_data = process_index.sibling_at_column(ProcessModel::Column::Icon).data(); icon_data.is_icon()) {
-        main_widget->find_descendant_of_type_named<GUI::Label>("icon_label")->set_icon(icon_data.as_icon().bitmap_for_size(32));
+        main_widget->find_descendant_of_type_named<GUI::ImageWidget>("process_icon")->set_bitmap(icon_data.as_icon().bitmap_for_size(32));
     }
 
-    main_widget->find_descendant_of_type_named<GUI::Label>("process_name")->set_text(DeprecatedString::formatted("{} (PID {})", process_index.sibling_at_column(ProcessModel::Column::Name).data().to_deprecated_string(), pid));
+    main_widget->find_descendant_of_type_named<GUI::Label>("process_name")->set_text(TRY(String::formatted("{} (PID {})", process_index.sibling_at_column(ProcessModel::Column::Name).data().to_deprecated_string(), pid)));
 
     main_widget->find_descendant_of_type_named<SystemMonitor::ProcessStateWidget>("process_state")->set_pid(pid);
     main_widget->find_descendant_of_type_named<SystemMonitor::ProcessFileDescriptorMapWidget>("open_files")->set_pid(pid);
@@ -540,7 +557,7 @@ ErrorOr<NonnullRefPtr<GUI::Window>> build_process_window(pid_t pid)
 
     auto& widget_stack = *main_widget->find_descendant_of_type_named<GUI::StackWidget>("widget_stack");
     auto& unavailable_process_widget = *widget_stack.find_descendant_of_type_named<SystemMonitor::UnavailableProcessWidget>("unavailable_process");
-    unavailable_process_widget.set_text(DeprecatedString::formatted("Unable to access PID {}", pid));
+    unavailable_process_widget.set_text(TRY(String::formatted("Unable to access PID {}", pid)));
 
     if (can_access_pid(pid))
         widget_stack.set_active_widget(widget_stack.find_descendant_of_type_named<GUI::TabWidget>("available_process"));
@@ -550,7 +567,7 @@ ErrorOr<NonnullRefPtr<GUI::Window>> build_process_window(pid_t pid)
     return window;
 }
 
-void build_performance_tab(GUI::Widget& graphs_container)
+ErrorOr<void> build_performance_tab(GUI::Widget& graphs_container)
 {
     auto& cpu_graph_group_box = *graphs_container.find_descendant_of_type_named<GUI::GroupBox>("cpu_graph");
 
@@ -560,36 +577,35 @@ void build_performance_tab(GUI::Widget& graphs_container)
 
     Vector<SystemMonitor::GraphWidget&> cpu_graphs;
     for (auto row = 0u; row < cpu_graph_rows; ++row) {
-        auto& cpu_graph_row = cpu_graph_group_box.add<GUI::Widget>();
-        cpu_graph_row.set_layout<GUI::HorizontalBoxLayout>();
-        cpu_graph_row.layout()->set_margins(6);
-        cpu_graph_row.set_fixed_height(108);
+        auto cpu_graph_row = TRY(cpu_graph_group_box.try_add<GUI::Widget>());
+        TRY(cpu_graph_row->try_set_layout<GUI::HorizontalBoxLayout>(6));
+        cpu_graph_row->set_fixed_height(108);
         for (auto i = 0u; i < cpu_graphs_per_row; ++i) {
-            auto& cpu_graph = cpu_graph_row.add<SystemMonitor::GraphWidget>();
-            cpu_graph.set_max(100);
-            cpu_graph.set_value_format(0, {
-                                              .graph_color_role = ColorRole::SyntaxPreprocessorStatement,
-                                              .text_formatter = [](u64 value) {
-                                                  return DeprecatedString::formatted("Total: {}%", value);
-                                              },
-                                          });
-            cpu_graph.set_value_format(1, {
-                                              .graph_color_role = ColorRole::SyntaxPreprocessorValue,
-                                              .text_formatter = [](u64 value) {
-                                                  return DeprecatedString::formatted("Kernel: {}%", value);
-                                              },
-                                          });
+            auto cpu_graph = TRY(cpu_graph_row->try_add<SystemMonitor::GraphWidget>());
+            cpu_graph->set_max(100);
+            cpu_graph->set_value_format(0, {
+                                               .graph_color_role = ColorRole::SyntaxPreprocessorStatement,
+                                               .text_formatter = [](u64 value) {
+                                                   return DeprecatedString::formatted("Total: {}%", value);
+                                               },
+                                           });
+            cpu_graph->set_value_format(1, {
+                                               .graph_color_role = ColorRole::SyntaxPreprocessorValue,
+                                               .text_formatter = [](u64 value) {
+                                                   return DeprecatedString::formatted("Kernel: {}%", value);
+                                               },
+                                           });
             cpu_graphs.append(cpu_graph);
         }
     }
-    ProcessModel::the().on_cpu_info_change = [cpu_graphs](NonnullOwnPtrVector<ProcessModel::CpuInfo> const& cpus) mutable {
+    ProcessModel::the().on_cpu_info_change = [cpu_graphs](Vector<NonnullOwnPtr<ProcessModel::CpuInfo>> const& cpus) mutable {
         float sum_cpu = 0;
         for (size_t i = 0; i < cpus.size(); ++i) {
-            cpu_graphs[i].add_value({ static_cast<size_t>(cpus[i].total_cpu_percent), static_cast<size_t>(cpus[i].total_cpu_percent_kernel) });
-            sum_cpu += cpus[i].total_cpu_percent;
+            cpu_graphs[i].add_value({ static_cast<size_t>(cpus[i]->total_cpu_percent), static_cast<size_t>(cpus[i]->total_cpu_percent_kernel) });
+            sum_cpu += cpus[i]->total_cpu_percent;
         }
         float cpu_usage = sum_cpu / (float)cpus.size();
-        statusbar->set_text(2, DeprecatedString::formatted("CPU usage: {}%", (int)roundf(cpu_usage)));
+        statusbar->set_text(2, String::formatted("CPU usage: {}%", (int)roundf(cpu_usage)).release_value_but_fixme_should_propagate_errors());
     };
 
     auto& memory_graph = *graphs_container.find_descendant_of_type_named<SystemMonitor::GraphWidget>("memory_graph");
@@ -611,4 +627,5 @@ void build_performance_tab(GUI::Widget& graphs_container)
                                              return DeprecatedString::formatted("Kernel heap: {}", human_readable_size(bytes));
                                          },
                                      });
+    return {};
 }

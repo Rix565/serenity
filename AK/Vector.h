@@ -31,13 +31,13 @@ struct CanBePlacedInsideVectorHelper;
 template<typename StorageType>
 struct CanBePlacedInsideVectorHelper<StorageType, true> {
     template<typename U>
-    static constexpr bool value = requires(U && u) { StorageType { &u }; };
+    static constexpr bool value = requires(U&& u) { StorageType { &u }; };
 };
 
 template<typename StorageType>
 struct CanBePlacedInsideVectorHelper<StorageType, false> {
     template<typename U>
-    static constexpr bool value = requires(U && u) { StorageType(forward<U>(u)); };
+    static constexpr bool value = requires(U&& u) { StorageType(forward<U>(u)); };
 };
 }
 
@@ -55,7 +55,6 @@ private:
 public:
     using ValueType = T;
     Vector()
-        : m_capacity(inline_capacity)
     {
     }
 
@@ -90,7 +89,7 @@ public:
         m_size = other.size();
     }
 
-    explicit Vector(Span<T const> other)
+    explicit Vector(ReadonlySpan<T> other)
     requires(!IsLvalueReference<T>)
     {
         ensure_capacity(other.size());
@@ -112,10 +111,10 @@ public:
     }
 
     Span<StorageType> span() { return { data(), size() }; }
-    Span<StorageType const> span() const { return { data(), size() }; }
+    ReadonlySpan<StorageType> span() const { return { data(), size() }; }
 
     operator Span<StorageType>() { return span(); }
-    operator Span<StorageType const>() const { return span(); }
+    operator ReadonlySpan<StorageType>() const { return span(); }
 
     bool is_empty() const { return size() == 0; }
     ALWAYS_INLINE size_t size() const { return m_size; }
@@ -797,6 +796,15 @@ public:
         return {};
     }
 
+    template<typename TUnaryPredicate>
+    Optional<size_t> find_first_index_if(TUnaryPredicate&& finder) const
+    {
+        auto maybe_result = AK::find_if(begin(), end(), finder);
+        if (maybe_result == end())
+            return {};
+        return maybe_result.index();
+    }
+
     void reverse()
     {
         for (size_t i = 0; i < size() / 2; ++i)
@@ -811,7 +819,7 @@ private:
 
     static size_t padded_capacity(size_t capacity)
     {
-        return max(static_cast<size_t>(4), capacity + (capacity / 4) + 4);
+        return 4 + capacity + capacity / 4;
     }
 
     StorageType* slot(size_t i) { return &data()[i]; }
@@ -833,7 +841,7 @@ private:
     StorageType& raw_at(size_t index) { return *slot(index); }
 
     size_t m_size { 0 };
-    size_t m_capacity { 0 };
+    size_t m_capacity { inline_capacity };
 
     static constexpr size_t storage_size()
     {

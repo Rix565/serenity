@@ -3,6 +3,7 @@
  * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021, Ali Mohammad Pur <mpfard@serenityos.org>
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -18,7 +19,6 @@
 #include <AK/Tuple.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
-#include <LibCore/Stream.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Lexer.h>
@@ -84,7 +84,7 @@
         __TestJS_flag_hook_##flag()                                                        \
         {                                                                                  \
             ::Test::JS::g_extra_args.set(&(flag), { help_string, long_name, short_name }); \
-        };                                                                                 \
+        }                                                                                  \
     } __testjs_flag_hook_##flag;
 
 #define TEST_ROOT(path) \
@@ -127,7 +127,6 @@ static consteval size_t __testjs_last()
 static constexpr auto TOP_LEVEL_TEST_NAME = "__$$TOP_LEVEL$$__";
 extern RefPtr<JS::VM> g_vm;
 extern bool g_collect_on_every_allocation;
-extern bool g_run_bytecode;
 extern DeprecatedString g_currently_running_test;
 struct FunctionWithLength {
     JS::ThrowCompletionOr<JS::Value> (*function)(JS::VM&);
@@ -218,10 +217,10 @@ inline JS::ThrowCompletionOr<void> TestRunnerGlobalObject::initialize(JS::Realm&
 inline ByteBuffer load_entire_file(StringView path)
 {
     auto try_load_entire_file = [](StringView const& path) -> ErrorOr<ByteBuffer> {
-        auto file = TRY(Core::Stream::File::open(path, Core::Stream::OpenMode::Read));
+        auto file = TRY(Core::File::open(path, Core::File::OpenMode::Read));
         auto file_size = TRY(file->size());
         auto content = TRY(ByteBuffer::create_uninitialized(file_size));
-        TRY(file->read(content.bytes()));
+        TRY(file->read_until_filled(content.bytes()));
         return content;
     };
 
@@ -361,13 +360,10 @@ inline JSFileResult TestRunner::run_file_test(DeprecatedString const& test_path)
     }
     auto test_script = result.release_value();
 
-    if (g_run_bytecode) {
-        auto executable = MUST(JS::Bytecode::Generator::generate(test_script->parse_node()));
-        executable->name = test_path;
-        if (JS::Bytecode::g_dump_bytecode)
-            executable->dump();
-        JS::Bytecode::Interpreter bytecode_interpreter(interpreter->realm());
-        MUST(bytecode_interpreter.run(*executable));
+    if (auto* bytecode_interpreter = g_vm->bytecode_interpreter_if_exists()) {
+        g_vm->push_execution_context(global_execution_context);
+        MUST(bytecode_interpreter->run(*test_script));
+        g_vm->pop_execution_context();
     } else {
         g_vm->push_execution_context(global_execution_context);
         MUST(interpreter->run(*test_script));
@@ -378,21 +374,13 @@ inline JSFileResult TestRunner::run_file_test(DeprecatedString const& test_path)
     JS::ThrowCompletionOr<JS::Value> top_level_result { JS::js_undefined() };
     if (file_script.is_error())
         return { test_path, file_script.error() };
-    if (g_run_bytecode) {
-        auto executable_result = JS::Bytecode::Generator::generate(file_script.value()->parse_node());
-        if (!executable_result.is_error()) {
-            auto executable = executable_result.release_value();
-            executable->name = test_path;
-            if (JS::Bytecode::g_dump_bytecode)
-                executable->dump();
-            JS::Bytecode::Interpreter bytecode_interpreter(interpreter->realm());
-            top_level_result = bytecode_interpreter.run(*executable);
-        }
+    g_vm->push_execution_context(global_execution_context);
+    if (auto* bytecode_interpreter = g_vm->bytecode_interpreter_if_exists()) {
+        top_level_result = bytecode_interpreter->run(file_script.value());
     } else {
-        g_vm->push_execution_context(global_execution_context);
         top_level_result = interpreter->run(file_script.value());
-        g_vm->pop_execution_context();
     }
+    g_vm->pop_execution_context();
 
     g_vm->push_execution_context(global_execution_context);
     auto test_json = get_test_results(*interpreter);
@@ -410,7 +398,7 @@ inline JSFileResult TestRunner::run_file_test(DeprecatedString const& test_path)
     auto& arr = user_output.as_array();
     for (auto& entry : arr.indexed_properties()) {
         auto message = MUST(arr.get(entry.index()));
-        file_result.logged_messages.append(message.to_string_without_side_effects());
+        file_result.logged_messages.append(message.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string());
     }
 
     test_json.value().as_object().for_each_member([&](DeprecatedString const& suite_name, JsonValue const& suite_value) {
@@ -438,6 +426,11 @@ inline JSFileResult TestRunner::run_file_test(DeprecatedString const& test_path)
                 auto details = test_value.as_object().get_deprecated_string("details"sv);
                 VERIFY(result.has_value());
                 test.details = details.value();
+            } else if (result_string == "xfail") {
+                test.result = Test::Result::ExpectedFail;
+                m_counts.tests_expected_failed++;
+                if (suite.most_severe_test_result != Test::Result::Fail)
+                    suite.most_severe_test_result = Test::Result::ExpectedFail;
             } else {
                 test.result = Test::Result::Skip;
                 if (suite.most_severe_test_result == Test::Result::Pass)
@@ -456,6 +449,8 @@ inline JSFileResult TestRunner::run_file_test(DeprecatedString const& test_path)
         } else {
             if (suite.most_severe_test_result == Test::Result::Skip && file_result.most_severe_test_result == Test::Result::Pass)
                 file_result.most_severe_test_result = Test::Result::Skip;
+            else if (suite.most_severe_test_result == Test::Result::ExpectedFail && (file_result.most_severe_test_result == Test::Result::Pass || file_result.most_severe_test_result == Test::Result::Skip))
+                file_result.most_severe_test_result = Test::Result::ExpectedFail;
             m_counts.suites_passed++;
         }
 
@@ -476,22 +471,22 @@ inline JSFileResult TestRunner::run_file_test(DeprecatedString const& test_path)
             auto message = error_object.get_without_side_effects(g_vm->names.message).value_or(JS::js_undefined());
 
             if (name.is_accessor() || message.is_accessor()) {
-                detail_builder.append(error.to_string_without_side_effects());
+                detail_builder.append(error.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors());
             } else {
-                detail_builder.append(name.to_string_without_side_effects());
+                detail_builder.append(name.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors());
                 detail_builder.append(": "sv);
-                detail_builder.append(message.to_string_without_side_effects());
+                detail_builder.append(message.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors());
             }
 
             if (is<JS::Error>(error_object)) {
                 auto& error_as_error = static_cast<JS::Error&>(error_object);
                 detail_builder.append('\n');
-                detail_builder.append(error_as_error.stack_string());
+                detail_builder.append(error_as_error.stack_string(*g_vm).release_allocated_value_but_fixme_should_propagate_errors());
             }
 
             test_case.details = detail_builder.to_deprecated_string();
         } else {
-            test_case.details = error.to_string_without_side_effects();
+            test_case.details = error.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
         }
 
         suite.tests.append(move(test_case));
@@ -513,7 +508,7 @@ inline JSFileResult TestRunner::run_file_test(DeprecatedString const& test_path)
 inline void TestRunner::print_file_result(JSFileResult const& file_result) const
 {
     if (file_result.most_severe_test_result == Test::Result::Fail || file_result.error.has_value()) {
-        print_modifiers({ BG_RED, FG_BLACK, FG_BOLD });
+        print_modifiers({ BG_RED, FG_BOLD });
         out(" FAIL ");
         print_modifiers({ CLEAR });
     } else {
@@ -618,6 +613,9 @@ inline void TestRunner::print_file_result(JSFileResult const& file_result) const
                     print_modifiers({ CLEAR, FG_RED });
                     outln("{} (failed):", test.name);
                     outln("                 {}", test.details);
+                } else if (test.result == Test::Result::ExpectedFail) {
+                    print_modifiers({ CLEAR, FG_ORANGE });
+                    outln("{} (expected fail)", test.name);
                 } else {
                     print_modifiers({ CLEAR, FG_ORANGE });
                     outln("{} (skipped)", test.name);

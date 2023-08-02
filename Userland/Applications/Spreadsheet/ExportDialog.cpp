@@ -10,8 +10,8 @@
 #include <AK/DeprecatedString.h>
 #include <AK/JsonArray.h>
 #include <AK/LexicalPath.h>
+#include <AK/MemoryStream.h>
 #include <Applications/Spreadsheet/CSVExportGML.h>
-#include <LibCore/MemoryStream.h>
 #include <LibCore/StandardPaths.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/CheckBox.h>
@@ -34,9 +34,10 @@ CSVExportDialogPage::CSVExportDialogPage(Sheet const& sheet)
 {
     m_headers.extend(m_data.take_first());
 
-    m_page = GUI::WizardPage::construct(
-        "CSV Export Options",
-        "Please select the options for the csv file you wish to export to");
+    m_page = GUI::WizardPage::create(
+        "CSV Export Options"sv,
+        "Please select the options for the csv file you wish to export to"sv)
+                 .release_value_but_fixme_should_propagate_errors();
 
     m_page->body_widget().load_from_gml(csv_export_gml).release_value_but_fixme_should_propagate_errors();
     m_page->set_is_final_page(true);
@@ -88,7 +89,7 @@ CSVExportDialogPage::CSVExportDialogPage(Sheet const& sheet)
     update_preview();
 }
 
-auto CSVExportDialogPage::generate(Core::Stream::Stream& stream, GenerationType type) -> ErrorOr<void>
+auto CSVExportDialogPage::generate(Stream& stream, GenerationType type) -> ErrorOr<void>
 {
     auto delimiter = TRY([this]() -> ErrorOr<DeprecatedString> {
         if (m_delimiter_other_radio->is_checked()) {
@@ -167,7 +168,7 @@ auto CSVExportDialogPage::generate(Core::Stream::Stream& stream, GenerationType 
 void CSVExportDialogPage::update_preview()
 {
     auto maybe_error = [this]() -> ErrorOr<void> {
-        Core::Stream::AllocatingMemoryStream memory_stream;
+        AllocatingMemoryStream memory_stream;
         TRY(generate(memory_stream, GenerationType::Preview));
         auto buffer = TRY(memory_stream.read_until_eof());
         m_data_preview_text_editor->set_text(StringView(buffer));
@@ -178,9 +179,9 @@ void CSVExportDialogPage::update_preview()
         m_data_preview_text_editor->set_text(DeprecatedString::formatted("Cannot update preview: {}", maybe_error.error()));
 }
 
-ErrorOr<void> ExportDialog::make_and_run_for(StringView mime, Core::Stream::File& file, DeprecatedString filename, Workbook& workbook)
+ErrorOr<void> ExportDialog::make_and_run_for(StringView mime, Core::File& file, DeprecatedString filename, Workbook& workbook)
 {
-    auto wizard = GUI::WizardDialog::construct(GUI::Application::the()->active_window());
+    auto wizard = TRY(GUI::WizardDialog::create(GUI::Application::the()->active_window()));
     wizard->set_title("File Export Wizard");
     wizard->set_icon(GUI::Icon::default_icon("app-spreadsheet"sv).bitmap_for_size(16));
 
@@ -202,10 +203,10 @@ ErrorOr<void> ExportDialog::make_and_run_for(StringView mime, Core::Stream::File
     auto export_worksheet = [&]() -> ErrorOr<void> {
         JsonArray array;
         for (auto& sheet : workbook.sheets())
-            array.append(sheet.to_json());
+            array.must_append(sheet->to_json());
 
         auto file_content = array.to_deprecated_string();
-        return file.write_entire_buffer(file_content.bytes());
+        return file.write_until_depleted(file_content.bytes());
     };
 
     if (mime == "text/csv") {
@@ -213,9 +214,9 @@ ErrorOr<void> ExportDialog::make_and_run_for(StringView mime, Core::Stream::File
     } else if (mime == "application/x-sheets+json") {
         return export_worksheet();
     } else {
-        auto page = GUI::WizardPage::construct(
-            "Export File Format",
-            DeprecatedString::formatted("Select the format you wish to export to '{}' as", LexicalPath::basename(filename)));
+        auto page = TRY(GUI::WizardPage::create(
+            "Export File Format"sv,
+            TRY(String::formatted("Select the format you wish to export to '{}' as", LexicalPath::basename(filename)))));
 
         page->on_next_page = [] { return nullptr; };
 

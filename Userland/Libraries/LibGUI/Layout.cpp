@@ -14,7 +14,9 @@ REGISTER_ABSTRACT_CORE_OBJECT(GUI, Layout)
 
 namespace GUI {
 
-Layout::Layout()
+Layout::Layout(Margins initial_margins, int spacing)
+    : m_margins(initial_margins)
+    , m_spacing(spacing)
 {
     REGISTER_INT_PROPERTY("spacing", spacing, set_spacing);
     REGISTER_MARGINS_PROPERTY("margins", margins, set_margins);
@@ -32,7 +34,7 @@ Layout::Layout()
                 } else {
                     VERIFY_NOT_REACHED();
                 }
-                entries_array.append(move(entry_object));
+                entries_array.must_append(move(entry_object));
             }
             return entries_array;
         });

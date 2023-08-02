@@ -6,7 +6,7 @@
 
 #include <AK/SourceGenerator.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 
 enum class PnpIdColumns {
     ManufacturerName,
@@ -116,7 +116,7 @@ static ErrorOr<ApprovalDate> parse_approval_date(StringView const& str)
     return ApprovalDate { .year = year.value(), .month = month.value(), .day = day.value() };
 }
 
-static ErrorOr<HashMap<DeprecatedString, PnpIdData>> parse_pnp_ids_database(Core::Stream::File& pnp_ids_file)
+static ErrorOr<HashMap<DeprecatedString, PnpIdData>> parse_pnp_ids_database(Core::File& pnp_ids_file)
 {
     auto pnp_ids_file_bytes = TRY(pnp_ids_file.read_until_eof());
     StringView pnp_ids_file_contents(pnp_ids_file_bytes);
@@ -168,9 +168,7 @@ static ErrorOr<HashMap<DeprecatedString, PnpIdData>> parse_pnp_ids_database(Core
 
         auto approval_date = TRY(parse_approval_date(columns[(size_t)PnpIdColumns::ApprovalDate]));
         auto decoded_manufacturer_name = TRY(decode_html_entities(columns[(size_t)PnpIdColumns::ManufacturerName]));
-        auto hash_set_result = pnp_id_data.set(columns[(size_t)PnpIdColumns::ManufacturerId], PnpIdData { .manufacturer_name = decoded_manufacturer_name, .approval_date = move(approval_date) });
-        if (hash_set_result != AK::HashSetResult::InsertedNewEntry)
-            return Error::from_string_literal("Duplicate manufacturer ID encountered");
+        pnp_id_data.set(columns[(size_t)PnpIdColumns::ManufacturerId], PnpIdData { .manufacturer_name = decoded_manufacturer_name, .approval_date = move(approval_date) });
 
         row_content_offset = row_end.value() + row_end_tag.length();
     }
@@ -181,7 +179,7 @@ static ErrorOr<HashMap<DeprecatedString, PnpIdData>> parse_pnp_ids_database(Core
     return pnp_id_data;
 }
 
-static ErrorOr<void> generate_header(Core::Stream::File& file, HashMap<DeprecatedString, PnpIdData> const& pnp_ids)
+static ErrorOr<void> generate_header(Core::File& file, HashMap<DeprecatedString, PnpIdData> const& pnp_ids)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
@@ -211,17 +209,17 @@ namespace PnpIDs {
 }
 )~~~");
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
-static ErrorOr<void> generate_source(Core::Stream::File& file, HashMap<DeprecatedString, PnpIdData> const& pnp_ids)
+static ErrorOr<void> generate_source(Core::File& file, HashMap<DeprecatedString, PnpIdData> const& pnp_ids)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
 
     generator.append(R"~~~(
-#include "PnpIDs.h"
+#include <LibEDID/PnpIDs.h>
 
 namespace PnpIDs {
 
@@ -265,7 +263,7 @@ IterationDecision for_each(Function<IterationDecision(PnpIDData const&)> callbac
 }
 )~~~");
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
@@ -281,17 +279,17 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_option(pnp_ids_file_path, "Path to the input PNP ID database file", "pnp-ids-file", 'p', "pnp-ids-file");
     args_parser.parse(arguments);
 
-    auto open_file = [&](StringView path, Core::Stream::OpenMode mode = Core::Stream::OpenMode::Read) -> ErrorOr<NonnullOwnPtr<Core::Stream::File>> {
+    auto open_file = [&](StringView path, Core::File::OpenMode mode = Core::File::OpenMode::Read) -> ErrorOr<NonnullOwnPtr<Core::File>> {
         if (path.is_empty()) {
-            args_parser.print_usage(stderr, arguments.argv[0]);
+            args_parser.print_usage(stderr, arguments.strings[0]);
             return Error::from_string_literal("Must provide all command line options");
         }
 
-        return Core::Stream::File::open(path, mode);
+        return Core::File::open(path, mode);
     };
 
-    auto generated_header_file = TRY(open_file(generated_header_path, Core::Stream::OpenMode::ReadWrite));
-    auto generated_implementation_file = TRY(open_file(generated_implementation_path, Core::Stream::OpenMode::ReadWrite));
+    auto generated_header_file = TRY(open_file(generated_header_path, Core::File::OpenMode::ReadWrite));
+    auto generated_implementation_file = TRY(open_file(generated_implementation_path, Core::File::OpenMode::ReadWrite));
     auto pnp_ids_file = TRY(open_file(pnp_ids_file_path));
 
     auto pnp_id_map = TRY(parse_pnp_ids_database(*pnp_ids_file));

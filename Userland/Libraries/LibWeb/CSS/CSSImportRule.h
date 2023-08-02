@@ -12,6 +12,7 @@
 #include <LibWeb/CSS/CSSRule.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
+#include <LibWeb/Loader/Resource.h>
 
 namespace Web::CSS {
 
@@ -21,7 +22,7 @@ class CSSImportRule final
     WEB_PLATFORM_OBJECT(CSSImportRule, CSSRule);
 
 public:
-    static CSSImportRule* create(AK::URL, DOM::Document&);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSImportRule>> create(AK::URL, DOM::Document&);
 
     virtual ~CSSImportRule() = default;
 
@@ -29,13 +30,12 @@ public:
     // FIXME: This should return only the specified part of the url. eg, "stuff/foo.css", not "https://example.com/stuff/foo.css".
     DeprecatedString href() const { return m_url.to_deprecated_string(); }
 
-    bool has_import_result() const { return !m_style_sheet; }
     CSSStyleSheet* loaded_style_sheet() { return m_style_sheet; }
     CSSStyleSheet const* loaded_style_sheet() const { return m_style_sheet; }
     CSSStyleSheet* style_sheet_for_bindings() { return m_style_sheet; }
     void set_style_sheet(CSSStyleSheet* style_sheet) { m_style_sheet = style_sheet; }
 
-    virtual Type type() const override { return Type::Import; };
+    virtual Type type() const override { return Type::Import; }
 
 private:
     CSSImportRule(AK::URL, DOM::Document&);

@@ -8,11 +8,9 @@
 
 #include "Loader.h"
 #include "MP3Types.h"
+#include <AK/BitStream.h>
 #include <AK/MemoryStream.h>
 #include <AK/Tuple.h>
-#include <LibCore/BitStream.h>
-#include <LibCore/MemoryStream.h>
-#include <LibCore/Stream.h>
 #include <LibDSP/MDCT.h>
 
 namespace Audio {
@@ -23,13 +21,13 @@ struct ScaleFactorBand;
 
 class MP3LoaderPlugin : public LoaderPlugin {
 public:
-    explicit MP3LoaderPlugin(NonnullOwnPtr<Core::Stream::SeekableStream> stream);
+    explicit MP3LoaderPlugin(NonnullOwnPtr<SeekableStream> stream);
     virtual ~MP3LoaderPlugin() = default;
 
-    static Result<NonnullOwnPtr<MP3LoaderPlugin>, LoaderError> create(StringView path);
-    static Result<NonnullOwnPtr<MP3LoaderPlugin>, LoaderError> create(Bytes buffer);
+    static bool sniff(SeekableStream& stream);
+    static ErrorOr<NonnullOwnPtr<LoaderPlugin>, LoaderError> create(NonnullOwnPtr<SeekableStream>);
 
-    virtual LoaderSamples get_more_samples(size_t max_bytes_to_read_from_input = 128 * KiB) override;
+    virtual ErrorOr<Vector<FixedArray<Sample>>, LoaderError> load_chunks(size_t samples_to_read_from_input) override;
 
     virtual MaybeLoaderError reset() override;
     virtual MaybeLoaderError seek(int const position) override;
@@ -43,23 +41,24 @@ public:
 
 private:
     MaybeLoaderError initialize();
+    static MaybeLoaderError synchronize(BigEndianInputBitStream& stream, size_t sample_index);
     MaybeLoaderError synchronize();
     MaybeLoaderError build_seek_table();
     ErrorOr<MP3::Header, LoaderError> read_header();
     ErrorOr<MP3::MP3Frame, LoaderError> read_next_frame();
     ErrorOr<MP3::MP3Frame, LoaderError> read_frame_data(MP3::Header const&);
     MaybeLoaderError read_side_information(MP3::MP3Frame&);
-    ErrorOr<size_t, LoaderError> read_scale_factors(MP3::MP3Frame&, Core::Stream::BigEndianInputBitStream& reservoir, size_t granule_index, size_t channel_index);
-    MaybeLoaderError read_huffman_data(MP3::MP3Frame&, Core::Stream::BigEndianInputBitStream& reservoir, size_t granule_index, size_t channel_index, size_t granule_bits_read);
+    ErrorOr<size_t, LoaderError> read_scale_factors(MP3::MP3Frame&, BigEndianInputBitStream& reservoir, size_t granule_index, size_t channel_index);
+    MaybeLoaderError read_huffman_data(MP3::MP3Frame&, BigEndianInputBitStream& reservoir, size_t granule_index, size_t channel_index, size_t granule_bits_read);
     static AK::Array<float, 576> calculate_frame_exponents(MP3::MP3Frame const&, size_t granule_index, size_t channel_index);
     static void reorder_samples(MP3::Granule&, u32 sample_rate);
     static void reduce_alias(MP3::Granule&, size_t max_subband_index = 576);
     static void process_stereo(MP3::MP3Frame&, size_t granule_index);
     static void transform_samples_to_time(Array<float, 576> const& input, size_t input_offset, Array<float, 36>& output, MP3::BlockType block_type);
     static void synthesis(Array<float, 1024>& V, Array<float, 32>& samples, Array<float, 32>& result);
-    static Span<MP3::Tables::ScaleFactorBand const> get_scalefactor_bands(MP3::Granule const&, int samplerate);
+    static ReadonlySpan<MP3::Tables::ScaleFactorBand> get_scalefactor_bands(MP3::Granule const&, int samplerate);
 
-    AK::Vector<AK::Tuple<size_t, int>> m_seek_table;
+    SeekTable m_seek_table;
     AK::Array<AK::Array<AK::Array<float, 18>, 32>, 2> m_last_values {};
     AK::Array<AK::Array<float, 1024>, 2> m_synthesis_buffer {};
     static DSP::MDCT<36> s_mdct_36;
@@ -72,9 +71,8 @@ private:
     size_t m_loaded_samples { 0 };
 
     AK::Optional<MP3::MP3Frame> m_current_frame;
-    u32 m_current_frame_read;
-    OwnPtr<Core::Stream::BigEndianInputBitStream> m_bitstream;
-    Core::Stream::AllocatingMemoryStream m_bit_reservoir;
+    OwnPtr<BigEndianInputBitStream> m_bitstream;
+    AllocatingMemoryStream m_bit_reservoir;
 };
 
 }

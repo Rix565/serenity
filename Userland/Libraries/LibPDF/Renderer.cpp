@@ -35,13 +35,6 @@ static void rect_path(Gfx::Path& path, float x, float y, float width, float heig
     path.close();
 }
 
-static Gfx::Path rect_path(float x, float y, float width, float height)
-{
-    Gfx::Path path;
-    rect_path(path, x, y, width, height);
-    return path;
-}
-
 template<typename T>
 static void rect_path(Gfx::Path& path, Gfx::Rect<T> rect)
 {
@@ -49,7 +42,7 @@ static void rect_path(Gfx::Path& path, Gfx::Rect<T> rect)
 }
 
 template<typename T>
-static Gfx::Path rect_path(Gfx::Rect<T> rect)
+static Gfx::Path rect_path(Gfx::Rect<T> const& rect)
 {
     Gfx::Path path;
     rect_path(path, rect);
@@ -84,7 +77,7 @@ Renderer::Renderer(RefPtr<Document> document, Page const& page, RefPtr<Gfx::Bitm
     userspace_matrix.multiply(horizontal_reflection_matrix);
     userspace_matrix.translate(0.0f, -height);
 
-    auto initial_clipping_path = rect_path(0, 0, width, height);
+    auto initial_clipping_path = rect_path(userspace_matrix.map(Gfx::FloatRect(0, 0, width, height)));
     m_graphics_state_stack.append(GraphicsState { userspace_matrix, { initial_clipping_path, initial_clipping_path } });
 
     m_bitmap->fill(Gfx::Color::NamedColor::White);
@@ -92,25 +85,7 @@ Renderer::Renderer(RefPtr<Document> document, Page const& page, RefPtr<Gfx::Bitm
 
 PDFErrorsOr<void> Renderer::render()
 {
-    // Use our own vector, as the /Content can be an array with multiple
-    // streams which gets concatenated
-    // FIXME: Text operators are supposed to only have effects on the current
-    // stream object. Do the text operators treat this concatenated stream
-    // as one stream or multiple?
-    ByteBuffer byte_buffer;
-
-    if (m_page.contents->is<ArrayObject>()) {
-        auto contents = m_page.contents->cast<ArrayObject>();
-        for (auto& ref : *contents) {
-            auto bytes = TRY(m_document->resolve_to<StreamObject>(ref))->bytes();
-            byte_buffer.append(bytes.data(), bytes.size());
-        }
-    } else {
-        auto bytes = m_page.contents->cast<StreamObject>()->bytes();
-        byte_buffer.append(bytes.data(), bytes.size());
-    }
-
-    auto operators = TRY(Parser::parse_operators(m_document, byte_buffer));
+    auto operators = TRY(Parser::parse_operators(m_document, TRY(m_page.page_contents(*m_document))));
 
     Errors errors;
     for (auto& op : operators) {
@@ -201,12 +176,17 @@ RENDERER_HANDLER(set_dash_pattern)
     Vector<int> pattern;
     for (auto& element : *dash_array)
         pattern.append(element.to_int());
-    state().line_dash_pattern = LineDashPattern { pattern, args[1].get<int>() };
+    state().line_dash_pattern = LineDashPattern { pattern, args[1].to_int() };
     return {};
 }
 
 RENDERER_TODO(set_color_rendering_intent)
-RENDERER_TODO(set_flatness_tolerance)
+
+RENDERER_HANDLER(set_flatness_tolerance)
+{
+    state().flatness_tolerance = args[0].to_float();
+    return {};
+}
 
 RENDERER_HANDLER(set_graphics_state_from_dict)
 {
@@ -245,7 +225,7 @@ RENDERER_HANDLER(path_cubic_bezier_curve_no_first_control)
 {
     VERIFY(args.size() == 4);
     VERIFY(!m_current_path.segments().is_empty());
-    auto current_point = m_current_path.segments().rbegin()->point();
+    auto current_point = (*m_current_path.segments().rbegin())->point();
     m_current_path.cubic_bezier_curve_to(
         current_point,
         map(args[0].to_float(), args[1].to_float()),
@@ -285,7 +265,7 @@ RENDERER_HANDLER(path_append_rect)
 
 void Renderer::begin_path_paint()
 {
-    auto bounding_box = map(state().clipping_paths.current.bounding_box());
+    auto bounding_box = state().clipping_paths.current.bounding_box();
     m_painter.clear_clip_rect();
     if (m_rendering_preferences.show_clipping_paths) {
         m_painter.stroke_path(rect_path(bounding_box), Color::Black, 1);
@@ -303,7 +283,7 @@ void Renderer::end_path_paint()
 RENDERER_HANDLER(path_stroke)
 {
     begin_path_paint();
-    m_anti_aliasing_painter.stroke_path(m_current_path, state().stroke_color, state().line_width);
+    m_anti_aliasing_painter.stroke_path(m_current_path, state().stroke_color, state().ctm.x_scale() * state().line_width);
     end_path_paint();
     return {};
 }
@@ -318,6 +298,7 @@ RENDERER_HANDLER(path_close_and_stroke)
 RENDERER_HANDLER(path_fill_nonzero)
 {
     begin_path_paint();
+    m_current_path.close_all_subpaths();
     m_anti_aliasing_painter.fill_path(m_current_path, state().paint_color, Gfx::Painter::WindingRule::Nonzero);
     end_path_paint();
     return {};
@@ -331,6 +312,7 @@ RENDERER_HANDLER(path_fill_nonzero_deprecated)
 RENDERER_HANDLER(path_fill_evenodd)
 {
     begin_path_paint();
+    m_current_path.close_all_subpaths();
     m_anti_aliasing_painter.fill_path(m_current_path, state().paint_color, Gfx::Painter::WindingRule::EvenOdd);
     end_path_paint();
     return {};
@@ -338,13 +320,13 @@ RENDERER_HANDLER(path_fill_evenodd)
 
 RENDERER_HANDLER(path_fill_stroke_nonzero)
 {
-    m_anti_aliasing_painter.stroke_path(m_current_path, state().stroke_color, state().line_width);
+    m_anti_aliasing_painter.stroke_path(m_current_path, state().stroke_color, state().ctm.x_scale() * state().line_width);
     return handle_path_fill_nonzero(args);
 }
 
 RENDERER_HANDLER(path_fill_stroke_evenodd)
 {
-    m_anti_aliasing_painter.stroke_path(m_current_path, state().stroke_color, state().line_width);
+    m_anti_aliasing_painter.stroke_path(m_current_path, state().stroke_color, state().ctm.x_scale() * state().line_width);
     return handle_path_fill_evenodd(args);
 }
 
@@ -478,6 +460,13 @@ RENDERER_HANDLER(text_set_matrix_and_line_matrix)
     m_text_line_matrix = new_transform;
     m_text_matrix = new_transform;
     m_text_rendering_matrix_is_dirty = true;
+
+    // Settings the text/line matrix retroactively affects fonts
+    if (text_state().font) {
+        auto new_text_rendering_matrix = calculate_text_rendering_matrix();
+        text_state().font->set_font_size(text_state().font_size * new_text_rendering_matrix.x_scale());
+    }
+
     return {};
 }
 
@@ -490,7 +479,7 @@ RENDERER_HANDLER(text_next_line)
 RENDERER_HANDLER(text_show_string)
 {
     auto text = MUST(m_document->resolve_to<StringObject>(args[0]))->string();
-    show_text(text);
+    TRY(show_text(text));
     return {};
 }
 
@@ -517,7 +506,7 @@ RENDERER_HANDLER(text_show_string_array)
             auto shift = next_shift / 1000.0f;
             m_text_matrix.translate(-shift * text_state().font_size * text_state().horizontal_scaling, 0.0f);
             auto str = element.get<NonnullRefPtr<Object>>()->cast<StringObject>()->string();
-            show_text(str);
+            TRY(show_text(str));
         }
     }
 
@@ -543,7 +532,7 @@ RENDERER_HANDLER(set_painting_space)
 
 RENDERER_HANDLER(set_stroking_color)
 {
-    state().stroke_color = state().stroke_color_space->color(args);
+    state().stroke_color = TRY(state().stroke_color_space->color(args));
     return {};
 }
 
@@ -554,13 +543,13 @@ RENDERER_HANDLER(set_stroking_color_extended)
     if (last_arg.has<NonnullRefPtr<Object>>() && last_arg.get<NonnullRefPtr<Object>>()->is<NameObject>())
         TODO();
 
-    state().stroke_color = state().stroke_color_space->color(args);
+    state().stroke_color = TRY(state().stroke_color_space->color(args));
     return {};
 }
 
 RENDERER_HANDLER(set_painting_color)
 {
-    state().paint_color = state().paint_color_space->color(args);
+    state().paint_color = TRY(state().paint_color_space->color(args));
     return {};
 }
 
@@ -568,52 +557,54 @@ RENDERER_HANDLER(set_painting_color_extended)
 {
     // FIXME: Handle Pattern color spaces
     auto last_arg = args.last();
-    if (last_arg.has<NonnullRefPtr<Object>>() && last_arg.get<NonnullRefPtr<Object>>()->is<NameObject>())
-        TODO();
+    if (last_arg.has<NonnullRefPtr<Object>>() && last_arg.get<NonnullRefPtr<Object>>()->is<NameObject>()) {
+        dbgln("pattern space {}", last_arg.get<NonnullRefPtr<Object>>()->cast<NameObject>()->name());
+        return Error::rendering_unsupported_error("Pattern color spaces not yet implemented");
+    }
 
-    state().paint_color = state().paint_color_space->color(args);
+    state().paint_color = TRY(state().paint_color_space->color(args));
     return {};
 }
 
 RENDERER_HANDLER(set_stroking_color_and_space_to_gray)
 {
     state().stroke_color_space = DeviceGrayColorSpace::the();
-    state().stroke_color = state().stroke_color_space->color(args);
+    state().stroke_color = TRY(state().stroke_color_space->color(args));
     return {};
 }
 
 RENDERER_HANDLER(set_painting_color_and_space_to_gray)
 {
     state().paint_color_space = DeviceGrayColorSpace::the();
-    state().paint_color = state().paint_color_space->color(args);
+    state().paint_color = TRY(state().paint_color_space->color(args));
     return {};
 }
 
 RENDERER_HANDLER(set_stroking_color_and_space_to_rgb)
 {
     state().stroke_color_space = DeviceRGBColorSpace::the();
-    state().stroke_color = state().stroke_color_space->color(args);
+    state().stroke_color = TRY(state().stroke_color_space->color(args));
     return {};
 }
 
 RENDERER_HANDLER(set_painting_color_and_space_to_rgb)
 {
     state().paint_color_space = DeviceRGBColorSpace::the();
-    state().paint_color = state().paint_color_space->color(args);
+    state().paint_color = TRY(state().paint_color_space->color(args));
     return {};
 }
 
 RENDERER_HANDLER(set_stroking_color_and_space_to_cmyk)
 {
     state().stroke_color_space = DeviceCMYKColorSpace::the();
-    state().stroke_color = state().stroke_color_space->color(args);
+    state().stroke_color = TRY(state().stroke_color_space->color(args));
     return {};
 }
 
 RENDERER_HANDLER(set_painting_color_and_space_to_cmyk)
 {
     state().paint_color_space = DeviceCMYKColorSpace::the();
-    state().paint_color = state().paint_color_space->color(args);
+    state().paint_color = TRY(state().paint_color_space->color(args));
     return {};
 }
 
@@ -626,8 +617,8 @@ RENDERER_HANDLER(paint_xobject)
     VERIFY(args.size() > 0);
     auto resources = extra_resources.value_or(m_page.resources);
     auto xobject_name = args[0].get<NonnullRefPtr<Object>>()->cast<NameObject>()->name();
-    auto xobjects_dict = MUST(resources->get_dict(m_document, CommonNames::XObject));
-    auto xobject = MUST(xobjects_dict->get_stream(m_document, xobject_name));
+    auto xobjects_dict = TRY(resources->get_dict(m_document, CommonNames::XObject));
+    auto xobject = TRY(xobjects_dict->get_stream(m_document, xobject_name));
 
     Optional<NonnullRefPtr<DictObject>> xobject_resources {};
     if (xobject->dict()->contains(CommonNames::Resources)) {
@@ -708,6 +699,8 @@ Gfx::Rect<T> Renderer::map(Gfx::Rect<T> rect) const
 
 PDFErrorOr<void> Renderer::set_graphics_state_from_dict(NonnullRefPtr<DictObject> dict)
 {
+    // ISO 32000 (PDF 2.0), 8.4.5 Graphics state parameter dictionaries
+
     if (dict->contains(CommonNames::LW))
         TRY(handle_set_line_width({ dict->get_value(CommonNames::LW) }));
 
@@ -725,61 +718,71 @@ PDFErrorOr<void> Renderer::set_graphics_state_from_dict(NonnullRefPtr<DictObject
         TRY(handle_set_dash_pattern(array->elements()));
     }
 
+    // FIXME: RI
+    // FIXME: OP
+    // FIXME: op
+    // FIXME: OPM
+    // FIXME: Font
+    // FIXME: BG
+    // FIXME: BG2
+    // FIXME: UCR
+    // FIXME: UCR2
+    // FIXME: TR
+    // FIXME: TR2
+    // FIXME: HT
+
     if (dict->contains(CommonNames::FL))
         TRY(handle_set_flatness_tolerance({ dict->get_value(CommonNames::FL) }));
+
+    // FIXME: SM
+    // FIXME: SA
+    // FIXME: BM
+    // FIXME: SMask
+    // FIXME: CA
+    // FIXME: ca
+    // FIXME: AIS
+    // FIXME: TK
+    // FIXME: UseBlackPtComp
+    // FIXME: HTO
 
     return {};
 }
 
-void Renderer::show_text(DeprecatedString const& string)
+PDFErrorOr<void> Renderer::show_text(DeprecatedString const& string)
 {
+    if (!text_state().font)
+        return Error::rendering_unsupported_error("Can't draw text because an invalid font was in use");
+
     auto& text_rendering_matrix = calculate_text_rendering_matrix();
 
     auto font_size = text_rendering_matrix.x_scale() * text_state().font_size;
 
-    auto glyph_position = text_rendering_matrix.map(Gfx::FloatPoint { 0.0f, 0.0f });
-
-    auto original_position = glyph_position;
-
-    for (auto char_code : string.bytes()) {
-        auto code_point = text_state().font->char_code_to_code_point(char_code);
-        auto char_width = text_state().font->get_char_width(char_code);
-        auto glyph_width = char_width * font_size;
-
-        if (code_point != 0x20)
-            text_state().font->draw_glyph(m_painter, glyph_position, glyph_width, char_code, state().paint_color);
-
-        auto tx = glyph_width;
-        tx += text_state().character_spacing;
-
-        if (code_point == ' ')
-            tx += text_state().word_spacing;
-
-        tx *= text_state().horizontal_scaling;
-
-        glyph_position += { tx, 0.0f };
-    }
+    auto start_position = text_rendering_matrix.map(Gfx::FloatPoint { 0.0f, 0.0f });
+    auto end_position = TRY(text_state().font->draw_string(m_painter, start_position, string, state().paint_color, font_size, text_state().character_spacing * text_rendering_matrix.x_scale(), text_state().word_spacing * text_rendering_matrix.x_scale(), text_state().horizontal_scaling));
 
     // Update text matrix
-    auto delta_x = glyph_position.x() - original_position.x();
+    auto delta_x = end_position.x() - start_position.x();
     m_text_rendering_matrix_is_dirty = true;
     m_text_matrix.translate(delta_x / text_rendering_matrix.x_scale(), 0.0f);
+    return {};
 }
 
 PDFErrorOr<NonnullRefPtr<Gfx::Bitmap>> Renderer::load_image(NonnullRefPtr<StreamObject> image)
 {
     auto image_dict = image->dict();
-    auto filter_object = TRY(image_dict->get_object(m_document, CommonNames::Filter));
     auto width = image_dict->get_value(CommonNames::Width).get<int>();
     auto height = image_dict->get_value(CommonNames::Height).get<int>();
 
-    auto is_filter = [&](DeprecatedFlyString const& name) {
+    auto is_filter = [&](DeprecatedFlyString const& name) -> PDFErrorOr<bool> {
+        if (!image_dict->contains(CommonNames::Filter))
+            return false;
+        auto filter_object = TRY(image_dict->get_object(m_document, CommonNames::Filter));
         if (filter_object->is<NameObject>())
             return filter_object->cast<NameObject>()->name() == name;
         auto filters = filter_object->cast<ArrayObject>();
         return MUST(filters->get_name_at(m_document, 0))->name() == name;
     };
-    if (is_filter(CommonNames::JPXDecode)) {
+    if (TRY(is_filter(CommonNames::JPXDecode))) {
         return Error(Error::Type::RenderingUnsupported, "JPXDecode filter");
     }
     if (image_dict->contains(CommonNames::ImageMask)) {
@@ -810,7 +813,7 @@ PDFErrorOr<NonnullRefPtr<Gfx::Bitmap>> Renderer::load_image(NonnullRefPtr<Stream
         component_value_decoders.empend(0.0f, 255.0f, dmin, dmax);
     }
 
-    if (is_filter(CommonNames::DCTDecode)) {
+    if (TRY(is_filter(CommonNames::DCTDecode))) {
         // TODO: stream objects could store Variant<bytes/Bitmap> to avoid seialisation/deserialisation here
         return TRY(Gfx::Bitmap::create_from_serialized_bytes(image->bytes()));
     }
@@ -831,7 +834,7 @@ PDFErrorOr<NonnullRefPtr<Gfx::Bitmap>> Renderer::load_image(NonnullRefPtr<Stream
             sample = sample.slice(bytes_per_component);
             component_values[i] = Value { component_value_decoders[i].interpolate(component[0]) };
         }
-        auto color = color_space->color(component_values);
+        auto color = TRY(color_space->color(component_values));
         bitmap->set_pixel(x, y, color);
         ++x;
         if (x == width) {
@@ -904,6 +907,10 @@ PDFErrorOr<NonnullRefPtr<ColorSpace>> Renderer::get_color_space_from_resources(V
         }
     }
     auto color_space_resource_dict = TRY(resources->get_dict(m_document, CommonNames::ColorSpace));
+    if (!color_space_resource_dict->contains(color_space_name)) {
+        dbgln("missing key {}", color_space_name);
+        return Error::rendering_unsupported_error("Missing entry for color space name");
+    }
     auto color_space_array = TRY(color_space_resource_dict->get_array(m_document, color_space_name));
     return ColorSpace::create(m_document, color_space_array);
 }

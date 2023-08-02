@@ -40,16 +40,15 @@ ErrorOr<void> Ext2FSInode::write_indirect_block(BlockBasedFileSystem::BlockIndex
     auto const entries_per_block = EXT2_ADDR_PER_BLOCK(&fs().super_block());
     VERIFY(blocks_indices.size() <= entries_per_block);
 
-    auto block_contents = TRY(ByteBuffer::create_uninitialized(fs().block_size()));
-    OutputMemoryStream stream { block_contents };
-    auto buffer = UserOrKernelBuffer::for_kernel_buffer(stream.data());
+    auto block_contents = TRY(ByteBuffer::create_zeroed(fs().logical_block_size()));
+    FixedMemoryStream stream { block_contents.bytes() };
+    auto buffer = UserOrKernelBuffer::for_kernel_buffer(block_contents.data());
 
     VERIFY(blocks_indices.size() <= EXT2_ADDR_PER_BLOCK(&fs().super_block()));
     for (unsigned i = 0; i < blocks_indices.size(); ++i)
-        stream << static_cast<u32>(blocks_indices[i].value());
-    stream.fill_to_end(0);
+        MUST(stream.write_value<u32>(blocks_indices[i].value()));
 
-    return fs().write_block(block, buffer, stream.size());
+    return fs().write_block(block, buffer, block_contents.size());
 }
 
 ErrorOr<void> Ext2FSInode::grow_doubly_indirect_block(BlockBasedFileSystem::BlockIndex block, size_t old_blocks_length, Span<BlockBasedFileSystem::BlockIndex> blocks_indices, Vector<Ext2FS::BlockIndex>& new_meta_blocks, unsigned& meta_blocks)
@@ -62,25 +61,24 @@ ErrorOr<void> Ext2FSInode::grow_doubly_indirect_block(BlockBasedFileSystem::Bloc
     VERIFY(blocks_indices.size() > old_blocks_length);
     VERIFY(blocks_indices.size() <= entries_per_doubly_indirect_block);
 
-    auto block_contents = TRY(ByteBuffer::create_uninitialized(fs().block_size()));
+    auto block_contents = TRY(ByteBuffer::create_zeroed(fs().logical_block_size()));
     auto* block_as_pointers = (unsigned*)block_contents.data();
-    OutputMemoryStream stream { block_contents };
-    auto buffer = UserOrKernelBuffer::for_kernel_buffer(stream.data());
+    FixedMemoryStream stream { block_contents.bytes() };
+    auto buffer = UserOrKernelBuffer::for_kernel_buffer(block_contents.data());
 
     if (old_blocks_length > 0) {
-        TRY(fs().read_block(block, &buffer, fs().block_size()));
+        TRY(fs().read_block(block, &buffer, fs().logical_block_size()));
     }
 
     // Grow the doubly indirect block.
     for (unsigned i = 0; i < old_indirect_blocks_length; i++)
-        stream << static_cast<u32>(block_as_pointers[i]);
+        MUST(stream.write_value<u32>(block_as_pointers[i]));
     for (unsigned i = old_indirect_blocks_length; i < new_indirect_blocks_length; i++) {
         auto new_block = new_meta_blocks.take_last().value();
         dbgln_if(EXT2_BLOCKLIST_DEBUG, "Ext2FSInode[{}]::grow_doubly_indirect_block(): Allocating indirect block {} at index {}", identifier(), new_block, i);
-        stream << static_cast<u32>(new_block);
+        MUST(stream.write_value<u32>(new_block));
         meta_blocks++;
     }
-    stream.fill_to_end(0);
 
     // Write out the indirect blocks.
     for (unsigned i = old_blocks_length / entries_per_block; i < new_indirect_blocks_length; i++) {
@@ -89,7 +87,7 @@ ErrorOr<void> Ext2FSInode::grow_doubly_indirect_block(BlockBasedFileSystem::Bloc
     }
 
     // Write out the doubly indirect block.
-    return fs().write_block(block, buffer, stream.size());
+    return fs().write_block(block, buffer, block_contents.size());
 }
 
 ErrorOr<void> Ext2FSInode::shrink_doubly_indirect_block(BlockBasedFileSystem::BlockIndex block, size_t old_blocks_length, size_t new_blocks_length, unsigned& meta_blocks)
@@ -102,10 +100,10 @@ ErrorOr<void> Ext2FSInode::shrink_doubly_indirect_block(BlockBasedFileSystem::Bl
     VERIFY(old_blocks_length >= new_blocks_length);
     VERIFY(new_blocks_length <= entries_per_doubly_indirect_block);
 
-    auto block_contents = TRY(ByteBuffer::create_uninitialized(fs().block_size()));
+    auto block_contents = TRY(ByteBuffer::create_uninitialized(fs().logical_block_size()));
     auto* block_as_pointers = (unsigned*)block_contents.data();
     auto buffer = UserOrKernelBuffer::for_kernel_buffer(reinterpret_cast<u8*>(block_as_pointers));
-    TRY(fs().read_block(block, &buffer, fs().block_size()));
+    TRY(fs().read_block(block, &buffer, fs().logical_block_size()));
 
     // Free the unused indirect blocks.
     for (unsigned i = new_indirect_blocks_length; i < old_indirect_blocks_length; i++) {
@@ -135,25 +133,24 @@ ErrorOr<void> Ext2FSInode::grow_triply_indirect_block(BlockBasedFileSystem::Bloc
     VERIFY(blocks_indices.size() > old_blocks_length);
     VERIFY(blocks_indices.size() <= entries_per_triply_indirect_block);
 
-    auto block_contents = TRY(ByteBuffer::create_uninitialized(fs().block_size()));
+    auto block_contents = TRY(ByteBuffer::create_zeroed(fs().logical_block_size()));
     auto* block_as_pointers = (unsigned*)block_contents.data();
-    OutputMemoryStream stream { block_contents };
-    auto buffer = UserOrKernelBuffer::for_kernel_buffer(stream.data());
+    FixedMemoryStream stream { block_contents.bytes() };
+    auto buffer = UserOrKernelBuffer::for_kernel_buffer(block_contents.data());
 
     if (old_blocks_length > 0) {
-        TRY(fs().read_block(block, &buffer, fs().block_size()));
+        TRY(fs().read_block(block, &buffer, fs().logical_block_size()));
     }
 
     // Grow the triply indirect block.
     for (unsigned i = 0; i < old_doubly_indirect_blocks_length; i++)
-        stream << static_cast<u32>(block_as_pointers[i]);
+        MUST(stream.write_value<u32>(block_as_pointers[i]));
     for (unsigned i = old_doubly_indirect_blocks_length; i < new_doubly_indirect_blocks_length; i++) {
         auto new_block = new_meta_blocks.take_last().value();
         dbgln_if(EXT2_BLOCKLIST_DEBUG, "Ext2FSInode[{}]::grow_triply_indirect_block(): Allocating doubly indirect block {} at index {}", identifier(), new_block, i);
-        stream << static_cast<u32>(new_block);
+        MUST(stream.write_value<u32>(new_block));
         meta_blocks++;
     }
-    stream.fill_to_end(0);
 
     // Write out the doubly indirect blocks.
     for (unsigned i = old_blocks_length / entries_per_doubly_indirect_block; i < new_doubly_indirect_blocks_length; i++) {
@@ -164,7 +161,7 @@ ErrorOr<void> Ext2FSInode::grow_triply_indirect_block(BlockBasedFileSystem::Bloc
     }
 
     // Write out the triply indirect block.
-    return fs().write_block(block, buffer, stream.size());
+    return fs().write_block(block, buffer, block_contents.size());
 }
 
 ErrorOr<void> Ext2FSInode::shrink_triply_indirect_block(BlockBasedFileSystem::BlockIndex block, size_t old_blocks_length, size_t new_blocks_length, unsigned& meta_blocks)
@@ -178,10 +175,10 @@ ErrorOr<void> Ext2FSInode::shrink_triply_indirect_block(BlockBasedFileSystem::Bl
     VERIFY(old_blocks_length >= new_blocks_length);
     VERIFY(new_blocks_length <= entries_per_triply_indirect_block);
 
-    auto block_contents = TRY(ByteBuffer::create_uninitialized(fs().block_size()));
+    auto block_contents = TRY(ByteBuffer::create_uninitialized(fs().logical_block_size()));
     auto* block_as_pointers = (unsigned*)block_contents.data();
     auto buffer = UserOrKernelBuffer::for_kernel_buffer(reinterpret_cast<u8*>(block_as_pointers));
-    TRY(fs().read_block(block, &buffer, fs().block_size()));
+    TRY(fs().read_block(block, &buffer, fs().logical_block_size()));
 
     // Shrink the doubly indirect blocks.
     for (unsigned i = new_triply_indirect_blocks_length; i < old_triply_indirect_blocks_length; i++) {
@@ -214,7 +211,7 @@ ErrorOr<void> Ext2FSInode::flush_block_list()
     }
 
     // NOTE: There is a mismatch between i_blocks and blocks.size() since i_blocks includes meta blocks and blocks.size() does not.
-    auto const old_block_count = ceil_div(size(), static_cast<u64>(fs().block_size()));
+    auto const old_block_count = ceil_div(size(), static_cast<u64>(fs().logical_block_size()));
 
     auto old_shape = fs().compute_block_list_shape(old_block_count);
     auto const new_shape = fs().compute_block_list_shape(m_block_list.size());
@@ -224,7 +221,7 @@ ErrorOr<void> Ext2FSInode::flush_block_list()
         new_meta_blocks = TRY(fs().allocate_blocks(fs().group_index_from_inode(index()), new_shape.meta_blocks - old_shape.meta_blocks));
     }
 
-    m_raw_inode.i_blocks = (m_block_list.size() + new_shape.meta_blocks) * (fs().block_size() / 512);
+    m_raw_inode.i_blocks = (m_block_list.size() + new_shape.meta_blocks) * (fs().logical_block_size() / 512);
     dbgln_if(EXT2_BLOCKLIST_DEBUG, "Ext2FSInode[{}]::flush_block_list(): Old shape=({};{};{};{}:{}), new shape=({};{};{};{}:{})", identifier(), old_shape.direct_blocks, old_shape.indirect_blocks, old_shape.doubly_indirect_blocks, old_shape.triply_indirect_blocks, old_shape.meta_blocks, new_shape.direct_blocks, new_shape.indirect_blocks, new_shape.doubly_indirect_blocks, new_shape.triply_indirect_blocks, new_shape.meta_blocks);
 
     unsigned output_block_index = 0;
@@ -357,7 +354,7 @@ ErrorOr<Vector<Ext2FS::BlockIndex>> Ext2FSInode::compute_block_list_impl_interna
 {
     unsigned entries_per_block = EXT2_ADDR_PER_BLOCK(&fs().super_block());
 
-    unsigned block_count = ceil_div(size(), static_cast<u64>(fs().block_size()));
+    unsigned block_count = ceil_div(size(), static_cast<u64>(fs().logical_block_size()));
 
     // If we are handling a symbolic link, the path is stored in the 60 bytes in
     // the inode that are used for the 12 direct and 3 indirect block pointers,
@@ -477,11 +474,11 @@ InodeMetadata Ext2FSInode::metadata() const
     metadata.uid = m_raw_inode.i_uid;
     metadata.gid = m_raw_inode.i_gid;
     metadata.link_count = m_raw_inode.i_links_count;
-    metadata.atime = Time::from_timespec({ m_raw_inode.i_atime, 0 });
-    metadata.ctime = Time::from_timespec({ m_raw_inode.i_ctime, 0 });
-    metadata.mtime = Time::from_timespec({ m_raw_inode.i_mtime, 0 });
-    metadata.dtime = Time::from_timespec({ m_raw_inode.i_dtime, 0 });
-    metadata.block_size = fs().block_size();
+    metadata.atime = UnixDateTime::from_seconds_since_epoch(m_raw_inode.i_atime);
+    metadata.ctime = UnixDateTime::from_seconds_since_epoch(m_raw_inode.i_ctime);
+    metadata.mtime = UnixDateTime::from_seconds_since_epoch(m_raw_inode.i_mtime);
+    metadata.dtime = UnixDateTime::from_seconds_since_epoch(m_raw_inode.i_dtime);
+    metadata.block_size = fs().logical_block_size();
     metadata.block_count = m_raw_inode.i_blocks;
 
     if (Kernel::is_character_device(m_raw_inode.i_mode) || Kernel::is_block_device(m_raw_inode.i_mode)) {
@@ -556,7 +553,7 @@ ErrorOr<size_t> Ext2FSInode::read_bytes_locked(off_t offset, size_t count, UserO
 
     bool allow_cache = !description || !description->is_direct();
 
-    int const block_size = fs().block_size();
+    int const block_size = fs().logical_block_size();
 
     BlockBasedFileSystem::BlockIndex first_block_logical_index = offset / block_size;
     BlockBasedFileSystem::BlockIndex last_block_logical_index = (offset + count) / block_size;
@@ -600,7 +597,7 @@ ErrorOr<void> Ext2FSInode::resize(u64 new_size)
     if (!((u32)fs().get_features_readonly() & (u32)Ext2FS::FeaturesReadOnly::FileSize64bits) && (new_size >= static_cast<u32>(-1)))
         return ENOSPC;
 
-    u64 block_size = fs().block_size();
+    u64 block_size = fs().logical_block_size();
     auto blocks_needed_before = ceil_div(old_size, block_size);
     auto blocks_needed_after = ceil_div(new_size, block_size);
 
@@ -686,7 +683,7 @@ ErrorOr<size_t> Ext2FSInode::write_bytes_locked(off_t offset, size_t count, User
 
     bool allow_cache = !description || !description->is_direct();
 
-    auto const block_size = fs().block_size();
+    auto const block_size = fs().logical_block_size();
     auto new_size = max(static_cast<u64>(offset) + count, size());
 
     TRY(resize(new_size));
@@ -731,12 +728,13 @@ ErrorOr<size_t> Ext2FSInode::write_bytes_locked(off_t offset, size_t count, User
 
 ErrorOr<void> Ext2FSInode::traverse_as_directory(Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)> callback) const
 {
+    MutexLocker locker(m_inode_lock);
     VERIFY(is_directory());
 
     u8 buffer[max_block_size];
     auto buf = UserOrKernelBuffer::for_kernel_buffer(buffer);
 
-    auto block_size = fs().block_size();
+    auto block_size = fs().logical_block_size();
     auto file_size = size();
 
     // Directory entries are guaranteed not to span multiple blocks,
@@ -763,7 +761,7 @@ ErrorOr<void> Ext2FSInode::traverse_as_directory(Function<ErrorOr<void>(FileSyst
 ErrorOr<void> Ext2FSInode::write_directory(Vector<Ext2FSDirectoryEntry>& entries)
 {
     MutexLocker locker(m_inode_lock);
-    auto block_size = fs().block_size();
+    auto block_size = fs().logical_block_size();
 
     // Calculate directory size and record length of entries so that
     // the following constraints are met:
@@ -790,34 +788,35 @@ ErrorOr<void> Ext2FSInode::write_directory(Vector<Ext2FSDirectoryEntry>& entries
     dbgln_if(EXT2_DEBUG, "Ext2FSInode[{}]::write_directory(): New directory contents to write (size {}):", identifier(), directory_size);
 
     auto directory_data = TRY(ByteBuffer::create_uninitialized(directory_size));
-    OutputMemoryStream stream { directory_data };
+    FixedMemoryStream stream { directory_data.bytes() };
 
     for (auto& entry : entries) {
         dbgln_if(EXT2_DEBUG, "Ext2FSInode[{}]::write_directory(): Writing inode: {}, name_len: {}, rec_len: {}, file_type: {}, name: {}", identifier(), entry.inode_index, u16(entry.name->length()), u16(entry.record_length), u8(entry.file_type), entry.name);
 
-        stream << u32(entry.inode_index.value());
-        stream << u16(entry.record_length);
-        stream << u8(entry.name->length());
-        stream << u8(entry.file_type);
-        stream << entry.name->bytes();
+        MUST(stream.write_value<u32>(entry.inode_index.value()));
+        MUST(stream.write_value<u16>(entry.record_length));
+        MUST(stream.write_value<u8>(entry.name->length()));
+        MUST(stream.write_value<u8>(entry.file_type));
+        MUST(stream.write_until_depleted(entry.name->bytes()));
         int padding = entry.record_length - entry.name->length() - 8;
         for (int j = 0; j < padding; ++j)
-            stream << u8(0);
+            MUST(stream.write_value<u8>(0));
     }
 
-    VERIFY(stream.is_end());
+    auto serialized_bytes_count = TRY(stream.tell());
+    VERIFY(serialized_bytes_count == directory_size);
 
-    TRY(resize(stream.size()));
+    TRY(resize(serialized_bytes_count));
 
-    auto buffer = UserOrKernelBuffer::for_kernel_buffer(stream.data());
-    auto nwritten = TRY(write_bytes(0, stream.size(), buffer, nullptr));
+    auto buffer = UserOrKernelBuffer::for_kernel_buffer(directory_data.data());
+    auto nwritten = TRY(write_bytes(0, serialized_bytes_count, buffer, nullptr));
     set_metadata_dirty(true);
     if (nwritten != directory_data.size())
         return EIO;
     return {};
 }
 
-ErrorOr<NonnullLockRefPtr<Inode>> Ext2FSInode::create_child(StringView name, mode_t mode, dev_t dev, UserID uid, GroupID gid)
+ErrorOr<NonnullRefPtr<Inode>> Ext2FSInode::create_child(StringView name, mode_t mode, dev_t dev, UserID uid, GroupID gid)
 {
     if (Kernel::is_directory(mode))
         return fs().create_directory(*this, name, mode, uid, gid);
@@ -967,7 +966,7 @@ ErrorOr<void> Ext2FSInode::populate_lookup_cache()
     return {};
 }
 
-ErrorOr<NonnullLockRefPtr<Inode>> Ext2FSInode::lookup(StringView name)
+ErrorOr<NonnullRefPtr<Inode>> Ext2FSInode::lookup(StringView name)
 {
     VERIFY(is_directory());
     dbgln_if(EXT2_DEBUG, "Ext2FSInode[{}]:lookup(): Looking up '{}'", identifier(), name);
@@ -987,7 +986,7 @@ ErrorOr<NonnullLockRefPtr<Inode>> Ext2FSInode::lookup(StringView name)
     return fs().get_inode({ fsid(), inode_index });
 }
 
-ErrorOr<void> Ext2FSInode::update_timestamps(Optional<Time> atime, Optional<Time> ctime, Optional<Time> mtime)
+ErrorOr<void> Ext2FSInode::update_timestamps(Optional<UnixDateTime> atime, Optional<UnixDateTime> ctime, Optional<UnixDateTime> mtime)
 {
     MutexLocker locker(m_inode_lock);
     if (fs().is_readonly())

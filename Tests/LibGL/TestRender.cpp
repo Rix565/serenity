@@ -7,11 +7,11 @@
 
 #include <AK/DeprecatedString.h>
 #include <AK/LexicalPath.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibGL/GL/gl.h>
 #include <LibGL/GLContext.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/QOIWriter.h>
+#include <LibGfx/ImageFormats/QOIWriter.h>
 #include <LibTest/TestCase.h>
 
 #ifdef AK_OS_SERENITY
@@ -35,9 +35,9 @@ static void expect_bitmap_equals_reference(Gfx::Bitmap const& bitmap, StringView
 
     if constexpr (SAVE_OUTPUT) {
         auto target_path = LexicalPath("/home/anon").append(reference_filename);
-        auto qoi_buffer = Gfx::QOIWriter::encode(bitmap);
-        auto qoi_output_stream = MUST(Core::Stream::File::open(target_path.string(), Core::Stream::OpenMode::Write));
-        MUST(qoi_output_stream->write_entire_buffer(qoi_buffer));
+        auto qoi_buffer = MUST(Gfx::QOIWriter::encode(bitmap));
+        auto qoi_output_stream = MUST(Core::File::open(target_path.string(), Core::File::OpenMode::Write));
+        MUST(qoi_output_stream->write_until_depleted(qoi_buffer));
     }
 
     auto reference_image_path = DeprecatedString::formatted(REFERENCE_IMAGE_DIR "/{}", reference_filename);

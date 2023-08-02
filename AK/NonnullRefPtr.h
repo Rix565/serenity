@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,7 +9,6 @@
 #define NONNULLREFPTR_SCRUB_BYTE 0xe1
 
 #include <AK/Assertions.h>
-#include <AK/Atomic.h>
 #include <AK/Format.h>
 #include <AK/Traits.h>
 #include <AK/Types.h>
@@ -54,8 +53,8 @@ public:
     }
 
     template<typename U>
-    ALWAYS_INLINE NonnullRefPtr(U const& object)
     requires(IsConvertible<U*, T*>)
+    ALWAYS_INLINE NonnullRefPtr(U const& object)
         : m_ptr(const_cast<T*>(static_cast<T const*>(&object)))
     {
         m_ptr->ref();
@@ -72,8 +71,8 @@ public:
     }
 
     template<typename U>
-    ALWAYS_INLINE NonnullRefPtr(NonnullRefPtr<U>&& other)
     requires(IsConvertible<U*, T*>)
+    ALWAYS_INLINE NonnullRefPtr(NonnullRefPtr<U>&& other)
         : m_ptr(static_cast<T*>(&other.leak_ref()))
     {
     }
@@ -85,8 +84,8 @@ public:
     }
 
     template<typename U>
-    ALWAYS_INLINE NonnullRefPtr(NonnullRefPtr<U> const& other)
     requires(IsConvertible<U*, T*>)
+    ALWAYS_INLINE NonnullRefPtr(NonnullRefPtr<U> const& other)
         : m_ptr(const_cast<T*>(static_cast<T const*>(other.ptr())))
     {
         m_ptr->ref();
@@ -94,8 +93,8 @@ public:
 
     ALWAYS_INLINE ~NonnullRefPtr()
     {
-        unref_if_not_null(m_ptr);
-        m_ptr = nullptr;
+        auto* ptr = exchange(m_ptr, nullptr);
+        unref_if_not_null(ptr);
 #ifdef SANITIZE_PTRS
         m_ptr = reinterpret_cast<T*>(explode_byte(NONNULLREFPTR_SCRUB_BYTE));
 #endif
@@ -121,8 +120,8 @@ public:
     }
 
     template<typename U>
-    NonnullRefPtr& operator=(NonnullRefPtr<U> const& other)
     requires(IsConvertible<U*, T*>)
+    NonnullRefPtr& operator=(NonnullRefPtr<U> const& other)
     {
         NonnullRefPtr tmp { other };
         swap(tmp);
@@ -137,8 +136,8 @@ public:
     }
 
     template<typename U>
-    NonnullRefPtr& operator=(NonnullRefPtr<U>&& other)
     requires(IsConvertible<U*, T*>)
+    NonnullRefPtr& operator=(NonnullRefPtr<U>&& other)
     {
         NonnullRefPtr tmp { move(other) };
         swap(tmp);
@@ -202,8 +201,8 @@ public:
     bool operator==(NonnullRefPtr const& other) const { return m_ptr == other.m_ptr; }
 
     template<typename RawPtr>
-    bool operator==(RawPtr other) const
     requires(IsPointer<RawPtr>)
+    bool operator==(RawPtr other) const
     {
         return m_ptr == other;
     }
@@ -226,6 +225,28 @@ inline NonnullRefPtr<T> adopt_ref(T& object)
     return NonnullRefPtr<T>(NonnullRefPtr<T>::Adopt, object);
 }
 
+// Use like `adopt_nonnull_ref_or_enomem(new (nothrow) T(args...))`.
+template<typename T>
+inline ErrorOr<NonnullRefPtr<T>> adopt_nonnull_ref_or_enomem(T* object)
+{
+    if (!object)
+        return Error::from_errno(ENOMEM);
+    return NonnullRefPtr<T>(NonnullRefPtr<T>::Adopt, *object);
+}
+
+template<typename T, class... Args>
+requires(IsConstructible<T, Args...>) inline ErrorOr<NonnullRefPtr<T>> try_make_ref_counted(Args&&... args)
+{
+    return adopt_nonnull_ref_or_enomem(new (nothrow) T(forward<Args>(args)...));
+}
+
+// FIXME: Remove once P0960R3 is available in Clang.
+template<typename T, class... Args>
+inline ErrorOr<NonnullRefPtr<T>> try_make_ref_counted(Args&&... args)
+{
+    return adopt_nonnull_ref_or_enomem(new (nothrow) T { forward<Args>(args)... });
+}
+
 template<Formattable T>
 struct Formatter<NonnullRefPtr<T>> : Formatter<T> {
     ErrorOr<void> format(FormatBuilder& builder, NonnullRefPtr<T> const& value)
@@ -244,8 +265,8 @@ struct Formatter<NonnullRefPtr<T>> : Formatter<T const*> {
 };
 
 template<typename T, typename U>
-inline void swap(NonnullRefPtr<T>& a, NonnullRefPtr<U>& b)
 requires(IsConvertible<U*, T*>)
+inline void swap(NonnullRefPtr<T>& a, NonnullRefPtr<U>& b)
 {
     a.swap(b);
 }
@@ -274,7 +295,9 @@ struct Traits<NonnullRefPtr<T>> : public GenericTraits<NonnullRefPtr<T>> {
 }
 
 #if USING_AK_GLOBALLY
+using AK::adopt_nonnull_ref_or_enomem;
 using AK::adopt_ref;
 using AK::make_ref_counted;
 using AK::NonnullRefPtr;
+using AK::try_make_ref_counted;
 #endif

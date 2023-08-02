@@ -25,7 +25,7 @@ public:
     virtual ThrowCompletionOr<Optional<PropertyDescriptor>> internal_get_own_property(PropertyKey const&) const override;
     virtual ThrowCompletionOr<bool> internal_define_own_property(PropertyKey const&, PropertyDescriptor const&) override;
     virtual ThrowCompletionOr<bool> internal_has_property(PropertyKey const&) const override;
-    virtual ThrowCompletionOr<Value> internal_get(PropertyKey const&, Value receiver) const override;
+    virtual ThrowCompletionOr<Value> internal_get(PropertyKey const&, Value receiver, CacheablePropertyMetadata* = nullptr) const override;
     virtual ThrowCompletionOr<bool> internal_set(PropertyKey const&, Value value, Value receiver) override;
     virtual ThrowCompletionOr<bool> internal_delete(PropertyKey const&) override;
     virtual ThrowCompletionOr<MarkedVector<Value>> internal_own_property_keys() const override;
@@ -35,7 +35,7 @@ private:
     ModuleNamespaceObject(Realm&, Module* module, Vector<DeprecatedFlyString> exports);
 
     // FIXME: UHHH how do we want to store this to avoid cycles but be safe??
-    Module* m_module;                      // [[Module]]
+    GCPtr<Module> m_module;                // [[Module]]
     Vector<DeprecatedFlyString> m_exports; // [[Exports]]
 };
 

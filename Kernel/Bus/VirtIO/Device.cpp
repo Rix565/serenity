@@ -4,12 +4,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <Kernel/Boot/CommandLine.h>
 #include <Kernel/Bus/PCI/API.h>
 #include <Kernel/Bus/PCI/IDs.h>
 #include <Kernel/Bus/VirtIO/Console.h>
 #include <Kernel/Bus/VirtIO/Device.h>
 #include <Kernel/Bus/VirtIO/RNG.h>
-#include <Kernel/CommandLine.h>
 #include <Kernel/Sections.h>
 
 namespace Kernel::VirtIO {
@@ -27,12 +27,12 @@ UNMAP_AFTER_INIT void detect()
         switch (device_identifier.hardware_id().device_id) {
         case PCI::DeviceID::VirtIOConsole: {
             auto& console = Console::must_create(device_identifier).leak_ref();
-            console.initialize();
+            MUST(console.initialize_virtio_resources());
             break;
         }
         case PCI::DeviceID::VirtIOEntropy: {
             auto& rng = RNG::must_create(device_identifier).leak_ref();
-            rng.initialize();
+            MUST(rng.initialize_virtio_resources());
             break;
         }
         case PCI::DeviceID::VirtIOGPU: {
@@ -86,7 +86,7 @@ static StringView determine_device_class(PCI::DeviceIdentifier const& device_ide
     }
 }
 
-UNMAP_AFTER_INIT void Device::initialize()
+UNMAP_AFTER_INIT ErrorOr<void> Device::initialize_virtio_resources()
 {
     enable_bus_mastering(device_identifier());
 
@@ -96,9 +96,23 @@ UNMAP_AFTER_INIT void Device::initialize()
             // We have a virtio_pci_cap
             Configuration config {};
             auto raw_config_type = capability.read8(0x3);
-            if (raw_config_type < static_cast<u8>(ConfigurationType::Common) || raw_config_type > static_cast<u8>(ConfigurationType::PCI)) {
+            // NOTE: The VirtIO specification allows iteration of configurations
+            // through a special PCI capbility structure with the VIRTIO_PCI_CAP_PCI_CFG tag:
+            //
+            // "Each structure can be mapped by a Base Address register (BAR) belonging to the function, or accessed via
+            // the special VIRTIO_PCI_CAP_PCI_CFG field in the PCI configuration space"
+            //
+            // "The VIRTIO_PCI_CAP_PCI_CFG capability creates an alternative (and likely suboptimal) access method
+            // to the common configuration, notification, ISR and device-specific configuration regions."
+            //
+            // Also, it is *very* likely to see this PCI capability as the first vendor-specific capbility of a certain PCI function,
+            // but this is not guaranteed by the VirtIO specification.
+            // Therefore, ignore this type of configuration as this is not needed by our implementation currently.
+            if (raw_config_type == static_cast<u8>(ConfigurationType::PCICapabilitiesAccess))
+                continue;
+            if (raw_config_type < static_cast<u8>(ConfigurationType::Common) || raw_config_type > static_cast<u8>(ConfigurationType::PCICapabilitiesAccess)) {
                 dbgln("{}: Unknown capability configuration type: {}", m_class_name, raw_config_type);
-                return;
+                return Error::from_errno(ENXIO);
             }
             config.cfg_type = static_cast<ConfigurationType>(raw_config_type);
             auto cap_length = capability.read8(0x2);
@@ -113,6 +127,15 @@ UNMAP_AFTER_INIT void Device::initialize()
             }
             config.offset = capability.read32(0x8);
             config.length = capability.read32(0xc);
+            // NOTE: Configuration length of zero is an invalid configuration, or at the very least a configuration
+            // type we don't know how to handle correctly...
+            // The VIRTIO_PCI_CAP_PCI_CFG configuration structure has length of 0
+            // but because we ignore that type and all other types should have a length
+            // greater than 0, we should ignore any other configuration in case this condition is not met.
+            if (config.length == 0) {
+                dbgln("{}: Found configuration {}, with invalid length of 0", m_class_name, (u32)config.cfg_type);
+                continue;
+            }
             dbgln_if(VIRTIO_DEBUG, "{}: Found configuration {}, bar: {}, offset: {}, length: {}", m_class_name, (u32)config.cfg_type, config.bar, config.offset, config.length);
             if (config.cfg_type == ConfigurationType::Common)
                 m_use_mmio = true;
@@ -125,14 +148,14 @@ UNMAP_AFTER_INIT void Device::initialize()
 
     if (m_use_mmio) {
         for (auto& cfg : m_configs) {
-            auto mapping_io_window = IOWindow::create_for_pci_device_bar(device_identifier(), static_cast<PCI::HeaderType0BaseRegister>(cfg.bar)).release_value_but_fixme_should_propagate_errors();
+            auto mapping_io_window = TRY(IOWindow::create_for_pci_device_bar(device_identifier(), static_cast<PCI::HeaderType0BaseRegister>(cfg.bar)));
             m_register_bases[cfg.bar] = move(mapping_io_window);
         }
-        m_common_cfg = get_config(ConfigurationType::Common, 0);
-        m_notify_cfg = get_config(ConfigurationType::Notify, 0);
-        m_isr_cfg = get_config(ConfigurationType::ISR, 0);
+        m_common_cfg = TRY(get_config(ConfigurationType::Common, 0));
+        m_notify_cfg = TRY(get_config(ConfigurationType::Notify, 0));
+        m_isr_cfg = TRY(get_config(ConfigurationType::ISR, 0));
     } else {
-        auto mapping_io_window = IOWindow::create_for_pci_device_bar(device_identifier(), PCI::HeaderType0BaseRegister::BAR0).release_value_but_fixme_should_propagate_errors();
+        auto mapping_io_window = TRY(IOWindow::create_for_pci_device_bar(device_identifier(), PCI::HeaderType0BaseRegister::BAR0));
         m_register_bases[0] = move(mapping_io_window);
     }
 
@@ -146,6 +169,7 @@ UNMAP_AFTER_INIT void Device::initialize()
     set_status_bit(DEVICE_STATUS_ACKNOWLEDGE);
 
     set_status_bit(DEVICE_STATUS_DRIVER);
+    return {};
 }
 
 UNMAP_AFTER_INIT VirtIO::Device::Device(PCI::DeviceIdentifier const& device_identifier)

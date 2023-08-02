@@ -8,15 +8,20 @@
 #pragma once
 
 #include <AK/Array.h>
+#include <AK/BitStream.h>
 #include <AK/Error.h>
 #include <AK/FixedArray.h>
+#include <AK/MemoryStream.h>
 #include <LibGfx/Size.h>
 #include <LibVideo/Color/CodingIndependentCodePoints.h>
+#include <LibVideo/DecoderError.h>
 
+#include "BooleanDecoder.h"
 #include "ContextStorage.h"
 #include "Enums.h"
 #include "LookupTables.h"
 #include "MotionVector.h"
+#include "SyntaxElementCounter.h"
 #include "Utilities.h"
 
 namespace Video::VP9 {
@@ -27,12 +32,48 @@ enum class FrameShowMode {
     DoNotShowFrame,
 };
 
+struct Quantizers {
+    u16 y_ac_quantizer { 0 };
+    u16 uv_ac_quantizer { 0 };
+
+    u16 y_dc_quantizer { 0 };
+    u16 uv_dc_quantizer { 0 };
+};
+
 struct FrameContext {
 public:
-    FrameContext(Vector2D<FrameBlockContext>& contexts)
-        : m_block_contexts(contexts)
+    static ErrorOr<FrameContext> create(ReadonlyBytes data,
+        Vector2D<FrameBlockContext>& contexts)
     {
+        return FrameContext(
+            data,
+            TRY(try_make<FixedMemoryStream>(data)),
+            TRY(try_make<SyntaxElementCounter>()),
+            contexts);
     }
+
+    FrameContext(FrameContext const&) = delete;
+    FrameContext(FrameContext&&) = default;
+
+    ReadonlyBytes stream_data;
+    NonnullOwnPtr<FixedMemoryStream> stream;
+    BigEndianInputBitStream bit_stream;
+
+    DecoderErrorOr<BooleanDecoder> create_range_decoder(size_t size)
+    {
+        auto compressed_header_data = ReadonlyBytes(stream_data.data() + stream->offset(), size);
+
+        // 9.2.1: The Boolean decoding process specified in section 9.2.2 is invoked to read a marker syntax element from the
+        //        bitstream. It is a requirement of bitstream conformance that the value read is equal to 0.
+        auto decoder = DECODER_TRY(DecoderErrorCategory::Corrupted, BooleanDecoder::initialize(compressed_header_data));
+        if (decoder.read_bool(128))
+            return DecoderError::corrupted("Range decoder marker was non-zero"sv);
+
+        DECODER_TRY(DecoderErrorCategory::Corrupted, bit_stream.discard(size));
+        return decoder;
+    }
+
+    NonnullOwnPtr<SyntaxElementCounter> counter;
 
     u8 profile { 0 };
 
@@ -77,6 +118,20 @@ public:
     u32 columns() const { return m_columns; }
     u32 superblock_rows() const { return blocks_ceiled_to_superblocks(rows()); }
     u32 superblock_columns() const { return blocks_ceiled_to_superblocks(columns()); }
+    // Calculates the output size for each plane in the frame.
+    Gfx::Size<u32> decoded_size(bool uv) const
+    {
+        if (uv) {
+            return {
+                y_size_to_uv_size(color_config.subsampling_y, blocks_to_pixels(columns())),
+                y_size_to_uv_size(color_config.subsampling_y, blocks_to_pixels(rows())),
+            };
+        }
+        return {
+            blocks_to_pixels(columns()),
+            blocks_to_pixels(rows()),
+        };
+    }
 
     Vector2D<FrameBlockContext> const& block_contexts() const { return m_block_contexts; }
 
@@ -95,15 +150,9 @@ public:
     Array<i8, MAX_REF_FRAMES> loop_filter_reference_deltas;
     Array<i8, 2> loop_filter_mode_deltas;
 
-    u8 base_quantizer_index { 0 };
-    i8 y_dc_quantizer_index_delta { 0 };
-    i8 uv_dc_quantizer_index_delta { 0 };
-    i8 uv_ac_quantizer_index_delta { 0 };
-    bool is_lossless() const
-    {
-        // From quantization_params( ) in the spec.
-        return base_quantizer_index == 0 && y_dc_quantizer_index_delta == 0 && uv_dc_quantizer_index_delta == 0 && uv_ac_quantizer_index_delta == 0;
-    }
+    // Set based on quantization_params( ) in the spec.
+    bool lossless { false };
+    Array<Quantizers, MAX_SEGMENTS> segment_quantizers;
 
     bool segmentation_enabled { false };
     // Note: We can use Optional<Array<...>> for these tree probabilities, but unfortunately it seems to have measurable performance overhead.
@@ -112,7 +161,11 @@ public:
     bool use_predicted_segment_id_tree { false };
     Array<u8, 3> predicted_segment_id_tree_probabilities;
     bool should_use_absolute_segment_base_quantizer { false };
-    Array<Array<SegmentFeature, SEG_LVL_MAX>, MAX_SEGMENTS> segmentation_features;
+    SegmentationFeatures segmentation_features;
+    SegmentFeatureStatus get_segment_feature(u8 segment_id, SegmentFeature feature) const
+    {
+        return segmentation_features[segment_id][to_underlying(feature)];
+    }
 
     u16 header_size_in_bytes { 0 };
 
@@ -125,6 +178,18 @@ public:
 
 private:
     friend struct TileContext;
+
+    FrameContext(ReadonlyBytes data,
+        NonnullOwnPtr<FixedMemoryStream> stream,
+        NonnullOwnPtr<SyntaxElementCounter> counter,
+        Vector2D<FrameBlockContext>& contexts)
+        : stream_data(data)
+        , stream(move(stream))
+        , bit_stream(MaybeOwned<Stream>(*this->stream))
+        , counter(move(counter))
+        , m_block_contexts(contexts)
+    {
+    }
 
     FrameShowMode m_frame_show_mode { FrameShowMode::CreateAndShowNewFrame };
     u8 m_existing_frame_index { 0 };
@@ -175,7 +240,7 @@ static NonZeroTokensView create_non_zero_tokens_view(NonZeroTokens& non_zero_tok
 
 struct TileContext {
 public:
-    static ErrorOr<TileContext> try_create(FrameContext& frame_context, u32 rows_start, u32 rows_end, u32 columns_start, u32 columns_end, PartitionContextView above_partition_context, NonZeroTokensView above_non_zero_tokens, SegmentationPredictionContextView above_segmentation_ids)
+    static DecoderErrorOr<TileContext> try_create(FrameContext& frame_context, u32 tile_size, u32 rows_start, u32 rows_end, u32 columns_start, u32 columns_end, PartitionContextView above_partition_context, NonZeroTokensView above_non_zero_tokens, SegmentationPredictionContextView above_segmentation_ids)
     {
         auto width = columns_end - columns_start;
         auto height = rows_end - rows_start;
@@ -183,6 +248,8 @@ public:
 
         return TileContext {
             frame_context,
+            TRY(frame_context.create_range_decoder(tile_size)),
+            DECODER_TRY_ALLOC(try_make<SyntaxElementCounter>()),
             rows_start,
             rows_end,
             columns_start,
@@ -191,15 +258,17 @@ public:
             above_partition_context,
             above_non_zero_tokens,
             above_segmentation_ids,
-            TRY(PartitionContext::create(superblocks_to_blocks(blocks_ceiled_to_superblocks(height)))),
-            TRY(create_non_zero_tokens(blocks_to_sub_blocks(height), frame_context.color_config.subsampling_y)),
-            TRY(SegmentationPredictionContext::create(height)),
+            DECODER_TRY_ALLOC(PartitionContext::create(superblocks_to_blocks(blocks_ceiled_to_superblocks(height)))),
+            DECODER_TRY_ALLOC(create_non_zero_tokens(blocks_to_sub_blocks(height), frame_context.color_config.subsampling_y)),
+            DECODER_TRY_ALLOC(SegmentationPredictionContext::create(height)),
         };
     }
 
     Vector2D<FrameBlockContext> const& frame_block_contexts() const { return frame_context.block_contexts(); }
 
     FrameContext const& frame_context;
+    BooleanDecoder decoder;
+    NonnullOwnPtr<SyntaxElementCounter> counter;
     u32 rows_start { 0 };
     u32 rows_end { 0 };
     u32 columns_start { 0 };
@@ -231,6 +300,8 @@ struct BlockContext {
         return BlockContext {
             .frame_context = tile_context.frame_context,
             .tile_context = tile_context,
+            .decoder = tile_context.decoder,
+            .counter = *tile_context.counter,
             .row = row,
             .column = column,
             .size = size,
@@ -246,6 +317,8 @@ struct BlockContext {
 
     FrameContext const& frame_context;
     TileContext const& tile_context;
+    BooleanDecoder& decoder;
+    SyntaxElementCounter& counter;
     u32 row { 0 };
     u32 column { 0 };
     BlockSubsize size;
@@ -282,6 +355,11 @@ struct BlockContext {
     SegmentationPredictionContextView above_segmentation_ids;
     NonZeroTokensView left_non_zero_tokens;
     SegmentationPredictionContextView left_segmentation_ids;
+
+    SegmentFeatureStatus get_segment_feature(SegmentFeature feature) const
+    {
+        return frame_context.get_segment_feature(segment_id, feature);
+    }
 };
 
 struct BlockMotionVectorCandidateSet {

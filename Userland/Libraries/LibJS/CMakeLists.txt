@@ -2,26 +2,23 @@ set(SOURCES
     AST.cpp
     Bytecode/ASTCodegen.cpp
     Bytecode/BasicBlock.cpp
+    Bytecode/CodeGenerationError.cpp
     Bytecode/Executable.cpp
     Bytecode/Generator.cpp
     Bytecode/IdentifierTable.cpp
     Bytecode/Instruction.cpp
     Bytecode/Interpreter.cpp
     Bytecode/Op.cpp
-    Bytecode/Pass/DumpCFG.cpp
-    Bytecode/Pass/GenerateCFG.cpp
-    Bytecode/Pass/LoadElimination.cpp
-    Bytecode/Pass/MergeBlocks.cpp
-    Bytecode/Pass/PlaceBlocks.cpp
-    Bytecode/Pass/UnifySameBlocks.cpp
+    Bytecode/RegexTable.cpp
     Bytecode/StringTable.cpp
     Console.cpp
-    Contrib/Test262/$262Object.cpp
+    Contrib/Test262/262Object.cpp
     Contrib/Test262/AgentObject.cpp
     Contrib/Test262/GlobalObject.cpp
     Contrib/Test262/IsHTMLDDA.cpp
     CyclicModule.cpp
     Heap/BlockAllocator.cpp
+    Heap/Cell.cpp
     Heap/CellAllocator.cpp
     Heap/Handle.cpp
     Heap/Heap.cpp
@@ -140,7 +137,10 @@ set(SOURCES
     Runtime/Intl/SegmentIteratorPrototype.cpp
     Runtime/Intl/SegmentsPrototype.cpp
     Runtime/Intrinsics.cpp
-    Runtime/IteratorOperations.cpp
+    Runtime/Iterator.cpp
+    Runtime/IteratorConstructor.cpp
+    Runtime/IteratorHelper.cpp
+    Runtime/IteratorHelperPrototype.cpp
     Runtime/IteratorPrototype.cpp
     Runtime/JSONObject.cpp
     Runtime/JobCallback.cpp
@@ -191,6 +191,8 @@ set(SOURCES
     Runtime/ShadowRealmConstructor.cpp
     Runtime/ShadowRealmPrototype.cpp
     Runtime/Shape.cpp
+    Runtime/SharedArrayBufferConstructor.cpp
+    Runtime/SharedArrayBufferPrototype.cpp
     Runtime/StringConstructor.cpp
     Runtime/StringIterator.cpp
     Runtime/StringIteratorPrototype.cpp
@@ -254,6 +256,7 @@ set(SOURCES
     Runtime/WeakSet.cpp
     Runtime/WeakSetConstructor.cpp
     Runtime/WeakSetPrototype.cpp
+    Runtime/WrapForValidIteratorPrototype.cpp
     Runtime/WrappedFunction.cpp
     Script.cpp
     SourceCode.cpp
@@ -264,4 +267,4 @@ set(SOURCES
 )
 
 serenity_lib(LibJS js)
-target_link_libraries(LibJS PRIVATE LibCore LibCrypto LibRegex LibSyntax LibLocale LibUnicode)
+target_link_libraries(LibJS PRIVATE LibCore LibCrypto LibFileSystem LibRegex LibSyntax LibLocale LibUnicode)

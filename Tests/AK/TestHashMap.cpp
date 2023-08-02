@@ -9,6 +9,7 @@
 #include <AK/DeprecatedString.h>
 #include <AK/HashMap.h>
 #include <AK/OwnPtr.h>
+#include <AK/String.h>
 
 TEST_CASE(construct)
 {
@@ -110,7 +111,7 @@ TEST_CASE(case_insensitive)
 
 TEST_CASE(case_insensitive_stringview)
 {
-    HashMap<StringView, int, CaseInsensitiveStringViewTraits> casemap;
+    HashMap<StringView, int, CaseInsensitiveASCIIStringViewTraits> casemap;
     EXPECT_EQ(casemap.set("nickserv"sv, 3), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(casemap.set("NickServ"sv, 3), AK::HashSetResult::ReplacedExistingEntry);
     EXPECT_EQ(casemap.size(), 1u);
@@ -218,4 +219,111 @@ TEST_CASE(in_place_rehashing_ordered_loop_bug)
     map.remove("yt.innertube::nextId");
     map.set("yt.innertube::nextId", "");
     VERIFY(map.keys().size() == 2);
+}
+
+TEST_CASE(take)
+{
+    HashMap<String, int> map;
+
+    EXPECT(!map.take("foo"sv).has_value());
+    EXPECT(!map.take("bar"sv).has_value());
+    EXPECT(!map.take("baz"_short_string).has_value());
+
+    map.set("foo"_short_string, 1);
+    map.set("bar"_short_string, 2);
+    map.set("baz"_short_string, 3);
+
+    auto foo = map.take("foo"sv);
+    EXPECT_EQ(foo, 1);
+
+    foo = map.take("foo"sv);
+    EXPECT(!foo.has_value());
+
+    auto bar = map.take("bar"sv);
+    EXPECT_EQ(bar, 2);
+
+    bar = map.take("bar"sv);
+    EXPECT(!bar.has_value());
+
+    auto baz = map.take("baz"_short_string);
+    EXPECT_EQ(baz, 3);
+
+    baz = map.take("baz"_short_string);
+    EXPECT(!baz.has_value());
+}
+
+TEST_CASE(clone_same_template_args)
+{
+    HashMap<int, int> orig;
+    orig.set(1, 10);
+    orig.set(2, 20);
+    orig.set(3, 30);
+    EXPECT_EQ(orig.size(), static_cast<size_t>(3));
+    EXPECT_EQ(orig.get(2), Optional<int>(20));
+
+    auto second = TRY_OR_FAIL(orig.clone());
+
+    EXPECT_EQ(orig.size(), static_cast<size_t>(3));
+    EXPECT_EQ(orig.get(2), Optional<int>(20));
+    EXPECT_EQ(second.size(), static_cast<size_t>(3));
+    EXPECT_EQ(second.get(2), Optional<int>(20));
+}
+
+TEST_CASE(clone_different_traits)
+{
+    HashMap<StringView, StringView> orig;
+    orig.set("Well"sv, "hello friends!"sv);
+    orig.set("Thank"sv, "you, very cool!"sv);
+    EXPECT_EQ(orig.size(), static_cast<size_t>(2));
+    EXPECT_EQ(orig.get("Well"sv), Optional<StringView>("hello friends!"sv));
+    EXPECT_EQ(orig.get("weLL"sv), Optional<StringView>());
+
+    auto second = TRY_OR_FAIL(orig.clone<CaseInsensitiveASCIIStringViewTraits>());
+
+    EXPECT_EQ(orig.size(), static_cast<size_t>(2));
+    EXPECT_EQ(orig.get("Well"sv), Optional<StringView>("hello friends!"sv));
+    EXPECT_EQ(orig.get("weLL"sv), Optional<StringView>());
+    EXPECT_EQ(second.size(), static_cast<size_t>(2));
+    EXPECT_EQ(second.get("Well"sv), Optional<StringView>("hello friends!"sv));
+    EXPECT_EQ(second.get("weLL"sv), Optional<StringView>("hello friends!"sv));
+}
+
+TEST_CASE(move_construct)
+{
+    HashMap<int, int> orig;
+    orig.set(1, 10);
+    orig.set(2, 20);
+    orig.set(3, 30);
+    EXPECT_EQ(orig.size(), static_cast<size_t>(3));
+    EXPECT_EQ(orig.get(2), Optional<int>(20));
+
+    HashMap<int, int> second = move(orig);
+
+    EXPECT_EQ(orig.size(), static_cast<size_t>(0));
+    EXPECT_EQ(orig.get(2), Optional<int>());
+    EXPECT_EQ(second.size(), static_cast<size_t>(3));
+    EXPECT_EQ(second.get(2), Optional<int>(20));
+}
+
+TEST_CASE(move_assign)
+{
+    HashMap<int, int> orig;
+    HashMap<int, int> second;
+    orig.set(1, 10);
+    orig.set(2, 20);
+    orig.set(3, 30);
+
+    EXPECT_EQ(orig.size(), static_cast<size_t>(3));
+    EXPECT_EQ(orig.get(2), Optional<int>(20));
+    EXPECT_EQ(second.size(), static_cast<size_t>(0));
+    EXPECT_EQ(second.get(2), Optional<int>());
+
+    // 'Hashtable::operator=(Hashtable&&)' allocates temporarily an empty table,
+    // so we can't use NoAllocationGuard here. :(
+    second = move(orig);
+
+    EXPECT_EQ(orig.size(), static_cast<size_t>(0));
+    EXPECT_EQ(orig.get(2), Optional<int>());
+    EXPECT_EQ(second.size(), static_cast<size_t>(3));
+    EXPECT_EQ(second.get(2), Optional<int>(20));
 }

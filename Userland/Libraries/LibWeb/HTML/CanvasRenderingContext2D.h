@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <AK/String.h>
 #include <AK/Variant.h>
 #include <LibGfx/AffineTransform.h>
 #include <LibGfx/AntiAliasingPainter.h>
@@ -15,11 +16,14 @@
 #include <LibGfx/Painter.h>
 #include <LibGfx/Path.h>
 #include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/HTML/Canvas/CanvasCompositing.h>
 #include <LibWeb/HTML/Canvas/CanvasDrawImage.h>
 #include <LibWeb/HTML/Canvas/CanvasDrawPath.h>
 #include <LibWeb/HTML/Canvas/CanvasFillStrokeStyles.h>
 #include <LibWeb/HTML/Canvas/CanvasImageData.h>
+#include <LibWeb/HTML/Canvas/CanvasImageSmoothing.h>
 #include <LibWeb/HTML/Canvas/CanvasPath.h>
+#include <LibWeb/HTML/Canvas/CanvasPathClipper.h>
 #include <LibWeb/HTML/Canvas/CanvasPathDrawingStyles.h>
 #include <LibWeb/HTML/Canvas/CanvasRect.h>
 #include <LibWeb/HTML/Canvas/CanvasState.h>
@@ -47,12 +51,14 @@ class CanvasRenderingContext2D
     , public CanvasText
     , public CanvasDrawImage
     , public CanvasImageData
+    , public CanvasImageSmoothing
+    , public CanvasCompositing
     , public CanvasPathDrawingStyles<CanvasRenderingContext2D> {
 
     WEB_PLATFORM_OBJECT(CanvasRenderingContext2D, Bindings::PlatformObject);
 
 public:
-    static JS::NonnullGCPtr<CanvasRenderingContext2D> create(JS::Realm&, HTMLCanvasElement&);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CanvasRenderingContext2D>> create(JS::Realm&, HTMLCanvasElement&);
     virtual ~CanvasRenderingContext2D() override;
 
     virtual void fill_rect(float x, float y, float width, float height) override;
@@ -81,7 +87,16 @@ public:
 
     virtual JS::NonnullGCPtr<TextMetrics> measure_text(DeprecatedString const& text) override;
 
-    virtual void clip() override;
+    virtual void clip(DeprecatedString const& fill_rule) override;
+    virtual void clip(Path2D& path, DeprecatedString const& fill_rule) override;
+
+    virtual bool image_smoothing_enabled() const override;
+    virtual void set_image_smoothing_enabled(bool) override;
+    virtual Bindings::ImageSmoothingQuality image_smoothing_quality() const override;
+    virtual void set_image_smoothing_quality(Bindings::ImageSmoothingQuality) override;
+
+    virtual float global_alpha() const override;
+    virtual void set_global_alpha(float) override;
 
 private:
     explicit CanvasRenderingContext2D(JS::Realm&, HTMLCanvasElement&);
@@ -90,7 +105,7 @@ private:
     virtual void visit_edges(Cell::Visitor&) override;
 
     struct PreparedTextGlyph {
-        unsigned int c;
+        String glyph;
         Gfx::IntPoint position;
     };
 
@@ -101,6 +116,20 @@ private:
     };
 
     void did_draw(Gfx::FloatRect const&);
+
+    template<typename TDrawFunction>
+    void draw_clipped(TDrawFunction draw_function)
+    {
+        auto painter = this->antialiased_painter();
+        if (!painter.has_value())
+            return;
+        ScopedCanvasPathClip clipper(painter->underlying_painter(), drawing_state().clip);
+        auto draw_rect = draw_function(*painter);
+        if (drawing_state().clip.has_value())
+            draw_rect.intersect(drawing_state().clip->path.bounding_box());
+        did_draw(draw_rect);
+    }
+
     PreparedText prepare_text(DeprecatedString const& text, float max_width = INFINITY);
 
     Gfx::Painter* painter();
@@ -109,8 +138,11 @@ private:
     HTMLCanvasElement& canvas_element();
     HTMLCanvasElement const& canvas_element() const;
 
+    Gfx::Path rect_path(float x, float y, float width, float height);
+
     void stroke_internal(Gfx::Path const&);
-    void fill_internal(Gfx::Path&, DeprecatedString const& fill_rule);
+    void fill_internal(Gfx::Path const&, Gfx::Painter::WindingRule);
+    void clip_internal(Gfx::Path&, Gfx::Painter::WindingRule);
 
     JS::NonnullGCPtr<HTMLCanvasElement> m_element;
     OwnPtr<Gfx::Painter> m_painter;

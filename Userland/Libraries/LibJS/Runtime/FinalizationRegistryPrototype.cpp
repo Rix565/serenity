@@ -11,7 +11,7 @@
 namespace JS {
 
 FinalizationRegistryPrototype::FinalizationRegistryPrototype(Realm& realm)
-    : PrototypeObject(*realm.intrinsics().object_prototype())
+    : PrototypeObject(realm.intrinsics().object_prototype())
 {
 }
 
@@ -26,7 +26,7 @@ ThrowCompletionOr<void> FinalizationRegistryPrototype::initialize(Realm& realm)
     define_native_function(realm, vm.names.unregister, unregister, 1, attr);
 
     // 26.2.3.4 FinalizationRegistry.prototype [ @@toStringTag ], https://tc39.es/ecma262/#sec-finalization-registry.prototype-@@tostringtag
-    define_direct_property(*vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, vm.names.FinalizationRegistry.as_string()), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, vm.names.FinalizationRegistry.as_string()), Attribute::Configurable);
 
     return {};
 }
@@ -38,11 +38,11 @@ JS_DEFINE_NATIVE_FUNCTION(FinalizationRegistryPrototype::cleanup_some)
 
     // 1. Let finalizationRegistry be the this value.
     // 2. Perform ? RequireInternalSlot(finalizationRegistry, [[Cells]]).
-    auto* finalization_registry = TRY(typed_this_object(vm));
+    auto finalization_registry = TRY(typed_this_object(vm));
 
     // 3. If callback is present and IsCallable(callback) is false, throw a TypeError exception.
     if (vm.argument_count() > 0 && !callback.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback.to_string_without_side_effects()));
 
     // IMPLEMENTATION DEFINED: The specification for this function hasn't been updated to accommodate for JobCallback records.
     //                         This just follows how the constructor immediately converts the callback to a JobCallback using HostMakeJobCallback.
@@ -62,11 +62,11 @@ JS_DEFINE_NATIVE_FUNCTION(FinalizationRegistryPrototype::register_)
 
     // 1. Let finalizationRegistry be the this value.
     // 2. Perform ? RequireInternalSlot(finalizationRegistry, [[Cells]]).
-    auto* finalization_registry = TRY(typed_this_object(vm));
+    auto finalization_registry = TRY(typed_this_object(vm));
 
     // 3. If target is not an Object, throw a TypeError exception.
     if (!can_be_held_weakly(target))
-        return vm.throw_completion<TypeError>(ErrorType::CannotBeHeldWeakly, target.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::CannotBeHeldWeakly, TRY_OR_THROW_OOM(vm, target.to_string_without_side_effects()));
 
     // 4. If SameValue(target, heldValue) is true, throw a TypeError exception.
     if (same_value(target, held_value))
@@ -76,7 +76,7 @@ JS_DEFINE_NATIVE_FUNCTION(FinalizationRegistryPrototype::register_)
     //     a. If unregisterToken is not undefined, throw a TypeError exception.
     //     b. Set unregisterToken to empty.
     if (!can_be_held_weakly(unregister_token) && !unregister_token.is_undefined())
-        return vm.throw_completion<TypeError>(ErrorType::CannotBeHeldWeakly, unregister_token.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::CannotBeHeldWeakly, TRY_OR_THROW_OOM(vm, unregister_token.to_string_without_side_effects()));
 
     // 6. Let cell be the Record { [[WeakRefTarget]]: target, [[HeldValue]]: heldValue, [[UnregisterToken]]: unregisterToken }.
     // 7. Append cell to finalizationRegistry.[[Cells]].
@@ -93,11 +93,11 @@ JS_DEFINE_NATIVE_FUNCTION(FinalizationRegistryPrototype::unregister)
 
     // 1. Let finalizationRegistry be the this value.
     // 2. Perform ? RequireInternalSlot(finalizationRegistry, [[Cells]]).
-    auto* finalization_registry = TRY(typed_this_object(vm));
+    auto finalization_registry = TRY(typed_this_object(vm));
 
     // 3. If unregisterToken is not an Object, throw a TypeError exception.
     if (!can_be_held_weakly(unregister_token))
-        return vm.throw_completion<TypeError>(ErrorType::CannotBeHeldWeakly, unregister_token.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::CannotBeHeldWeakly, TRY_OR_THROW_OOM(vm, unregister_token.to_string_without_side_effects()));
 
     // 4-6.
     return Value(finalization_registry->remove_by_token(unregister_token.as_cell()));

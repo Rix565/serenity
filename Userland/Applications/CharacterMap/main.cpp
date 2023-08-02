@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2022-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -28,6 +28,7 @@ static void search_and_print_results(DeprecatedString const& query)
         builder.append(display_name);
         outln(builder.string_view());
         result_count++;
+        return IterationDecision::Continue;
     });
 
     if (result_count == 0)
@@ -42,10 +43,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd rpath unix"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
     Config::pledge_domain("CharacterMap");
 
-    TRY(Desktop::Launcher::add_allowed_handler_with_only_specific_urls("/bin/Help", { URL::create_with_file_scheme("/usr/share/man/man1/CharacterMap.md") }));
+    TRY(Desktop::Launcher::add_allowed_handler_with_only_specific_urls("/bin/Help", { URL::create_with_file_scheme("/usr/share/man/man1/Applications/CharacterMap.md") }));
     TRY(Desktop::Launcher::seal_allowlist());
 
     TRY(Core::System::pledge("stdio recvfd sendfd rpath"));
@@ -69,7 +70,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     window->resize(600, 400);
 
     auto character_map_widget = TRY(window->set_main_widget<CharacterMapWidget>());
-    character_map_widget->initialize_menubar(*window);
+    TRY(character_map_widget->initialize_menubar(*window));
 
     auto font_query = Config::read_string("CharacterMap"sv, "History"sv, "Font"sv, Gfx::FontDatabase::the().default_font_query());
     character_map_widget->set_font(Gfx::FontDatabase::the().get_by_name(font_query));

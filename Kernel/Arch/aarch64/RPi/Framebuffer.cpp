@@ -5,8 +5,11 @@
  */
 
 #include <AK/Format.h>
+#include <Kernel/Arch/aarch64/BootPPMParser.h>
 #include <Kernel/Arch/aarch64/RPi/Framebuffer.h>
 #include <Kernel/Arch/aarch64/RPi/FramebufferMailboxMessages.h>
+#include <Kernel/Boot/BootInfo.h>
+#include <Kernel/Sections.h>
 
 namespace Kernel::RPi {
 
@@ -27,7 +30,7 @@ Framebuffer::Framebuffer()
         FramebufferSetDepthMboxMessage set_depth;
         FramebufferSetPixelOrderMboxMessage set_pixel_order;
         FramebufferAllocateBufferMboxMessage allocate_buffer;
-        FramebufferGetPithMboxMessage get_pitch;
+        FramebufferGetPitchMboxMessage get_pitch;
         Mailbox::MessageTail tail;
     } message_queue;
 
@@ -42,7 +45,7 @@ Framebuffer::Framebuffer()
     // message_queue.set_virtual_offset.y = 0;
 
     message_queue.set_depth.depth_bits = 32;
-    message_queue.set_pixel_order.pixel_order = FramebufferSetPixelOrderMboxMessage::PixelOrder::RGB;
+    message_queue.set_pixel_order.pixel_order = FramebufferSetPixelOrderMboxMessage::PixelOrder::BGR;
     message_queue.allocate_buffer.alignment = 4096;
 
     if (!Mailbox::the().send_queue(&message_queue, sizeof(message_queue))) {
@@ -111,4 +114,20 @@ Framebuffer& Framebuffer::the()
     static Framebuffer instance;
     return instance;
 }
+
+void Framebuffer::initialize()
+{
+    auto& framebuffer = the();
+    if (framebuffer.initialized()) {
+        multiboot_framebuffer_addr = PhysicalAddress((PhysicalPtr)framebuffer.gpu_buffer());
+        multiboot_framebuffer_width = framebuffer.width();
+        multiboot_framebuffer_height = framebuffer.height();
+        multiboot_framebuffer_pitch = framebuffer.pitch();
+
+        // NOTE: The required pixel format for MULTIBOOT_FRAMEBUFFER_TYPE_RGB is actually BGRx8888.
+        VERIFY(framebuffer.pixel_order() == PixelOrder::BGR);
+        multiboot_framebuffer_type = MULTIBOOT_FRAMEBUFFER_TYPE_RGB;
+    }
+}
+
 }

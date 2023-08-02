@@ -4,29 +4,35 @@ with pkgs;
 stdenv.mkDerivation {
   name = "cpp-env";
   nativeBuildInputs = [
-    gcc12
-    curl
+    ccache
     cmake
+    curl
+    e2fsprogs
+    fuse2fs
+    gcc12
+    gmp
+    # To create port launcher icons
+    imagemagick
+    libmpc
     mpfr
     ninja
-    gmp
-    libmpc
-    e2fsprogs
     patch
-    ccache
-    rsync
-    unzip
-    texinfo
-    # Example Build-time Additional Dependencies
     pkg-config
+    rsync
+    texinfo
+    unzip
   ];
+
   buildInputs = [
-    # Example Run-time Additional Dependencies
-    openssl
-    libxcrypt
-    xlibsWrapper
-    qemu
     e2fsprogs
+    fuse2fs
+    # To build the GRUB disk image
+    grub2
+    libxcrypt
+    openssl
+    parted
+    qemu
+    xlibsWrapper
   ];
 
   hardeningDisable = [ "format" "fortify" ];

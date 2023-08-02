@@ -10,25 +10,31 @@
 #include <LibCore/ArgsParser.h>
 #include <LibCore/System.h>
 #include <LibDesktop/Launcher.h>
+#include <LibFileSystemAccessClient/Client.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Icon.h>
 #include <LibGUI/Window.h>
-#include <LibGfx/Font/BitmapFont.h>
 #include <LibMain/Main.h>
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd thread rpath unix cpath wpath"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
+    app->set_config_domain(TRY("FontEditor"_string));
 
-    TRY(Desktop::Launcher::add_allowed_handler_with_only_specific_urls("/bin/Help", { URL::create_with_file_scheme("/usr/share/man/man1/FontEditor.md") }));
+    FontEditor::g_resources = FontEditor::Resources::create();
+
+    TRY(Desktop::Launcher::add_allowed_handler_with_only_specific_urls("/bin/Help", { URL::create_with_file_scheme("/usr/share/man/man1/Applications/FontEditor.md") }));
     TRY(Desktop::Launcher::seal_allowlist());
 
     Config::pledge_domain("FontEditor");
-    TRY(Core::System::pledge("stdio recvfd sendfd thread rpath cpath wpath"));
 
-    char const* path = nullptr;
+    TRY(Core::System::unveil("/tmp/session/%sid/portal/filesystemaccess", "rw"));
+    TRY(Core::System::unveil("/res", "r"));
+    TRY(Core::System::unveil(nullptr, nullptr));
+
+    StringView path;
     Core::ArgsParser args_parser;
     args_parser.add_positional_argument(path, "The font file for editing.", "file", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
@@ -41,13 +47,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto font_editor = TRY(window->set_main_widget<FontEditor::MainWidget>());
     TRY(font_editor->initialize_menubar(*window));
-
-    if (path) {
-        TRY(font_editor->open_file(path));
-    } else {
-        auto mutable_font = TRY(TRY(Gfx::BitmapFont::try_load_from_file("/res/fonts/KaticaRegular10.font"))->unmasked_character_set());
-        TRY(font_editor->initialize({}, move(mutable_font)));
-    }
+    font_editor->reset();
 
     window->on_close_request = [&]() -> GUI::Window::CloseRequestDecision {
         if (font_editor->request_close())
@@ -56,6 +56,16 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     };
 
     window->show();
+
+    auto default_path = TRY(String::from_deprecated_string(Config::read_string("FontEditor"sv, "Defaults"sv, "Font"sv, {})));
+    auto path_to_load = path.is_empty() ? default_path : path;
+    if (!path_to_load.is_empty()) {
+        auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(window, path_to_load);
+        if (!response.is_error()) {
+            if (auto result = font_editor->open_file(path, response.value().release_stream()); result.is_error())
+                font_editor->show_error(result.release_error(), "Opening"sv, path_to_load);
+        }
+    }
 
     return app->exec();
 }

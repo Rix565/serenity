@@ -9,7 +9,6 @@
 #include <AK/CircularQueue.h>
 #include <AK/JsonObject.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
 #include <LibCore/System.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Frame.h>
@@ -36,7 +35,7 @@ private:
     GraphWidget(GraphType graph_type, Optional<Gfx::Color> graph_color, Optional<Gfx::Color> graph_error_color)
         : m_graph_type(graph_type)
     {
-        set_frame_thickness(1);
+        set_frame_style(Gfx::FrameStyle::SunkenPanel);
         m_graph_color = graph_color.value_or(palette().menu_selection());
         m_graph_error_color = graph_error_color.value_or(Color::Red);
         start_timer(1000);
@@ -124,13 +123,13 @@ private:
         for (auto value : m_history) {
             if (value >= 0) {
                 painter.draw_line(
-                    { rect.x() + i, rect.bottom() },
+                    { rect.x() + i, rect.bottom() - 1 },
                     { rect.x() + i, rect.top() + (int)(roundf(rect.height() - (value * rect.height()))) },
                     m_graph_color);
             } else {
                 painter.draw_line(
                     { rect.x() + i, rect.top() },
-                    { rect.x() + i, rect.bottom() },
+                    { rect.x() + i, rect.bottom() - 1 },
                     m_graph_error_color);
             }
             ++i;
@@ -144,13 +143,13 @@ private:
         GUI::Process::spawn_or_show_error(window(), "/bin/SystemMonitor"sv, Array { "-t", m_graph_type == GraphType::Network ? "network" : "graphs" });
     }
 
-    ErrorOr<JsonValue> get_data_as_json(OwnPtr<Core::Stream::File>& file, StringView filename)
+    ErrorOr<JsonValue> get_data_as_json(OwnPtr<Core::File>& file, StringView filename)
     {
         if (file) {
             // Seeking to the beginning causes a data refresh!
-            TRY(file->seek(0, Core::Stream::SeekMode::SetPosition));
+            TRY(file->seek(0, SeekMode::SetPosition));
         } else {
-            file = TRY(Core::Stream::File::open(filename, Core::Stream::OpenMode::Read));
+            file = TRY(Core::File::open(filename, Core::File::OpenMode::Read));
         }
 
         auto file_contents = TRY(file->read_until_eof());
@@ -231,16 +230,16 @@ private:
     static constexpr u64 const scale_unit = 8000;
     u64 m_current_scale { scale_unit };
     DeprecatedString m_tooltip;
-    OwnPtr<Core::Stream::File> m_proc_stat;
-    OwnPtr<Core::Stream::File> m_proc_mem;
-    OwnPtr<Core::Stream::File> m_proc_net;
+    OwnPtr<Core::File> m_proc_stat;
+    OwnPtr<Core::File> m_proc_mem;
+    OwnPtr<Core::File> m_proc_net;
 };
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd proc exec rpath unix"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
     TRY(Core::System::pledge("stdio recvfd sendfd proc exec rpath"));
 
@@ -258,7 +257,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         return 1;
     }
 
-    NonnullRefPtrVector<GUI::Window> applet_windows;
+    Vector<NonnullRefPtr<GUI::Window>> applet_windows;
 
     auto create_applet = [&](GraphType graph_type, StringView spec) -> ErrorOr<void> {
         auto parts = spec.split_view(',');

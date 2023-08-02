@@ -32,7 +32,8 @@ ErrorOr<String> MarkupGenerator::html_from_source(StringView source)
 ErrorOr<String> MarkupGenerator::html_from_value(Value value)
 {
     StringBuilder output_html;
-    TRY(value_to_html(value, output_html));
+    HashTable<Object*> seen_objects;
+    TRY(value_to_html(value, output_html, seen_objects));
     return output_html.to_string();
 }
 
@@ -43,7 +44,7 @@ ErrorOr<String> MarkupGenerator::html_from_error(Error const& object, bool in_pr
     return output_html.to_string();
 }
 
-ErrorOr<void> MarkupGenerator::value_to_html(Value value, StringBuilder& output_html, HashTable<Object*> seen_objects)
+ErrorOr<void> MarkupGenerator::value_to_html(Value value, StringBuilder& output_html, HashTable<Object*>& seen_objects)
 {
     if (value.is_empty()) {
         TRY(output_html.try_append("&lt;empty&gt;"sv));
@@ -81,7 +82,7 @@ ErrorOr<void> MarkupGenerator::value_to_html(Value value, StringBuilder& output_
 
     if (value.is_string())
         TRY(output_html.try_append('"'));
-    TRY(output_html.try_append(escape_html_entities(value.to_string_without_side_effects())));
+    TRY(output_html.try_append(escape_html_entities(TRY(value.to_string_without_side_effects()))));
     if (value.is_string())
         TRY(output_html.try_append('"'));
 
@@ -150,12 +151,12 @@ ErrorOr<void> MarkupGenerator::date_to_html(Object const& date, StringBuilder& h
 ErrorOr<void> MarkupGenerator::trace_to_html(TracebackFrame const& traceback_frame, StringBuilder& html_output)
 {
     auto function_name = escape_html_entities(traceback_frame.function_name);
-    auto [line, column, _] = traceback_frame.source_range.start;
+    auto [line, column, _] = traceback_frame.source_range().start;
     auto get_filename_from_path = [&](StringView filename) -> StringView {
         auto last_slash_index = filename.find_last('/');
         return last_slash_index.has_value() ? filename.substring_view(*last_slash_index + 1) : filename;
     };
-    auto filename = escape_html_entities(get_filename_from_path(traceback_frame.source_range.filename()));
+    auto filename = escape_html_entities(get_filename_from_path(traceback_frame.source_range().filename()));
     auto trace = TRY(String::formatted("at {} ({}:{}:{})", function_name, filename, line, column));
 
     TRY(html_output.try_appendff("&nbsp;&nbsp;{}<br>", trace));
@@ -167,8 +168,8 @@ ErrorOr<void> MarkupGenerator::error_to_html(Error const& error, StringBuilder& 
     auto& vm = error.vm();
     auto name = error.get_without_side_effects(vm.names.name).value_or(js_undefined());
     auto message = error.get_without_side_effects(vm.names.message).value_or(js_undefined());
-    auto name_string = name.to_string_without_side_effects();
-    auto message_string = message.to_string_without_side_effects();
+    auto name_string = TRY(name.to_string_without_side_effects());
+    auto message_string = TRY(message.to_string_without_side_effects());
     auto uncaught_message = TRY(String::formatted("Uncaught {}[{}]: ", in_promise ? "(in promise) " : "", name_string));
 
     TRY(html_output.try_append(TRY(wrap_string_in_style(uncaught_message, StyleType::Invalid)).bytes_as_string_view()));

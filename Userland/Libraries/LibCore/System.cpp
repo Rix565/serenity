@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2021-2022, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021-2022, Kenneth Myhra <kennethmyhra@serenityos.org>
- * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2022, Matthias Zimmerman <matthias291999@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -11,8 +11,8 @@
 #include <AK/FixedArray.h>
 #include <AK/ScopedValueRollback.h>
 #include <AK/StdLibExtras.h>
+#include <AK/String.h>
 #include <AK/Vector.h>
-#include <LibCore/File.h>
 #include <LibCore/SessionManagement.h>
 #include <LibCore/System.h>
 #include <limits.h>
@@ -43,7 +43,10 @@ static int memfd_create(char const* name, unsigned int flags)
 #endif
 
 #if defined(AK_OS_MACOS)
+#    include <crt_externs.h>
 #    include <sys/mman.h>
+#else
+extern char** environ;
 #endif
 
 #define HANDLE_SYSCALL_RETURN_VALUE(syscall_name, rc, success_value) \
@@ -52,13 +55,10 @@ static int memfd_create(char const* name, unsigned int flags)
     }                                                                \
     return success_value;
 
-// clang-format off
 template<typename T>
-concept SupportsReentrantGetpwent = requires(T passwd, T* ptr)
-{
+concept SupportsReentrantGetpwent = requires(T passwd, T* ptr) {
     getpwent_r(&passwd, nullptr, 0, &ptr);
 };
-// clang-format on
 
 // Note: This has to be in the global namespace for the extern declaration to trick the compiler
 // into finding a declaration of getpwent_r when it doesn't actually exist.
@@ -86,13 +86,10 @@ static ErrorOr<Optional<struct passwd>> getpwent_impl(Span<char> buffer)
     return Optional<struct passwd> {};
 }
 
-// clang-format off
 template<typename T>
-concept SupportsReentrantGetgrent = requires(T group, T* ptr)
-{
+concept SupportsReentrantGetgrent = requires(T group, T* ptr) {
     getgrent_r(&group, nullptr, 0, &ptr);
 };
-// clang-format on
 
 // Note: This has to be in the global namespace for the extern declaration to trick the compiler
 // into finding a declaration of getgrent_r when it doesn't actually exist.
@@ -132,9 +129,9 @@ namespace Core::System {
 
 #ifdef AK_OS_SERENITY
 
-ErrorOr<void> beep()
+ErrorOr<void> beep(Optional<size_t> tone)
 {
-    auto rc = ::sysbeep();
+    auto rc = ::sysbeep(tone.value_or(440));
     if (rc < 0)
         return Error::from_syscall("beep"sv, -errno);
     return {};
@@ -231,19 +228,75 @@ ErrorOr<void> ptrace_peekbuf(pid_t tid, void const* tracee_addr, Bytes destinati
     HANDLE_SYSCALL_RETURN_VALUE("ptrace_peekbuf", rc, {});
 }
 
+ErrorOr<void> bindmount(int source_fd, StringView target, int flags)
+{
+    if (target.is_null())
+        return Error::from_errno(EFAULT);
+
+    Syscall::SC_bindmount_params params {
+        { target.characters_without_null_termination(), target.length() },
+        source_fd,
+        flags,
+    };
+    int rc = syscall(SC_bindmount, &params);
+    HANDLE_SYSCALL_RETURN_VALUE("bindmount", rc, {});
+}
+
+ErrorOr<void> remount(StringView target, int flags)
+{
+    if (target.is_null())
+        return Error::from_errno(EFAULT);
+
+    Syscall::SC_remount_params params {
+        { target.characters_without_null_termination(), target.length() },
+        flags
+    };
+    int rc = syscall(SC_remount, &params);
+    HANDLE_SYSCALL_RETURN_VALUE("remount", rc, {});
+}
+
 ErrorOr<void> mount(int source_fd, StringView target, StringView fs_type, int flags)
 {
     if (target.is_null() || fs_type.is_null())
         return Error::from_errno(EFAULT);
 
-    Syscall::SC_mount_params params {
-        { target.characters_without_null_termination(), target.length() },
+    if (flags & MS_REMOUNT) {
+        TRY(remount(target, flags));
+        return {};
+    }
+    if (flags & MS_BIND) {
+        TRY(bindmount(source_fd, target, flags));
+        return {};
+    }
+    int mount_fd = TRY(fsopen(fs_type, flags));
+    return fsmount(mount_fd, source_fd, target);
+}
+
+ErrorOr<int> fsopen(StringView fs_type, int flags)
+{
+    if (fs_type.is_null())
+        return Error::from_errno(EFAULT);
+
+    Syscall::SC_fsopen_params params {
         { fs_type.characters_without_null_termination(), fs_type.length() },
-        source_fd,
-        flags
+        flags,
     };
-    int rc = syscall(SC_mount, &params);
-    HANDLE_SYSCALL_RETURN_VALUE("mount", rc, {});
+    int rc = syscall(SC_fsopen, &params);
+    HANDLE_SYSCALL_RETURN_VALUE("fsopen", rc, rc);
+}
+
+ErrorOr<void> fsmount(int mount_fd, int source_fd, StringView target)
+{
+    if (target.is_null())
+        return Error::from_errno(EFAULT);
+
+    Syscall::SC_fsmount_params params {
+        mount_fd,
+        { target.characters_without_null_termination(), target.length() },
+        source_fd,
+    };
+    int rc = syscall(SC_fsmount, &params);
+    HANDLE_SYSCALL_RETURN_VALUE("fsmount", rc, {});
 }
 
 ErrorOr<void> umount(StringView mount_point)
@@ -330,7 +383,9 @@ ErrorOr<void> sigaction(int signal, struct sigaction const* action, struct sigac
     return {};
 }
 
-#if defined(AK_OS_MACOS) || defined(AK_OS_OPENBSD) || defined(AK_OS_FREEBSD)
+#if defined(AK_OS_SOLARIS)
+ErrorOr<SIG_TYP> signal(int signal, SIG_TYP handler)
+#elif defined(AK_OS_BSD_GENERIC)
 ErrorOr<sig_t> signal(int signal, sig_t handler)
 #else
 ErrorOr<sighandler_t> signal(int signal, sighandler_t handler)
@@ -348,6 +403,22 @@ ErrorOr<struct stat> fstat(int fd)
     if (::fstat(fd, &st) < 0)
         return Error::from_syscall("fstat"sv, -errno);
     return st;
+}
+
+ErrorOr<struct stat> fstatat(int fd, StringView path, int flags)
+{
+    if (!path.characters_without_null_termination())
+        return Error::from_syscall("fstatat"sv, -EFAULT);
+
+    struct stat st = {};
+#ifdef AK_OS_SERENITY
+    Syscall::SC_stat_params params { { path.characters_without_null_termination(), path.length() }, &st, fd, !(flags & AT_SYMLINK_NOFOLLOW) };
+    int rc = syscall(SC_stat, &params);
+#else
+    DeprecatedString path_string = path;
+    int rc = ::fstatat(fd, path_string.characters(), &st, flags);
+#endif
+    HANDLE_SYSCALL_RETURN_VALUE("fstatat", rc, st);
 }
 
 ErrorOr<int> fcntl(int fd, int command, ...)
@@ -403,7 +474,7 @@ ErrorOr<int> anon_create([[maybe_unused]] size_t size, [[maybe_unused]] int opti
         TRY(close(fd));
         return Error::from_errno(saved_errno);
     }
-#elif defined(AK_OS_MACOS) || defined(AK_OS_EMSCRIPTEN) || defined(AK_OS_OPENBSD)
+#elif defined(AK_OS_BSD_GENERIC) || defined(AK_OS_EMSCRIPTEN)
     struct timespec time;
     clock_gettime(CLOCK_REALTIME, &time);
     auto name = DeprecatedString::formatted("/shm-{}{}", (unsigned long)time.tv_sec, (unsigned long)time.tv_nsec);
@@ -503,7 +574,7 @@ ErrorOr<struct stat> lstat(StringView path)
     HANDLE_SYSCALL_RETURN_VALUE("lstat", rc, st);
 #else
     DeprecatedString path_string = path;
-    if (::stat(path_string.characters(), &st) < 0)
+    if (::lstat(path_string.characters(), &st) < 0)
         return Error::from_syscall("lstat"sv, -errno);
     return st;
 #endif
@@ -574,7 +645,11 @@ ErrorOr<DeprecatedString> gethostname()
 
 ErrorOr<void> sethostname(StringView hostname)
 {
+#if defined(AK_OS_SOLARIS)
+    int rc = ::sethostname(const_cast<char*>(hostname.characters_without_null_termination()), hostname.length());
+#else
     int rc = ::sethostname(hostname.characters_without_null_termination(), hostname.length());
+#endif
     if (rc < 0)
         return Error::from_syscall("sethostname"sv, -errno);
     return {};
@@ -991,6 +1066,16 @@ ErrorOr<int> mkstemp(Span<char> pattern)
     return fd;
 }
 
+ErrorOr<String> mkdtemp(Span<char> pattern)
+{
+    auto* path = ::mkdtemp(pattern.data());
+    if (path == nullptr) {
+        return Error::from_errno(errno);
+    }
+
+    return String::from_utf8(StringView { path, strlen(path) });
+}
+
 ErrorOr<void> rename(StringView old_path, StringView new_path)
 {
     if (old_path.is_null() || new_path.is_null())
@@ -1049,9 +1134,59 @@ ErrorOr<void> utime(StringView path, Optional<struct utimbuf> maybe_buf)
 #endif
 }
 
+ErrorOr<void> utimensat(int fd, StringView path, struct timespec const times[2], int flag)
+{
+    if (path.is_null())
+        return Error::from_errno(EFAULT);
+
+#ifdef AK_OS_SERENITY
+    // POSIX allows AT_SYMLINK_NOFOLLOW flag or no flags.
+    if (flag & ~AT_SYMLINK_NOFOLLOW)
+        return Error::from_errno(EINVAL);
+
+    // Return early without error since both changes are to be omitted.
+    if (times && times[0].tv_nsec == UTIME_OMIT && times[1].tv_nsec == UTIME_OMIT)
+        return {};
+
+    // According to POSIX, when times is a nullptr, it's equivalent to setting
+    // both last access time and last modification time to the current time.
+    // Setting the times argument to nullptr if it matches this case prevents
+    // the need to copy it in the kernel.
+    if (times && times[0].tv_nsec == UTIME_NOW && times[1].tv_nsec == UTIME_NOW)
+        times = nullptr;
+
+    if (times) {
+        for (int i = 0; i < 2; ++i) {
+            if ((times[i].tv_nsec != UTIME_NOW && times[i].tv_nsec != UTIME_OMIT)
+                && (times[i].tv_nsec < 0 || times[i].tv_nsec >= 1'000'000'000L)) {
+                return Error::from_errno(EINVAL);
+            }
+        }
+    }
+
+    Syscall::SC_utimensat_params params {
+        .dirfd = fd,
+        .path = { path.characters_without_null_termination(), path.length() },
+        .times = times,
+        .flag = flag,
+    };
+    int rc = syscall(SC_utimensat, &params);
+    HANDLE_SYSCALL_RETURN_VALUE("utimensat", rc, {});
+#else
+    auto builder = TRY(StringBuilder::create());
+    TRY(builder.try_append(path));
+    TRY(builder.try_append('\0'));
+
+    // Note the explicit null terminators above.
+    if (::utimensat(fd, builder.string_view().characters_without_null_termination(), times, flag) < 0)
+        return Error::from_syscall("utimensat"sv, -errno);
+    return {};
+#endif
+}
+
 ErrorOr<struct utsname> uname()
 {
-    utsname uts;
+    struct utsname uts;
 #ifdef AK_OS_SERENITY
     int rc = syscall(SC_uname, &uts);
     HANDLE_SYSCALL_RETURN_VALUE("uname", rc, uts);
@@ -1105,15 +1240,15 @@ ErrorOr<void> join_jail(u64 jail_index)
     HANDLE_SYSCALL_RETURN_VALUE("jail_attach", rc, {});
 }
 
-ErrorOr<u64> create_jail(StringView jail_name)
+ErrorOr<u64> create_jail(StringView jail_name, JailIsolationFlags flags)
 {
-    Syscall::SC_jail_create_params params { 0, { jail_name.characters_without_null_termination(), jail_name.length() } };
+    Syscall::SC_jail_create_params params { 0, { jail_name.characters_without_null_termination(), jail_name.length() }, static_cast<int>(flags) };
     int rc = syscall(SC_jail_create, &params);
     HANDLE_SYSCALL_RETURN_VALUE("jail_create", rc, static_cast<u64>(params.index));
 }
 #endif
 
-ErrorOr<void> exec(StringView filename, Span<StringView> arguments, SearchInPath search_in_path, Optional<Span<StringView>> environment)
+ErrorOr<void> exec(StringView filename, ReadonlySpan<StringView> arguments, SearchInPath search_in_path, Optional<ReadonlySpan<StringView>> environment)
 {
 #ifdef AK_OS_SERENITY
     Syscall::SC_execve_params params;
@@ -1153,20 +1288,21 @@ ErrorOr<void> exec(StringView filename, Span<StringView> arguments, SearchInPath
         return {};
     };
 
-    DeprecatedString exec_filename;
-
+    StringView exec_filename;
+    String resolved_executable_path;
     if (search_in_path == SearchInPath::Yes) {
-        auto maybe_executable = Core::File::resolve_executable_from_environment(filename);
+        auto executable_or_error = resolve_executable_from_environment(filename);
 
-        if (!maybe_executable.has_value())
-            return ENOENT;
+        if (executable_or_error.is_error())
+            return executable_or_error.release_error();
 
-        exec_filename = maybe_executable.release_value();
+        resolved_executable_path = executable_or_error.release_value();
+        exec_filename = resolved_executable_path;
     } else {
-        exec_filename = filename.to_deprecated_string();
+        exec_filename = filename;
     }
 
-    params.path = { exec_filename.characters(), exec_filename.length() };
+    params.path = { exec_filename.characters_without_null_termination(), exec_filename.length() };
     TRY(run_exec(params));
     VERIFY_NOT_REACHED();
 #else
@@ -1191,18 +1327,19 @@ ErrorOr<void> exec(StringView filename, Span<StringView> arguments, SearchInPath
         envp[environment->size()] = nullptr;
 
         if (search_in_path == SearchInPath::Yes && !filename.contains('/')) {
-#    if defined(AK_OS_MACOS) || defined(AK_OS_FREEBSD)
+#    if defined(AK_OS_MACOS) || defined(AK_OS_FREEBSD) || defined(AK_OS_SOLARIS)
             // These BSDs don't support execvpe(), so we'll have to manually search the PATH.
             ScopedValueRollback errno_rollback(errno);
 
-            auto maybe_executable = Core::File::resolve_executable_from_environment(filename_string);
+            auto executable_or_error = resolve_executable_from_environment(filename_string);
 
-            if (!maybe_executable.has_value()) {
-                errno_rollback.set_override_rollback_value(ENOENT);
-                return Error::from_errno(ENOENT);
+            if (executable_or_error.is_error()) {
+                errno_rollback.set_override_rollback_value(executable_or_error.error().code());
+                return executable_or_error.release_error();
             }
 
-            rc = ::execve(maybe_executable.release_value().characters(), argv.data(), envp.data());
+            DeprecatedString executable = executable_or_error.release_value().to_deprecated_string();
+            rc = ::execve(executable.characters(), argv.data(), envp.data());
 #    else
             rc = ::execvpe(filename_string.characters(), argv.data(), envp.data());
 #    endif
@@ -1399,7 +1536,7 @@ ErrorOr<Vector<gid_t>> getgroups()
     return groups;
 }
 
-ErrorOr<void> setgroups(Span<gid_t const> gids)
+ErrorOr<void> setgroups(ReadonlySpan<gid_t> gids)
 {
     if (::setgroups(gids.size(), gids.data()) < 0)
         return Error::from_syscall("setgroups"sv, -errno);
@@ -1430,15 +1567,31 @@ ErrorOr<void> mkfifo(StringView pathname, mode_t mode)
 
 ErrorOr<void> setenv(StringView name, StringView value, bool overwrite)
 {
+    auto builder = TRY(StringBuilder::create());
+    TRY(builder.try_append(name));
+    TRY(builder.try_append('\0'));
+    TRY(builder.try_append(value));
+    TRY(builder.try_append('\0'));
+    // Note the explicit null terminators above.
+    auto c_name = builder.string_view().characters_without_null_termination();
+    auto c_value = c_name + name.length() + 1;
+    auto rc = ::setenv(c_name, c_value, overwrite);
+    if (rc < 0)
+        return Error::from_errno(errno);
+    return {};
+}
+
+ErrorOr<void> putenv(StringView env)
+{
 #ifdef AK_OS_SERENITY
-    auto const rc = ::serenity_setenv(name.characters_without_null_termination(), name.length(), value.characters_without_null_termination(), value.length(), overwrite);
+    auto rc = serenity_putenv(env.characters_without_null_termination(), env.length());
 #else
-    DeprecatedString name_string = name;
-    DeprecatedString value_string = value;
-    auto const rc = ::setenv(name_string.characters(), value_string.characters(), overwrite);
+    // Leak somewhat unavoidable here due to the putenv API.
+    auto leaked_new_env = strndup(env.characters_without_null_termination(), env.length());
+    auto rc = ::putenv(leaked_new_env);
 #endif
     if (rc < 0)
-        return Error::from_syscall("setenv"sv, -errno);
+        return Error::from_errno(errno);
     return {};
 }
 
@@ -1466,7 +1619,7 @@ ErrorOr<void> unlockpt(int fildes)
     return {};
 }
 
-ErrorOr<void> access(StringView pathname, int mode)
+ErrorOr<void> access(StringView pathname, int mode, int flags)
 {
     if (pathname.is_null())
         return Error::from_syscall("access"sv, -EFAULT);
@@ -1476,12 +1629,13 @@ ErrorOr<void> access(StringView pathname, int mode)
         .dirfd = AT_FDCWD,
         .pathname = { pathname.characters_without_null_termination(), pathname.length() },
         .mode = mode,
-        .flags = 0,
+        .flags = flags,
     };
     int rc = ::syscall(Syscall::SC_faccessat, &params);
     HANDLE_SYSCALL_RETURN_VALUE("access", rc, {});
 #else
     DeprecatedString path_string = pathname;
+    (void)flags;
     if (::access(path_string.characters(), mode) < 0)
         return Error::from_syscall("access"sv, -errno);
     return {};
@@ -1527,5 +1681,49 @@ ErrorOr<void> posix_fallocate(int fd, off_t offset, off_t length)
     return {};
 }
 #endif
+
+// This constant is copied from LibFileSystem. We cannot use or even include it directly,
+// because that would cause a dependency of LibCore on LibFileSystem, effectively rendering
+// the distinction between these libraries moot.
+static constexpr StringView INTERNAL_DEFAULT_PATH_SV = "/usr/local/sbin:/usr/local/bin:/usr/bin:/bin"sv;
+
+ErrorOr<String> resolve_executable_from_environment(StringView filename, int flags)
+{
+    if (filename.is_empty())
+        return Error::from_errno(ENOENT);
+
+    // Paths that aren't just a file name generally count as already resolved.
+    if (filename.contains('/')) {
+        TRY(Core::System::access(filename, X_OK, flags));
+        return TRY(String::from_utf8(filename));
+    }
+
+    auto const* path_str = ::getenv("PATH");
+    StringView path;
+    if (path_str)
+        path = { path_str, strlen(path_str) };
+    if (path.is_empty())
+        path = INTERNAL_DEFAULT_PATH_SV;
+
+    auto directories = path.split_view(':');
+
+    for (auto directory : directories) {
+        auto file = TRY(String::formatted("{}/{}", directory, filename));
+
+        if (!Core::System::access(file, X_OK, flags).is_error())
+            return file;
+    }
+
+    return Error::from_errno(ENOENT);
+}
+
+char** environment()
+{
+#if defined(AK_OS_MACOS)
+    return *_NSGetEnviron();
+#else
+    return environ;
+#endif
+}
 
 }

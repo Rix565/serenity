@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,17 +11,25 @@
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
+#include <LibWeb/Infra/Strings.h>
 
 namespace Web::CSS {
 
 CSSStyleDeclaration::CSSStyleDeclaration(JS::Realm& realm)
-    : PlatformObject(Bindings::ensure_web_prototype<Bindings::CSSStyleDeclarationPrototype>(realm, "CSSStyleDeclaration"))
+    : PlatformObject(realm)
 {
 }
 
-PropertyOwningCSSStyleDeclaration* PropertyOwningCSSStyleDeclaration::create(JS::Realm& realm, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
+JS::ThrowCompletionOr<void> CSSStyleDeclaration::initialize(JS::Realm& realm)
 {
-    return realm.heap().allocate<PropertyOwningCSSStyleDeclaration>(realm, realm, move(properties), move(custom_properties)).release_allocated_value_but_fixme_should_propagate_errors();
+    MUST_OR_THROW_OOM(Base::initialize(realm));
+    set_prototype(&Bindings::ensure_web_prototype<Bindings::CSSStyleDeclarationPrototype>(realm, "CSSStyleDeclaration"));
+    return {};
+}
+
+WebIDL::ExceptionOr<JS::NonnullGCPtr<PropertyOwningCSSStyleDeclaration>> PropertyOwningCSSStyleDeclaration::create(JS::Realm& realm, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
+{
+    return MUST_OR_THROW_OOM(realm.heap().allocate<PropertyOwningCSSStyleDeclaration>(realm, realm, move(properties), move(custom_properties)));
 }
 
 PropertyOwningCSSStyleDeclaration::PropertyOwningCSSStyleDeclaration(JS::Realm& realm, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
@@ -38,10 +46,10 @@ DeprecatedString PropertyOwningCSSStyleDeclaration::item(size_t index) const
     return CSS::string_from_property_id(m_properties[index].property_id);
 }
 
-ElementInlineCSSStyleDeclaration* ElementInlineCSSStyleDeclaration::create(DOM::Element& element, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<ElementInlineCSSStyleDeclaration>> ElementInlineCSSStyleDeclaration::create(DOM::Element& element, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
 {
     auto& realm = element.realm();
-    return realm.heap().allocate<ElementInlineCSSStyleDeclaration>(realm, element, move(properties), move(custom_properties)).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<ElementInlineCSSStyleDeclaration>(realm, element, move(properties), move(custom_properties)));
 }
 
 ElementInlineCSSStyleDeclaration::ElementInlineCSSStyleDeclaration(DOM::Element& element, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
@@ -88,11 +96,13 @@ WebIDL::ExceptionOr<void> PropertyOwningCSSStyleDeclaration::set_property(Proper
     }
 
     // 4. If priority is not the empty string and is not an ASCII case-insensitive match for the string "important", then return.
-    if (!priority.is_empty() && !priority.equals_ignoring_case("important"sv))
+    if (!priority.is_empty() && !Infra::is_ascii_case_insensitive_match(priority, "important"sv))
         return {};
 
     // 5. Let component value list be the result of parsing value for property property.
-    auto component_value_list = parse_css_value(CSS::Parser::ParsingContext {}, value, property_id);
+    auto component_value_list = is<ElementInlineCSSStyleDeclaration>(this)
+        ? MUST(parse_css_value(CSS::Parser::ParsingContext { static_cast<ElementInlineCSSStyleDeclaration&>(*this).element()->document() }, value, property_id))
+        : MUST(parse_css_value(CSS::Parser::ParsingContext { realm() }, value, property_id));
 
     // 6. If component value list is null, then return.
     if (!component_value_list)
@@ -171,7 +181,7 @@ void ElementInlineCSSStyleDeclaration::update_style_attribute()
 }
 
 // https://drafts.csswg.org/cssom/#set-a-css-declaration
-bool PropertyOwningCSSStyleDeclaration::set_a_css_declaration(PropertyID property_id, NonnullRefPtr<StyleValue> value, Important important)
+bool PropertyOwningCSSStyleDeclaration::set_a_css_declaration(PropertyID property_id, NonnullRefPtr<StyleValue const> value, Important important)
 {
     // FIXME: Handle logical property groups.
 
@@ -196,9 +206,9 @@ bool PropertyOwningCSSStyleDeclaration::set_a_css_declaration(PropertyID propert
 DeprecatedString CSSStyleDeclaration::get_property_value(StringView property_name) const
 {
     auto property_id = property_id_from_string(property_name);
-    if (property_id == CSS::PropertyID::Invalid)
+    if (!property_id.has_value())
         return {};
-    auto maybe_property = property(property_id);
+    auto maybe_property = property(property_id.value());
     if (!maybe_property.has_value())
         return {};
     return maybe_property->value->to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
@@ -208,9 +218,9 @@ DeprecatedString CSSStyleDeclaration::get_property_value(StringView property_nam
 DeprecatedString CSSStyleDeclaration::get_property_priority(StringView property_name) const
 {
     auto property_id = property_id_from_string(property_name);
-    if (property_id == CSS::PropertyID::Invalid)
+    if (!property_id.has_value())
         return {};
-    auto maybe_property = property(property_id);
+    auto maybe_property = property(property_id.value());
     if (!maybe_property.has_value())
         return {};
     return maybe_property->important == Important::Yes ? "important" : "";
@@ -219,17 +229,17 @@ DeprecatedString CSSStyleDeclaration::get_property_priority(StringView property_
 WebIDL::ExceptionOr<void> CSSStyleDeclaration::set_property(StringView property_name, StringView css_text, StringView priority)
 {
     auto property_id = property_id_from_string(property_name);
-    if (property_id == CSS::PropertyID::Invalid)
+    if (!property_id.has_value())
         return {};
-    return set_property(property_id, css_text, priority);
+    return set_property(property_id.value(), css_text, priority);
 }
 
 WebIDL::ExceptionOr<DeprecatedString> CSSStyleDeclaration::remove_property(StringView property_name)
 {
     auto property_id = property_id_from_string(property_name);
-    if (property_id == CSS::PropertyID::Invalid)
+    if (!property_id.has_value())
         return DeprecatedString::empty();
-    return remove_property(property_id);
+    return remove_property(property_id.value());
 }
 
 // https://drafts.csswg.org/cssom/#dom-cssstyledeclaration-csstext
@@ -277,6 +287,60 @@ DeprecatedString PropertyOwningCSSStyleDeclaration::serialized() const
     // 2. Let already serialized be an empty array.
     HashTable<PropertyID> already_serialized;
 
+    // NOTE: The spec treats custom properties the same as any other property, and expects the above loop to handle them.
+    //       However, our implementation separates them from regular properties, so we need to handle them separately here.
+    // FIXME: Is the relative order of custom properties and regular properties supposed to be preserved?
+    for (auto& declaration : m_custom_properties) {
+        // 1. Let property be declaration’s property name.
+        auto const& property = declaration.key;
+
+        // 2. If property is in already serialized, continue with the steps labeled declaration loop.
+        // NOTE: It is never in already serialized, as there are no shorthands for custom properties.
+
+        // 3. If property maps to one or more shorthand properties, let shorthands be an array of those shorthand properties, in preferred order.
+        // NOTE: There are no shorthands for custom properties.
+
+        // 4. Shorthand loop: For each shorthand in shorthands, follow these substeps: ...
+        // NOTE: There are no shorthands for custom properties.
+
+        // 5. Let value be the result of invoking serialize a CSS value of declaration.
+        auto value = declaration.value.value->to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+
+        // 6. Let serialized declaration be the result of invoking serialize a CSS declaration with property name property, value value,
+        //    and the important flag set if declaration has its important flag set.
+        // NOTE: We have to inline this here as the actual implementation does not accept custom properties.
+        DeprecatedString serialized_declaration = [&] {
+            // https://www.w3.org/TR/cssom/#serialize-a-css-declaration
+            StringBuilder builder;
+
+            // 1. Let s be the empty string.
+            // 2. Append property to s.
+            builder.append(property);
+
+            // 3. Append ": " (U+003A U+0020) to s.
+            builder.append(": "sv);
+
+            // 4. Append value to s.
+            builder.append(value);
+
+            // 5. If the important flag is set, append " !important" (U+0020 U+0021 U+0069 U+006D U+0070 U+006F U+0072 U+0074 U+0061 U+006E U+0074) to s.
+            if (declaration.value.important == Important::Yes)
+                builder.append(" !important"sv);
+
+            // 6. Append ";" (U+003B) to s.
+            builder.append(';');
+
+            // 7. Return s.
+            return builder.to_deprecated_string();
+        }();
+
+        // 7. Append serialized declaration to list.
+        list.append(move(serialized_declaration));
+
+        // 8. Append property to already serialized.
+        // NOTE: We don't need to do this, as we don't have shorthands for custom properties.
+    }
+
     // 3. Declaration loop: For each CSS declaration declaration in declaration block’s declarations, follow these substeps:
     for (auto& declaration : m_properties) {
         // 1. Let property be declaration’s property name.
@@ -316,11 +380,11 @@ static CSS::PropertyID property_id_from_name(StringView name)
     if (name == "cssFloat"sv)
         return CSS::PropertyID::Float;
 
-    if (auto property_id = CSS::property_id_from_camel_case_string(name); property_id != CSS::PropertyID::Invalid)
-        return property_id;
+    if (auto property_id = CSS::property_id_from_camel_case_string(name); property_id.has_value())
+        return property_id.value();
 
-    if (auto property_id = CSS::property_id_from_string(name); property_id != CSS::PropertyID::Invalid)
-        return property_id;
+    if (auto property_id = CSS::property_id_from_string(name); property_id.has_value())
+        return property_id.value();
 
     return CSS::PropertyID::Invalid;
 }
@@ -332,13 +396,13 @@ JS::ThrowCompletionOr<bool> CSSStyleDeclaration::internal_has_property(JS::Prope
     return property_id_from_name(name.to_string()) != CSS::PropertyID::Invalid;
 }
 
-JS::ThrowCompletionOr<JS::Value> CSSStyleDeclaration::internal_get(JS::PropertyKey const& name, JS::Value receiver) const
+JS::ThrowCompletionOr<JS::Value> CSSStyleDeclaration::internal_get(JS::PropertyKey const& name, JS::Value receiver, JS::CacheablePropertyMetadata* cacheable_metadata) const
 {
     if (!name.is_string())
-        return Base::internal_get(name, receiver);
+        return Base::internal_get(name, receiver, cacheable_metadata);
     auto property_id = property_id_from_name(name.to_string());
     if (property_id == CSS::PropertyID::Invalid)
-        return Base::internal_get(name, receiver);
+        return Base::internal_get(name, receiver, cacheable_metadata);
     if (auto maybe_property = property(property_id); maybe_property.has_value())
         return { JS::PrimitiveString::create(vm(), maybe_property->value->to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string()) };
     return { JS::PrimitiveString::create(vm(), String {}) };
@@ -394,7 +458,8 @@ WebIDL::ExceptionOr<void> ElementInlineCSSStyleDeclaration::set_css_text(StringV
 
     // 3. Parse the given value and, if the return value is not the empty list, insert the items in the list into the declarations, in specified order.
     auto style = parse_css_style_attribute(CSS::Parser::ParsingContext(m_element->document()), css_text, *m_element.ptr());
-    set_the_declarations(style->properties(), style->custom_properties());
+    auto custom_properties = TRY_OR_THROW_OOM(vm(), style->custom_properties().clone());
+    set_the_declarations(style->properties(), move(custom_properties));
 
     // 4. Update style attribute for the CSS declaration block.
     update_style_attribute();

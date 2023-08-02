@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,27 +9,17 @@
 #include <AK/DeprecatedString.h>
 #include <AK/Vector.h>
 #include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/CSS/StyleProperty.h>
 #include <LibWeb/CSS/StyleValue.h>
 
 namespace Web::CSS {
-
-enum class Important {
-    No,
-    Yes,
-};
-
-struct StyleProperty {
-    Important important { Important::No };
-    CSS::PropertyID property_id;
-    NonnullRefPtr<StyleValue> value;
-    DeprecatedString custom_name {};
-};
 
 class CSSStyleDeclaration : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(CSSStyleDeclaration, Bindings::PlatformObject);
 
 public:
     virtual ~CSSStyleDeclaration() = default;
+    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
 
     virtual size_t length() const = 0;
     virtual DeprecatedString item(size_t index) const = 0;
@@ -51,7 +41,7 @@ public:
     virtual DeprecatedString serialized() const = 0;
 
     virtual JS::ThrowCompletionOr<bool> internal_has_property(JS::PropertyKey const& name) const override;
-    virtual JS::ThrowCompletionOr<JS::Value> internal_get(JS::PropertyKey const&, JS::Value receiver) const override;
+    virtual JS::ThrowCompletionOr<JS::Value> internal_get(JS::PropertyKey const&, JS::Value receiver, JS::CacheablePropertyMetadata*) const override;
     virtual JS::ThrowCompletionOr<bool> internal_set(JS::PropertyKey const&, JS::Value value, JS::Value receiver) override;
 
 protected:
@@ -63,7 +53,8 @@ class PropertyOwningCSSStyleDeclaration : public CSSStyleDeclaration {
     friend class ElementInlineCSSStyleDeclaration;
 
 public:
-    static PropertyOwningCSSStyleDeclaration* create(JS::Realm&, Vector<StyleProperty>, HashMap<DeprecatedString, StyleProperty> custom_properties);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<PropertyOwningCSSStyleDeclaration>>
+    create(JS::Realm&, Vector<StyleProperty>, HashMap<DeprecatedString, StyleProperty> custom_properties);
 
     virtual ~PropertyOwningCSSStyleDeclaration() override = default;
 
@@ -92,7 +83,7 @@ protected:
     void set_the_declarations(Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties);
 
 private:
-    bool set_a_css_declaration(PropertyID, NonnullRefPtr<StyleValue>, Important);
+    bool set_a_css_declaration(PropertyID, NonnullRefPtr<StyleValue const>, Important);
 
     Vector<StyleProperty> m_properties;
     HashMap<DeprecatedString, StyleProperty> m_custom_properties;
@@ -102,7 +93,7 @@ class ElementInlineCSSStyleDeclaration final : public PropertyOwningCSSStyleDecl
     WEB_PLATFORM_OBJECT(ElementInlineCSSStyleDeclaration, PropertyOwningCSSStyleDeclaration);
 
 public:
-    static ElementInlineCSSStyleDeclaration* create(DOM::Element&, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<ElementInlineCSSStyleDeclaration>> create(DOM::Element&, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties);
 
     virtual ~ElementInlineCSSStyleDeclaration() override = default;
 

@@ -5,10 +5,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/BitStream.h>
+#include <AK/Endian.h>
 #include <AK/MemoryStream.h>
 #include <AK/Tuple.h>
-#include <LibCore/BitStream.h>
-#include <LibCore/MemoryStream.h>
 #include <LibPDF/CommonNames.h>
 #include <LibPDF/Document.h>
 #include <LibPDF/DocumentParser.h>
@@ -21,33 +21,40 @@ DocumentParser::DocumentParser(Document* document, ReadonlyBytes bytes)
 {
 }
 
-PDFErrorOr<void> DocumentParser::initialize()
+PDFErrorOr<Version> DocumentParser::initialize()
 {
-    TRY(parse_header());
+    m_reader.set_reading_forwards();
+    if (m_reader.remaining() == 0)
+        return error("Empty PDF document");
+
+    auto maybe_version = parse_header();
+    if (maybe_version.is_error()) {
+        warnln("{}", maybe_version.error().message());
+        warnln("No valid PDF header detected, continuing anyway.");
+        maybe_version = Version { 1, 6 }; // ¯\_(ツ)_/¯
+    }
 
     auto const linearization_result = TRY(initialize_linearization_dict());
 
-    if (linearization_result == LinearizationResult::NotLinearized)
-        return initialize_non_linearized_xref_table();
+    if (linearization_result == LinearizationResult::NotLinearized) {
+        TRY(initialize_non_linearized_xref_table());
+        return maybe_version.value();
+    }
 
     bool is_linearized = m_linearization_dictionary.has_value();
     if (is_linearized) {
-        // The file may have been linearized at one point, but could have been updated afterwards,
-        // which means it is no longer a linearized PDF file.
+        // If the length given in the linearization dictionary is not equal to the length
+        // of the document, then this file has most likely been incrementally updated, and
+        // should no longer be treated as linearized.
         is_linearized = m_linearization_dictionary.value().length_of_file == m_reader.bytes().size();
-
-        if (!is_linearized) {
-            // FIXME: The file shouldn't be treated as linearized, yet the xref tables are still
-            // split. This might take some tweaking to ensure correct behavior, which can be
-            // implemented later.
-            TODO();
-        }
     }
 
     if (is_linearized)
-        return initialize_linearized_xref_table();
+        TRY(initialize_linearized_xref_table());
+    else
+        TRY(initialize_non_linearized_xref_table());
 
-    return initialize_non_linearized_xref_table();
+    return maybe_version.value();
 }
 
 PDFErrorOr<Value> DocumentParser::parse_object_with_index(u32 index)
@@ -65,13 +72,8 @@ PDFErrorOr<Value> DocumentParser::parse_object_with_index(u32 index)
     return indirect_value->value();
 }
 
-PDFErrorOr<void> DocumentParser::parse_header()
+PDFErrorOr<Version> DocumentParser::parse_header()
 {
-    // FIXME: Do something with the version?
-    m_reader.set_reading_forwards();
-    if (m_reader.remaining() == 0)
-        return error("Empty PDF document");
-
     m_reader.move_to(0);
     if (m_reader.remaining() < 8 || !m_reader.matches("%PDF-"))
         return error("Not a PDF document");
@@ -102,14 +104,37 @@ PDFErrorOr<void> DocumentParser::parse_header()
         }
     }
 
-    return {};
+    return Version { major_ver - '0', minor_ver - '0' };
 }
 
 PDFErrorOr<DocumentParser::LinearizationResult> DocumentParser::initialize_linearization_dict()
 {
-    // parse_header() is called immediately before this, so we are at the right location
-    auto indirect_value = Value(*TRY(parse_indirect_value()));
-    auto dict_value = TRY(m_document->resolve(indirect_value));
+    // parse_header() is called immediately before this, so we are at the right location.
+    // There may not actually be a linearization dict, or even a valid PDF object here.
+    // If that is the case, this file may be completely valid but not linearized.
+
+    // If there is indeed a linearization dict, there should be an object number here.
+    if (!m_reader.matches_number())
+        return LinearizationResult::NotLinearized;
+
+    // At this point, we still don't know for sure if we are dealing with a valid object.
+
+    // The linearization dict is read before decryption state is initialized.
+    // A linearization dict only contains numbers, so the decryption dictionary is not been needed (only strings and streams get decrypted, and only streams get unfiltered).
+    // But we don't know if the first object is a linearization dictionary until after parsing it, so the object might be a stream.
+    // If that stream is encrypted and filtered, we'd try to unfilter it while it's still encrypted, handing encrypted data to the unfiltering algorithms.
+    // This makes them assert, since they can't make sense of the encrypted data.
+    // So read the first object without unfiltering.
+    // If it is a linearization dict, there's no stream data and this has no effect.
+    // If it is a stream, this isn't a linearized file and the object will be read on demand (and unfiltered) later, when the object is lazily read via an xref entry.
+    set_filters_enabled(false);
+    auto indirect_value_or_error = parse_indirect_value();
+    set_filters_enabled(true);
+
+    if (indirect_value_or_error.is_error())
+        return LinearizationResult::NotLinearized;
+
+    auto dict_value = indirect_value_or_error.value()->value();
     if (!dict_value.has<NonnullRefPtr<Object>>())
         return error("Expected linearization object to be a dictionary");
 
@@ -186,14 +211,12 @@ PDFErrorOr<void> DocumentParser::initialize_linearized_xref_table()
     // The linearization parameter dictionary has just been parsed, and the xref table
     // comes immediately after it. We are in the correct spot.
     m_xref_table = TRY(parse_xref_table());
-    if (!m_trailer)
-        m_trailer = TRY(parse_file_trailer());
 
     // Also parse the main xref table and merge into the first-page xref table. Note
     // that we don't use the main xref table offset from the linearization dict because
     // for some reason, it specified the offset of the whitespace after the object
     // index start and length? So it's much easier to do it this way.
-    auto main_xref_table_offset = m_trailer->get_value(CommonNames::Prev).to_int();
+    auto main_xref_table_offset = m_xref_table->trailer()->get_value(CommonNames::Prev).to_int();
     m_reader.move_to(main_xref_table_offset);
     auto main_xref_table = TRY(parse_xref_table());
     TRY(m_xref_table->merge(move(*main_xref_table)));
@@ -267,15 +290,31 @@ PDFErrorOr<void> DocumentParser::initialize_non_linearized_xref_table()
         return error("No xref");
 
     m_reader.set_reading_forwards();
-    auto xref_offset_value = parse_number();
-    if (xref_offset_value.is_error() || !xref_offset_value.value().has<int>())
-        return error("Invalid xref offset");
-    auto xref_offset = xref_offset_value.value().get<int>();
-
+    auto xref_offset_value = TRY(parse_number());
+    auto xref_offset = TRY(m_document->resolve_to<int>(xref_offset_value));
     m_reader.move_to(xref_offset);
-    m_xref_table = TRY(parse_xref_table());
-    if (!m_trailer)
-        m_trailer = TRY(parse_file_trailer());
+
+    // As per 7.5.6 Incremental Updates:
+    // When a conforming reader reads the file, it shall build its cross-reference
+    // information in such a way that the most recent copy of each object shall be
+    // the one accessed from the file.
+    // NOTE: This means that we have to follow back the chain of XRef table sections
+    //       and only add objects that were not already specified in a previous
+    //       (and thus newer) XRef section.
+    while (1) {
+        auto xref_table = TRY(parse_xref_table());
+        if (!m_xref_table)
+            m_xref_table = xref_table;
+        else
+            TRY(m_xref_table->merge(move(*xref_table)));
+
+        if (!xref_table->trailer() || !xref_table->trailer()->contains(CommonNames::Prev))
+            break;
+
+        auto offset = TRY(m_document->resolve_to<int>(xref_table->trailer()->get_value(CommonNames::Prev)));
+        m_reader.move_to(offset);
+    }
+
     return validate_xref_table_and_fix_if_necessary();
 }
 
@@ -348,8 +387,10 @@ PDFErrorOr<NonnullRefPtr<XRefTable>> DocumentParser::parse_xref_stream()
     auto field_sizes = TRY(dict->get_array(m_document, "W"));
     if (field_sizes->size() != 3)
         return error("Malformed xref dictionary");
+    if (field_sizes->at(1).get_u32() == 0)
+        return error("Malformed xref dictionary");
 
-    auto highest_object_number = dict->get_value("Size").get<int>() - 1;
+    auto number_of_object_entries = dict->get_value("Size").get<int>();
 
     Vector<Tuple<int, int>> subsections;
     if (dict->contains(CommonNames::Index)) {
@@ -358,14 +399,14 @@ PDFErrorOr<NonnullRefPtr<XRefTable>> DocumentParser::parse_xref_stream()
             return error("Malformed xref dictionary");
 
         for (size_t i = 0; i < index_array->size(); i += 2)
-            subsections.append({ index_array->at(i).get<int>(), index_array->at(i + 1).get<int>() - 1 });
+            subsections.append({ index_array->at(i).get<int>(), index_array->at(i + 1).get<int>() });
     } else {
-        subsections.append({ 0, highest_object_number });
+        subsections.append({ 0, number_of_object_entries });
     }
     auto stream = TRY(parse_stream(dict));
     auto table = adopt_ref(*new XRefTable());
 
-    auto field_to_long = [](Span<u8 const> field) -> long {
+    auto field_to_long = [](ReadonlyBytes field) -> long {
         long value = 0;
         const u8 max = (field.size() - 1) * 8;
         for (size_t i = 0; i < field.size(); ++i) {
@@ -375,38 +416,36 @@ PDFErrorOr<NonnullRefPtr<XRefTable>> DocumentParser::parse_xref_stream()
     };
 
     size_t byte_index = 0;
-    size_t subsection_index = 0;
 
-    Vector<XRefEntry> entries;
+    for (auto const& subsection : subsections) {
+        auto start = subsection.get<0>();
+        auto count = subsection.get<1>();
+        Vector<XRefEntry> entries;
 
-    for (int entry_index = 0; subsection_index < subsections.size(); ++entry_index) {
-        Array<long, 3> fields;
-        for (size_t field_index = 0; field_index < 3; ++field_index) {
-            auto field_size = field_sizes->at(field_index).get_u32();
+        for (int i = 0; i < count; i++) {
+            Array<long, 3> fields;
+            for (size_t field_index = 0; field_index < 3; ++field_index) {
+                auto field_size = field_sizes->at(field_index).get_u32();
 
-            if (byte_index + field_size > stream->bytes().size())
-                return error("The xref stream data cut off early");
+                if (byte_index + field_size > stream->bytes().size())
+                    return error("The xref stream data cut off early");
 
-            auto field = stream->bytes().slice(byte_index, field_size);
-            fields[field_index] = field_to_long(field);
-            byte_index += field_size;
+                auto field = stream->bytes().slice(byte_index, field_size);
+                fields[field_index] = field_to_long(field);
+                byte_index += field_size;
+            }
+
+            u8 type = fields[0];
+            if (field_sizes->at(0).get_u32() == 0)
+                type = 1;
+
+            entries.append({ fields[1], static_cast<u16>(fields[2]), type != 0, type == 2 });
         }
 
-        u8 type = fields[0];
-        if (!field_sizes->at(0).get_u32())
-            type = 1;
-
-        entries.append({ fields[1], static_cast<u16>(fields[2]), type != 0, type == 2 });
-
-        auto subsection = subsections[subsection_index];
-        if (entry_index >= subsection.get<1>()) {
-            table->add_section({ subsection.get<0>(), subsection.get<1>(), entries });
-            entries.clear();
-            subsection_index++;
-        }
+        table->add_section({ start, count, move(entries) });
     }
 
-    m_trailer = dict;
+    table->set_trailer(dict);
 
     return table;
 }
@@ -424,10 +463,7 @@ PDFErrorOr<NonnullRefPtr<XRefTable>> DocumentParser::parse_xref_table()
 
     auto table = adopt_ref(*new XRefTable());
 
-    do {
-        if (m_reader.matches("trailer"))
-            return table;
-
+    while (m_reader.matches_number()) {
         Vector<XRefEntry> entries;
 
         auto starting_index_value = TRY(parse_number());
@@ -470,7 +506,11 @@ PDFErrorOr<NonnullRefPtr<XRefTable>> DocumentParser::parse_xref_table()
         }
 
         table->add_section({ starting_index, object_count, entries });
-    } while (m_reader.matches_number());
+    }
+
+    m_reader.consume_whitespace();
+    if (m_reader.matches("trailer"))
+        table->set_trailer(TRY(parse_file_trailer()));
 
     return table;
 }
@@ -522,7 +562,9 @@ PDFErrorOr<Value> DocumentParser::parse_compressed_object_with_index(u32 index)
     if (m_reader.matches_eol())
         m_reader.consume_eol();
 
+    push_reference({ static_cast<u32>(first_number.get<int>()), static_cast<u32>(second_number.get<int>()) });
     auto dict = TRY(parse_dict());
+
     auto type = TRY(dict->get_name(m_document, CommonNames::Type))->name();
     if (type != "ObjStm")
         return error("Invalid object stream type");
@@ -531,7 +573,12 @@ PDFErrorOr<Value> DocumentParser::parse_compressed_object_with_index(u32 index)
     auto first_object_offset = dict->get_value("First").get_u32();
 
     auto stream = TRY(parse_stream(dict));
+    pop_reference();
+
     Parser stream_parser(m_document, stream->bytes());
+
+    // The data was already decrypted when reading the outer compressed ObjStm.
+    stream_parser.set_encryption_enabled(false);
 
     for (u32 i = 0; i < object_count; ++i) {
         auto object_number = TRY(stream_parser.parse_number());
@@ -543,7 +590,11 @@ PDFErrorOr<Value> DocumentParser::parse_compressed_object_with_index(u32 index)
         }
     }
 
-    return TRY(stream_parser.parse_value());
+    stream_parser.push_reference({ index, 0 });
+    auto value = TRY(stream_parser.parse_value());
+    stream_parser.pop_reference();
+
+    return value;
 }
 
 PDFErrorOr<DocumentParser::PageOffsetHintTable> DocumentParser::parse_page_offset_hint_table(ReadonlyBytes hint_stream_bytes)
@@ -596,10 +647,10 @@ PDFErrorOr<DocumentParser::PageOffsetHintTable> DocumentParser::parse_page_offse
 
 PDFErrorOr<Vector<DocumentParser::PageOffsetHintTableEntry>> DocumentParser::parse_all_page_offset_hint_table_entries(PageOffsetHintTable const& hint_table, ReadonlyBytes hint_stream_bytes)
 {
-    auto input_stream = TRY(Core::Stream::FixedMemoryStream::construct(hint_stream_bytes));
+    auto input_stream = TRY(try_make<FixedMemoryStream>(hint_stream_bytes));
     TRY(input_stream->seek(sizeof(PageOffsetHintTable)));
 
-    auto bit_stream = TRY(Core::Stream::LittleEndianInputBitStream::construct(move(input_stream)));
+    LittleEndianInputBitStream bit_stream { move(input_stream) };
 
     auto number_of_pages = m_linearization_dictionary.value().number_of_pages;
     Vector<PageOffsetHintTableEntry> entries;
@@ -620,7 +671,7 @@ PDFErrorOr<Vector<DocumentParser::PageOffsetHintTableEntry>> DocumentParser::par
 
         for (int i = 0; i < number_of_pages; i++) {
             auto& entry = entries[i];
-            entry.*field = TRY(bit_stream->read_bits(bit_size));
+            entry.*field = TRY(bit_stream.read_bits(bit_size));
         }
 
         return {};
@@ -636,7 +687,7 @@ PDFErrorOr<Vector<DocumentParser::PageOffsetHintTableEntry>> DocumentParser::par
             items.ensure_capacity(number_of_shared_objects);
 
             for (size_t i = 0; i < number_of_shared_objects; i++)
-                items.unchecked_append(TRY(bit_stream->read_bits(bit_size)));
+                items.unchecked_append(TRY(bit_stream.read_bits(bit_size)));
 
             entries[page].*field = move(items);
         }
@@ -660,19 +711,13 @@ bool DocumentParser::navigate_to_before_eof_marker()
     m_reader.set_reading_backwards();
 
     while (!m_reader.done()) {
+        m_reader.consume_eol();
+        if (m_reader.matches("%%EOF")) {
+            m_reader.move_by(5);
+            return true;
+        }
+
         m_reader.move_until([&](auto) { return m_reader.matches_eol(); });
-        if (m_reader.done())
-            return false;
-
-        m_reader.consume_eol();
-        if (!m_reader.matches("%%EOF"))
-            continue;
-
-        m_reader.move_by(5);
-        if (!m_reader.matches_eol())
-            continue;
-        m_reader.consume_eol();
-        return true;
     }
 
     return false;

@@ -7,35 +7,45 @@
 #pragma once
 
 #include <LibGfx/Font/ScaledFont.h>
-#include <LibPDF/Fonts/PDFFont.h>
+#include <LibPDF/Fonts/SimpleFont.h>
 #include <LibPDF/Fonts/Type1FontProgram.h>
 
 namespace PDF {
 
-class Type1Font : public PDFFont {
+struct Type1GlyphCacheKey {
+    u32 glyph_id;
+    Gfx::GlyphSubpixelOffset subpixel_offset;
+    float width;
+
+    bool operator==(Type1GlyphCacheKey const&) const = default;
+};
+
+class Type1Font : public SimpleFont {
 public:
-    struct Data : PDFFont::CommonData {
-        RefPtr<Type1FontProgram> font_program;
-    };
-
-    static PDFErrorOr<Data> parse_data(Document*, NonnullRefPtr<DictObject> font_dict, float font_size);
-
-    static PDFErrorOr<NonnullRefPtr<Type1Font>> create(Document*, NonnullRefPtr<DictObject>, float font_size);
-
-    Type1Font(Data);
-    ~Type1Font() override = default;
-
-    u32 char_code_to_code_point(u16 char_code) const override;
-    float get_char_width(u16 char_code) const override;
-
-    void draw_glyph(Gfx::Painter& painter, Gfx::FloatPoint point, float width, u32 char_code, Color color) override;
-
+    float get_glyph_width(u8 char_code) const override;
+    void set_font_size(float font_size) override;
+    void draw_glyph(Gfx::Painter& painter, Gfx::FloatPoint point, float width, u8 char_code, Color color) override;
     Type type() const override { return PDFFont::Type::Type1; }
-    DeprecatedFlyString base_font_name() const override { return m_data.base_font_name; };
+
+protected:
+    PDFErrorOr<void> initialize(Document*, NonnullRefPtr<DictObject> const&, float font_size) override;
 
 private:
-    Data m_data;
-    HashMap<Gfx::GlyphIndexWithSubpixelOffset, RefPtr<Gfx::Bitmap>> m_glyph_cache;
+    RefPtr<Type1FontProgram> m_font_program;
+    RefPtr<Gfx::Font> m_font;
+    HashMap<Type1GlyphCacheKey, RefPtr<Gfx::Bitmap>> m_glyph_cache;
+};
+
+}
+
+namespace AK {
+
+template<>
+struct Traits<PDF::Type1GlyphCacheKey> : public GenericTraits<PDF::Type1GlyphCacheKey> {
+    static unsigned hash(PDF::Type1GlyphCacheKey const& index)
+    {
+        return pair_int_hash(pair_int_hash(index.glyph_id, (index.subpixel_offset.x << 8) | index.subpixel_offset.y), int_hash(bit_cast<u32>(index.width)));
+    }
 };
 
 }

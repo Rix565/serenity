@@ -45,7 +45,7 @@ ConnectionFromClient* ConnectionFromClient::from_client_id(int client_id)
     return (*it).value.ptr();
 }
 
-ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::Stream::LocalSocket> client_socket, int client_id)
+ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket> client_socket, int client_id)
     : IPC::ConnectionFromClient<WindowClientEndpoint, WindowServerEndpoint>(*this, move(client_socket), client_id)
 {
     if (!s_connections)
@@ -90,10 +90,31 @@ void ConnectionFromClient::notify_about_new_screen_rects()
     async_screen_rects_changed(Screen::rects(), Screen::main().index(), wm.window_stack_rows(), wm.window_stack_columns());
 }
 
-void ConnectionFromClient::create_menu(i32 menu_id, DeprecatedString const& menu_title)
+void ConnectionFromClient::create_menu(i32 menu_id, String const& name)
 {
-    auto menu = Menu::construct(this, menu_id, menu_title);
+    auto menu = Menu::construct(this, menu_id, name);
     m_menus.set(menu_id, move(menu));
+}
+
+void ConnectionFromClient::set_menu_name(i32 menu_id, String const& name)
+{
+    auto it = m_menus.find(menu_id);
+    if (it == m_menus.end()) {
+        did_misbehave("DestroyMenu: Bad menu ID");
+        return;
+    }
+    auto& menu = *it->value;
+    menu.set_name(name);
+    for (auto& it : m_windows) {
+        auto& window = *it.value;
+        window.menubar().for_each_menu([&](Menu& other_menu) {
+            if (&menu == &other_menu) {
+                window.invalidate_menubar();
+                return IterationDecision::Break;
+            }
+            return IterationDecision::Continue;
+        });
+    }
 }
 
 void ConnectionFromClient::destroy_menu(i32 menu_id)
@@ -301,16 +322,6 @@ void ConnectionFromClient::set_forced_shadow(i32 window_id, bool shadow)
     Compositor::the().invalidate_occlusions();
 }
 
-void ConnectionFromClient::set_window_opacity(i32 window_id, float opacity)
-{
-    auto it = m_windows.find(window_id);
-    if (it == m_windows.end()) {
-        did_misbehave("SetWindowOpacity: Bad window ID");
-        return;
-    }
-    it->value->set_opacity(opacity);
-}
-
 Messages::WindowServer::SetWallpaperResponse ConnectionFromClient::set_wallpaper(Gfx::ShareableBitmap const& bitmap)
 {
     return Compositor::the().set_wallpaper(bitmap.bitmap());
@@ -500,6 +511,7 @@ static Gfx::IntSize calculate_minimum_size_for_window(Window const& window)
     //       because we want to always keep their title buttons accessible.
     if (window.type() == WindowType::Normal) {
         auto palette = WindowManager::the().palette();
+        auto& title_font = Gfx::FontDatabase::the().window_title_font();
 
         int required_width = 0;
         // Padding on left and right of window title content.
@@ -514,8 +526,11 @@ static Gfx::IntSize calculate_minimum_size_for_window(Window const& window)
         // Maximize button
         if (window.is_resizable())
             required_width += palette.window_title_button_width();
+        // Title text and drop shadow
+        else
+            required_width += title_font.width_rounded_up(window.title()) + 4;
         // Minimize button
-        if (window.is_minimizable())
+        if (window.is_minimizable() && !window.is_modal())
             required_width += palette.window_title_button_width();
 
         return { required_width, 0 };
@@ -588,7 +603,7 @@ Window* ConnectionFromClient::window_from_id(i32 window_id)
 
 void ConnectionFromClient::create_window(i32 window_id, Gfx::IntRect const& rect,
     bool auto_position, bool has_alpha_channel, bool minimizable, bool closeable, bool resizable,
-    bool fullscreen, bool frameless, bool forced_shadow, float opacity,
+    bool fullscreen, bool frameless, bool forced_shadow,
     float alpha_hit_threshold, Gfx::IntSize base_size, Gfx::IntSize size_increment,
     Gfx::IntSize minimum_size, Optional<Gfx::IntSize> const& resize_aspect_ratio, i32 type, i32 mode,
     DeprecatedString const& title, i32 parent_window_id, Gfx::IntRect const& launch_origin_rect)
@@ -598,11 +613,6 @@ void ConnectionFromClient::create_window(i32 window_id, Gfx::IntRect const& rect
         parent_window = window_from_id(parent_window_id);
         if (!parent_window) {
             did_misbehave("CreateWindow with bad parent_window_id");
-            return;
-        }
-
-        if (auto* blocker = parent_window->blocking_modal_window(); blocker && mode == (i32)WindowMode::Blocking) {
-            did_misbehave("CreateWindow with illegal mode: reciprocally blocked");
             return;
         }
     }
@@ -623,6 +633,11 @@ void ConnectionFromClient::create_window(i32 window_id, Gfx::IntRect const& rect
     }
 
     auto window = Window::construct(*this, (WindowType)type, (WindowMode)mode, window_id, minimizable, closeable, frameless, resizable, fullscreen, parent_window);
+
+    if (auto* blocker = window->blocking_modal_window(); blocker && mode == to_underlying(WindowMode::Blocking)) {
+        did_misbehave("CreateWindow with illegal mode: Reciprocally blocked");
+        return;
+    }
 
     window->set_forced_shadow(forced_shadow);
 
@@ -650,7 +665,6 @@ void ConnectionFromClient::create_window(i32 window_id, Gfx::IntRect const& rect
         window->set_rect(Screen::bounding_rect());
         window->recalculate_rect();
     }
-    window->set_opacity(opacity);
     window->set_alpha_hit_threshold(alpha_hit_threshold);
     window->set_size_increment(size_increment);
     window->set_base_size(base_size);
@@ -865,9 +879,9 @@ void ConnectionFromClient::set_accepts_drag(bool accepts)
     wm.set_accepts_drag(accepts);
 }
 
-Messages::WindowServer::SetSystemThemeResponse ConnectionFromClient::set_system_theme(DeprecatedString const& theme_path, DeprecatedString const& theme_name, bool keep_desktop_background)
+Messages::WindowServer::SetSystemThemeResponse ConnectionFromClient::set_system_theme(DeprecatedString const& theme_path, DeprecatedString const& theme_name, bool keep_desktop_background, Optional<DeprecatedString> const& color_scheme_path)
 {
-    bool success = WindowManager::the().update_theme(theme_path, theme_name, keep_desktop_background);
+    bool success = WindowManager::the().update_theme(theme_path, theme_name, keep_desktop_background, color_scheme_path);
     return success;
 }
 
@@ -895,6 +909,11 @@ void ConnectionFromClient::clear_system_theme_override()
 Messages::WindowServer::IsSystemThemeOverriddenResponse ConnectionFromClient::is_system_theme_overridden()
 {
     return WindowManager::the().is_theme_overridden();
+}
+
+Messages::WindowServer::GetPreferredColorSchemeResponse ConnectionFromClient::get_preferred_color_scheme()
+{
+    return WindowManager::the().get_preferred_color_scheme();
 }
 
 void ConnectionFromClient::apply_cursor_theme(DeprecatedString const& name)
@@ -954,9 +973,13 @@ Messages::WindowServer::SetSystemFontsResponse ConnectionFromClient::set_system_
     return !g_config->sync().is_error();
 }
 
-void ConnectionFromClient::set_system_effects(Vector<bool> const& effects, u8 geometry)
+void ConnectionFromClient::set_system_effects(Vector<bool> const& effects, u8 geometry, u8 tile_window)
 {
-    WindowManager::the().apply_system_effects(effects, static_cast<ShowGeometry>(geometry));
+    if (effects.size() != to_underlying(Effects::__Count) || geometry >= to_underlying(ShowGeometry::__Count) || tile_window >= to_underlying(TileWindow::__Count)) {
+        did_misbehave("SetSystemEffects: Bad values");
+        return;
+    }
+    WindowManager::the().apply_system_effects(effects, static_cast<ShowGeometry>(geometry), static_cast<TileWindow>(tile_window));
     ConnectionFromClient::for_each_client([&](auto& client) {
         client.async_update_system_effects(effects);
     });
@@ -1330,6 +1353,12 @@ void ConnectionFromClient::set_window_parent_from_client(i32 client_id, i32 pare
         child_window->set_parent_window(*parent_window);
     } else {
         did_misbehave("SetWindowParentFromClient: Window is not stealable");
+    }
+
+    auto is_also_blocking = to_underlying(child_window->mode()) == to_underlying(WindowMode::Blocking);
+    if (auto* blocker = child_window->blocking_modal_window(); blocker && is_also_blocking) {
+        did_misbehave("SetWindowParentFromClient: Reciprocally blocked");
+        return;
     }
 }
 

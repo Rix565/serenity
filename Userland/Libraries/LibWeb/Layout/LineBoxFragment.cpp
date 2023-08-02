@@ -6,10 +6,10 @@
 
 #include <AK/Utf8View.h>
 #include <LibWeb/DOM/Range.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
 #include <LibWeb/Layout/LayoutState.h>
 #include <LibWeb/Layout/LineBoxFragment.h>
 #include <LibWeb/Layout/TextNode.h>
+#include <LibWeb/Layout/Viewport.h>
 #include <ctype.h>
 
 namespace Web::Layout {
@@ -37,7 +37,7 @@ StringView LineBoxFragment::text() const
 CSSPixelRect const LineBoxFragment::absolute_rect() const
 {
     CSSPixelRect rect { {}, size() };
-    rect.set_location(m_layout_node.containing_block()->paint_box()->absolute_position());
+    rect.set_location(m_layout_node->containing_block()->paintable_box()->absolute_position());
     rect.translate_by(offset());
     return rect;
 }
@@ -58,11 +58,15 @@ int LineBoxFragment::text_index_at(CSSPixels x) const
 
     CSSPixels width_so_far = 0;
     for (auto it = view.begin(); it != view.end(); ++it) {
-        CSSPixels glyph_width = font.glyph_or_emoji_width(*it);
+        auto previous_it = it;
+        CSSPixels glyph_width = font.glyph_or_emoji_width(it);
+
         if ((width_so_far + (glyph_width + glyph_spacing) / 2) > relative_x)
-            return m_start + view.byte_offset_of(it);
+            return m_start + view.byte_offset_of(previous_it);
+
         width_so_far += glyph_width + glyph_spacing;
     }
+
     return m_start + m_length;
 }
 
@@ -143,6 +147,11 @@ CSSPixelRect LineBoxFragment::selection_rect(Gfx::Font const& font) const
         return rect;
     }
     return {};
+}
+
+bool LineBoxFragment::is_atomic_inline() const
+{
+    return layout_node().is_replaced_box() || (layout_node().display().is_inline_outside() && !layout_node().display().is_flow_inside());
 }
 
 }

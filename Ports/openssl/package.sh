@@ -1,14 +1,23 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=openssl
-branch='1.1.1'
-version="${branch}q"
-useconfigure=true
-configscript=Configure
-files="https://www.openssl.org/source/openssl-${version}.tar.gz openssl-${version}.tar.gz d7939ce614029cdff0b6c20f0e2e5703158a489a72b2507b8bd51bf8c8fd10ca"
-auth_type=sha256
+port='openssl'
+version='3.0.9'
+useconfigure='true'
+configscript='Configure'
+files="https://www.openssl.org/source/openssl-${version}.tar.gz openssl-${version}.tar.gz eb1ab04781474360f77c318ab89d8c5a03abc38e63d65a603cabbf1b00a1dc90"
 
-depends=("zlib")
-configopts=("--prefix=/usr/local" "-DOPENSSL_SYS_SERENITY=1" "-DOPENSSL_USE_IPV6=0" "zlib" "threads" "no-tests" "no-asm" "serenity-generic")
+depends=(
+    'zlib'
+)
+configopts=(
+    '--prefix=/usr/local'
+    '-DOPENSSL_SYS_SERENITY=1'
+    '-DOPENSSL_USE_IPV6=0'
+    'no-asm'
+    'no-tests'
+    'serenity-generic'
+    'threads'
+    'zlib'
+)
 
 configure() {
     export LDFLAGS="-L${SERENITY_INSTALL_ROOT}/usr/local/lib"

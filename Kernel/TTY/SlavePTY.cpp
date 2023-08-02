@@ -6,9 +6,9 @@
 
 #include <AK/Singleton.h>
 #include <Kernel/Debug.h>
-#include <Kernel/Process.h>
 #include <Kernel/TTY/MasterPTY.h>
 #include <Kernel/TTY/SlavePTY.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
@@ -35,9 +35,9 @@ bool SlavePTY::unref() const
     return did_hit_zero;
 }
 
-SlavePTY::SlavePTY(MasterPTY& master, unsigned index)
+SlavePTY::SlavePTY(NonnullRefPtr<MasterPTY> master, unsigned index)
     : TTY(201, index)
-    , m_master(master)
+    , m_master(move(master))
     , m_index(index)
 {
     auto& process = Process::current();
@@ -80,7 +80,7 @@ void SlavePTY::on_master_write(UserOrKernelBuffer const& buffer, size_t size)
 
 ErrorOr<size_t> SlavePTY::on_tty_write(UserOrKernelBuffer const& data, size_t size)
 {
-    m_time_of_last_write = kgettimeofday().to_truncated_seconds();
+    m_time_of_last_write = kgettimeofday();
     return m_master->on_slave_write(data, size);
 }
 

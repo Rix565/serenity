@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,6 +14,7 @@
 #include <LibJS/Heap/Handle.h>
 #include <LibWeb/CSS/ComputedValues.h>
 #include <LibWeb/CSS/StyleProperties.h>
+#include <LibWeb/FontCache.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Layout/BoxModelMetrics.h>
 #include <LibWeb/Painting/PaintContext.h>
@@ -41,8 +42,6 @@ class Node
 public:
     virtual ~Node();
 
-    size_t serial_id() const { return m_serial_id; }
-
     bool is_anonymous() const;
     DOM::Node const* dom_node() const;
     DOM::Node* dom_node();
@@ -62,14 +61,15 @@ public:
     HTML::BrowsingContext const& browsing_context() const;
     HTML::BrowsingContext& browsing_context();
 
-    InitialContainingBlock const& root() const;
-    InitialContainingBlock& root();
+    Viewport const& root() const;
+    Viewport& root();
 
     bool is_root_element() const;
 
     DeprecatedString debug_description() const;
 
     bool has_style() const { return m_has_style; }
+    bool has_style_or_parent_with_style() const;
 
     virtual bool can_have_children() const { return true; }
 
@@ -86,14 +86,16 @@ public:
     virtual bool is_block_container() const { return false; }
     virtual bool is_break_node() const { return false; }
     virtual bool is_text_node() const { return false; }
-    virtual bool is_initial_containing_block_box() const { return false; }
+    virtual bool is_viewport() const { return false; }
     virtual bool is_svg_box() const { return false; }
     virtual bool is_svg_geometry_box() const { return false; }
+    virtual bool is_svg_svg_box() const { return false; }
     virtual bool is_label() const { return false; }
     virtual bool is_replaced_box() const { return false; }
+    virtual bool is_list_item_box() const { return false; }
     virtual bool is_list_item_marker_box() const { return false; }
     virtual bool is_table_wrapper() const { return false; }
-    virtual bool is_table() const { return false; }
+    virtual bool is_node_with_style_and_box_model_metrics() const { return false; }
 
     template<typename T>
     bool fast_is() const = delete;
@@ -109,11 +111,20 @@ public:
     Box const* containing_block() const;
     Box* containing_block() { return const_cast<Box*>(const_cast<Node const*>(this)->containing_block()); }
 
+    // Closest non-anonymous ancestor box, to be used when resolving percentage values.
+    // Anonymous block boxes are ignored when resolving percentage values that would refer to it:
+    // the closest non-anonymous ancestor box is used instead.
+    // https://www.w3.org/TR/CSS22/visuren.html#anonymous-block-level
+    Box const* non_anonymous_containing_block() const;
+
     bool establishes_stacking_context() const;
 
     bool can_contain_boxes_with_position_absolute() const;
 
     Gfx::Font const& font() const;
+    Gfx::Font const& scaled_font(PaintContext&) const;
+    Gfx::Font const& scaled_font(float scale_factor) const;
+
     CSS::ImmutableComputedValues const& computed_values() const;
     CSSPixels line_height() const;
 
@@ -158,8 +169,6 @@ private:
 
     JS::NonnullGCPtr<HTML::BrowsingContext> m_browsing_context;
 
-    size_t m_serial_id { 0 };
-
     bool m_anonymous { false };
     bool m_has_style { false };
     bool m_visible { true };
@@ -187,17 +196,19 @@ public:
 
     JS::NonnullGCPtr<NodeWithStyle> create_anonymous_wrapper() const;
 
-    void reset_table_box_computed_values_used_by_wrapper_to_init_values();
+    void transfer_table_box_computed_values_to_wrapper_computed_values(CSS::ComputedValues& wrapper_computed_values);
 
 protected:
     NodeWithStyle(DOM::Document&, DOM::Node*, NonnullRefPtr<CSS::StyleProperties>);
     NodeWithStyle(DOM::Document&, DOM::Node*, CSS::ComputedValues);
 
 private:
+    void reset_table_box_computed_values_used_by_wrapper_to_init_values();
+
     CSS::ComputedValues m_computed_values;
-    RefPtr<Gfx::Font> m_font;
+    RefPtr<Gfx::Font const> m_font;
     CSSPixels m_line_height { 0 };
-    RefPtr<CSS::AbstractImageStyleValue> m_list_style_image;
+    RefPtr<CSS::AbstractImageStyleValue const> m_list_style_image;
 };
 
 class NodeWithStyleAndBoxModelMetrics : public NodeWithStyle {
@@ -219,18 +230,42 @@ protected:
     }
 
 private:
+    virtual bool is_node_with_style_and_box_model_metrics() const final { return true; }
+
     BoxModelMetrics m_box_model;
 };
 
+template<>
+inline bool Node::fast_is<NodeWithStyleAndBoxModelMetrics>() const { return is_node_with_style_and_box_model_metrics(); }
+
+inline bool Node::has_style_or_parent_with_style() const
+{
+    return m_has_style || (parent() != nullptr && parent()->has_style_or_parent_with_style());
+}
+
 inline Gfx::Font const& Node::font() const
 {
+    VERIFY(has_style_or_parent_with_style());
+
     if (m_has_style)
         return static_cast<NodeWithStyle const*>(this)->font();
     return parent()->font();
 }
 
+inline Gfx::Font const& Node::scaled_font(PaintContext& context) const
+{
+    return scaled_font(context.device_pixels_per_css_pixel());
+}
+
+inline Gfx::Font const& Node::scaled_font(float scale_factor) const
+{
+    return *FontCache::the().scaled_font(font(), scale_factor);
+}
+
 inline const CSS::ImmutableComputedValues& Node::computed_values() const
 {
+    VERIFY(has_style_or_parent_with_style());
+
     if (m_has_style)
         return static_cast<NodeWithStyle const*>(this)->computed_values();
     return parent()->computed_values();
@@ -238,6 +273,8 @@ inline const CSS::ImmutableComputedValues& Node::computed_values() const
 
 inline CSSPixels Node::line_height() const
 {
+    VERIFY(has_style_or_parent_with_style());
+
     if (m_has_style)
         return static_cast<NodeWithStyle const*>(this)->line_height();
     return parent()->line_height();

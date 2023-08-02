@@ -12,11 +12,11 @@
 #include <Kernel/Bus/USB/UHCI/UHCIController.h>
 #include <Kernel/Bus/USB/USBRequest.h>
 #include <Kernel/Debug.h>
+#include <Kernel/Library/StdLib.h>
 #include <Kernel/Memory/AnonymousVMObject.h>
 #include <Kernel/Memory/MemoryManager.h>
-#include <Kernel/Process.h>
 #include <Kernel/Sections.h>
-#include <Kernel/StdLib.h>
+#include <Kernel/Tasks/Process.h>
 #include <Kernel/Time/TimeManagement.h>
 
 static constexpr u8 RETRY_COUNTER_RELOAD = 3;
@@ -585,24 +585,24 @@ size_t UHCIController::poll_transfer_queue(QueueHead& transfer_queue)
 
 ErrorOr<void> UHCIController::spawn_port_process()
 {
-    LockRefPtr<Thread> usb_hotplug_thread;
-    (void)Process::create_kernel_process(usb_hotplug_thread, TRY(KString::try_create("UHCI Hot Plug Task"sv)), [&] {
-        for (;;) {
+    TRY(Process::create_kernel_process(TRY(KString::try_create("UHCI Hot Plug Task"sv)), [&] {
+        while (!Process::current().is_dying()) {
             if (m_root_hub)
                 m_root_hub->check_for_port_updates();
 
-            (void)Thread::current()->sleep(Time::from_seconds(1));
+            (void)Thread::current()->sleep(Duration::from_seconds(1));
         }
-    });
+        Process::current().sys$exit(0);
+        VERIFY_NOT_REACHED();
+    }));
     return {};
 }
 
 ErrorOr<void> UHCIController::spawn_async_poll_process()
 {
-    LockRefPtr<Thread> async_poll_thread;
-    (void)Process::create_kernel_process(async_poll_thread, TRY(KString::try_create("UHCI Async Poll Task"sv)), [&] {
+    TRY(Process::create_kernel_process(TRY(KString::try_create("UHCI Async Poll Task"sv)), [&] {
         u16 poll_interval_ms = 1024;
-        for (;;) {
+        while (!Process::current().is_dying()) {
             {
                 SpinlockLocker locker { m_async_lock };
                 for (OwnPtr<AsyncTransferHandle>& handle : m_active_async_transfers) {
@@ -618,9 +618,11 @@ ErrorOr<void> UHCIController::spawn_async_poll_process()
                     }
                 }
             }
-            (void)Thread::current()->sleep(Time::from_milliseconds(poll_interval_ms));
+            (void)Thread::current()->sleep(Duration::from_milliseconds(poll_interval_ms));
         }
-    });
+        Process::current().sys$exit(0);
+        VERIFY_NOT_REACHED();
+    }));
     return {};
 }
 

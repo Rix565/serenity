@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -24,6 +24,7 @@
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/Palette.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -158,7 +159,6 @@ void Window::show()
         m_fullscreen,
         m_frameless,
         m_forced_shadow,
-        m_opacity_when_windowless,
         m_alpha_hit_threshold,
         m_base_size,
         m_size_increment,
@@ -319,6 +319,27 @@ void Window::center_within(Window const& other)
     set_rect(rect().centered_within(other.rect()));
 }
 
+void Window::center_within(Gfx::IntRect const& other)
+{
+    set_rect(rect().centered_within(other));
+}
+
+void Window::constrain_to_desktop()
+{
+    auto desktop_rect = Desktop::the().rect().shrunken(0, 0, Desktop::the().taskbar_height(), 0);
+    auto titlebar = Application::the()->palette().window_title_height();
+    auto border = Application::the()->palette().window_border_thickness();
+    auto constexpr margin = 1;
+
+    auto framed_rect = rect().inflated(border + titlebar + margin, border, border, border);
+    if (desktop_rect.contains(framed_rect))
+        return;
+
+    auto constrained = framed_rect.constrained_to(desktop_rect);
+    constrained.shrink(border + titlebar + margin, border, border, border);
+    set_rect(constrained.x(), constrained.y(), rect().width(), rect().height());
+}
+
 void Window::set_window_type(WindowType window_type)
 {
     m_window_type = window_type;
@@ -336,26 +357,17 @@ void Window::make_window_manager(unsigned event_mask)
     GUI::ConnectionToWindowManagerServer::the().async_set_manager_window(m_window_id);
 }
 
-bool Window::are_cursors_the_same(AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> const& left, AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> const& right) const
-{
-    if (left.has<Gfx::StandardCursor>() != right.has<Gfx::StandardCursor>())
-        return false;
-    if (left.has<Gfx::StandardCursor>())
-        return left.get<Gfx::StandardCursor>() == right.get<Gfx::StandardCursor>();
-    return left.get<NonnullRefPtr<Gfx::Bitmap>>().ptr() == right.get<NonnullRefPtr<Gfx::Bitmap>>().ptr();
-}
-
 void Window::set_cursor(Gfx::StandardCursor cursor)
 {
-    if (are_cursors_the_same(m_cursor, cursor))
+    if (m_cursor == cursor)
         return;
     m_cursor = cursor;
     update_cursor();
 }
 
-void Window::set_cursor(NonnullRefPtr<Gfx::Bitmap> cursor)
+void Window::set_cursor(NonnullRefPtr<Gfx::Bitmap const> cursor)
 {
-    if (are_cursors_the_same(m_cursor, cursor))
+    if (m_cursor == cursor)
         return;
     m_cursor = cursor;
     update_cursor();
@@ -479,7 +491,7 @@ void Window::handle_multi_paint_event(MultiPaintEvent& event)
         ConnectionToWindowServer::the().async_did_finish_painting(m_window_id, rects);
 }
 
-void Window::propagate_shortcuts_up_to_application(KeyEvent& event, Widget* widget)
+void Window::propagate_shortcuts(KeyEvent& event, Widget* widget, ShortcutPropagationBoundary boundary)
 {
     VERIFY(event.type() == Event::KeyDown);
     auto shortcut = Shortcut(event.modifiers(), event.key());
@@ -497,9 +509,9 @@ void Window::propagate_shortcuts_up_to_application(KeyEvent& event, Widget* widg
         } while (widget);
     }
 
-    if (!action)
+    if (!action && boundary >= ShortcutPropagationBoundary::Window)
         action = action_for_shortcut(shortcut);
-    if (!action)
+    if (!action && boundary >= ShortcutPropagationBoundary::Application)
         action = Application::the()->action_for_shortcut(shortcut);
 
     if (action) {
@@ -528,12 +540,11 @@ void Window::handle_key_event(KeyEvent& event)
     if (event.is_accepted())
         return;
 
-    if (is_blocking() || is_popup())
-        return;
-
     // Only process shortcuts if this is a keydown event.
-    if (event.type() == Event::KeyDown)
-        propagate_shortcuts_up_to_application(event, nullptr);
+    if (event.type() == Event::KeyDown) {
+        auto const boundary = (is_blocking() || is_popup()) ? ShortcutPropagationBoundary::Window : ShortcutPropagationBoundary::Application;
+        propagate_shortcuts(event, nullptr, boundary);
+    }
 }
 
 void Window::handle_resize_event(ResizeEvent& event)
@@ -616,6 +627,12 @@ void Window::handle_fonts_change_event(FontsChangeEvent& event)
         });
     };
     dispatch_fonts_change(*m_main_widget.ptr(), dispatch_fonts_change);
+
+    if (is_auto_shrinking())
+        schedule_relayout();
+
+    if (on_font_change)
+        on_font_change();
 }
 
 void Window::handle_screen_rects_change_event(ScreenRectsChangeEvent& event)
@@ -877,14 +894,6 @@ void Window::set_double_buffering_enabled(bool value)
     m_double_buffering_enabled = value;
 }
 
-void Window::set_opacity(float opacity)
-{
-    m_opacity_when_windowless = opacity;
-    if (!is_visible())
-        return;
-    ConnectionToWindowServer::the().async_set_window_opacity(m_window_id, opacity);
-}
-
 void Window::set_alpha_hit_threshold(float threshold)
 {
     if (threshold < 0.0f)
@@ -987,11 +996,12 @@ void Window::set_icon(Gfx::Bitmap const* icon)
 
     Gfx::IntSize icon_size = icon ? icon->size() : Gfx::IntSize(16, 16);
 
-    m_icon = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, icon_size).release_value_but_fixme_should_propagate_errors();
+    auto new_icon = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, icon_size).release_value_but_fixme_should_propagate_errors();
     if (icon) {
-        Painter painter(*m_icon);
+        Painter painter(*new_icon);
         painter.blit({ 0, 0 }, *icon, icon->rect());
     }
+    m_icon = move(new_icon);
 
     apply_icon();
 }
@@ -1096,6 +1106,14 @@ void Window::set_obey_widget_min_size(bool obey_widget_min_size)
     }
 }
 
+void Window::set_auto_shrink(bool shrink)
+{
+    if (m_auto_shrink == shrink)
+        return;
+    m_auto_shrink = shrink;
+    schedule_relayout();
+}
+
 void Window::set_maximized(bool maximized)
 {
     m_maximized = maximized;
@@ -1119,16 +1137,19 @@ void Window::set_minimized(bool minimized)
 
 void Window::update_min_size()
 {
-    if (main_widget()) {
-        main_widget()->do_layout();
-        if (m_obey_widget_min_size) {
-            auto min_size = main_widget()->effective_min_size();
-            Gfx::IntSize size = { MUST(min_size.width().shrink_value()), MUST(min_size.height().shrink_value()) };
-            m_minimum_size_when_windowless = size;
-            if (is_visible())
-                ConnectionToWindowServer::the().async_set_window_minimum_size(m_window_id, size);
-        }
+    if (!main_widget())
+        return;
+    main_widget()->do_layout();
+
+    auto min_size = main_widget()->effective_min_size();
+    Gfx::IntSize size = { MUST(min_size.width().shrink_value()), MUST(min_size.height().shrink_value()) };
+    if (is_obeying_widget_min_size()) {
+        m_minimum_size_when_windowless = size;
+        if (is_visible())
+            ConnectionToWindowServer::the().async_set_window_minimum_size(m_window_id, size);
     }
+    if (is_auto_shrinking())
+        resize(size);
 }
 
 void Window::schedule_relayout()
@@ -1252,7 +1273,7 @@ void Window::update_cursor()
     auto new_cursor = m_cursor;
 
     auto is_usable_cursor = [](auto& cursor) {
-        return cursor.template has<NonnullRefPtr<Gfx::Bitmap>>() || cursor.template get<Gfx::StandardCursor>() != Gfx::StandardCursor::None;
+        return cursor.template has<NonnullRefPtr<Gfx::Bitmap const>>() || cursor.template get<Gfx::StandardCursor>() != Gfx::StandardCursor::None;
     };
 
     // NOTE: If there's an automatic cursor tracking widget, we retain its cursor until tracking stops.
@@ -1264,12 +1285,12 @@ void Window::update_cursor()
             new_cursor = widget->override_cursor();
     }
 
-    if (are_cursors_the_same(m_effective_cursor, new_cursor))
+    if (m_effective_cursor == new_cursor)
         return;
     m_effective_cursor = new_cursor;
 
-    if (new_cursor.has<NonnullRefPtr<Gfx::Bitmap>>())
-        ConnectionToWindowServer::the().async_set_window_custom_cursor(m_window_id, new_cursor.get<NonnullRefPtr<Gfx::Bitmap>>()->to_shareable_bitmap());
+    if (new_cursor.has<NonnullRefPtr<Gfx::Bitmap const>>())
+        ConnectionToWindowServer::the().async_set_window_custom_cursor(m_window_id, new_cursor.get<NonnullRefPtr<Gfx::Bitmap const>>()->to_shareable_bitmap());
     else
         ConnectionToWindowServer::the().async_set_window_cursor(m_window_id, (u32)new_cursor.get<Gfx::StandardCursor>());
 }
@@ -1307,7 +1328,7 @@ ErrorOr<void> Window::try_add_menu(NonnullRefPtr<Menu> menu)
     return {};
 }
 
-ErrorOr<NonnullRefPtr<Menu>> Window::try_add_menu(DeprecatedString name)
+ErrorOr<NonnullRefPtr<Menu>> Window::try_add_menu(String name)
 {
     auto menu = TRY(m_menubar->try_add_menu({}, move(name)));
     if (m_window_id) {
@@ -1317,7 +1338,7 @@ ErrorOr<NonnullRefPtr<Menu>> Window::try_add_menu(DeprecatedString name)
     return menu;
 }
 
-Menu& Window::add_menu(DeprecatedString name)
+Menu& Window::add_menu(String name)
 {
     auto menu = MUST(try_add_menu(move(name)));
     return *menu;

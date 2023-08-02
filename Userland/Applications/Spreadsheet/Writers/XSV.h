@@ -9,10 +9,10 @@
 #include <AK/DeprecatedString.h>
 #include <AK/GenericLexer.h>
 #include <AK/OwnPtr.h>
+#include <AK/Stream.h>
 #include <AK/StringView.h>
 #include <AK/Types.h>
 #include <AK/Vector.h>
-#include <LibCore/Stream.h>
 
 namespace Writer {
 
@@ -42,13 +42,13 @@ constexpr WriterBehavior default_behaviors()
 template<typename ContainerType, typename HeaderType = Vector<StringView>>
 class XSV {
 public:
-    static ErrorOr<void> generate(Core::Stream::Stream& output, ContainerType const& data, WriterTraits traits, HeaderType headers = {}, WriterBehavior behaviors = default_behaviors())
+    static ErrorOr<void> generate(Stream& output, ContainerType const& data, WriterTraits traits, HeaderType headers = {}, WriterBehavior behaviors = default_behaviors())
     {
         auto writer = XSV(output, data, traits, headers, behaviors);
         auto with_headers = has_flag(writer.m_behaviors, WriterBehavior::WriteHeaders);
         if (with_headers) {
             TRY(writer.write_row(writer.m_names));
-            TRY(writer.m_output.write_entire_buffer({ "\n", 1 }));
+            TRY(writer.m_output.write_until_depleted({ "\n", 1 }));
         }
 
         for (auto&& row : writer.m_data) {
@@ -58,12 +58,12 @@ public:
             }
 
             TRY(writer.write_row(row));
-            TRY(writer.m_output.write_entire_buffer({ "\n", 1 }));
+            TRY(writer.m_output.write_until_depleted({ "\n", 1 }));
         }
         return {};
     }
 
-    static ErrorOr<void> generate_preview(Core::Stream::Stream& output, ContainerType const& data, WriterTraits traits, HeaderType headers = {}, WriterBehavior behaviors = default_behaviors())
+    static ErrorOr<void> generate_preview(Stream& output, ContainerType const& data, WriterTraits traits, HeaderType headers = {}, WriterBehavior behaviors = default_behaviors())
     {
         auto writer = XSV(output, data, traits, headers, behaviors);
         auto lines_written = 0;
@@ -72,7 +72,7 @@ public:
         auto with_headers = has_flag(writer.m_behaviors, WriterBehavior::WriteHeaders);
         if (with_headers) {
             TRY(writer.write_row(writer.m_names));
-            TRY(writer.m_output.write_entire_buffer({ "\n", 1 }));
+            TRY(writer.m_output.write_until_depleted({ "\n", 1 }));
             ++lines_written;
         }
 
@@ -83,7 +83,7 @@ public:
             }
 
             TRY(writer.write_row(row));
-            TRY(writer.m_output.write_entire_buffer({ "\n", 1 }));
+            TRY(writer.m_output.write_until_depleted({ "\n", 1 }));
             ++lines_written;
 
             if (lines_written >= max_preview_lines)
@@ -93,7 +93,7 @@ public:
     }
 
 private:
-    XSV(Core::Stream::Stream& output, ContainerType const& data, WriterTraits traits, HeaderType headers = {}, WriterBehavior behaviors = default_behaviors())
+    XSV(Stream& output, ContainerType const& data, WriterTraits traits, HeaderType headers = {}, WriterBehavior behaviors = default_behaviors())
         : m_data(data)
         , m_traits(move(traits))
         , m_behaviors(behaviors)
@@ -110,7 +110,7 @@ private:
         bool first = true;
         for (auto&& entry : row) {
             if (!first) {
-                TRY(m_output.write_entire_buffer(m_traits.separator.bytes()));
+                TRY(m_output.write_until_depleted(m_traits.separator.bytes()));
             }
             first = false;
             TRY(write_entry(entry));
@@ -136,33 +136,33 @@ private:
 
         if (safe_to_write_normally) {
             if (!string.is_empty())
-                TRY(m_output.write_entire_buffer(string.bytes()));
+                TRY(m_output.write_until_depleted(string.bytes()));
             return {};
         }
 
-        TRY(m_output.write_entire_buffer(m_traits.quote.bytes()));
+        TRY(m_output.write_until_depleted(m_traits.quote.bytes()));
 
         GenericLexer lexer(string);
         while (!lexer.is_eof()) {
             if (lexer.consume_specific(m_traits.quote)) {
                 switch (m_traits.quote_escape) {
                 case WriterTraits::Repeat:
-                    TRY(m_output.write_entire_buffer(m_traits.quote.bytes()));
-                    TRY(m_output.write_entire_buffer(m_traits.quote.bytes()));
+                    TRY(m_output.write_until_depleted(m_traits.quote.bytes()));
+                    TRY(m_output.write_until_depleted(m_traits.quote.bytes()));
                     break;
                 case WriterTraits::Backslash:
-                    TRY(m_output.write_entire_buffer({ "\\", 1 }));
-                    TRY(m_output.write_entire_buffer(m_traits.quote.bytes()));
+                    TRY(m_output.write_until_depleted({ "\\", 1 }));
+                    TRY(m_output.write_until_depleted(m_traits.quote.bytes()));
                     break;
                 }
                 continue;
             }
 
             auto ch = lexer.consume();
-            TRY(m_output.write_entire_buffer({ &ch, 1 }));
+            TRY(m_output.write_until_depleted({ &ch, 1 }));
         }
 
-        TRY(m_output.write_entire_buffer(m_traits.quote.bytes()));
+        TRY(m_output.write_until_depleted(m_traits.quote.bytes()));
         return {};
     }
 
@@ -170,7 +170,7 @@ private:
     WriterTraits m_traits;
     WriterBehavior m_behaviors;
     HeaderType m_names;
-    Core::Stream::Stream& m_output;
+    Stream& m_output;
 };
 
 }

@@ -7,7 +7,8 @@
 
 #pragma once
 
-#include <AK/DeprecatedString.h>
+#include <AK/GenericLexer.h>
+#include <AK/Variant.h>
 #include <AK/Vector.h>
 #include <LibGfx/Point.h>
 
@@ -33,15 +34,116 @@ struct PathInstruction {
     Vector<float> data;
 };
 
+struct Transform {
+    struct Translate {
+        float x;
+        float y;
+    };
+    struct Scale {
+        float x;
+        float y;
+    };
+    struct Rotate {
+        float a;
+        float x;
+        float y;
+    };
+    struct SkewX {
+        float a;
+    };
+    struct SkewY {
+        float a;
+    };
+    struct Matrix {
+        float a;
+        float b;
+        float c;
+        float d;
+        float e;
+        float f;
+    };
+
+    using Operation = Variant<Translate, Scale, Rotate, SkewX, SkewY, Matrix>;
+    Operation operation;
+};
+
+struct PreserveAspectRatio {
+    enum class Align {
+        None,
+        xMinYMin,
+        xMidYMin,
+        xMaxYMin,
+        xMinYMid,
+        xMidYMid,
+        xMaxYMid,
+        xMinYMax,
+        xMidYMax,
+        xMaxYMax
+    };
+    enum class MeetOrSlice {
+        Meet,
+        Slice
+    };
+    Align align { Align::xMidYMid };
+    MeetOrSlice meet_or_slice { MeetOrSlice::Meet };
+};
+
+enum class GradientUnits {
+    ObjectBoundingBox,
+    UserSpaceOnUse
+};
+
+class NumberPercentage {
+public:
+    NumberPercentage(float value, bool is_percentage)
+        : m_value(is_percentage ? value / 100 : value)
+        , m_is_percentage(is_percentage)
+    {
+    }
+
+    static NumberPercentage create_percentage(float value)
+    {
+        return NumberPercentage(value, true);
+    }
+
+    static NumberPercentage create_number(float value)
+    {
+        return NumberPercentage(value, false);
+    }
+
+    float resolve_relative_to(float length) const;
+
+    float value() const { return m_value; }
+
+private:
+    float m_value;
+    bool m_is_percentage { false };
+};
+
+enum class FillRule {
+    Nonzero,
+    Evenodd
+};
+
+enum class TextAnchor {
+    Start,
+    Middle,
+    End
+};
+
 class AttributeParser final {
 public:
     ~AttributeParser() = default;
 
     static Optional<float> parse_coordinate(StringView input);
     static Optional<float> parse_length(StringView input);
+    static Optional<NumberPercentage> parse_number_percentage(StringView input);
     static Optional<float> parse_positive_length(StringView input);
     static Vector<Gfx::FloatPoint> parse_points(StringView input);
     static Vector<PathInstruction> parse_path_data(StringView input);
+    static Optional<Vector<Transform>> parse_transform(StringView input);
+    static Optional<PreserveAspectRatio> parse_preserve_aspect_ratio(StringView input);
+    static Optional<GradientUnits> parse_gradient_units(StringView input);
 
 private:
     AttributeParser(StringView source);
@@ -57,6 +159,8 @@ private:
     void parse_quadratic_bezier_curveto();
     void parse_smooth_quadratic_bezier_curveto();
     void parse_elliptical_arc();
+
+    Optional<Vector<Transform>> parse_transform();
 
     float parse_length();
     float parse_coordinate();
@@ -78,14 +182,14 @@ private:
     bool match_comma_whitespace() const;
     bool match_coordinate() const;
     bool match_length() const;
+    bool match_number() const;
     bool match(char c) const { return !done() && ch() == c; }
 
-    bool done() const { return m_cursor >= m_source.length(); }
-    char ch() const { return m_source[m_cursor]; }
-    char consume() { return m_source[m_cursor++]; }
+    bool done() const { return m_lexer.is_eof(); }
+    char ch() const { return m_lexer.peek(); }
+    char consume() { return m_lexer.consume(); }
 
-    StringView m_source;
-    size_t m_cursor { 0 };
+    GenericLexer m_lexer;
     Vector<PathInstruction> m_instructions;
 };
 

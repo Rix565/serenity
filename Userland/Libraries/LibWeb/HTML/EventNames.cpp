@@ -8,22 +8,22 @@
 
 namespace Web::HTML::EventNames {
 
-#define __ENUMERATE_HTML_EVENT(name) DeprecatedFlyString name;
+#define __ENUMERATE_HTML_EVENT(name) FlyString name;
 ENUMERATE_HTML_EVENTS
 #undef __ENUMERATE_HTML_EVENT
 
-[[gnu::constructor]] static void initialize()
+ErrorOr<void> initialize_strings()
 {
     static bool s_initialized = false;
-    if (s_initialized)
-        return;
+    VERIFY(!s_initialized);
 
 #define __ENUMERATE_HTML_EVENT(name) \
-    name = #name;
+    name = TRY(#name##_fly_string);
     ENUMERATE_HTML_EVENTS
 #undef __ENUMERATE_HTML_EVENT
 
     s_initialized = true;
+    return {};
 }
 
 }

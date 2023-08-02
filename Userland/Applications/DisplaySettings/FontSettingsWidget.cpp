@@ -17,9 +17,16 @@ namespace DisplaySettings {
 
 static void update_label_with_font(GUI::Label&, Gfx::Font const&);
 
-FontSettingsWidget::FontSettingsWidget()
+ErrorOr<NonnullRefPtr<FontSettingsWidget>> FontSettingsWidget::try_create()
 {
-    load_from_gml(font_settings_gml).release_value_but_fixme_should_propagate_errors();
+    auto font_settings_widget = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) FontSettingsWidget()));
+    TRY(font_settings_widget->setup_interface());
+    return font_settings_widget;
+}
+
+ErrorOr<void> FontSettingsWidget::setup_interface()
+{
+    TRY(load_from_gml(font_settings_gml));
 
     auto& default_font = Gfx::FontDatabase::default_font();
     m_default_font_label = *find_descendant_of_type_named<GUI::Label>("default_font_label");
@@ -59,11 +66,13 @@ FontSettingsWidget::FontSettingsWidget()
             set_modified(true);
         }
     };
+
+    return {};
 }
 
 static void update_label_with_font(GUI::Label& label, Gfx::Font const& font)
 {
-    label.set_text(font.human_readable_name());
+    label.set_text(String::from_deprecated_string(font.human_readable_name()).release_value_but_fixme_should_propagate_errors());
     label.set_font(font);
 }
 

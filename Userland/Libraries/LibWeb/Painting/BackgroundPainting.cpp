@@ -8,8 +8,8 @@
 
 #include <LibGfx/AntiAliasingPainter.h>
 #include <LibGfx/Painter.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
 #include <LibWeb/Layout/Node.h>
+#include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Painting/BackgroundPainting.h>
 #include <LibWeb/Painting/BorderRadiusCornerClipper.h>
 #include <LibWeb/Painting/GradientPainting.h>
@@ -29,7 +29,7 @@ void paint_background(PaintContext& context, Layout::NodeWithStyleAndBoxModelMet
         inline void shrink(CSSPixels top, CSSPixels right, CSSPixels bottom, CSSPixels left)
         {
             rect.shrink(top, right, bottom, left);
-            radii.shrink(top.value(), right.value(), bottom.value(), left.value());
+            radii.shrink(top, right, bottom, left);
         }
     };
 
@@ -83,10 +83,10 @@ void paint_background(PaintContext& context, Layout::NodeWithStyleAndBoxModelMet
         return;
 
     struct {
-        int top { 0 };
-        int bottom { 0 };
-        int left { 0 };
-        int right { 0 };
+        DevicePixels top { 0 };
+        DevicePixels bottom { 0 };
+        DevicePixels left { 0 };
+        DevicePixels right { 0 };
     } clip_shrink;
 
     auto border_top = layout_node.computed_values().border_top();
@@ -96,10 +96,10 @@ void paint_background(PaintContext& context, Layout::NodeWithStyleAndBoxModelMet
 
     if (border_top.color.alpha() == 255 && border_bottom.color.alpha() == 255
         && border_left.color.alpha() == 255 && border_right.color.alpha() == 255) {
-        clip_shrink.top = border_top.width;
-        clip_shrink.bottom = border_bottom.width;
-        clip_shrink.left = border_left.width;
-        clip_shrink.right = border_right.width;
+        clip_shrink.top = context.rounded_device_pixels(border_top.width);
+        clip_shrink.bottom = context.rounded_device_pixels(border_bottom.width);
+        clip_shrink.left = context.rounded_device_pixels(border_left.width);
+        clip_shrink.right = context.rounded_device_pixels(border_right.width);
     }
 
     // Note: Background layers are ordered front-to-back, so we paint them in reverse
@@ -137,8 +137,8 @@ void paint_background(PaintContext& context, Layout::NodeWithStyleAndBoxModelMet
         }
 
         // FIXME: Implement proper default sizing algorithm: https://drafts.csswg.org/css-images/#default-sizing
-        CSSPixels natural_image_width = image.natural_width().value_or(background_positioning_area.width().value());
-        CSSPixels natural_image_height = image.natural_height().value_or(background_positioning_area.height().value());
+        CSSPixels natural_image_width = image.natural_width().value_or(background_positioning_area.width());
+        CSSPixels natural_image_height = image.natural_height().value_or(background_positioning_area.height());
 
         // If any of these are zero, the NaNs will pop up in the painting code.
         if (background_positioning_area.is_empty() || natural_image_height <= 0 || natural_image_width <= 0)
@@ -148,16 +148,16 @@ void paint_background(PaintContext& context, Layout::NodeWithStyleAndBoxModelMet
         CSSPixelRect image_rect;
         switch (layer.size_type) {
         case CSS::BackgroundSize::Contain: {
-            float max_width_ratio = (background_positioning_area.width() / natural_image_width).value();
-            float max_height_ratio = (background_positioning_area.height() / natural_image_height).value();
-            float ratio = min(max_width_ratio, max_height_ratio);
+            double max_width_ratio = (background_positioning_area.width() / natural_image_width).to_double();
+            double max_height_ratio = (background_positioning_area.height() / natural_image_height).to_double();
+            double ratio = min(max_width_ratio, max_height_ratio);
             image_rect.set_size(natural_image_width * ratio, natural_image_height * ratio);
             break;
         }
         case CSS::BackgroundSize::Cover: {
-            float max_width_ratio = (background_positioning_area.width() / natural_image_width).value();
-            float max_height_ratio = (background_positioning_area.height() / natural_image_height).value();
-            float ratio = max(max_width_ratio, max_height_ratio);
+            double max_width_ratio = (background_positioning_area.width() / natural_image_width).to_double();
+            double max_height_ratio = (background_positioning_area.height() / natural_image_height).to_double();
+            double ratio = max(max_width_ratio, max_height_ratio);
             image_rect.set_size(natural_image_width * ratio, natural_image_height * ratio);
             break;
         }
@@ -170,14 +170,14 @@ void paint_background(PaintContext& context, Layout::NodeWithStyleAndBoxModelMet
                 width = natural_image_width;
                 height = natural_image_height;
             } else if (x_is_auto) {
-                height = layer.size_y.resolved(layout_node, CSS::Length::make_px(background_positioning_area.height())).to_px(layout_node);
+                height = layer.size_y.to_px(layout_node, background_positioning_area.height());
                 width = natural_image_width * (height / natural_image_height);
             } else if (y_is_auto) {
-                width = layer.size_x.resolved(layout_node, CSS::Length::make_px(background_positioning_area.width())).to_px(layout_node);
+                width = layer.size_x.to_px(layout_node, background_positioning_area.width());
                 height = natural_image_height * (width / natural_image_width);
             } else {
-                width = layer.size_x.resolved(layout_node, CSS::Length::make_px(background_positioning_area.width())).to_px(layout_node);
-                height = layer.size_y.resolved(layout_node, CSS::Length::make_px(background_positioning_area.height())).to_px(layout_node);
+                width = layer.size_x.to_px(layout_node, background_positioning_area.width());
+                height = layer.size_y.to_px(layout_node, background_positioning_area.height());
             }
 
             image_rect.set_size(width, height);
@@ -221,14 +221,14 @@ void paint_background(PaintContext& context, Layout::NodeWithStyleAndBoxModelMet
         CSSPixels space_y = background_positioning_area.height() - image_rect.height();
 
         // Position
-        CSSPixels offset_x = layer.position_offset_x.resolved(layout_node, CSS::Length::make_px(space_x)).to_px(layout_node);
+        CSSPixels offset_x = layer.position_offset_x.to_px(layout_node, space_x);
         if (layer.position_edge_x == CSS::PositionEdge::Right) {
             image_rect.set_right_without_resize(background_positioning_area.right() - offset_x);
         } else {
             image_rect.set_left(background_positioning_area.left() + offset_x);
         }
 
-        CSSPixels offset_y = layer.position_offset_y.resolved(layout_node, CSS::Length::make_px(space_y)).to_px(layout_node);
+        CSSPixels offset_y = layer.position_offset_y.to_px(layout_node, space_y);
         if (layer.position_edge_y == CSS::PositionEdge::Bottom) {
             image_rect.set_bottom_without_resize(background_positioning_area.bottom() - offset_y);
         } else {
@@ -247,13 +247,13 @@ void paint_background(PaintContext& context, Layout::NodeWithStyleAndBoxModelMet
             repeat_x = true;
             break;
         case CSS::Repeat::Space: {
-            int whole_images = (background_positioning_area.width() / image_rect.width()).value();
+            int whole_images = (background_positioning_area.width() / image_rect.width()).to_int();
             if (whole_images <= 1) {
                 x_step = image_rect.width();
                 repeat_x = false;
             } else {
-                auto space = fmod(background_positioning_area.width(), image_rect.width());
-                x_step = image_rect.width() + (space / (float)(whole_images - 1));
+                auto space = fmod(background_positioning_area.width().to_double(), image_rect.width().to_double());
+                x_step = image_rect.width() + (space / static_cast<double>(whole_images - 1));
                 repeat_x = true;
             }
             break;
@@ -278,13 +278,13 @@ void paint_background(PaintContext& context, Layout::NodeWithStyleAndBoxModelMet
             repeat_y = true;
             break;
         case CSS::Repeat::Space: {
-            int whole_images = (background_positioning_area.height() / image_rect.height()).value();
+            int whole_images = (background_positioning_area.height() / image_rect.height()).to_int();
             if (whole_images <= 1) {
                 y_step = image_rect.height();
                 repeat_y = false;
             } else {
-                auto space = fmod(background_positioning_area.height(), image_rect.height());
-                y_step = image_rect.height() + ((float)space / (float)(whole_images - 1));
+                auto space = fmod(background_positioning_area.height().to_float(), image_rect.height().to_float());
+                y_step = image_rect.height() + (static_cast<double>(space) / static_cast<double>(whole_images - 1));
                 repeat_y = true;
             }
             break;
@@ -309,14 +309,14 @@ void paint_background(PaintContext& context, Layout::NodeWithStyleAndBoxModelMet
 
         image.resolve_for_size(layout_node, image_rect.size());
 
-        while (image_y <= css_clip_rect.bottom()) {
+        while (image_y < css_clip_rect.bottom()) {
             image_rect.set_y(image_y);
 
             auto image_x = initial_image_x;
-            while (image_x <= css_clip_rect.right()) {
+            while (image_x < css_clip_rect.right()) {
                 image_rect.set_x(image_x);
                 auto image_device_rect = context.rounded_device_rect(image_rect);
-                if (image_device_rect != last_image_device_rect && image_device_rect.intersects(context.device_viewport_rect()))
+                if (image_device_rect != last_image_device_rect && !context.would_be_fully_clipped_by_painter(image_device_rect))
                     image.paint(context, image_device_rect, image_rendering);
                 last_image_device_rect = image_device_rect;
                 if (!repeat_x)

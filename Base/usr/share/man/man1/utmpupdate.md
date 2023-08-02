@@ -8,15 +8,16 @@ utmpupdate
 $ utmpupdate [--create] [--delete] [--PID PID] [--from From] <tty>
 ```
 
-## Options:
+## Options
 
 * `-c`, `--create`: Create entry
 * `-d`, `--delete`: Delete entry
 * `-p PID`, `--PID PID`: PID
 * `-f From`, `--from From`: From
 
-## Arguments:
+## Arguments
 
 * `tty`: TTY name
 
-<!-- Auto-generated through ArgsParser -->
+## See also
+* [`w`(1)](help://man/1/w)

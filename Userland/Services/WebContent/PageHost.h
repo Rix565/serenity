@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -29,7 +29,7 @@ public:
 
     virtual void paint(Web::DevicePixelRect const& content_rect, Gfx::Bitmap&) override;
 
-    void set_palette_impl(Gfx::PaletteImpl const&);
+    void set_palette_impl(Gfx::PaletteImpl&);
     void set_viewport_rect(Web::DevicePixelRect const&);
     void set_screen_rects(Vector<Gfx::IntRect, 4> const& rects, size_t main_screen_index) { m_screen_rect = rects[main_screen_index].to_type<Web::DevicePixels>(); }
     void set_device_pixels_per_css_pixel(float device_pixels_per_css_pixel) { m_device_pixels_per_css_pixel = device_pixels_per_css_pixel; }
@@ -43,17 +43,25 @@ public:
     Web::DevicePixelSize content_size() const { return m_content_size; }
 
     ErrorOr<void> connect_to_webdriver(DeprecatedString const& webdriver_ipc_path);
+    Function<void(WebDriverConnection&)> on_webdriver_connection;
 
     void alert_closed();
     void confirm_closed(bool accepted);
-    void prompt_closed(DeprecatedString response);
+    void prompt_closed(Optional<String> response);
+
+    Web::WebIDL::ExceptionOr<void> toggle_media_play_state();
+    void toggle_media_mute_state();
+    Web::WebIDL::ExceptionOr<void> toggle_media_loop_state();
+    Web::WebIDL::ExceptionOr<void> toggle_media_controls_state();
+
+    [[nodiscard]] Gfx::Color background_color() const;
 
 private:
     // ^PageClient
     virtual bool is_connection_open() const override;
     virtual Gfx::Palette palette() const override;
     virtual Web::DevicePixelRect screen_rect() const override { return m_screen_rect; }
-    virtual float device_pixels_per_css_pixel() const override { return m_device_pixels_per_css_pixel; }
+    virtual double device_pixels_per_css_pixel() const override { return m_device_pixels_per_css_pixel; }
     virtual Web::CSS::PreferredColorScheme preferred_color_scheme() const override { return m_preferred_color_scheme; }
     virtual void page_did_invalidate(Web::CSSPixelRect const&) override;
     virtual void page_did_change_selection() override;
@@ -83,25 +91,29 @@ private:
     virtual void page_did_start_loading(const URL&, bool) override;
     virtual void page_did_create_main_document() override;
     virtual void page_did_finish_loading(const URL&) override;
-    virtual void page_did_request_alert(DeprecatedString const&) override;
-    virtual void page_did_request_confirm(DeprecatedString const&) override;
-    virtual void page_did_request_prompt(DeprecatedString const&, DeprecatedString const&) override;
-    virtual void page_did_request_set_prompt_text(DeprecatedString const&) override;
+    virtual void page_did_request_alert(String const&) override;
+    virtual void page_did_request_confirm(String const&) override;
+    virtual void page_did_request_prompt(String const&, String const&) override;
+    virtual void page_did_request_set_prompt_text(String const&) override;
     virtual void page_did_request_accept_dialog() override;
     virtual void page_did_request_dismiss_dialog() override;
     virtual void page_did_change_favicon(Gfx::Bitmap const&) override;
     virtual void page_did_request_image_context_menu(Web::CSSPixelPoint, const URL&, DeprecatedString const& target, unsigned modifiers, Gfx::Bitmap const*) override;
+    virtual void page_did_request_media_context_menu(Web::CSSPixelPoint, DeprecatedString const& target, unsigned modifiers, Web::Page::MediaContextMenu) override;
     virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies(URL const&) override;
     virtual Optional<Web::Cookie::Cookie> page_did_request_named_cookie(URL const&, DeprecatedString const&) override;
     virtual DeprecatedString page_did_request_cookie(const URL&, Web::Cookie::Source) override;
     virtual void page_did_set_cookie(const URL&, Web::Cookie::ParsedCookie const&, Web::Cookie::Source) override;
     virtual void page_did_update_cookie(Web::Cookie::Cookie) override;
     virtual void page_did_update_resource_count(i32) override;
-    virtual void request_file(NonnullRefPtr<Web::FileRequest>&) override;
+    virtual String page_did_request_new_tab(Web::HTML::ActivateTab activate_tab) override;
+    virtual void page_did_request_activate_tab() override;
+    virtual void page_did_close_browsing_context(Web::HTML::BrowsingContext const&) override;
+    virtual void request_file(Web::FileRequest) override;
 
     explicit PageHost(ConnectionFromClient&);
 
-    Web::Layout::InitialContainingBlock* layout_root();
+    Web::Layout::Viewport* layout_root();
     void setup_palette();
 
     ConnectionFromClient& m_client;

@@ -9,8 +9,8 @@
 #include <AK/Platform.h>
 #include <AK/Types.h>
 #include <Kernel/Arch/RegisterState.h>
-#include <Kernel/ExecutionMode.h>
-#include <Kernel/VirtualAddress.h>
+#include <Kernel/Memory/VirtualAddress.h>
+#include <Kernel/Security/ExecutionMode.h>
 
 namespace Kernel {
 
@@ -77,6 +77,8 @@ public:
 
     void set_mode(ExecutionMode execution_mode) { m_execution_mode = execution_mode; }
     ExecutionMode mode() const { return m_execution_mode; }
+
+    void set_instruction_fetch(bool b) { m_is_instruction_fetch = b; }
 
     bool is_not_present() const { return m_type == Type::PageNotPresent; }
     bool is_protection_violation() const { return m_type == Type::ProtectionViolation; }

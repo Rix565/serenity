@@ -96,10 +96,10 @@ TEST_CASE(move_moves)
 {
     struct NoCopy {
         AK_MAKE_NONCOPYABLE(NoCopy);
+        AK_MAKE_DEFAULT_MOVABLE(NoCopy);
 
     public:
         NoCopy() = default;
-        NoCopy(NoCopy&&) = default;
     };
 
     Variant<NoCopy, int> first_variant { 42 };
@@ -272,4 +272,33 @@ TEST_CASE(type_list_specialization)
     EXPECT((IsSame<typename MyList::template Type<0>, Empty>));
     EXPECT((IsSame<typename MyList::template Type<1>, int>));
     EXPECT((IsSame<typename MyList::template Type<2>, String>));
+}
+
+TEST_CASE(variant_equality)
+{
+    using MyVariant = Variant<Empty, int, float>;
+
+    {
+        MyVariant variant1 = 1;
+        MyVariant variant2 = 1;
+        EXPECT_EQ(variant1, variant2);
+    }
+
+    {
+        MyVariant variant1 = 1;
+        MyVariant variant2 = 1.5f;
+        EXPECT_NE(variant1, variant2);
+    }
+
+    {
+        MyVariant variant1 = 1;
+        MyVariant variant2;
+        EXPECT_NE(variant1, variant2);
+    }
+
+    {
+        MyVariant variant1;
+        MyVariant variant2;
+        EXPECT_EQ(variant1, variant2);
+    }
 }

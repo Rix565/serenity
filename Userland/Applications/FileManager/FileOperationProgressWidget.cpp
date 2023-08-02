@@ -8,7 +8,6 @@
 #include "FileOperationProgressWidget.h"
 #include "FileUtils.h"
 #include <Applications/FileManager/FileOperationProgressGML.h>
-#include <LibCore/File.h>
 #include <LibCore/Notifier.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/ImageWidget.h>
@@ -19,7 +18,7 @@
 
 namespace FileManager {
 
-FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation, NonnullOwnPtr<Core::Stream::BufferedFile> helper_pipe, int helper_pipe_fd)
+FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation, NonnullOwnPtr<Core::InputBufferedFile> helper_pipe, int helper_pipe_fd)
     : m_operation(operation)
     , m_helper_pipe(move(helper_pipe))
 {
@@ -55,23 +54,23 @@ FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation
 
     switch (m_operation) {
     case FileOperation::Copy:
-        files_copied_label.set_text("Copying files...");
-        current_file_action_label.set_text("Copying: ");
+        files_copied_label.set_text("Copying files..."_string.release_value_but_fixme_should_propagate_errors());
+        current_file_action_label.set_text("Copying: "_string.release_value_but_fixme_should_propagate_errors());
         break;
     case FileOperation::Move:
-        files_copied_label.set_text("Moving files...");
-        current_file_action_label.set_text("Moving: ");
+        files_copied_label.set_text("Moving files..."_string.release_value_but_fixme_should_propagate_errors());
+        current_file_action_label.set_text("Moving: "_string.release_value_but_fixme_should_propagate_errors());
         break;
     case FileOperation::Delete:
-        files_copied_label.set_text("Deleting files...");
-        current_file_action_label.set_text("Deleting: ");
+        files_copied_label.set_text("Deleting files..."_string.release_value_but_fixme_should_propagate_errors());
+        current_file_action_label.set_text("Deleting: "_string.release_value_but_fixme_should_propagate_errors());
         break;
     default:
         VERIFY_NOT_REACHED();
     }
 
-    m_notifier = Core::Notifier::construct(helper_pipe_fd, Core::Notifier::Read);
-    m_notifier->on_ready_to_read = [this] {
+    m_notifier = Core::Notifier::construct(helper_pipe_fd, Core::Notifier::Type::Read);
+    m_notifier->on_activation = [this] {
         auto line_buffer_or_error = ByteBuffer::create_zeroed(1 * KiB);
         if (line_buffer_or_error.is_error()) {
             did_error("Failed to allocate ByteBuffer for reading data."sv);
@@ -180,23 +179,23 @@ void FileOperationProgressWidget::did_progress(off_t bytes_done, off_t total_byt
     auto& overall_progressbar = *find_descendant_of_type_named<GUI::Progressbar>("overall_progressbar");
     auto& estimated_time_label = *find_descendant_of_type_named<GUI::Label>("estimated_time_label");
 
-    current_file_label.set_text(current_filename);
+    current_file_label.set_text(String::from_utf8(current_filename).release_value_but_fixme_should_propagate_errors());
 
     switch (m_operation) {
     case FileOperation::Copy:
-        files_copied_label.set_text(DeprecatedString::formatted("Copying file {} of {}", files_done, total_file_count));
+        files_copied_label.set_text(String::formatted("Copying file {} of {}", files_done, total_file_count).release_value_but_fixme_should_propagate_errors());
         break;
     case FileOperation::Move:
-        files_copied_label.set_text(DeprecatedString::formatted("Moving file {} of {}", files_done, total_file_count));
+        files_copied_label.set_text(String::formatted("Moving file {} of {}", files_done, total_file_count).release_value_but_fixme_should_propagate_errors());
         break;
     case FileOperation::Delete:
-        files_copied_label.set_text(DeprecatedString::formatted("Deleting file {} of {}", files_done, total_file_count));
+        files_copied_label.set_text(String::formatted("Deleting file {} of {}", files_done, total_file_count).release_value_but_fixme_should_propagate_errors());
         break;
     default:
         VERIFY_NOT_REACHED();
     }
 
-    estimated_time_label.set_text(estimate_time(bytes_done, total_byte_count));
+    estimated_time_label.set_text(String::from_deprecated_string(estimate_time(bytes_done, total_byte_count)).release_value_but_fixme_should_propagate_errors());
 
     if (total_byte_count) {
         window()->set_progress(100.0f * bytes_done / total_byte_count);
@@ -212,7 +211,7 @@ void FileOperationProgressWidget::close_pipe()
     m_helper_pipe = nullptr;
     if (m_notifier) {
         m_notifier->set_enabled(false);
-        m_notifier->on_ready_to_read = nullptr;
+        m_notifier->on_activation = nullptr;
     }
     m_notifier = nullptr;
 }

@@ -185,7 +185,7 @@ void Canvas::draw()
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
     TRY(Core::System::pledge("stdio recvfd sendfd rpath"));
     TRY(Core::System::unveil("/res", "r"));
@@ -197,7 +197,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     window->set_resizable(false);
     window->resize(WIDTH, HEIGHT);
 
-    auto file_menu = TRY(window->try_add_menu("&File"));
+    auto file_menu = TRY(window->try_add_menu("&File"_short_string));
     TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); })));
 
     auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-libgfx-demo"sv));

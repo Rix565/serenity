@@ -10,9 +10,9 @@
 
 namespace Kernel {
 
-ErrorOr<NonnullLockRefPtr<FileSystem>> FATFS::try_create(OpenFileDescription& file_description)
+ErrorOr<NonnullRefPtr<FileSystem>> FATFS::try_create(OpenFileDescription& file_description, ReadonlyBytes)
 {
-    return TRY(adopt_nonnull_lock_ref_or_enomem(new (nothrow) FATFS(file_description)));
+    return TRY(adopt_nonnull_ref_or_enomem(new (nothrow) FATFS(file_description)));
 }
 
 FATFS::FATFS(OpenFileDescription& file_description)
@@ -31,7 +31,7 @@ ErrorOr<void> FATFS::initialize_while_locked()
     VERIFY(m_lock.is_locked());
     VERIFY(!is_initialized_while_locked());
 
-    m_boot_record = TRY(KBuffer::try_create_with_size("FATFS: Boot Record"sv, m_logical_block_size));
+    m_boot_record = TRY(KBuffer::try_create_with_size("FATFS: Boot Record"sv, m_device_block_size));
     auto boot_record_buffer = UserOrKernelBuffer::for_kernel_buffer(m_boot_record->data());
     TRY(raw_read(0, boot_record_buffer));
 
@@ -62,10 +62,10 @@ ErrorOr<void> FATFS::initialize_while_locked()
         return EINVAL;
     }
 
-    m_logical_block_size = boot_record()->bytes_per_sector;
-    set_block_size(m_logical_block_size);
+    m_device_block_size = boot_record()->bytes_per_sector;
+    set_logical_block_size(m_device_block_size);
 
-    u32 root_directory_sectors = ((boot_record()->root_directory_entry_count * sizeof(FATEntry)) + (m_logical_block_size - 1)) / m_logical_block_size;
+    u32 root_directory_sectors = ((boot_record()->root_directory_entry_count * sizeof(FATEntry)) + (m_device_block_size - 1)) / m_device_block_size;
     m_first_data_sector = boot_record()->reserved_sector_count + (boot_record()->fat_count * boot_record()->sectors_per_fat) + root_directory_sectors;
 
     TRY(BlockBasedFileSystem::initialize_while_locked());
@@ -89,6 +89,20 @@ Inode& FATFS::root_inode()
 BlockBasedFileSystem::BlockIndex FATFS::first_block_of_cluster(u32 cluster) const
 {
     return ((cluster - first_data_cluster) * boot_record()->sectors_per_cluster) + m_first_data_sector;
+}
+
+u8 FATFS::internal_file_type_to_directory_entry_type(DirectoryEntryView const& entry) const
+{
+    FATAttributes attrib = static_cast<FATAttributes>(entry.file_type);
+    if (has_flag(attrib, FATAttributes::Directory)) {
+        return DT_DIR;
+    } else if (has_flag(attrib, FATAttributes::VolumeID)) {
+        return DT_UNKNOWN;
+    } else {
+        // ReadOnly, Hidden, System, Archive, LongFileName.
+        return DT_REG;
+    }
+    return DT_UNKNOWN;
 }
 
 }

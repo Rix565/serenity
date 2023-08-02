@@ -30,17 +30,17 @@ public:
     virtual int row_count(GUI::ModelIndex const& = GUI::ModelIndex()) const override { return m_matches.size(); }
     virtual int column_count(GUI::ModelIndex const& = GUI::ModelIndex()) const override { return Column::__Count; }
 
-    virtual DeprecatedString column_name(int column) const override
+    virtual ErrorOr<String> column_name(int column) const override
     {
         switch (column) {
         case Column::Filename:
-            return "Filename";
+            return TRY("Filename"_string);
         case Column::Text:
-            return "Text";
+            return "Text"_short_string;
         case Column::Line:
-            return "Line";
+            return "Line"_short_string;
         case Column::Column:
-            return "Col";
+            return "Col"_short_string;
         default:
             VERIFY_NOT_REACHED();
         }

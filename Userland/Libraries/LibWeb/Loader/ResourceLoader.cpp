@@ -1,15 +1,14 @@
 /*
- * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, Dex♪ <dexes.ttp@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Base64.h>
 #include <AK/Debug.h>
 #include <AK/JsonObject.h>
 #include <LibCore/ElapsedTimer.h>
-#include <LibCore/File.h>
+#include <LibCore/MimeData.h>
 #include <LibWeb/Cookie/Cookie.h>
 #include <LibWeb/Cookie/ParsedCookie.h>
 #include <LibWeb/Loader/ContentFilter.h>
@@ -123,7 +122,7 @@ RefPtr<Resource> ResourceLoader::load_resource(Resource::Type type, LoadRequest&
 static DeprecatedString sanitized_url_for_logging(AK::URL const& url)
 {
     if (url.scheme() == "data"sv)
-        return DeprecatedString::formatted("[data URL, mime-type={}, size={}]", url.data_mime_type(), url.data_payload().length());
+        return "[data URL]"sv;
     return url.to_deprecated_string();
 }
 
@@ -172,7 +171,7 @@ void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, Has
         dbgln("ResourceLoader: Finished load of: \"{}\", Duration: {}ms", url_for_logging, load_time_ms);
     };
 
-    auto const log_failure = [url_for_logging, id](auto const& request, auto const error_message) {
+    auto const log_failure = [url_for_logging, id](auto const& request, auto const& error_message) {
         auto load_time_ms = request.load_time().to_milliseconds();
         emit_signpost(DeprecatedString::formatted("Failed load: {}", url_for_logging), id);
         dbgln("ResourceLoader: Failed load of: \"{}\", \033[31;1mError: {}\033[0m, Duration: {}ms", url_for_logging, error_message, load_time_ms);
@@ -204,28 +203,26 @@ void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, Has
     }
 
     if (url.scheme() == "data") {
-        dbgln_if(SPAM_DEBUG, "ResourceLoader loading a data URL with mime-type: '{}', base64={}, payload='{}'",
-            url.data_mime_type(),
-            url.data_payload_is_base64(),
-            url.data_payload());
-
-        ByteBuffer data;
-        if (url.data_payload_is_base64()) {
-            auto data_maybe = decode_base64(url.data_payload());
-            if (data_maybe.is_error()) {
-                auto error_message = data_maybe.error().string_literal();
-                log_failure(request, error_message);
-                error_callback(error_message, {});
-                return;
-            }
-            data = data_maybe.value();
-        } else {
-            data = url.data_payload().to_byte_buffer();
+        auto data_url_or_error = url.process_data_url();
+        if (data_url_or_error.is_error()) {
+            auto error_message = data_url_or_error.error().string_literal();
+            log_failure(request, error_message);
+            error_callback(error_message, {});
+            return;
         }
+        auto data_url = data_url_or_error.release_value();
+
+        dbgln_if(SPAM_DEBUG, "ResourceLoader loading a data URL with mime-type: '{}', payload='{}'",
+            data_url.mime_type,
+            StringView(data_url.body.bytes()));
+
+        HashMap<DeprecatedString, DeprecatedString, CaseInsensitiveStringTraits> response_headers;
+        response_headers.set("Content-Type", data_url.mime_type.to_deprecated_string());
 
         log_success(request);
-        Platform::EventLoopPlugin::the().deferred_invoke([data = move(data), success_callback = move(success_callback)] {
-            success_callback(data, {}, {});
+
+        Platform::EventLoopPlugin::the().deferred_invoke([data = move(data_url.body), response_headers = move(response_headers), success_callback = move(success_callback)] {
+            success_callback(data, response_headers, {});
         });
         return;
     }
@@ -236,27 +233,28 @@ void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, Has
 
         if (!m_page.has_value())
             return;
-        VERIFY(m_page.has_value());
-        auto file_ref = make_ref_counted<FileRequest>(url.path());
-        file_ref->on_file_request_finish = [this, success_callback = move(success_callback), error_callback = move(error_callback), log_success, log_failure, request, file_ref](ErrorOr<i32> file_or_error) {
+
+        FileRequest file_request(url.serialize_path(), [this, success_callback = move(success_callback), error_callback = move(error_callback), log_success, log_failure, request](ErrorOr<i32> file_or_error) {
             --m_pending_loads;
             if (on_load_counter_change)
                 on_load_counter_change();
 
             if (file_or_error.is_error()) {
                 log_failure(request, file_or_error.error());
-                if (error_callback)
-                    error_callback(DeprecatedString::formatted("{}", file_or_error.error()), file_or_error.error().code());
+                if (error_callback) {
+                    auto status = file_or_error.error().code() == ENOENT ? 404u : 500u;
+                    error_callback(DeprecatedString::formatted("{}", file_or_error.error()), status);
+                }
                 return;
             }
 
             auto const fd = file_or_error.value();
 
-            auto maybe_file = Core::Stream::File::adopt_fd(fd, Core::Stream::OpenMode::Read);
+            auto maybe_file = Core::File::adopt_fd(fd, Core::File::OpenMode::Read);
             if (maybe_file.is_error()) {
                 log_failure(request, maybe_file.error());
                 if (error_callback)
-                    error_callback(DeprecatedString::formatted("{}", maybe_file.error()), maybe_file.error().code());
+                    error_callback(DeprecatedString::formatted("{}", maybe_file.error()), 500u);
                 return;
             }
 
@@ -265,14 +263,22 @@ void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, Has
             if (maybe_data.is_error()) {
                 log_failure(request, maybe_data.error());
                 if (error_callback)
-                    error_callback(DeprecatedString::formatted("{}", maybe_data.error()), maybe_data.error().code());
+                    error_callback(DeprecatedString::formatted("{}", maybe_data.error()), 500u);
                 return;
             }
             auto data = maybe_data.release_value();
             log_success(request);
-            success_callback(data, {}, {});
-        };
-        m_page->client().request_file(file_ref);
+
+            // NOTE: For file:// URLs, we have to guess the MIME type, since there's no HTTP header to tell us what this is.
+            //       We insert a fake Content-Type header here, so that clients can use it to learn the MIME type.
+            HashMap<DeprecatedString, DeprecatedString, CaseInsensitiveStringTraits> response_headers;
+            auto mime_type = Core::guess_mime_type_based_on_filename(request.url().serialize_path());
+            response_headers.set("Content-Type"sv, mime_type);
+
+            success_callback(data, response_headers, {});
+        });
+
+        m_page->client().request_file(move(file_request));
 
         ++m_pending_loads;
         if (on_load_counter_change)
@@ -321,9 +327,14 @@ void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, Has
             if (request.page().has_value()) {
                 if (auto set_cookie = response_headers.get("Set-Cookie"); set_cookie.has_value())
                     store_response_cookies(request.page().value(), request.url(), *set_cookie);
+                if (auto cache_control = response_headers.get("cache-control"); cache_control.has_value()) {
+                    if (cache_control.value().contains("no-store"sv)) {
+                        s_resource_cache.remove(request);
+                    }
+                }
             }
 
-            if (!success || (status_code.has_value() && *status_code >= 400 && *status_code <= 599)) {
+            if (!success || (status_code.has_value() && *status_code >= 400 && *status_code <= 599 && (payload.is_empty() || !request.is_main_resource()))) {
                 StringBuilder error_builder;
                 if (status_code.has_value())
                     error_builder.appendff("Load failed: {}", *status_code);

@@ -9,12 +9,9 @@
 #include "AttributeValue.h"
 #include "DwarfTypes.h"
 #include <AK/ByteBuffer.h>
-#include <AK/DeprecatedString.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/RedBlackTree.h>
 #include <AK/RefCounted.h>
-#include <LibCore/Stream.h>
 #include <LibDebug/Dwarf/DIE.h>
 #include <LibELF/Image.h>
 
@@ -43,7 +40,7 @@ public:
     ErrorOr<void> for_each_compilation_unit(Callback) const;
 
     ErrorOr<AttributeValue> get_attribute_value(AttributeDataForm form, ssize_t implicit_const_value,
-        Core::Stream::SeekableStream& debug_info_stream, CompilationUnit const* unit = nullptr) const;
+        SeekableStream& debug_info_stream, CompilationUnit const* unit = nullptr) const;
 
     ErrorOr<Optional<DIE>> get_die_at_address(FlatPtr) const;
 
@@ -71,7 +68,7 @@ private:
     ReadonlyBytes m_debug_addr_data;
     ReadonlyBytes m_debug_ranges_data;
 
-    NonnullOwnPtrVector<Dwarf::CompilationUnit> m_compilation_units;
+    Vector<NonnullOwnPtr<Dwarf::CompilationUnit>> m_compilation_units;
 
     struct DIERange {
         FlatPtr start_address { 0 };
@@ -94,7 +91,7 @@ template<typename Callback>
 ErrorOr<void> DwarfInfo::for_each_compilation_unit(Callback callback) const
 {
     for (auto const& unit : m_compilation_units) {
-        TRY(callback(unit));
+        TRY(callback(*unit));
     }
     return {};
 }

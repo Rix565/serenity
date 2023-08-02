@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <AK/URL.h>
+#include <LibJS/Heap/Cell.h>
 #include <LibWeb/HTML/Scripting/ModuleScript.h>
 
 namespace Web::HTML {
@@ -18,13 +20,13 @@ public:
     {
     }
 
-    AK::URL const& url() const { return m_url; };
+    AK::URL const& url() const { return m_url; }
     DeprecatedString const& type() const { return m_type; }
 
     bool operator==(ModuleLocationTuple const& other) const
     {
         return other.url() == m_url && other.type() == m_type;
-    };
+    }
 
 private:
     AK::URL m_url;
@@ -32,8 +34,8 @@ private:
 };
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#module-map
-class ModuleMap {
-    AK_MAKE_NONCOPYABLE(ModuleMap);
+class ModuleMap final : public JS::Cell {
+    JS_CELL(ModuleMap, Cell);
 
 public:
     ModuleMap() = default;
@@ -47,7 +49,7 @@ public:
 
     struct Entry {
         EntryType type;
-        JavaScriptModuleScript* module_script;
+        JS::GCPtr<JavaScriptModuleScript> module_script;
     };
 
     bool is_fetching(AK::URL const& url, DeprecatedString const& type) const;
@@ -62,6 +64,8 @@ public:
     void wait_for_change(AK::URL const& url, DeprecatedString const& type, Function<void(Entry)> callback);
 
 private:
+    virtual void visit_edges(JS::Cell::Visitor&) override;
+
     HashMap<ModuleLocationTuple, Entry> m_values;
     HashMap<ModuleLocationTuple, Vector<Function<void(Entry)>>> m_callbacks;
 };

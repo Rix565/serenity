@@ -48,7 +48,7 @@ struct InodeMetadata {
     bool may_write(Credentials const&, UseEffectiveIDs = UseEffectiveIDs::Yes) const;
     bool may_execute(Credentials const&, UseEffectiveIDs = UseEffectiveIDs::Yes) const;
 
-    bool may_read(UserID u, GroupID g, Span<GroupID const> eg) const
+    bool may_read(UserID u, GroupID g, ReadonlySpan<GroupID> eg) const
     {
         if (u == 0)
             return true;
@@ -59,7 +59,7 @@ struct InodeMetadata {
         return (mode & S_IROTH) == S_IROTH;
     }
 
-    bool may_write(UserID u, GroupID g, Span<GroupID const> eg) const
+    bool may_write(UserID u, GroupID g, ReadonlySpan<GroupID> eg) const
     {
         if (u == 0)
             return true;
@@ -70,7 +70,7 @@ struct InodeMetadata {
         return (mode & S_IWOTH) == S_IWOTH;
     }
 
-    bool may_execute(UserID u, GroupID g, Span<GroupID const> eg) const
+    bool may_execute(UserID u, GroupID g, ReadonlySpan<GroupID> eg) const
     {
         if (u == 0)
             return true;
@@ -120,10 +120,10 @@ struct InodeMetadata {
     UserID uid { 0 };
     GroupID gid { 0 };
     nlink_t link_count { 0 };
-    Time atime {};
-    Time ctime {};
-    Time mtime {};
-    Time dtime {};
+    UnixDateTime atime {};
+    UnixDateTime ctime {};
+    UnixDateTime mtime {};
+    UnixDateTime dtime {};
     blkcnt_t block_count { 0 };
     blksize_t block_size { 0 };
     MajorNumber major_device { 0 };

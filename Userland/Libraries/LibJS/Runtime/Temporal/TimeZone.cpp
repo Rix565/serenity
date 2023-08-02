@@ -10,7 +10,7 @@
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/Iterator.h>
 #include <LibJS/Runtime/Temporal/AbstractOperations.h>
 #include <LibJS/Runtime/Temporal/Calendar.h>
 #include <LibJS/Runtime/Temporal/Instant.h>
@@ -40,6 +40,7 @@ bool is_available_time_zone_name(StringView time_zone)
     return ::TimeZone::time_zone_from_string(time_zone).has_value();
 }
 
+// 6.4.2 CanonicalizeTimeZoneName ( timeZone ), https://tc39.es/ecma402/#sec-canonicalizetimezonename
 // 11.1.2 CanonicalizeTimeZoneName ( timeZone ), https://tc39.es/proposal-temporal/#sec-canonicalizetimezonename
 // 15.1.2 CanonicalizeTimeZoneName ( timeZone ), https://tc39.es/proposal-temporal/#sup-canonicalizetimezonename
 ThrowCompletionOr<String> canonicalize_time_zone_name(VM& vm, StringView time_zone)
@@ -48,7 +49,7 @@ ThrowCompletionOr<String> canonicalize_time_zone_name(VM& vm, StringView time_zo
     // 2. If ianaTimeZone is a Link name, let ianaTimeZone be the String value of the corresponding Zone name as specified in the file backward of the IANA Time Zone Database.
     auto iana_time_zone = ::TimeZone::canonicalize_time_zone(time_zone);
 
-    // 3. If ianaTimeZone is "Etc/UTC" or "Etc/GMT", return "UTC".
+    // 3. If ianaTimeZone is one of "Etc/UTC", "Etc/GMT", or "GMT", return "UTC".
     // NOTE: This is already done in canonicalize_time_zone().
 
     // 4. Return ianaTimeZone.
@@ -328,7 +329,7 @@ ThrowCompletionOr<Object*> to_temporal_time_zone(VM& vm, Value temporal_time_zon
 ThrowCompletionOr<double> get_offset_nanoseconds_for(VM& vm, Value time_zone, Instant& instant)
 {
     // 1. Let getOffsetNanosecondsFor be ? GetMethod(timeZone, "getOffsetNanosecondsFor").
-    auto* get_offset_nanoseconds_for = TRY(time_zone.get_method(vm, vm.names.getOffsetNanosecondsFor));
+    auto get_offset_nanoseconds_for = TRY(time_zone.get_method(vm, vm.names.getOffsetNanosecondsFor));
 
     // 2. Let offsetNanoseconds be ? Call(getOffsetNanosecondsFor, timeZone, « instant »).
     auto offset_nanoseconds_value = TRY(call(vm, get_offset_nanoseconds_for, time_zone, &instant));
@@ -525,7 +526,7 @@ ThrowCompletionOr<MarkedVector<Instant*>> get_possible_instants_for(VM& vm, Valu
     auto list = MarkedVector<Instant*> { vm.heap() };
 
     // 5. Let next be true.
-    Object* next = nullptr;
+    GCPtr<Object> next;
 
     // 6. Repeat, while next is not false,
     do {

@@ -21,20 +21,20 @@ public:
     ~Service();
 
     bool is_enabled() const;
-    void activate();
-    void did_exit(int exit_code);
+    ErrorOr<void> activate();
+    // Note: This is a `status` as in POSIX's wait syscall, not an exit-code.
+    ErrorOr<void> did_exit(int status);
 
     static Service* find_by_pid(pid_t);
-
-    // FIXME: Port to Core::Property
-    void save_to(JsonObject&);
 
 private:
     Service(Core::ConfigFile const&, StringView name);
 
-    void spawn(int socket_fd = -1);
+    ErrorOr<void> spawn(int socket_fd = -1);
 
     ErrorOr<void> determine_account(int fd);
+
+    ErrorOr<void> change_privileges();
 
     /// SocketDescriptor describes the details of a single socket that was
     /// requested by a service.
@@ -50,7 +50,7 @@ private:
     // Path to the executable. By default this is /bin/{m_name}.
     DeprecatedString m_executable_path;
     // Extra arguments, starting from argv[1], to pass when exec'ing.
-    Vector<DeprecatedString> m_extra_arguments;
+    DeprecatedString m_extra_arguments;
     // File path to open as stdio fds.
     DeprecatedString m_stdio_file_path;
     int m_priority { 1 };
@@ -71,12 +71,13 @@ private:
     // Whether several instances of this service can run at once.
     bool m_multi_instance { false };
     // Environment variables to pass to the service.
-    Vector<DeprecatedString> m_environment;
+    DeprecatedString m_environment;
     // Socket descriptors for this service.
     Vector<SocketDescriptor> m_sockets;
 
     // The resolved user account to run this service as.
     Optional<Core::Account> m_account;
+    bool m_must_login { false };
 
     // For single-instance services, PID of the running instance of this service.
     pid_t m_pid { -1 };
@@ -91,5 +92,5 @@ private:
     ErrorOr<void> setup_socket(SocketDescriptor&);
     ErrorOr<void> setup_sockets();
     void setup_notifier();
-    void handle_socket_connection();
+    ErrorOr<void> handle_socket_connection();
 };

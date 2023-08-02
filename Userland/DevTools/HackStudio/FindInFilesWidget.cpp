@@ -39,15 +39,15 @@ public:
     virtual int row_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override { return m_matches.size(); }
     virtual int column_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override { return Column::__Count; }
 
-    virtual DeprecatedString column_name(int column) const override
+    virtual ErrorOr<String> column_name(int column) const override
     {
         switch (column) {
         case Column::Filename:
-            return "Filename";
+            return TRY("Filename"_string);
         case Column::Location:
-            return "#";
+            return "#"_short_string;
         case Column::MatchedText:
-            return "Text";
+            return "Text"_short_string;
         default:
             VERIFY_NOT_REACHED();
         }
@@ -122,8 +122,8 @@ FindInFilesWidget::FindInFilesWidget()
 
     m_textbox = top_container.add<GUI::TextBox>();
 
-    m_button = top_container.add<GUI::Button>("Find in files");
-    m_button->set_fixed_width(100);
+    m_button = top_container.add<GUI::Button>("Find"_string.release_value_but_fixme_should_propagate_errors());
+    m_button->set_fixed_width(50);
 
     m_result_view = add<GUI::TableView>();
 

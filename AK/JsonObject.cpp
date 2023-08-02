@@ -14,7 +14,7 @@ JsonObject::JsonObject() = default;
 JsonObject::~JsonObject() = default;
 
 JsonObject::JsonObject(JsonObject const& other)
-    : m_members(other.m_members)
+    : m_members(other.m_members.clone().release_value_but_fixme_should_propagate_errors())
 {
 }
 
@@ -26,7 +26,7 @@ JsonObject::JsonObject(JsonObject&& other)
 JsonObject& JsonObject::operator=(JsonObject const& other)
 {
     if (this != &other)
-        m_members = other.m_members;
+        m_members = other.m_members.clone().release_value_but_fixme_should_propagate_errors();
     return *this;
 }
 
@@ -45,26 +45,6 @@ size_t JsonObject::size() const
 bool JsonObject::is_empty() const
 {
     return m_members.is_empty();
-}
-
-JsonValue const& JsonObject::get_deprecated(StringView key) const
-{
-    auto const* value = get_ptr(key);
-    static JsonValue* s_null_value { nullptr };
-    if (!value) {
-        if (!s_null_value)
-            s_null_value = new JsonValue;
-        return *s_null_value;
-    }
-    return *value;
-}
-
-JsonValue const* JsonObject::get_ptr(StringView key) const
-{
-    auto it = m_members.find(key);
-    if (it == m_members.end())
-        return nullptr;
-    return &(*it).value;
 }
 
 Optional<JsonValue const&> JsonObject::get(StringView key) const

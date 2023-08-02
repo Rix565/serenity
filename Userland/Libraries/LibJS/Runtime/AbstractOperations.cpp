@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -27,6 +27,8 @@
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Object.h>
 #include <LibJS/Runtime/ObjectEnvironment.h>
+#include <LibJS/Runtime/PromiseCapability.h>
+#include <LibJS/Runtime/PromiseConstructor.h>
 #include <LibJS/Runtime/PropertyDescriptor.h>
 #include <LibJS/Runtime/PropertyKey.h>
 #include <LibJS/Runtime/ProxyObject.h>
@@ -39,7 +41,7 @@ namespace JS {
 ThrowCompletionOr<Value> require_object_coercible(VM& vm, Value value)
 {
     if (value.is_nullish())
-        return vm.throw_completion<TypeError>(ErrorType::NotObjectCoercible, value.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotObjectCoercible, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
     return value;
 }
 
@@ -52,7 +54,7 @@ ThrowCompletionOr<Value> call_impl(VM& vm, Value function, Value this_value, Opt
 
     // 2. If IsCallable(F) is false, throw a TypeError exception.
     if (!function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, function.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, function.to_string_without_side_effects()));
 
     // 3. Return ? F.[[Call]](V, argumentsList).
     return function.as_function().internal_call(this_value, move(*arguments_list));
@@ -100,7 +102,7 @@ ThrowCompletionOr<MarkedVector<Value>> create_list_from_array_like(VM& vm, Value
 
     // 2. If Type(obj) is not Object, throw a TypeError exception.
     if (!value.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, value.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
 
     auto& array_like = value.as_object();
 
@@ -144,10 +146,10 @@ ThrowCompletionOr<FunctionObject*> species_constructor(VM& vm, Object const& obj
 
     // 3. If Type(C) is not Object, throw a TypeError exception.
     if (!constructor.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, constructor.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, TRY_OR_THROW_OOM(vm, constructor.to_string_without_side_effects()));
 
     // 4. Let S be ? Get(C, @@species).
-    auto species = TRY(constructor.as_object().get(*vm.well_known_symbol_species()));
+    auto species = TRY(constructor.as_object().get(vm.well_known_symbol_species()));
 
     // 5. If S is either undefined or null, return defaultConstructor.
     if (species.is_nullish())
@@ -158,7 +160,7 @@ ThrowCompletionOr<FunctionObject*> species_constructor(VM& vm, Object const& obj
         return &species.as_function();
 
     // 7. Throw a TypeError exception.
-    return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, species.to_string_without_side_effects());
+    return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, TRY_OR_THROW_OOM(vm, species.to_string_without_side_effects()));
 }
 
 // 7.3.25 GetFunctionRealm ( obj ), https://tc39.es/ecma262/#sec-getfunctionrealm
@@ -345,8 +347,8 @@ bool validate_and_apply_property_descriptor(Object* object, PropertyKey const& p
             // i. For each field of Desc, set the corresponding attribute of the property named P of object O to the value of the field.
             Value value;
             if (descriptor.is_accessor_descriptor() || (current->is_accessor_descriptor() && !descriptor.is_data_descriptor())) {
-                auto* getter = descriptor.get.value_or(current->get.value_or(nullptr));
-                auto* setter = descriptor.set.value_or(current->set.value_or(nullptr));
+                auto getter = descriptor.get.value_or(current->get.value_or(nullptr));
+                auto setter = descriptor.set.value_or(current->set.value_or(nullptr));
                 value = Accessor::create(object->vm(), getter, setter);
             } else {
                 value = descriptor.value.value_or(current->value.value_or({}));
@@ -364,7 +366,7 @@ bool validate_and_apply_property_descriptor(Object* object, PropertyKey const& p
 }
 
 // 10.1.14 GetPrototypeFromConstructor ( constructor, intrinsicDefaultProto ), https://tc39.es/ecma262/#sec-getprototypefromconstructor
-ThrowCompletionOr<Object*> get_prototype_from_constructor(VM& vm, FunctionObject const& constructor, Object* (Intrinsics::*intrinsic_default_prototype)())
+ThrowCompletionOr<Object*> get_prototype_from_constructor(VM& vm, FunctionObject const& constructor, NonnullGCPtr<Object> (Intrinsics::*intrinsic_default_prototype)())
 {
     // 1. Assert: intrinsicDefaultProto is this specification's name of an intrinsic object. The corresponding object must be an intrinsic that is intended to be used as the [[Prototype]] value of an object.
 
@@ -511,11 +513,8 @@ ThrowCompletionOr<Reference> make_super_property_reference(VM& vm, Value actual_
     // 3. Let baseValue be ? env.GetSuperBase().
     auto base_value = TRY(env.get_super_base());
 
-    // 4. Let bv be ? RequireObjectCoercible(baseValue).
-    auto bv = TRY(require_object_coercible(vm, base_value));
-
-    // 5. Return the Reference Record { [[Base]]: bv, [[ReferencedName]]: propertyKey, [[Strict]]: strict, [[ThisValue]]: actualThis }.
-    return Reference { bv, property_key, actual_this, strict };
+    // 4. Return the Reference Record { [[Base]]: baseValue, [[ReferencedName]]: propertyKey, [[Strict]]: strict, [[ThisValue]]: actualThis }.
+    return Reference { base_value, property_key, actual_this, strict };
 }
 
 // 19.2.1.1 PerformEval ( x, strictCaller, direct ), https://tc39.es/ecma262/#sec-performeval
@@ -602,7 +601,7 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
     //     b. If script is a List of errors, throw a SyntaxError exception.
     if (parser.has_errors()) {
         auto& error = parser.errors()[0];
-        return vm.throw_completion<SyntaxError>(error.to_deprecated_string());
+        return vm.throw_completion<SyntaxError>(TRY_OR_THROW_OOM(vm, error.to_string()));
     }
 
     bool strict_eval = false;
@@ -701,16 +700,16 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
 
     // 29. If result.[[Type]] is normal, then
     //     a. Set result to the result of evaluating body.
-    if (auto* bytecode_interpreter = Bytecode::Interpreter::current()) {
+    if (auto* bytecode_interpreter = vm.bytecode_interpreter_if_exists()) {
         auto executable_result = Bytecode::Generator::generate(program);
         if (executable_result.is_error())
-            return vm.throw_completion<InternalError>(ErrorType::NotImplemented, executable_result.error().to_deprecated_string());
+            return vm.throw_completion<InternalError>(ErrorType::NotImplemented, TRY_OR_THROW_OOM(vm, executable_result.error().to_string()));
 
         auto executable = executable_result.release_value();
         executable->name = "eval"sv;
         if (Bytecode::g_dump_bytecode)
             executable->dump();
-        auto result_or_error = bytecode_interpreter->run_and_return_frame(*executable, nullptr);
+        auto result_or_error = bytecode_interpreter->run_and_return_frame(eval_realm, *executable, nullptr);
         if (result_or_error.value.is_error())
             return result_or_error.value.release_error();
 
@@ -744,10 +743,10 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, Program const& pr
         // a. If varEnv is a global Environment Record, then
         if (global_var_environment) {
             // i. For each element name of varNames, do
-            TRY(program.for_each_var_declared_name([&](auto const& name) -> ThrowCompletionOr<void> {
+            TRY(program.for_each_var_declared_identifier([&](auto const& identifier) -> ThrowCompletionOr<void> {
                 // 1. If varEnv.HasLexicalDeclaration(name) is true, throw a SyntaxError exception.
-                if (global_var_environment->has_lexical_declaration(name))
-                    return vm.throw_completion<SyntaxError>(ErrorType::TopLevelVariableAlreadyDeclared, name);
+                if (global_var_environment->has_lexical_declaration(identifier.string()))
+                    return vm.throw_completion<SyntaxError>(ErrorType::TopLevelVariableAlreadyDeclared, identifier.string());
 
                 // 2. NOTE: eval will not create a global var declaration that would be shadowed by a global lexical declaration.
                 return {};
@@ -764,7 +763,8 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, Program const& pr
             if (!is<ObjectEnvironment>(*this_environment)) {
                 // 1. NOTE: The environment of with statements cannot contain any lexical declaration so it doesn't need to be checked for var/let hoisting conflicts.
                 // 2. For each element name of varNames, do
-                TRY(program.for_each_var_declared_name([&](auto const& name) -> ThrowCompletionOr<void> {
+                TRY(program.for_each_var_declared_identifier([&](auto const& identifier) -> ThrowCompletionOr<void> {
+                    auto const& name = identifier.string();
                     // a. If ! thisEnv.HasBinding(name) is true, then
                     if (MUST(this_environment->has_binding(name))) {
                         // i. Throw a SyntaxError exception.
@@ -843,7 +843,7 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, Program const& pr
         // b. For each FunctionDeclaration f that is directly contained in the StatementList of a Block, CaseClause, or DefaultClause Contained within body, do
         TRY(program.for_each_function_hoistable_with_annexB_extension([&](FunctionDeclaration& function_declaration) -> ThrowCompletionOr<void> {
             // i. Let F be StringValue of the BindingIdentifier of f.
-            auto& function_name = function_declaration.name();
+            auto function_name = function_declaration.name();
 
             // ii. If replacing the FunctionDeclaration f with a VariableStatement that has F as a BindingIdentifier would not produce any Early Errors for body, then
             // Note: This is checked during parsing and for_each_function_hoistable_with_annexB_extension so it always passes here.
@@ -937,7 +937,9 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, Program const& pr
         // Note: This is handled by for_each_var_scoped_variable_declaration.
 
         // i. For each String vn of the BoundNames of d, do
-        return declaration.for_each_bound_name([&](auto const& name) -> ThrowCompletionOr<void> {
+        return declaration.for_each_bound_identifier([&](auto const& identifier) -> ThrowCompletionOr<void> {
+            auto const& name = identifier.string();
+
             // 1. If vn is not an element of declaredFunctionNames, then
             if (!declared_function_names.contains(name)) {
                 // a. If varEnv is a global Environment Record, then
@@ -966,7 +968,9 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, Program const& pr
         // a. NOTE: Lexically declared names are only instantiated here but not initialized.
 
         // b. For each element dn of the BoundNames of d, do
-        return declaration.for_each_bound_name([&](auto const& name) -> ThrowCompletionOr<void> {
+        return declaration.for_each_bound_identifier([&](auto const& identifier) -> ThrowCompletionOr<void> {
+            auto const& name = identifier.string();
+
             // i. If IsConstantDeclaration of d is true, then
             if (declaration.is_constant_declaration()) {
                 // 1. Perform ? lexEnv.CreateImmutableBinding(dn, true).
@@ -988,7 +992,7 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, Program const& pr
     for (auto& declaration : functions_to_initialize.in_reverse()) {
         // a. Let fn be the sole element of the BoundNames of f.
         // b. Let fo be InstantiateFunctionObject of f with arguments lexEnv and privateEnv.
-        auto function = ECMAScriptFunctionObject::create(realm, declaration.name(), declaration.source_text(), declaration.body(), declaration.parameters(), declaration.function_length(), lexical_environment, private_environment, declaration.kind(), declaration.is_strict_mode(), declaration.might_need_arguments_object());
+        auto function = ECMAScriptFunctionObject::create(realm, declaration.name(), declaration.source_text(), declaration.body(), declaration.parameters(), declaration.function_length(), declaration.local_variables_names(), lexical_environment, private_environment, declaration.kind(), declaration.is_strict_mode(), declaration.might_need_arguments_object());
 
         // c. If varEnv is a global Environment Record, then
         if (global_var_environment) {
@@ -1075,11 +1079,11 @@ Object* create_unmapped_arguments_object(VM& vm, Span<Value> arguments)
     }
 
     // 7. Perform ! DefinePropertyOrThrow(obj, @@iterator, PropertyDescriptor { [[Value]]: %Array.prototype.values%, [[Writable]]: true, [[Enumerable]]: false, [[Configurable]]: true }).
-    auto* array_prototype_values = realm.intrinsics().array_prototype_values_function();
-    MUST(object->define_property_or_throw(*vm.well_known_symbol_iterator(), { .value = array_prototype_values, .writable = true, .enumerable = false, .configurable = true }));
+    auto array_prototype_values = realm.intrinsics().array_prototype_values_function();
+    MUST(object->define_property_or_throw(vm.well_known_symbol_iterator(), { .value = array_prototype_values, .writable = true, .enumerable = false, .configurable = true }));
 
     // 8. Perform ! DefinePropertyOrThrow(obj, "callee", PropertyDescriptor { [[Get]]: %ThrowTypeError%, [[Set]]: %ThrowTypeError%, [[Enumerable]]: false, [[Configurable]]: false }).
-    auto* throw_type_error = realm.intrinsics().throw_type_error_function();
+    auto throw_type_error = realm.intrinsics().throw_type_error_function();
     MUST(object->define_property_or_throw(vm.names.callee, { .get = throw_type_error, .set = throw_type_error, .enumerable = false, .configurable = false }));
 
     // 9. Return obj.
@@ -1129,7 +1133,7 @@ Object* create_mapped_arguments_object(VM& vm, FunctionObject& function, Vector<
     VERIFY(formals.size() <= NumericLimits<i32>::max());
     for (i32 index = static_cast<i32>(formals.size()) - 1; index >= 0; --index) {
         // a. Let name be parameterNames[index].
-        auto const& name = formals[index].binding.get<DeprecatedFlyString>();
+        auto const& name = formals[index].binding.get<NonnullRefPtr<Identifier const>>()->string();
 
         // b. If name is not an element of mappedNames, then
         if (mapped_names.contains(name))
@@ -1158,8 +1162,8 @@ Object* create_mapped_arguments_object(VM& vm, FunctionObject& function, Vector<
     }
 
     // 20. Perform ! DefinePropertyOrThrow(obj, @@iterator, PropertyDescriptor { [[Value]]: %Array.prototype.values%, [[Writable]]: true, [[Enumerable]]: false, [[Configurable]]: true }).
-    auto* array_prototype_values = realm.intrinsics().array_prototype_values_function();
-    MUST(object->define_property_or_throw(*vm.well_known_symbol_iterator(), { .value = array_prototype_values, .writable = true, .enumerable = false, .configurable = true }));
+    auto array_prototype_values = realm.intrinsics().array_prototype_values_function();
+    MUST(object->define_property_or_throw(vm.well_known_symbol_iterator(), { .value = array_prototype_values, .writable = true, .enumerable = false, .configurable = true }));
 
     // 21. Perform ! DefinePropertyOrThrow(obj, "callee", PropertyDescriptor { [[Value]]: func, [[Writable]]: true, [[Enumerable]]: false, [[Configurable]]: true }).
     MUST(object->define_property_or_throw(vm.names.callee, { .value = &function, .writable = true, .enumerable = false, .configurable = true }));
@@ -1169,7 +1173,7 @@ Object* create_mapped_arguments_object(VM& vm, FunctionObject& function, Vector<
 }
 
 // 7.1.21 CanonicalNumericIndexString ( argument ), https://tc39.es/ecma262/#sec-canonicalnumericindexstring
-CanonicalIndex canonical_numeric_index_string(PropertyKey const& property_key, CanonicalIndexMode mode)
+ThrowCompletionOr<CanonicalIndex> canonical_numeric_index_string(VM& vm, PropertyKey const& property_key, CanonicalIndexMode mode)
 {
     // NOTE: If the property name is a number type (An implementation-defined optimized
     // property key type), it can be treated as a string property that has already been
@@ -1219,18 +1223,17 @@ CanonicalIndex canonical_numeric_index_string(PropertyKey const& property_key, C
     auto maybe_double = argument.to_double(AK::TrimWhitespace::No);
     if (!maybe_double.has_value())
         return CanonicalIndex(CanonicalIndex::Type::Undefined, 0);
-    auto double_value = Value(maybe_double.value());
 
     // FIXME: We return 0 instead of n but it might not observable?
     // 3. If SameValue(! ToString(n), argument) is true, return n.
-    if (double_value.to_string_without_side_effects() == argument)
+    if (TRY_OR_THROW_OOM(vm, number_to_string(*maybe_double)) == argument.view())
         return CanonicalIndex(CanonicalIndex::Type::Numeric, 0);
 
     // 4. Return undefined.
     return CanonicalIndex(CanonicalIndex::Type::Undefined, 0);
 }
 
-// 22.1.3.18.1 GetSubstitution ( matched, str, position, captures, namedCaptures, replacementTemplate ), https://tc39.es/ecma262/#sec-getsubstitution
+// 22.1.3.19.1 GetSubstitution ( matched, str, position, captures, namedCaptures, replacementTemplate ), https://tc39.es/ecma262/#sec-getsubstitution
 ThrowCompletionOr<String> get_substitution(VM& vm, Utf16View const& matched, Utf16View const& str, size_t position, Span<Value> captures, Value named_captures, Value replacement_template)
 {
     auto replace_string = TRY(replacement_template.to_utf16_string(vm));
@@ -1333,7 +1336,7 @@ ThrowCompletionOr<void> add_disposable_resource(VM& vm, Vector<DisposableResourc
 
         // b. If Type(V) is not Object, throw a TypeError exception.
         if (!value.is_object())
-            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, value.to_string_without_side_effects());
+            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
 
         // c. Let resource be ? CreateDisposableResource(V, hint).
         resource = TRY(create_disposable_resource(vm, value, hint));
@@ -1349,7 +1352,7 @@ ThrowCompletionOr<void> add_disposable_resource(VM& vm, Vector<DisposableResourc
         else {
             // i. If Type(V) is not Object, throw a TypeError exception.
             if (!value.is_object())
-                return vm.throw_completion<TypeError>(ErrorType::NotAnObject, value.to_string_without_side_effects());
+                return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
 
             // ii. Let resource be ? CreateDisposableResource(V, hint, method).
             resource = TRY(create_disposable_resource(vm, value, hint, method));
@@ -1378,7 +1381,7 @@ ThrowCompletionOr<DisposableResource> create_disposable_resource(VM& vm, Value v
 
         // c. If method is undefined, throw a TypeError exception.
         if (!method)
-            return vm.throw_completion<TypeError>(ErrorType::NoDisposeMethod, value.to_string_without_side_effects());
+            return vm.throw_completion<TypeError>(ErrorType::NoDisposeMethod, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
     }
     // 2. Else,
     // a. If IsCallable(method) is false, throw a TypeError exception.
@@ -1402,7 +1405,7 @@ ThrowCompletionOr<GCPtr<FunctionObject>> get_dispose_method(VM& vm, Value value,
 
     // 2. Else,
     // a. Let method be ? GetMethod(V, @@dispose).
-    return GCPtr<FunctionObject> { TRY(value.get_method(vm, *vm.well_known_symbol_dispose())) };
+    return TRY(value.get_method(vm, vm.well_known_symbol_dispose()));
 }
 
 // 2.1.5 Dispose ( V, hint, method ), https://tc39.es/proposal-explicit-resource-management/#sec-dispose
@@ -1471,6 +1474,98 @@ Completion dispose_resources(VM& vm, GCPtr<DeclarativeEnvironment> disposable, C
 
     // 2. Return completion.
     return completion;
+}
+
+ThrowCompletionOr<Value> perform_import_call(VM& vm, Value specifier, Value options_value)
+{
+    auto& realm = *vm.current_realm();
+
+    // 2.1.1.1 EvaluateImportCall ( specifierExpression [ , optionsExpression ] ), https://tc39.es/proposal-import-assertions/#sec-evaluate-import-call
+    //  1. Let referencingScriptOrModule be GetActiveScriptOrModule().
+    auto referencing_script_or_module = vm.get_active_script_or_module();
+
+    // 6. Let promiseCapability be ! NewPromiseCapability(%Promise%).
+    auto promise_capability = MUST(new_promise_capability(vm, realm.intrinsics().promise_constructor()));
+
+    // 7. Let specifierString be Completion(ToString(specifier)).
+    // 8. IfAbruptRejectPromise(specifierString, promiseCapability).
+    auto specifier_string = TRY_OR_REJECT_WITH_VALUE(vm, promise_capability, specifier.to_deprecated_string(vm));
+
+    // 9. Let assertions be a new empty List.
+    Vector<ModuleRequest::Assertion> assertions;
+
+    // 10. If options is not undefined, then
+    if (!options_value.is_undefined()) {
+        // a. If Type(options) is not Object,
+        if (!options_value.is_object()) {
+            auto error = TypeError::create(realm, TRY_OR_THROW_OOM(vm, String::formatted(ErrorType::NotAnObject.message(), "ImportOptions")));
+            // i. Perform ! Call(promiseCapability.[[Reject]], undefined, « a newly created TypeError object »).
+            MUST(call(vm, *promise_capability->reject(), js_undefined(), error));
+
+            // ii. Return promiseCapability.[[Promise]].
+            return Value { promise_capability->promise() };
+        }
+
+        // b. Let assertionsObj be Get(options, "assert").
+        // c. IfAbruptRejectPromise(assertionsObj, promiseCapability).
+        auto assertion_object = TRY_OR_REJECT_WITH_VALUE(vm, promise_capability, options_value.get(vm, vm.names.assert));
+
+        // d. If assertionsObj is not undefined,
+        if (!assertion_object.is_undefined()) {
+            // i. If Type(assertionsObj) is not Object,
+            if (!assertion_object.is_object()) {
+                auto error = TypeError::create(realm, TRY_OR_THROW_OOM(vm, String::formatted(ErrorType::NotAnObject.message(), "ImportOptionsAssertions")));
+                // 1. Perform ! Call(promiseCapability.[[Reject]], undefined, « a newly created TypeError object »).
+                MUST(call(vm, *promise_capability->reject(), js_undefined(), error));
+
+                // 2. Return promiseCapability.[[Promise]].
+                return Value { promise_capability->promise() };
+            }
+
+            // ii. Let keys be EnumerableOwnPropertyNames(assertionsObj, key).
+            // iii. IfAbruptRejectPromise(keys, promiseCapability).
+            auto keys = TRY_OR_REJECT_WITH_VALUE(vm, promise_capability, assertion_object.as_object().enumerable_own_property_names(Object::PropertyKind::Key));
+
+            // iv. Let supportedAssertions be ! HostGetSupportedImportAssertions().
+            auto supported_assertions = vm.host_get_supported_import_assertions();
+
+            // v. For each String key of keys,
+            for (auto const& key : keys) {
+                auto property_key = MUST(key.to_property_key(vm));
+
+                // 1. Let value be Get(assertionsObj, key).
+                // 2. IfAbruptRejectPromise(value, promiseCapability).
+                auto value = TRY_OR_REJECT_WITH_VALUE(vm, promise_capability, assertion_object.get(vm, property_key));
+
+                // 3. If Type(value) is not String, then
+                if (!value.is_string()) {
+                    auto error = TypeError::create(realm, TRY_OR_THROW_OOM(vm, String::formatted(ErrorType::NotAString.message(), "Import Assertion option value")));
+                    // a. Perform ! Call(promiseCapability.[[Reject]], undefined, « a newly created TypeError object »).
+                    MUST(call(vm, *promise_capability->reject(), js_undefined(), error));
+
+                    // b. Return promiseCapability.[[Promise]].
+                    return Value { promise_capability->promise() };
+                }
+
+                // 4. If supportedAssertions contains key, then
+                if (supported_assertions.contains_slow(property_key.to_string())) {
+                    // a. Append { [[Key]]: key, [[Value]]: value } to assertions.
+                    assertions.empend(property_key.to_string(), TRY(value.as_string().deprecated_string()));
+                }
+            }
+        }
+        // e. Sort assertions by the code point order of the [[Key]] of each element. NOTE: This sorting is observable only in that hosts are prohibited from distinguishing among assertions by the order they occur in.
+        // Note: This is done when constructing the ModuleRequest.
+    }
+
+    // 11. Let moduleRequest be a new ModuleRequest Record { [[Specifier]]: specifierString, [[Assertions]]: assertions }.
+    ModuleRequest request { specifier_string, assertions };
+
+    // 12. Perform HostImportModuleDynamically(referencingScriptOrModule, moduleRequest, promiseCapability).
+    MUST_OR_THROW_OOM(vm.host_import_module_dynamically(referencing_script_or_module, move(request), promise_capability));
+
+    // 13. Return promiseCapability.[[Promise]].
+    return Value { promise_capability->promise() };
 }
 
 }

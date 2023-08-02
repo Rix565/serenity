@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2023, networkException <networkexception@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -47,8 +48,8 @@ void TerminalWidget::set_pty_master_fd(int fd)
         m_notifier = nullptr;
         return;
     }
-    m_notifier = Core::Notifier::construct(m_ptm_fd, Core::Notifier::Read);
-    m_notifier->on_ready_to_read = [this] {
+    m_notifier = Core::Notifier::construct(m_ptm_fd, Core::Notifier::Type::Read);
+    m_notifier->on_activation = [this] {
         u8 buffer[BUFSIZ];
         ssize_t nread = read(m_ptm_fd, buffer, sizeof(buffer));
         if (nread < 0) {
@@ -208,7 +209,7 @@ void TerminalWidget::keydown_event(GUI::KeyEvent& event)
 {
     // We specifically need to process shortcuts before input to the Terminal is done
     // since otherwise escape sequences will eat all our shortcuts for dinner.
-    window()->propagate_shortcuts_up_to_application(event, this);
+    window()->propagate_shortcuts(event, this);
     if (event.is_accepted())
         return;
 
@@ -368,12 +369,12 @@ void TerminalWidget::paint_event(GUI::PaintEvent& event)
             }
 
             if (underline_style == UnderlineStyle::Solid) {
-                painter.draw_line(cell_rect.bottom_left(), cell_rect.bottom_right(), underline_color);
+                painter.draw_line(cell_rect.bottom_left().moved_up(1), cell_rect.bottom_right().translated(-1), underline_color);
             } else if (underline_style == UnderlineStyle::Dotted) {
-                int x1 = cell_rect.bottom_left().x();
-                int x2 = cell_rect.bottom_right().x();
-                int y = cell_rect.bottom_left().y();
-                for (int x = x1; x <= x2; ++x) {
+                int x1 = cell_rect.left();
+                int x2 = cell_rect.right();
+                int y = cell_rect.bottom() - 1;
+                for (int x = x1; x < x2; ++x) {
                     if ((x % 3) == 0)
                         painter.set_pixel({ x, y }, underline_color);
                 }
@@ -438,16 +439,16 @@ void TerminalWidget::paint_event(GUI::PaintEvent& event)
         auto cursor_color = terminal_color_to_rgb(cursor_line.attribute_at(m_terminal.cursor_column()).effective_foreground_color());
         auto cell_rect = glyph_rect(row_with_cursor, m_terminal.cursor_column()).inflated(0, m_line_spacing);
         if (m_cursor_shape == VT::CursorShape::Underline) {
-            auto x1 = cell_rect.bottom_left().x();
-            auto x2 = cell_rect.bottom_right().x();
-            auto y = cell_rect.bottom_left().y();
-            for (auto x = x1; x <= x2; ++x)
+            auto x1 = cell_rect.left();
+            auto x2 = cell_rect.right();
+            auto y = cell_rect.bottom() - 1;
+            for (auto x = x1; x < x2; ++x)
                 painter.set_pixel({ x, y }, cursor_color);
         } else if (m_cursor_shape == VT::CursorShape::Bar) {
-            auto x = cell_rect.bottom_left().x();
-            auto y1 = cell_rect.top_left().y();
-            auto y2 = cell_rect.bottom_left().y();
-            for (auto y = y1; y <= y2; ++y)
+            auto x = cell_rect.left();
+            auto y1 = cell_rect.top();
+            auto y2 = cell_rect.bottom();
+            for (auto y = y1; y < y2; ++y)
                 painter.set_pixel({ x, y }, cursor_color);
         } else {
             // We fall back to a block if we don't support the selected cursor type.
@@ -527,7 +528,7 @@ void TerminalWidget::relayout(Gfx::IntSize size)
 
 Gfx::IntSize TerminalWidget::compute_base_size() const
 {
-    int base_width = frame_thickness() * 2 + m_inset * 2 + m_scrollbar->width();
+    int base_width = frame_thickness() * 2 + m_inset * 2 + (m_scrollbar->is_visible() ? m_scrollbar->width() : 0);
     int base_height = frame_thickness() * 2 + m_inset * 2;
     return { base_width, base_height };
 }
@@ -557,6 +558,7 @@ void TerminalWidget::set_opacity(u8 new_opacity)
 void TerminalWidget::set_show_scrollbar(bool show_scrollbar)
 {
     m_scrollbar->set_visible(show_scrollbar);
+    relayout(size());
 }
 
 bool TerminalWidget::has_selection() const
@@ -671,15 +673,27 @@ VT::Range TerminalWidget::find_next(StringView needle, const VT::Position& start
     VT::Position start_of_potential_match;
     size_t needle_index = 0;
 
+    Utf8View unicode_needle(needle);
+    Vector<u32> needle_code_points;
+    for (u32 code_point : unicode_needle)
+        needle_code_points.append(code_point);
+
     do {
         auto ch = code_point_at(position);
-        // FIXME: This is not the right way to use a Unicode needle!
-        auto needle_ch = (u32)needle[needle_index];
-        if (case_sensitivity ? ch == needle_ch : to_lowercase_code_point(ch) == to_lowercase_code_point(needle_ch)) {
+
+        bool code_point_matches = false;
+        if (needle_index >= needle_code_points.size())
+            code_point_matches = false;
+        else if (case_sensitivity)
+            code_point_matches = ch == needle_code_points[needle_index];
+        else
+            code_point_matches = to_lowercase_code_point(ch) == to_lowercase_code_point(needle_code_points[needle_index]);
+
+        if (code_point_matches) {
             if (needle_index == 0)
                 start_of_potential_match = position;
             ++needle_index;
-            if (needle_index >= needle.length())
+            if (needle_index >= needle_code_points.size())
                 return { start_of_potential_match, position };
         } else {
             if (needle_index > 0)
@@ -700,23 +714,35 @@ VT::Range TerminalWidget::find_previous(StringView needle, const VT::Position& s
     VT::Position position = start.is_valid() ? start : VT::Position(m_terminal.line_count() - 1, m_terminal.line(m_terminal.line_count() - 1).length() - 1);
     VT::Position original_position = position;
 
+    Utf8View unicode_needle(needle);
+    Vector<u32> needle_code_points;
+    for (u32 code_point : unicode_needle)
+        needle_code_points.append(code_point);
+
     VT::Position end_of_potential_match;
-    size_t needle_index = needle.length() - 1;
+    size_t needle_index = needle_code_points.size() - 1;
 
     do {
         auto ch = code_point_at(position);
-        // FIXME: This is not the right way to use a Unicode needle!
-        auto needle_ch = (u32)needle[needle_index];
-        if (case_sensitivity ? ch == needle_ch : to_lowercase_code_point(ch) == to_lowercase_code_point(needle_ch)) {
-            if (needle_index == needle.length() - 1)
+
+        bool code_point_matches = false;
+        if (needle_index >= needle_code_points.size())
+            code_point_matches = false;
+        else if (case_sensitivity)
+            code_point_matches = ch == needle_code_points[needle_index];
+        else
+            code_point_matches = to_lowercase_code_point(ch) == to_lowercase_code_point(needle_code_points[needle_index]);
+
+        if (code_point_matches) {
+            if (needle_index == needle_code_points.size() - 1)
                 end_of_potential_match = position;
             if (needle_index == 0)
                 return { position, end_of_potential_match };
             --needle_index;
         } else {
-            if (needle_index < needle.length() - 1)
+            if (needle_index < needle_code_points.size() - 1)
                 position = end_of_potential_match;
-            needle_index = needle.length() - 1;
+            needle_index = needle_code_points.size() - 1;
         }
         position = previous_position_before(position, should_wrap);
     } while (position.is_valid() && position != original_position);
@@ -843,7 +869,7 @@ void TerminalWidget::mousemove_event(GUI::MouseEvent& event)
             auto handlers = Desktop::Launcher::get_handlers_for_url(attribute.href);
             if (!handlers.is_empty()) {
                 auto url = URL(attribute.href);
-                auto path = url.path();
+                auto path = url.serialize_path();
 
                 auto app_file = Desktop::AppFile::get_for_app(LexicalPath::basename(handlers[0]));
                 auto app_name = app_file->is_valid() ? app_file->name() : LexicalPath::basename(handlers[0]);
@@ -1043,7 +1069,7 @@ void TerminalWidget::beep()
         return;
     }
     if (m_bell_mode == BellMode::AudibleBeep) {
-        sysbeep();
+        sysbeep(440);
         return;
     }
     m_visual_beep_timer->restart(200);
@@ -1122,7 +1148,7 @@ void TerminalWidget::context_menu_event(GUI::ContextMenuEvent& event)
         }));
         m_context_menu_for_hyperlink->add_action(GUI::Action::create("Copy &Name", [&](auto&) {
             // file://courage/home/anon/something -> /home/anon/something
-            auto path = URL(m_context_menu_href).path();
+            auto path = URL(m_context_menu_href).serialize_path();
             // /home/anon/something -> something
             auto name = LexicalPath::basename(path);
             GUI::Clipboard::the().set_plain_text(name);
@@ -1153,7 +1179,7 @@ void TerminalWidget::drop_event(GUI::DropEvent& event)
                 send_non_user_input(" "sv.bytes());
 
             if (url.scheme() == "file")
-                send_non_user_input(url.path().bytes());
+                send_non_user_input(url.serialize_path().bytes());
             else
                 send_non_user_input(url.to_deprecated_string().bytes());
 
@@ -1178,7 +1204,7 @@ static void collect_font_metrics(Gfx::Font const& font, int& column_width, int& 
 {
     line_spacing = 4;
     column_width = static_cast<int>(ceilf(font.glyph_width('x')));
-    cell_height = static_cast<int>(ceilf(font.pixel_size()));
+    cell_height = font.pixel_size_rounded_up();
     line_height = cell_height + line_spacing;
 }
 
@@ -1277,7 +1303,7 @@ constexpr Gfx::Color TerminalWidget::terminal_color_to_rgb(VT::Color color) cons
     default:
         VERIFY_NOT_REACHED();
     }
-};
+}
 
 void TerminalWidget::set_font_and_resize_to_fit(Gfx::Font const& font)
 {

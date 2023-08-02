@@ -8,6 +8,7 @@
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
+#include <LibCore/File.h>
 #include <LibCore/ProcessStatisticsReader.h>
 #include <pwd.h>
 
@@ -15,9 +16,9 @@ namespace Core {
 
 HashMap<uid_t, DeprecatedString> ProcessStatisticsReader::s_usernames;
 
-ErrorOr<AllProcessesStatistics> ProcessStatisticsReader::get_all(Core::Stream::SeekableStream& proc_all_file, bool include_usernames)
+ErrorOr<AllProcessesStatistics> ProcessStatisticsReader::get_all(SeekableStream& proc_all_file, bool include_usernames)
 {
-    TRY(proc_all_file.seek(0, Core::Stream::SeekMode::SetPosition));
+    TRY(proc_all_file.seek(0, SeekMode::SetPosition));
 
     AllProcessesStatistics all_processes_statistics;
 
@@ -35,13 +36,13 @@ ErrorOr<AllProcessesStatistics> ProcessStatisticsReader::get_all(Core::Stream::S
         process.uid = process_object.get_u32("uid"sv).value_or(0);
         process.gid = process_object.get_u32("gid"sv).value_or(0);
         process.ppid = process_object.get_u32("ppid"sv).value_or(0);
-        process.nfds = process_object.get_u32("nfds"sv).value_or(0);
         process.kernel = process_object.get_bool("kernel"sv).value_or(false);
         process.name = process_object.get_deprecated_string("name"sv).value_or("");
         process.executable = process_object.get_deprecated_string("executable"sv).value_or("");
         process.tty = process_object.get_deprecated_string("tty"sv).value_or("");
         process.pledge = process_object.get_deprecated_string("pledge"sv).value_or("");
         process.veil = process_object.get_deprecated_string("veil"sv).value_or("");
+        process.creation_time = UnixDateTime::from_nanoseconds_since_epoch(process_object.get_i64("creation_time"sv).value_or(0));
         process.amount_virtual = process_object.get_u32("amount_virtual"sv).value_or(0);
         process.amount_resident = process_object.get_u32("amount_resident"sv).value_or(0);
         process.amount_shared = process_object.get_u32("amount_shared"sv).value_or(0);
@@ -67,12 +68,12 @@ ErrorOr<AllProcessesStatistics> ProcessStatisticsReader::get_all(Core::Stream::S
             thread.inode_faults = thread_object.get_u32("inode_faults"sv).value_or(0);
             thread.zero_faults = thread_object.get_u32("zero_faults"sv).value_or(0);
             thread.cow_faults = thread_object.get_u32("cow_faults"sv).value_or(0);
-            thread.unix_socket_read_bytes = thread_object.get_u32("unix_socket_read_bytes"sv).value_or(0);
-            thread.unix_socket_write_bytes = thread_object.get_u32("unix_socket_write_bytes"sv).value_or(0);
-            thread.ipv4_socket_read_bytes = thread_object.get_u32("ipv4_socket_read_bytes"sv).value_or(0);
-            thread.ipv4_socket_write_bytes = thread_object.get_u32("ipv4_socket_write_bytes"sv).value_or(0);
-            thread.file_read_bytes = thread_object.get_u32("file_read_bytes"sv).value_or(0);
-            thread.file_write_bytes = thread_object.get_u32("file_write_bytes"sv).value_or(0);
+            thread.unix_socket_read_bytes = thread_object.get_u64("unix_socket_read_bytes"sv).value_or(0);
+            thread.unix_socket_write_bytes = thread_object.get_u64("unix_socket_write_bytes"sv).value_or(0);
+            thread.ipv4_socket_read_bytes = thread_object.get_u64("ipv4_socket_read_bytes"sv).value_or(0);
+            thread.ipv4_socket_write_bytes = thread_object.get_u64("ipv4_socket_write_bytes"sv).value_or(0);
+            thread.file_read_bytes = thread_object.get_u64("file_read_bytes"sv).value_or(0);
+            thread.file_write_bytes = thread_object.get_u64("file_write_bytes"sv).value_or(0);
             process.threads.append(move(thread));
         });
 
@@ -90,7 +91,7 @@ ErrorOr<AllProcessesStatistics> ProcessStatisticsReader::get_all(Core::Stream::S
 
 ErrorOr<AllProcessesStatistics> ProcessStatisticsReader::get_all(bool include_usernames)
 {
-    auto proc_all_file = TRY(Core::Stream::File::open("/sys/kernel/processes"sv, Core::Stream::OpenMode::Read));
+    auto proc_all_file = TRY(Core::File::open("/sys/kernel/processes"sv, Core::File::OpenMode::Read));
     return get_all(*proc_all_file, include_usernames);
 }
 

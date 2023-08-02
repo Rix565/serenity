@@ -8,7 +8,6 @@
 #pragma once
 
 #include <AK/IntegralMath.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/Optional.h>
 #include <AK/OwnPtr.h>
 #include <LibCore/MappedFile.h>
@@ -26,6 +25,8 @@ public:
     typedef Function<DecoderErrorOr<IterationDecision>(TrackEntry const&)> TrackEntryCallback;
 
     static DecoderErrorOr<Reader> from_file(StringView path);
+    static DecoderErrorOr<Reader> from_mapped_file(NonnullRefPtr<Core::MappedFile> mapped_file);
+
     static DecoderErrorOr<Reader> from_data(ReadonlyBytes data);
 
     EBMLHeader const& header() const { return m_header.value(); }
@@ -38,7 +39,7 @@ public:
     DecoderErrorOr<size_t> track_count();
 
     DecoderErrorOr<SampleIterator> create_sample_iterator(u64 track_number);
-    DecoderErrorOr<void> seek_to_random_access_point(SampleIterator&, Time);
+    DecoderErrorOr<SampleIterator> seek_to_random_access_point(SampleIterator, Duration);
     DecoderErrorOr<Optional<Vector<CuePoint> const&>> cue_points_for_track(u64 track_number);
     DecoderErrorOr<bool> has_cues_for_track(u64 track_number);
 
@@ -57,7 +58,7 @@ private:
 
     DecoderErrorOr<void> parse_cues(Streamer&);
     DecoderErrorOr<void> ensure_cues_are_parsed();
-    DecoderErrorOr<void> seek_to_cue_for_timestamp(SampleIterator&, Time const&);
+    DecoderErrorOr<void> seek_to_cue_for_timestamp(SampleIterator&, Duration const&);
 
     RefPtr<Core::MappedFile> m_mapped_file;
     ReadonlyBytes m_data;
@@ -83,7 +84,7 @@ class SampleIterator {
 public:
     DecoderErrorOr<Block> next_block();
     Cluster const& current_cluster() { return *m_current_cluster; }
-    Time const& last_timestamp() { return m_last_timestamp; }
+    Optional<Duration> const& last_timestamp() { return m_last_timestamp; }
 
 private:
     friend class Reader;
@@ -107,7 +108,7 @@ private:
     // Must always point to an element ID or the end of the stream.
     size_t m_position { 0 };
 
-    Time m_last_timestamp { Time::min() };
+    Optional<Duration> m_last_timestamp;
 
     Optional<Cluster> m_current_cluster;
 };

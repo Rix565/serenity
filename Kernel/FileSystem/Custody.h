@@ -10,7 +10,7 @@
 #include <AK/IntrusiveList.h>
 #include <AK/RefPtr.h>
 #include <Kernel/Forward.h>
-#include <Kernel/KString.h>
+#include <Kernel/Library/KString.h>
 #include <Kernel/Library/ListedRefCounted.h>
 #include <Kernel/Locking/SpinlockProtected.h>
 
@@ -37,7 +37,7 @@ private:
 
     RefPtr<Custody> m_parent;
     NonnullOwnPtr<KString> m_name;
-    NonnullLockRefPtr<Inode> m_inode;
+    NonnullRefPtr<Inode> const m_inode;
     int m_mount_flags { 0 };
 
     mutable IntrusiveListNode<Custody> m_all_custodies_list_node;

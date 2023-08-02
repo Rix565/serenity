@@ -6,8 +6,9 @@
  */
 
 #include <AK/Array.h>
+#include <AK/CharacterTypes.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
 #include <ctype.h>
@@ -37,9 +38,9 @@ ErrorOr<int> serenity_main(Main::Arguments args)
     args_parser.add_option(seek_to, "Seek to a byte offset", "seek", 's', "offset");
     args_parser.parse(args);
 
-    auto file = TRY(Core::Stream::File::open_file_or_standard_stream(path, Core::Stream::OpenMode::Read));
+    auto file = TRY(Core::File::open_file_or_standard_stream(path, Core::File::OpenMode::Read));
     if (seek_to.has_value())
-        TRY(file->seek(seek_to.value(), Core::Stream::SeekMode::SetPosition));
+        TRY(file->seek(seek_to.value(), SeekMode::SetPosition));
 
     auto print_line = [](Bytes line) {
         VERIFY(line.size() <= LINE_LENGTH_BYTES);
@@ -56,7 +57,7 @@ ErrorOr<int> serenity_main(Main::Arguments args)
         out("  |");
 
         for (auto const& byte : line) {
-            if (isprint(byte))
+            if (is_ascii_printable(byte))
                 putchar(byte);
             else
                 putchar('.');
@@ -86,7 +87,7 @@ ErrorOr<int> serenity_main(Main::Arguments args)
         }
 
         bytes = contents.span().slice(0, bytes_to_read);
-        bytes = TRY(file->read(bytes));
+        bytes = TRY(file->read_some(bytes));
 
         total_bytes_read += bytes.size();
 

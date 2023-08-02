@@ -17,7 +17,7 @@ DeprecatedString OutlineItem::to_deprecated_string(int indent) const
     StringBuilder child_builder;
     child_builder.append('[');
     for (auto& child : children)
-        child_builder.appendff("{}\n", child.to_deprecated_string(indent + 1));
+        child_builder.appendff("{}\n", child->to_deprecated_string(indent + 1));
     child_builder.appendff("{}]", indent_str);
 
     StringBuilder builder;
@@ -34,13 +34,52 @@ DeprecatedString OutlineItem::to_deprecated_string(int indent) const
     return builder.to_deprecated_string();
 }
 
+PDFErrorOr<Optional<DeprecatedString>> InfoDict::title() const
+{
+    return get(CommonNames::Title);
+}
+
+PDFErrorOr<Optional<DeprecatedString>> InfoDict::author() const
+{
+    return get(CommonNames::Author);
+}
+
+PDFErrorOr<Optional<DeprecatedString>> InfoDict::subject() const
+{
+    return get(CommonNames::Subject);
+}
+
+PDFErrorOr<Optional<DeprecatedString>> InfoDict::keywords() const
+{
+    return get(CommonNames::Keywords);
+}
+
+PDFErrorOr<Optional<DeprecatedString>> InfoDict::creator() const
+{
+    return get(CommonNames::Creator);
+}
+
+PDFErrorOr<Optional<DeprecatedString>> InfoDict::producer() const
+{
+    return get(CommonNames::Producer);
+}
+
+PDFErrorOr<Optional<DeprecatedString>> InfoDict::creation_date() const
+{
+    return get(CommonNames::CreationDate);
+}
+
+PDFErrorOr<Optional<DeprecatedString>> InfoDict::modification_date() const
+{
+    return get(CommonNames::ModDate);
+}
+
 PDFErrorOr<NonnullRefPtr<Document>> Document::create(ReadonlyBytes bytes)
 {
     auto parser = adopt_ref(*new DocumentParser({}, bytes));
     auto document = adopt_ref(*new Document(parser));
 
-    TRY(parser->initialize());
-
+    document->m_version = TRY(parser->initialize());
     document->m_trailer = parser->trailer();
     document->m_catalog = TRY(parser->trailer()->get_dict(document, CommonNames::Root));
 
@@ -97,6 +136,67 @@ u32 Document::get_page_count() const
     return m_page_object_indices.size();
 }
 
+static ErrorOr<void> collect_referenced_indices(Value const& value, Vector<int>& referenced_indices)
+{
+    TRY(value.visit(
+        [&](Empty const&) -> ErrorOr<void> { return {}; },
+        [&](nullptr_t const&) -> ErrorOr<void> { return {}; },
+        [&](bool const&) -> ErrorOr<void> { return {}; },
+        [&](int const&) -> ErrorOr<void> { return {}; },
+        [&](float const&) -> ErrorOr<void> { return {}; },
+        [&](Reference const& ref) -> ErrorOr<void> {
+            TRY(referenced_indices.try_append(ref.as_ref_index()));
+            return {};
+        },
+        [&](NonnullRefPtr<Object> const& object) -> ErrorOr<void> {
+            if (object->is<ArrayObject>()) {
+                for (auto& element : object->cast<ArrayObject>()->elements())
+                    TRY(collect_referenced_indices(element, referenced_indices));
+            } else if (object->is<DictObject>()) {
+                for (auto& [key, value] : object->cast<DictObject>()->map()) {
+                    if (key != CommonNames::Parent)
+                        TRY(collect_referenced_indices(value, referenced_indices));
+                }
+            } else if (object->is<StreamObject>()) {
+                for (auto& [key, value] : object->cast<StreamObject>()->dict()->map()) {
+                    if (key != CommonNames::Parent)
+                        TRY(collect_referenced_indices(value, referenced_indices));
+                }
+            }
+            return {};
+        }));
+    return {};
+}
+
+static PDFErrorOr<void> dump_tree(Document& document, size_t index, HashTable<int>& seen)
+{
+    if (seen.contains(index))
+        return {};
+    seen.set(index);
+
+    auto const& value = TRY(document.get_or_load_value(index));
+    outln("{} 0 obj", index);
+    outln("{}", value.to_deprecated_string(0));
+    outln("endobj");
+
+    Vector<int> referenced_indices;
+    TRY(collect_referenced_indices(value, referenced_indices));
+    for (auto index : referenced_indices)
+        TRY(dump_tree(document, index, seen));
+
+    return {};
+}
+
+PDFErrorOr<void> Document::dump_page(u32 index)
+{
+    VERIFY(index < m_page_object_indices.size());
+    auto page_object_index = m_page_object_indices[index];
+
+    HashTable<int> seen;
+    TRY(dump_tree(*this, page_object_index, seen));
+    return {};
+}
+
 PDFErrorOr<Page> Document::get_page(u32 index)
 {
     VERIFY(index < m_page_object_indices.size());
@@ -109,26 +209,48 @@ PDFErrorOr<Page> Document::get_page(u32 index)
     auto page_object = TRY(get_or_load_value(page_object_index));
     auto raw_page_object = TRY(resolve_to<DictObject>(page_object));
 
-    auto resources = TRY(get_inheritable_object(CommonNames::Resources, raw_page_object))->cast<DictObject>();
-    auto contents = TRY(raw_page_object->get_object(this, CommonNames::Contents));
+    RefPtr<DictObject> resources;
+    auto maybe_resources_object = TRY(get_inheritable_object(CommonNames::Resources, raw_page_object));
+    if (maybe_resources_object.has_value())
+        resources = maybe_resources_object.value()->cast<DictObject>();
+    else
+        resources = adopt_ref(*new DictObject({}));
 
-    auto media_box_array = TRY(get_inheritable_object(CommonNames::MediaBox, raw_page_object))->cast<ArrayObject>();
-    auto media_box = Rectangle {
-        media_box_array->at(0).to_float(),
-        media_box_array->at(1).to_float(),
-        media_box_array->at(2).to_float(),
-        media_box_array->at(3).to_float(),
-    };
+    RefPtr<Object> contents;
+    if (raw_page_object->contains(CommonNames::Contents))
+        contents = TRY(raw_page_object->get_object(this, CommonNames::Contents));
 
-    auto crop_box = media_box;
-    if (raw_page_object->contains(CommonNames::CropBox)) {
-        auto crop_box_array = TRY(raw_page_object->get_array(this, CommonNames::CropBox));
+    Rectangle media_box;
+    auto maybe_media_box_object = TRY(get_inheritable_object(CommonNames::MediaBox, raw_page_object));
+    if (maybe_media_box_object.has_value()) {
+        auto media_box_array = maybe_media_box_object.value()->cast<ArrayObject>();
+        media_box = Rectangle {
+            media_box_array->at(0).to_float(),
+            media_box_array->at(1).to_float(),
+            media_box_array->at(2).to_float(),
+            media_box_array->at(3).to_float(),
+        };
+    } else {
+        // As most other libraries seem to do, we default to the standard
+        // US letter size of 8.5" x 11" (612 x 792 Postscript units).
+        media_box = Rectangle {
+            0, 0,
+            612, 792
+        };
+    }
+
+    Rectangle crop_box;
+    auto maybe_crop_box_object = TRY(get_inheritable_object(CommonNames::CropBox, raw_page_object));
+    if (maybe_crop_box_object.has_value()) {
+        auto crop_box_array = maybe_crop_box_object.value()->cast<ArrayObject>();
         crop_box = Rectangle {
             crop_box_array->at(0).to_float(),
             crop_box_array->at(1).to_float(),
             crop_box_array->at(2).to_float(),
             crop_box_array->at(3).to_float(),
         };
+    } else {
+        crop_box = media_box;
     }
 
     float user_unit = 1.0f;
@@ -136,12 +258,13 @@ PDFErrorOr<Page> Document::get_page(u32 index)
         user_unit = raw_page_object->get_value(CommonNames::UserUnit).to_float();
 
     int rotate = 0;
-    if (raw_page_object->contains(CommonNames::Rotate)) {
-        rotate = raw_page_object->get_value(CommonNames::Rotate).get<int>();
+    auto maybe_rotate = TRY(get_inheritable_value(CommonNames::Rotate, raw_page_object));
+    if (maybe_rotate.has_value()) {
+        rotate = maybe_rotate.value().to_int();
         VERIFY(rotate % 90 == 0);
     }
 
-    Page page { move(resources), move(contents), media_box, crop_box, user_unit, rotate };
+    Page page { resources.release_nonnull(), move(contents), media_box, crop_box, user_unit, rotate };
     m_pages.set(index, page);
     return page;
 }
@@ -164,6 +287,31 @@ PDFErrorOr<Value> Document::resolve(Value const& value)
         return static_ptr_cast<IndirectValue>(obj)->value();
 
     return value;
+}
+
+PDFErrorOr<Optional<InfoDict>> Document::info_dict()
+{
+    if (!trailer()->contains(CommonNames::Info))
+        return OptionalNone {};
+
+    return InfoDict(this, TRY(trailer()->get_dict(this, CommonNames::Info)));
+}
+
+PDFErrorOr<Vector<DeprecatedFlyString>> Document::read_filters(NonnullRefPtr<DictObject> dict)
+{
+    Vector<DeprecatedFlyString> filters;
+
+    // We may either get a single filter or an array of cascading filters
+    auto filter_object = TRY(dict->get_object(this, CommonNames::Filter));
+    if (filter_object->is<ArrayObject>()) {
+        auto filter_array = filter_object->cast<ArrayObject>();
+        for (size_t i = 0; i < filter_array->size(); ++i)
+            filters.append(TRY(filter_array->get_name_at(this, i))->name());
+    } else {
+        filters.append(filter_object->cast<NameObject>()->name());
+    }
+
+    return filters;
 }
 
 PDFErrorOr<void> Document::build_page_tree()
@@ -306,13 +454,26 @@ PDFErrorOr<Destination> Document::create_destination_from_parameters(NonnullRefP
     return Destination { type, page_number_by_index_ref.get(page_ref.as_ref_index()), parameters };
 }
 
-PDFErrorOr<NonnullRefPtr<Object>> Document::get_inheritable_object(DeprecatedFlyString const& name, NonnullRefPtr<DictObject> object)
+PDFErrorOr<Optional<NonnullRefPtr<Object>>> Document::get_inheritable_object(DeprecatedFlyString const& name, NonnullRefPtr<DictObject> object)
 {
     if (!object->contains(name)) {
+        if (!object->contains(CommonNames::Parent))
+            return { OptionalNone() };
         auto parent = TRY(object->get_dict(this, CommonNames::Parent));
         return get_inheritable_object(name, parent);
     }
-    return object->get_object(this, name);
+    return TRY(object->get_object(this, name));
+}
+
+PDFErrorOr<Optional<Value>> Document::get_inheritable_value(DeprecatedFlyString const& name, NonnullRefPtr<DictObject> object)
+{
+    if (!object->contains(name)) {
+        if (!object->contains(CommonNames::Parent))
+            return { OptionalNone() };
+        auto parent = TRY(object->get_dict(this, CommonNames::Parent));
+        return get_inheritable_value(name, parent);
+    }
+    return object->get(name);
 }
 
 PDFErrorOr<Destination> Document::create_destination_from_dictionary_entry(NonnullRefPtr<Object> const& entry, HashMap<u32, u32> const& page_number_by_index_ref)
@@ -335,7 +496,7 @@ PDFErrorOr<NonnullRefPtr<OutlineItem>> Document::build_outline_item(NonnullRefPt
         auto first_ref = outline_item_dict->get_value(CommonNames::First);
         auto children = TRY(build_outline_item_chain(first_ref, page_number_by_index_ref));
         for (auto& child : children) {
-            child.parent = outline_item;
+            child->parent = outline_item;
         }
         outline_item->children = move(children);
     }
@@ -390,7 +551,7 @@ PDFErrorOr<NonnullRefPtr<OutlineItem>> Document::build_outline_item(NonnullRefPt
     return outline_item;
 }
 
-PDFErrorOr<NonnullRefPtrVector<OutlineItem>> Document::build_outline_item_chain(Value const& first_ref, HashMap<u32, u32> const& page_number_by_index_ref)
+PDFErrorOr<Vector<NonnullRefPtr<OutlineItem>>> Document::build_outline_item_chain(Value const& first_ref, HashMap<u32, u32> const& page_number_by_index_ref)
 {
     // We used to receive a last_ref parameter, which was what the parent of this chain
     // thought was this chain's last child. There are documents out there in the wild
@@ -399,7 +560,7 @@ PDFErrorOr<NonnullRefPtrVector<OutlineItem>> Document::build_outline_item_chain(
     // (we already ignore the /Parent attribute too, which can also be out of sync).
     VERIFY(first_ref.has<Reference>());
 
-    NonnullRefPtrVector<OutlineItem> children;
+    Vector<NonnullRefPtr<OutlineItem>> children;
 
     auto first_value = TRY(get_or_load_value(first_ref.as_ref_index())).get<NonnullRefPtr<Object>>();
     auto first_dict = first_value->cast<DictObject>();

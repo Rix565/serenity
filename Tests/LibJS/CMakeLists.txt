@@ -6,9 +6,6 @@ link_with_locale_data(test-js)
 serenity_test(test-invalid-unicode-js.cpp LibJS LIBS LibJS LibLocale)
 link_with_locale_data(test-invalid-unicode-js)
 
-serenity_test(test-bytecode-js.cpp LibJS LIBS LibJS LibLocale)
-link_with_locale_data(test-bytecode-js)
-
 serenity_test(test-value-js.cpp LibJS LIBS LibJS LibLocale)
 link_with_locale_data(test-value-js)
 
@@ -27,6 +24,6 @@ serenity_component(
         TARGETS test-test262
 )
 add_executable(test-test262 test-test262.cpp)
-target_link_libraries(test-test262 PRIVATE LibMain LibCore)
+target_link_libraries(test-test262 PRIVATE LibMain LibCore LibFileSystem)
 serenity_set_implicit_links(test-test262)
 install(TARGETS test-test262 RUNTIME DESTINATION bin OPTIONAL)

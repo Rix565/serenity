@@ -20,7 +20,7 @@
 #include <LibEDID/VIC.h>
 
 #ifdef KERNEL
-#    include <Kernel/KString.h>
+#    include <Kernel/Library/KString.h>
 #else
 #    include <AK/DeprecatedString.h>
 #endif
@@ -254,7 +254,7 @@ public:
         };
 
         ALWAYS_INLINE Source source() const { return m_source; }
-        ALWAYS_INLINE unsigned width() const { return m_width; };
+        ALWAYS_INLINE unsigned width() const { return m_width; }
         ALWAYS_INLINE unsigned height() const { return m_height; }
 
         ALWAYS_INLINE unsigned refresh_rate() const

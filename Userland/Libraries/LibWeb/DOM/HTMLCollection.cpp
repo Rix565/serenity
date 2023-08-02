@@ -13,15 +13,16 @@
 
 namespace Web::DOM {
 
-JS::NonnullGCPtr<HTMLCollection> HTMLCollection::create(ParentNode& root, Function<bool(Element const&)> filter)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<HTMLCollection>> HTMLCollection::create(ParentNode& root, Scope scope, Function<bool(Element const&)> filter)
 {
-    return root.heap().allocate<HTMLCollection>(root.realm(), root, move(filter)).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(root.heap().allocate<HTMLCollection>(root.realm(), root, scope, move(filter)));
 }
 
-HTMLCollection::HTMLCollection(ParentNode& root, Function<bool(Element const&)> filter)
+HTMLCollection::HTMLCollection(ParentNode& root, Scope scope, Function<bool(Element const&)> filter)
     : LegacyPlatformObject(root.realm())
     , m_root(root)
     , m_filter(move(filter))
+    , m_scope(scope)
 {
 }
 
@@ -44,11 +45,19 @@ void HTMLCollection::visit_edges(Cell::Visitor& visitor)
 JS::MarkedVector<Element*> HTMLCollection::collect_matching_elements() const
 {
     JS::MarkedVector<Element*> elements(m_root->heap());
-    m_root->for_each_in_inclusive_subtree_of_type<Element>([&](auto& element) {
-        if (m_filter(element))
-            elements.append(const_cast<Element*>(&element));
-        return IterationDecision::Continue;
-    });
+    if (m_scope == Scope::Descendants) {
+        m_root->for_each_in_subtree_of_type<Element>([&](auto& element) {
+            if (m_filter(element))
+                elements.append(const_cast<Element*>(&element));
+            return IterationDecision::Continue;
+        });
+    } else {
+        m_root->for_each_child_of_type<Element>([&](auto& element) {
+            if (m_filter(element))
+                elements.append(const_cast<Element*>(&element));
+            return IterationDecision::Continue;
+        });
+    }
     return elements;
 }
 
@@ -130,7 +139,7 @@ bool HTMLCollection::is_supported_property_index(u32 index) const
     return index < elements.size();
 }
 
-JS::Value HTMLCollection::item_value(size_t index) const
+WebIDL::ExceptionOr<JS::Value> HTMLCollection::item_value(size_t index) const
 {
     auto* element = item(index);
     if (!element)
@@ -138,7 +147,7 @@ JS::Value HTMLCollection::item_value(size_t index) const
     return const_cast<Element*>(element);
 }
 
-JS::Value HTMLCollection::named_item_value(DeprecatedFlyString const& index) const
+WebIDL::ExceptionOr<JS::Value> HTMLCollection::named_item_value(DeprecatedFlyString const& index) const
 {
     auto* element = named_item(index);
     if (!element)

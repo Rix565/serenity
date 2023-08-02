@@ -7,8 +7,8 @@
 #include <AK/DeprecatedString.h>
 #include <AK/LexicalPath.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/File.h>
 #include <LibCore/System.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibMain/Main.h>
 #include <stdio.h>
 #include <string.h>
@@ -33,7 +33,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.parse(arguments);
 
     if (paths.size() < 2) {
-        args_parser.print_usage(stderr, arguments.argv[0]);
+        args_parser.print_usage(stderr, arguments.strings[0]);
         return 1;
     }
 
@@ -69,20 +69,20 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             new_path = combined_new_path.characters();
         }
 
-        if (no_clobber && Core::File::exists(new_path))
+        if (no_clobber && FileSystem::exists(new_path))
             continue;
 
         rc = rename(old_path.characters(), new_path.characters());
         if (rc < 0) {
             if (errno == EXDEV) {
-                auto result = Core::File::copy_file_or_directory(
+                auto result = FileSystem::copy_file_or_directory(
                     new_path, old_path,
-                    Core::File::RecursionMode::Allowed,
-                    Core::File::LinkMode::Disallowed,
-                    Core::File::AddDuplicateFileMarker::No);
+                    FileSystem::RecursionMode::Allowed,
+                    FileSystem::LinkMode::Disallowed,
+                    FileSystem::AddDuplicateFileMarker::No);
 
                 if (result.is_error()) {
-                    warnln("mv: could not move '{}': {}", old_path, static_cast<Error const&>(result.error()));
+                    warnln("mv: could not move '{}': {}", old_path, result.error());
                     return 1;
                 }
                 rc = unlink(old_path.characters());

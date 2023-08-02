@@ -8,19 +8,21 @@
 
 #include <LibCore/Forward.h>
 #include <LibGfx/Forward.h>
-#include <LibWeb/HTML/BrowsingContextContainer.h>
 #include <LibWeb/HTML/FormAssociatedElement.h>
 #include <LibWeb/HTML/HTMLElement.h>
-#include <LibWeb/Loader/ImageLoader.h>
+#include <LibWeb/HTML/NavigableContainer.h>
+#include <LibWeb/Layout/ImageProvider.h>
+#include <LibWeb/Loader/Resource.h>
 
 namespace Web::HTML {
 
 class HTMLObjectElement final
-    : public BrowsingContextContainer
+    : public NavigableContainer
     , public FormAssociatedElement
-    , public ResourceClient {
-    WEB_PLATFORM_OBJECT(HTMLObjectElement, BrowsingContextContainer)
-    FORM_ASSOCIATED_ELEMENT(BrowsingContextContainer, HTMLObjectElement)
+    , public ResourceClient
+    , public Layout::ImageProvider {
+    WEB_PLATFORM_OBJECT(HTMLObjectElement, NavigableContainer)
+    FORM_ASSOCIATED_ELEMENT(NavigableContainer, HTMLObjectElement)
 
     enum class Representation {
         Unknown,
@@ -32,7 +34,7 @@ class HTMLObjectElement final
 public:
     virtual ~HTMLObjectElement() override;
 
-    virtual void parse_attribute(DeprecatedFlyString const& name, DeprecatedString const& value) override;
+    virtual void attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value) override;
 
     DeprecatedString data() const;
     void set_data(DeprecatedString const& data) { MUST(set_attribute(HTML::AttributeNames::data, data)); }
@@ -57,7 +59,7 @@ private:
     void run_object_representation_completed_steps(Representation);
     void run_object_representation_fallback_steps();
 
-    void convert_resource_to_image();
+    void load_image();
     void update_layout_and_child_objects(Representation);
 
     // ^ResourceClient
@@ -67,8 +69,18 @@ private:
     // ^DOM::Element
     virtual i32 default_tab_index_value() const override;
 
+    // ^Layout::ImageProvider
+    virtual Optional<CSSPixels> intrinsic_width() const override;
+    virtual Optional<CSSPixels> intrinsic_height() const override;
+    virtual Optional<float> intrinsic_aspect_ratio() const override;
+    virtual RefPtr<Gfx::Bitmap const> current_image_bitmap(Gfx::IntSize = {}) const override;
+    virtual void set_visible_in_viewport(bool) override;
+
     Representation m_representation { Representation::Unknown };
-    Optional<ImageLoader> m_image_loader;
+
+    RefPtr<DecodedImageData const> image_data() const;
+
+    RefPtr<SharedImageRequest> m_image_request;
 };
 
 }

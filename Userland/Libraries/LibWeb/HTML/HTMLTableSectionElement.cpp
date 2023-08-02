@@ -41,10 +41,9 @@ JS::NonnullGCPtr<DOM::HTMLCollection> HTMLTableSectionElement::rows() const
     // The rows attribute must return an HTMLCollection rooted at this element,
     // whose filter matches only tr elements that are children of this element.
     if (!m_rows) {
-        m_rows = DOM::HTMLCollection::create(const_cast<HTMLTableSectionElement&>(*this), [this](Element const& element) {
-            return element.parent() == this
-                && is<HTMLTableRowElement>(element);
-        });
+        m_rows = DOM::HTMLCollection::create(const_cast<HTMLTableSectionElement&>(*this), DOM::HTMLCollection::Scope::Children, [](Element const& element) {
+            return is<HTMLTableRowElement>(element);
+        }).release_value_but_fixme_should_propagate_errors();
     }
     return *m_rows;
 }
@@ -60,7 +59,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<HTMLTableRowElement>> HTMLTableSectionEleme
         return WebIDL::IndexSizeError::create(realm(), "Index is negative or greater than the number of rows");
 
     // 2. Let table row be the result of creating an element given this element's node document, tr, and the HTML namespace.
-    auto& table_row = static_cast<HTMLTableRowElement&>(*DOM::create_element(document(), TagNames::tr, Namespace::HTML));
+    auto& table_row = static_cast<HTMLTableRowElement&>(*TRY(DOM::create_element(document(), TagNames::tr, Namespace::HTML)));
 
     // 3. If index is −1 or equal to the number of items in the rows collection, then append table row to this element.
     if (index == -1 || index == rows_collection_size)

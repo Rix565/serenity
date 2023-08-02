@@ -14,7 +14,7 @@
 #include <AK/StringView.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibMain/Main.h>
 
 struct ArgumentDefinition {
@@ -355,7 +355,7 @@ Vector<FunctionDefinition> create_function_definitions(DeprecatedString function
     return functions;
 }
 
-ErrorOr<void> generate_header_file(JsonObject& api_data, Core::Stream::File& file)
+ErrorOr<void> generate_header_file(JsonObject& api_data, Core::File& file)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
@@ -375,7 +375,7 @@ ErrorOr<void> generate_header_file(JsonObject& api_data, Core::Stream::File& fil
         auto function_definitions = create_function_definitions(function_name, function);
 
         for (auto const& function_definition : function_definitions) {
-            auto function_generator = generator.fork();
+            auto function_generator = generator.fork().release_value_but_fixme_should_propagate_errors();
 
             function_generator.set("name", function_definition.name);
             function_generator.set("return_type", function_definition.return_type);
@@ -387,7 +387,7 @@ ErrorOr<void> generate_header_file(JsonObject& api_data, Core::Stream::File& fil
                 if (!argument_definition.name.has_value() || !argument_definition.cpp_type.has_value())
                     continue;
 
-                auto argument_generator = function_generator.fork();
+                auto argument_generator = function_generator.fork().release_value_but_fixme_should_propagate_errors();
                 argument_generator.set("argument_type", argument_definition.cpp_type.value());
                 argument_generator.set("argument_name", argument_definition.name.value());
 
@@ -405,11 +405,11 @@ ErrorOr<void> generate_header_file(JsonObject& api_data, Core::Stream::File& fil
     generator.appendln("}");
     generator.appendln("#endif");
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
-ErrorOr<void> generate_implementation_file(JsonObject& api_data, Core::Stream::File& file)
+ErrorOr<void> generate_implementation_file(JsonObject& api_data, Core::File& file)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
@@ -426,7 +426,7 @@ ErrorOr<void> generate_implementation_file(JsonObject& api_data, Core::Stream::F
         auto function_definitions = create_function_definitions(function_name, function);
 
         for (auto const& function_definition : function_definitions) {
-            auto function_generator = generator.fork();
+            auto function_generator = generator.fork().release_value_but_fixme_should_propagate_errors();
             auto return_type = function_definition.return_type;
 
             function_generator.set("name"sv, function_definition.name);
@@ -441,7 +441,7 @@ ErrorOr<void> generate_implementation_file(JsonObject& api_data, Core::Stream::F
                 if (!argument_definition.name.has_value() || !argument_definition.cpp_type.has_value())
                     continue;
 
-                auto argument_generator = function_generator.fork();
+                auto argument_generator = function_generator.fork().release_value_but_fixme_should_propagate_errors();
                 argument_generator.set("argument_type", argument_definition.cpp_type.value());
                 argument_generator.set("argument_name", argument_definition.name.value());
 
@@ -504,7 +504,7 @@ ErrorOr<void> generate_implementation_file(JsonObject& api_data, Core::Stream::F
 
                 first = true;
                 for (auto const& argument_definition : function_definition.arguments) {
-                    auto argument_generator = function_generator.fork();
+                    auto argument_generator = function_generator.fork().release_value_but_fixme_should_propagate_errors();
 
                     auto cast_to = argument_definition.cast_to;
                     argument_generator.set("argument_name", argument_definition.name.value_or(""));
@@ -529,16 +529,16 @@ ErrorOr<void> generate_implementation_file(JsonObject& api_data, Core::Stream::F
         }
     });
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
 ErrorOr<JsonValue> read_entire_file_as_json(StringView filename)
 {
-    auto file = TRY(Core::Stream::File::open(filename, Core::Stream::OpenMode::Read));
+    auto file = TRY(Core::File::open(filename, Core::File::OpenMode::Read));
     auto json_size = TRY(file->size());
     auto json_data = TRY(ByteBuffer::create_uninitialized(json_size));
-    TRY(file->read_entire_buffer(json_data.bytes()));
+    TRY(file->read_until_filled(json_data.bytes()));
     return JsonValue::from_string(json_data);
 }
 
@@ -558,8 +558,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     VERIFY(json.is_object());
     auto api_data = json.as_object();
 
-    auto generated_header_file = TRY(Core::Stream::File::open(generated_header_path, Core::Stream::OpenMode::Write));
-    auto generated_implementation_file = TRY(Core::Stream::File::open(generated_implementation_path, Core::Stream::OpenMode::Write));
+    auto generated_header_file = TRY(Core::File::open(generated_header_path, Core::File::OpenMode::Write));
+    auto generated_implementation_file = TRY(Core::File::open(generated_implementation_path, Core::File::OpenMode::Write));
 
     TRY(generate_header_file(api_data, *generated_header_file));
     TRY(generate_implementation_file(api_data, *generated_implementation_file));

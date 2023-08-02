@@ -6,18 +6,13 @@ set -e
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-NPROC="nproc"
-SYSTEM_NAME="$(uname -s)"
+# shellcheck source=/dev/null
+. "${DIR}/../Meta/shell_include.sh"
 
-if [ "$SYSTEM_NAME" = "OpenBSD" ]; then
-    NPROC="sysctl -n hw.ncpuonline"
-elif [ "$SYSTEM_NAME" = "FreeBSD" ]; then
-    NPROC="sysctl -n hw.ncpu"
-elif [ "$SYSTEM_NAME" = "Darwin" ]; then
-    NPROC="sysctl -n hw.ncpu"
-fi
+exit_if_running_as_root "Do not run BuildMold.sh as root, parts of your Toolchain directory will become root-owned"
 
-[ -z "$MAKEJOBS" ] && MAKEJOBS=$($NPROC)
+NPROC=$(get_number_of_processing_units)
+[ -z "$MAKEJOBS" ] && MAKEJOBS=${NPROC}
 
 mkdir -p "$DIR"/Tarballs
 pushd "$DIR"/Tarballs

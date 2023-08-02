@@ -7,7 +7,6 @@
 #include "SourceModel.h"
 #include "Gradient.h"
 #include "Profile.h"
-#include <LibCore/Stream.h>
 #include <LibDebug/DebugInfo.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibSymbolication/Symbolication.h>
@@ -29,8 +28,8 @@ public:
         DeprecatedString source_file_name = filename.replace("../../"sv, source_root_path, ReplaceMode::FirstOnly);
 
         auto try_read_lines = [&]() -> ErrorOr<void> {
-            auto unbuffered_file = TRY(Core::Stream::File::open(source_file_name, Core::Stream::OpenMode::Read));
-            auto file = TRY(Core::Stream::BufferedFile::create(move(unbuffered_file)));
+            auto unbuffered_file = TRY(Core::File::open(source_file_name, Core::File::OpenMode::Read));
+            auto file = TRY(Core::InputBufferedFile::create(move(unbuffered_file)));
 
             Array<u8, 1024> buffer;
             while (!file->is_eof())
@@ -123,20 +122,19 @@ int SourceModel::row_count(GUI::ModelIndex const&) const
     return m_source_lines.size();
 }
 
-DeprecatedString SourceModel::column_name(int column) const
+ErrorOr<String> SourceModel::column_name(int column) const
 {
     switch (column) {
     case Column::SampleCount:
-        return m_profile.show_percentages() ? "% Samples" : "# Samples";
+        return m_profile.show_percentages() ? TRY("% Samples"_string) : TRY("# Samples"_string);
     case Column::SourceCode:
-        return "Source Code";
+        return TRY("Source Code"_string);
     case Column::Location:
-        return "Location";
+        return TRY("Location"_string);
     case Column::LineNumber:
-        return "Line";
+        return "Line"_short_string;
     default:
         VERIFY_NOT_REACHED();
-        return {};
     }
 }
 

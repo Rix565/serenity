@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021-2022, David Tuin <davidot@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -21,7 +21,6 @@
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/ErrorTypes.h>
 #include <LibJS/Runtime/ExecutionContext.h>
-#include <LibJS/Runtime/Iterator.h>
 #include <LibJS/Runtime/Promise.h>
 #include <LibJS/Runtime/Value.h>
 
@@ -35,14 +34,17 @@ public:
     struct CustomData {
         virtual ~CustomData() = default;
 
-        virtual void spin_event_loop_until(Function<bool()> goal_condition) = 0;
+        virtual void spin_event_loop_until(JS::SafeFunction<bool()> goal_condition) = 0;
     };
 
-    static NonnullRefPtr<VM> create(OwnPtr<CustomData> = {});
-    ~VM() = default;
+    static ErrorOr<NonnullRefPtr<VM>> create(OwnPtr<CustomData> = {});
+    ~VM();
 
     Heap& heap() { return m_heap; }
     Heap const& heap() const { return m_heap; }
+
+    Bytecode::Interpreter& bytecode_interpreter();
+    Bytecode::Interpreter* bytecode_interpreter_if_exists();
 
     Interpreter& interpreter();
     Interpreter* interpreter_if_exists();
@@ -65,20 +67,20 @@ public:
 
     void gather_roots(HashTable<Cell*>&);
 
-#define __JS_ENUMERATE(SymbolName, snake_name)     \
-    Symbol* well_known_symbol_##snake_name() const \
-    {                                              \
-        return m_well_known_symbol_##snake_name;   \
+#define __JS_ENUMERATE(SymbolName, snake_name)                  \
+    NonnullGCPtr<Symbol> well_known_symbol_##snake_name() const \
+    {                                                           \
+        return *m_well_known_symbols.snake_name;                \
     }
     JS_ENUMERATE_WELL_KNOWN_SYMBOLS
 #undef __JS_ENUMERATE
 
-    HashMap<String, PrimitiveString*>& string_cache()
+    HashMap<String, GCPtr<PrimitiveString>>& string_cache()
     {
         return m_string_cache;
     }
 
-    HashMap<DeprecatedString, PrimitiveString*>& deprecated_string_cache()
+    HashMap<DeprecatedString, GCPtr<PrimitiveString>>& deprecated_string_cache()
     {
         return m_deprecated_string_cache;
     }
@@ -90,6 +92,17 @@ public:
         VERIFY(character < 0x80);
         return *m_single_ascii_character_strings[character];
     }
+
+    // This represents the list of errors from ErrorTypes.h whose messages are used in contexts which
+    // must not fail to allocate when they are used. For example, we cannot allocate when we raise an
+    // out-of-memory error, thus we pre-allocate that error string at VM creation time.
+    enum class ErrorMessage {
+        OutOfMemory,
+
+        // Keep this last:
+        __Count,
+    };
+    String const& error_message(ErrorMessage) const;
 
     bool did_reach_stack_space_limit() const
     {
@@ -174,10 +187,10 @@ public:
 
     ThrowCompletionOr<Value> resolve_this_binding();
 
-    StackInfo const& stack_info() const { return m_stack_info; };
+    StackInfo const& stack_info() const { return m_stack_info; }
 
-    HashMap<DeprecatedString, NonnullGCPtr<Symbol>> const& global_symbol_registry() const { return m_global_symbol_registry; }
-    HashMap<DeprecatedString, NonnullGCPtr<Symbol>>& global_symbol_registry() { return m_global_symbol_registry; }
+    HashMap<String, NonnullGCPtr<Symbol>> const& global_symbol_registry() const { return m_global_symbol_registry; }
+    HashMap<String, NonnullGCPtr<Symbol>>& global_symbol_registry() { return m_global_symbol_registry; }
 
     u32 execution_generation() const { return m_execution_generation; }
     void finish_execution_generation() { ++m_execution_generation; }
@@ -190,7 +203,12 @@ public:
     Completion throw_completion(Args&&... args)
     {
         auto& realm = *current_realm();
-        return JS::throw_completion(T::create(realm, forward<Args>(args)...));
+        auto completion = T::create(realm, forward<Args>(args)...);
+
+        if constexpr (IsSame<decltype(completion), ThrowCompletionOr<NonnullGCPtr<T>>>)
+            return JS::throw_completion(MUST_OR_THROW_OOM(completion));
+        else
+            return JS::throw_completion(completion);
     }
 
     template<typename T, typename... Args>
@@ -200,6 +218,8 @@ public:
     }
 
     Value get_new_target();
+
+    Object* get_import_meta();
 
     Object& get_global_object();
 
@@ -219,9 +239,9 @@ public:
 
     CustomData* custom_data() { return m_custom_data; }
 
-    ThrowCompletionOr<void> destructuring_assignment_evaluation(NonnullRefPtr<BindingPattern> const& target, Value value);
+    ThrowCompletionOr<void> destructuring_assignment_evaluation(NonnullRefPtr<BindingPattern const> const& target, Value value);
     ThrowCompletionOr<void> binding_initialization(DeprecatedFlyString const& target, Value value, Environment* environment);
-    ThrowCompletionOr<void> binding_initialization(NonnullRefPtr<BindingPattern> const& target, Value value, Environment* environment);
+    ThrowCompletionOr<void> binding_initialization(NonnullRefPtr<BindingPattern const> const& target, Value value, Environment* environment);
 
     ThrowCompletionOr<Value> named_evaluation_if_anonymous_function(ASTNode const& expression, DeprecatedFlyString const& name);
 
@@ -230,14 +250,15 @@ public:
 
     // Do not call this method unless you are sure this is the only and first module to be loaded in this vm.
     ThrowCompletionOr<void> link_and_eval_module(Badge<Interpreter>, SourceTextModule& module);
+    ThrowCompletionOr<void> link_and_eval_module(Badge<Bytecode::Interpreter>, SourceTextModule& module);
 
     ScriptOrModule get_active_script_or_module() const;
 
     Function<ThrowCompletionOr<NonnullGCPtr<Module>>(ScriptOrModule, ModuleRequest const&)> host_resolve_imported_module;
-    Function<void(ScriptOrModule, ModuleRequest, PromiseCapability const&)> host_import_module_dynamically;
+    Function<ThrowCompletionOr<void>(ScriptOrModule, ModuleRequest, PromiseCapability const&)> host_import_module_dynamically;
     Function<void(ScriptOrModule, ModuleRequest const&, PromiseCapability const&, Promise*)> host_finish_dynamic_import;
 
-    Function<HashMap<PropertyKey, Value>(SourceTextModule const&)> host_get_import_meta_properties;
+    Function<HashMap<PropertyKey, Value>(SourceTextModule&)> host_get_import_meta_properties;
     Function<void(Object*, SourceTextModule const&)> host_finalize_import_meta;
 
     Function<Vector<DeprecatedString>()> host_get_supported_import_assertions;
@@ -252,20 +273,35 @@ public:
     Function<ThrowCompletionOr<void>(Realm&)> host_ensure_can_compile_strings;
     Function<ThrowCompletionOr<void>(Object&)> host_ensure_can_add_private_element;
 
+    // Execute a specific AST node either in AST or BC interpreter, depending on which one is enabled by default.
+    // NOTE: This is meant as a temporary stopgap until everything is bytecode.
+    ThrowCompletionOr<Value> execute_ast_node(ASTNode const&);
+
 private:
-    explicit VM(OwnPtr<CustomData>);
+    using ErrorMessages = AK::Array<String, to_underlying(ErrorMessage::__Count)>;
+
+    struct WellKnownSymbols {
+#define __JS_ENUMERATE(SymbolName, snake_name) \
+    GCPtr<Symbol> snake_name;
+        JS_ENUMERATE_WELL_KNOWN_SYMBOLS
+#undef __JS_ENUMERATE
+    };
+
+    VM(OwnPtr<CustomData>, ErrorMessages);
 
     ThrowCompletionOr<void> property_binding_initialization(BindingPattern const& binding, Value value, Environment* environment);
-    ThrowCompletionOr<void> iterator_binding_initialization(BindingPattern const& binding, Iterator& iterator_record, Environment* environment);
+    ThrowCompletionOr<void> iterator_binding_initialization(BindingPattern const& binding, IteratorRecord& iterator_record, Environment* environment);
 
     ThrowCompletionOr<NonnullGCPtr<Module>> resolve_imported_module(ScriptOrModule referencing_script_or_module, ModuleRequest const& module_request);
     ThrowCompletionOr<void> link_and_eval_module(Module& module);
 
-    void import_module_dynamically(ScriptOrModule referencing_script_or_module, ModuleRequest module_request, PromiseCapability const& promise_capability);
+    ThrowCompletionOr<void> import_module_dynamically(ScriptOrModule referencing_script_or_module, ModuleRequest module_request, PromiseCapability const& promise_capability);
     void finish_dynamic_import(ScriptOrModule referencing_script_or_module, ModuleRequest module_request, PromiseCapability const& promise_capability, Promise* inner_promise);
 
-    HashMap<String, PrimitiveString*> m_string_cache;
-    HashMap<DeprecatedString, PrimitiveString*> m_deprecated_string_cache;
+    void set_well_known_symbols(WellKnownSymbols well_known_symbols) { m_well_known_symbols = move(well_known_symbols); }
+
+    HashMap<String, GCPtr<PrimitiveString>> m_string_cache;
+    HashMap<DeprecatedString, GCPtr<PrimitiveString>> m_deprecated_string_cache;
 
     Heap m_heap;
     Vector<Interpreter*> m_interpreters;
@@ -277,14 +313,15 @@ private:
     StackInfo m_stack_info;
 
     // GlobalSymbolRegistry, https://tc39.es/ecma262/#table-globalsymbolregistry-record-fields
-    HashMap<DeprecatedString, NonnullGCPtr<Symbol>> m_global_symbol_registry;
+    HashMap<String, NonnullGCPtr<Symbol>> m_global_symbol_registry;
 
     Vector<Function<ThrowCompletionOr<Value>()>> m_promise_jobs;
 
-    Vector<FinalizationRegistry*> m_finalization_registry_cleanup_jobs;
+    Vector<GCPtr<FinalizationRegistry>> m_finalization_registry_cleanup_jobs;
 
-    PrimitiveString* m_empty_string { nullptr };
-    PrimitiveString* m_single_ascii_character_strings[128] {};
+    GCPtr<PrimitiveString> m_empty_string;
+    GCPtr<PrimitiveString> m_single_ascii_character_strings[128] {};
+    ErrorMessages m_error_messages;
 
     struct StoredModule {
         ScriptOrModule referencing_script_or_module;
@@ -298,24 +335,13 @@ private:
 
     Vector<StoredModule> m_loaded_modules;
 
-#define __JS_ENUMERATE(SymbolName, snake_name) \
-    Symbol* m_well_known_symbol_##snake_name { nullptr };
-    JS_ENUMERATE_WELL_KNOWN_SYMBOLS
-#undef __JS_ENUMERATE
+    WellKnownSymbols m_well_known_symbols;
 
     u32 m_execution_generation { 0 };
 
     OwnPtr<CustomData> m_custom_data;
+
+    OwnPtr<Bytecode::Interpreter> m_bytecode_interpreter;
 };
-
-ALWAYS_INLINE Heap& Cell::heap() const
-{
-    return HeapBlock::from_cell(this)->heap();
-}
-
-ALWAYS_INLINE VM& Cell::vm() const
-{
-    return heap().vm();
-}
 
 }

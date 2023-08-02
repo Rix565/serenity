@@ -37,9 +37,9 @@ NonnullRefPtr<TranslationUnit> Parser::parse()
     return unit;
 }
 
-NonnullRefPtrVector<Declaration> Parser::parse_declarations_in_translation_unit(ASTNode& parent)
+Vector<NonnullRefPtr<Declaration const>> Parser::parse_declarations_in_translation_unit(ASTNode const& parent)
 {
-    NonnullRefPtrVector<Declaration> declarations;
+    Vector<NonnullRefPtr<Declaration const>> declarations;
     while (!eof()) {
         auto declaration = parse_single_declaration_in_translation_unit(parent);
         if (declaration) {
@@ -52,7 +52,7 @@ NonnullRefPtrVector<Declaration> Parser::parse_declarations_in_translation_unit(
     return declarations;
 }
 
-RefPtr<Declaration> Parser::parse_single_declaration_in_translation_unit(ASTNode& parent)
+RefPtr<Declaration const> Parser::parse_single_declaration_in_translation_unit(ASTNode const& parent)
 {
     while (!eof()) {
         if (match_comment()) {
@@ -74,7 +74,7 @@ RefPtr<Declaration> Parser::parse_single_declaration_in_translation_unit(ASTNode
     return {};
 }
 
-NonnullRefPtr<Declaration> Parser::parse_declaration(ASTNode& parent, DeclarationType declaration_type)
+NonnullRefPtr<Declaration const> Parser::parse_declaration(ASTNode const& parent, DeclarationType declaration_type)
 {
     switch (declaration_type) {
     case DeclarationType::Function:
@@ -93,13 +93,17 @@ NonnullRefPtr<Declaration> Parser::parse_declaration(ASTNode& parent, Declaratio
         return parse_destructor(parent);
     case DeclarationType::UsingNamespace:
         return parse_using_namespace_declaration(parent);
+    case DeclarationType::UsingType:
+        return parse_using_type_declaration(parent);
+    case DeclarationType::Typedef:
+        return parse_typedef_declaration(parent);
     default:
         error("unexpected declaration type"sv);
         return create_ast_node<InvalidDeclaration>(parent, position(), position());
     }
 }
 
-NonnullRefPtr<FunctionDeclaration> Parser::parse_function_declaration(ASTNode& parent)
+NonnullRefPtr<FunctionDeclaration const> Parser::parse_function_declaration(ASTNode const& parent)
 {
     auto func = create_ast_node<FunctionDeclaration>(parent, position(), {});
 
@@ -120,7 +124,7 @@ NonnullRefPtr<FunctionDeclaration> Parser::parse_function_declaration(ASTNode& p
         // FIXME: Note that this function is supposed to be a class member, and `this` has to be const, somehow.
     }
 
-    RefPtr<FunctionDefinition> body;
+    RefPtr<FunctionDefinition const> body;
     Position func_end {};
     if (peek(Token::Type::LeftCurly).has_value()) {
         body = parse_function_definition(*func);
@@ -137,7 +141,7 @@ NonnullRefPtr<FunctionDeclaration> Parser::parse_function_declaration(ASTNode& p
     return func;
 }
 
-NonnullRefPtr<FunctionDefinition> Parser::parse_function_definition(ASTNode& parent)
+NonnullRefPtr<FunctionDefinition const> Parser::parse_function_definition(ASTNode const& parent)
 {
     LOG_SCOPE();
     auto func = create_ast_node<FunctionDefinition>(parent, position(), {});
@@ -151,7 +155,7 @@ NonnullRefPtr<FunctionDefinition> Parser::parse_function_definition(ASTNode& par
     return func;
 }
 
-NonnullRefPtr<Statement> Parser::parse_statement(ASTNode& parent)
+NonnullRefPtr<Statement const> Parser::parse_statement(ASTNode const& parent)
 {
     LOG_SCOPE();
     ArmedScopeGuard consume_semicolon([this]() {
@@ -190,7 +194,7 @@ NonnullRefPtr<Statement> Parser::parse_statement(ASTNode& parent)
     }
 }
 
-NonnullRefPtr<Comment> Parser::parse_comment(ASTNode& parent)
+NonnullRefPtr<Comment const> Parser::parse_comment(ASTNode const& parent)
 {
     auto comment = create_ast_node<Comment>(parent, position(), {});
     consume(Token::Type::Comment);
@@ -203,7 +207,7 @@ bool Parser::match_block_statement()
     return peek().type() == Token::Type::LeftCurly;
 }
 
-NonnullRefPtr<BlockStatement> Parser::parse_block_statement(ASTNode& parent)
+NonnullRefPtr<BlockStatement const> Parser::parse_block_statement(ASTNode const& parent)
 {
     LOG_SCOPE();
     auto block_statement = create_ast_node<BlockStatement>(parent, position(), {});
@@ -259,13 +263,13 @@ bool Parser::match_template_arguments()
     return peek().type() == Token::Type::Greater;
 }
 
-NonnullRefPtrVector<Type> Parser::parse_template_arguments(ASTNode& parent)
+Vector<NonnullRefPtr<Type const>> Parser::parse_template_arguments(ASTNode const& parent)
 {
     LOG_SCOPE();
 
     consume(Token::Type::Less);
 
-    NonnullRefPtrVector<Type> template_arguments;
+    Vector<NonnullRefPtr<Type const>> template_arguments;
     while (!eof() && peek().type() != Token::Type::Greater) {
         template_arguments.append(parse_type(parent));
     }
@@ -294,6 +298,19 @@ bool Parser::match_variable_declaration()
 
     (void)parse_name(get_dummy_node());
 
+    while (!eof() && (peek().type() == Token::Type::LeftBracket)) {
+        consume(Token::Type::LeftBracket);
+
+        if (match(Token::Type::Integer)) {
+            consume(Token::Type::Integer);
+        }
+        if (!match(Token::Type::RightBracket)) {
+            error("No closing right bracket"sv);
+            return false;
+        }
+        consume(Token::Type::RightBracket);
+    }
+
     if (match(Token::Type::Equals)) {
         consume(Token::Type::Equals);
         if (!match_expression()) {
@@ -309,7 +326,7 @@ bool Parser::match_variable_declaration()
     return match(Token::Type::Semicolon);
 }
 
-NonnullRefPtr<VariableDeclaration> Parser::parse_variable_declaration(ASTNode& parent, bool expect_semicolon)
+NonnullRefPtr<VariableDeclaration const> Parser::parse_variable_declaration(ASTNode const& parent, bool expect_semicolon)
 {
     LOG_SCOPE();
     auto var = create_ast_node<VariableDeclaration>(parent, position(), {});
@@ -320,7 +337,7 @@ NonnullRefPtr<VariableDeclaration> Parser::parse_variable_declaration(ASTNode& p
     }
     var->set_type(parse_type(var));
     auto name = parse_name(*var);
-    RefPtr<Expression> initial_value;
+    RefPtr<Expression const> initial_value;
 
     if (match(Token::Type::Equals)) {
         consume(Token::Type::Equals);
@@ -341,7 +358,7 @@ NonnullRefPtr<VariableDeclaration> Parser::parse_variable_declaration(ASTNode& p
     return var;
 }
 
-NonnullRefPtr<Expression> Parser::parse_expression(ASTNode& parent)
+NonnullRefPtr<Expression const> Parser::parse_expression(ASTNode const& parent)
 {
     LOG_SCOPE();
     auto expression = parse_primary_expression(parent);
@@ -350,7 +367,7 @@ NonnullRefPtr<Expression> Parser::parse_expression(ASTNode& parent)
         return expression;
     }
 
-    NonnullRefPtrVector<Expression> secondary_expressions;
+    Vector<NonnullRefPtr<Expression const>> secondary_expressions;
 
     while (match_secondary_expression()) {
         // FIXME: Handle operator precedence
@@ -359,7 +376,7 @@ NonnullRefPtr<Expression> Parser::parse_expression(ASTNode& parent)
     }
 
     for (size_t i = 0; secondary_expressions.size() != 0 && i < secondary_expressions.size() - 1; ++i) {
-        secondary_expressions[i].set_parent(secondary_expressions[i + 1]);
+        const_cast<Expression&>(*secondary_expressions[i]).set_parent(secondary_expressions[i + 1]);
     }
 
     return expression;
@@ -402,7 +419,7 @@ bool Parser::match_secondary_expression()
         || type == Token::Type::LeftParen;
 }
 
-NonnullRefPtr<Expression> Parser::parse_primary_expression(ASTNode& parent)
+NonnullRefPtr<Expression const> Parser::parse_primary_expression(ASTNode const& parent)
 {
     LOG_SCOPE();
     // TODO: remove eof() logic, should still work without it
@@ -470,7 +487,7 @@ bool Parser::match_unary_expression()
         || type == Token::Type::And;
 }
 
-NonnullRefPtr<UnaryExpression> Parser::parse_unary_expression(ASTNode& parent)
+NonnullRefPtr<UnaryExpression const> Parser::parse_unary_expression(ASTNode const& parent)
 {
     auto unary_exp = create_ast_node<UnaryExpression>(parent, position(), {});
     auto op_token = consume();
@@ -504,7 +521,7 @@ NonnullRefPtr<UnaryExpression> Parser::parse_unary_expression(ASTNode& parent)
     return unary_exp;
 }
 
-NonnullRefPtr<Expression> Parser::parse_literal(ASTNode& parent)
+NonnullRefPtr<Expression const> Parser::parse_literal(ASTNode const& parent)
 {
     switch (peek().type()) {
     case Token::Type::Integer: {
@@ -532,7 +549,7 @@ NonnullRefPtr<Expression> Parser::parse_literal(ASTNode& parent)
     }
 }
 
-NonnullRefPtr<Expression> Parser::parse_secondary_expression(ASTNode& parent, NonnullRefPtr<Expression> lhs)
+NonnullRefPtr<Expression const> Parser::parse_secondary_expression(ASTNode const& parent, NonnullRefPtr<Expression const> lhs)
 {
     LOG_SCOPE();
     switch (peek().type()) {
@@ -559,7 +576,7 @@ NonnullRefPtr<Expression> Parser::parse_secondary_expression(ASTNode& parent, No
     case Token::Type::Dot: {
         consume();
         auto exp = create_ast_node<MemberExpression>(parent, lhs->start(), {});
-        lhs->set_parent(*exp);
+        const_cast<Expression&>(*lhs).set_parent(*exp);
         exp->set_object(move(lhs));
         auto identifier_token = consume(Token::Type::Identifier);
         exp->set_property(create_ast_node<Identifier>(*exp, identifier_token.start(), identifier_token.end(), identifier_token.text()));
@@ -569,7 +586,7 @@ NonnullRefPtr<Expression> Parser::parse_secondary_expression(ASTNode& parent, No
     case Token::Type::LeftParen: {
         consume();
         auto func = create_ast_node<FunctionCall>(parent, lhs->start(), {});
-        lhs->set_parent(*func);
+        const_cast<Expression&>(*lhs).set_parent(*func);
         func->set_callee(move(lhs));
         while (peek().type() != Token::Type::RightParen && !eof()) {
             func->add_argument(parse_expression(*func));
@@ -588,11 +605,11 @@ NonnullRefPtr<Expression> Parser::parse_secondary_expression(ASTNode& parent, No
     }
 }
 
-NonnullRefPtr<BinaryExpression> Parser::parse_binary_expression(ASTNode& parent, NonnullRefPtr<Expression> lhs, BinaryOp op)
+NonnullRefPtr<BinaryExpression const> Parser::parse_binary_expression(ASTNode const& parent, NonnullRefPtr<Expression const> lhs, BinaryOp op)
 {
     consume(); // Operator
     auto exp = create_ast_node<BinaryExpression>(parent, lhs->start(), {});
-    lhs->set_parent(*exp);
+    const_cast<Expression&>(*lhs).set_parent(*exp);
     exp->set_op(op);
     exp->set_lhs(move(lhs));
     auto rhs = parse_expression(exp);
@@ -601,11 +618,11 @@ NonnullRefPtr<BinaryExpression> Parser::parse_binary_expression(ASTNode& parent,
     return exp;
 }
 
-NonnullRefPtr<AssignmentExpression> Parser::parse_assignment_expression(ASTNode& parent, NonnullRefPtr<Expression> lhs, AssignmentOp op)
+NonnullRefPtr<AssignmentExpression const> Parser::parse_assignment_expression(ASTNode const& parent, NonnullRefPtr<Expression const> lhs, AssignmentOp op)
 {
     consume(); // Operator
     auto exp = create_ast_node<AssignmentExpression>(parent, lhs->start(), {});
-    lhs->set_parent(*exp);
+    const_cast<Expression&>(*lhs).set_parent(*exp);
     exp->set_op(op);
     exp->set_lhs(move(lhs));
     auto rhs = parse_expression(exp);
@@ -628,6 +645,10 @@ Optional<Parser::DeclarationType> Parser::match_declaration_in_translation_unit(
         return DeclarationType::Variable;
     if (match_using_namespace_declaration())
         return DeclarationType::UsingNamespace;
+    if (match_using_type_declaration())
+        return DeclarationType::UsingType;
+    if (match_typedef_declaration())
+        return DeclarationType::Typedef;
     return {};
 }
 
@@ -748,10 +769,10 @@ bool Parser::match_function_declaration()
     return false;
 }
 
-Optional<NonnullRefPtrVector<Parameter>> Parser::parse_parameter_list(ASTNode& parent)
+Optional<Vector<NonnullRefPtr<Parameter const>>> Parser::parse_parameter_list(ASTNode const& parent)
 {
     LOG_SCOPE();
-    NonnullRefPtrVector<Parameter> parameters;
+    Vector<NonnullRefPtr<Parameter const>> parameters;
     while (peek().type() != Token::Type::RightParen && !eof()) {
         if (match_ellipsis()) {
             auto param = create_ast_node<Parameter>(parent, position(), {}, RefPtr<Name> {});
@@ -764,13 +785,13 @@ Optional<NonnullRefPtrVector<Parameter>> Parser::parse_parameter_list(ASTNode& p
         } else {
             auto type = parse_type(parent);
 
-            RefPtr<Name> name;
+            RefPtr<Name const> name;
             if (match_name()) {
                 name = parse_name(parent);
             }
 
             auto param = create_ast_node<Parameter>(parent, type->start(), !name.is_null() ? name->end() : type->end(), name);
-            type->set_parent(*param.ptr());
+            const_cast<Type&>(*type).set_parent(*param.ptr());
 
             param->set_type(move(type));
             parameters.append(move(param));
@@ -958,7 +979,7 @@ Position Parser::previous_token_end() const
     return m_tokens[m_state.token_index - 1].end();
 }
 
-RefPtr<ASTNode> Parser::node_at(Position pos) const
+RefPtr<ASTNode const> Parser::node_at(Position pos) const
 {
     VERIFY(m_saved_states.is_empty());
     auto index = index_of_node_at(pos);
@@ -981,7 +1002,7 @@ Optional<size_t> Parser::index_of_node_at(Position pos) const
 
     for (size_t node_index = 0; node_index < m_nodes.size(); ++node_index) {
         auto& node = m_nodes[node_index];
-        if (node.start() > pos || node.end() < pos)
+        if (node->start() > pos || node->end() < pos)
             continue;
 
         if (!match_node_index.has_value() || (node_span(node) <= node_span(m_nodes[match_node_index.value()])))
@@ -1029,7 +1050,7 @@ Vector<CodeComprehension::TodoEntry> Parser::get_todo_entries() const
     return ret;
 }
 
-NonnullRefPtr<StringLiteral> Parser::parse_string_literal(ASTNode& parent)
+NonnullRefPtr<StringLiteral const> Parser::parse_string_literal(ASTNode const& parent)
 {
     LOG_SCOPE();
     Optional<size_t> start_token_index;
@@ -1063,7 +1084,7 @@ NonnullRefPtr<StringLiteral> Parser::parse_string_literal(ASTNode& parent)
     return string_literal;
 }
 
-NonnullRefPtr<ReturnStatement> Parser::parse_return_statement(ASTNode& parent)
+NonnullRefPtr<ReturnStatement const> Parser::parse_return_statement(ASTNode const& parent)
 {
     LOG_SCOPE();
     auto return_statement = create_ast_node<ReturnStatement>(parent, position(), {});
@@ -1075,7 +1096,7 @@ NonnullRefPtr<ReturnStatement> Parser::parse_return_statement(ASTNode& parent)
     return return_statement;
 }
 
-NonnullRefPtr<EnumDeclaration> Parser::parse_enum_declaration(ASTNode& parent)
+NonnullRefPtr<EnumDeclaration const> Parser::parse_enum_declaration(ASTNode const& parent)
 {
     LOG_SCOPE();
     auto enum_decl = create_ast_node<EnumDeclaration>(parent, position(), {});
@@ -1093,7 +1114,7 @@ NonnullRefPtr<EnumDeclaration> Parser::parse_enum_declaration(ASTNode& parent)
     consume(Token::Type::LeftCurly);
     while (!eof() && peek().type() != Token::Type::RightCurly) {
         auto name = text_of_token(consume(Token::Type::Identifier));
-        RefPtr<Expression> value;
+        RefPtr<Expression const> value;
         if (peek().type() == Token::Type::Equals) {
             consume();
             value = parse_expression(enum_decl);
@@ -1136,7 +1157,7 @@ bool Parser::match_keyword(DeprecatedString const& keyword)
     return true;
 }
 
-NonnullRefPtr<StructOrClassDeclaration> Parser::parse_class_declaration(ASTNode& parent)
+NonnullRefPtr<StructOrClassDeclaration const> Parser::parse_class_declaration(ASTNode const& parent)
 {
     LOG_SCOPE();
 
@@ -1155,7 +1176,7 @@ NonnullRefPtr<StructOrClassDeclaration> Parser::parse_class_declaration(ASTNode&
 
     auto has_final = match_keyword("final");
 
-    NonnullRefPtrVector<Name> baseclasses;
+    Vector<NonnullRefPtr<Name const>> baseclasses;
 
     // FIXME: Don't ignore this.
     if (peek(has_final ? 1 : 0).type() == Token::Type::Colon) {
@@ -1186,7 +1207,7 @@ NonnullRefPtr<StructOrClassDeclaration> Parser::parse_class_declaration(ASTNode&
     return decl;
 }
 
-NonnullRefPtr<BooleanLiteral> Parser::parse_boolean_literal(ASTNode& parent)
+NonnullRefPtr<BooleanLiteral const> Parser::parse_boolean_literal(ASTNode const& parent)
 {
     LOG_SCOPE();
     auto token = consume(Token::Type::Keyword);
@@ -1205,7 +1226,7 @@ bool Parser::match_boolean_literal()
     return text == "true" || text == "false";
 }
 
-NonnullRefPtr<Type> Parser::parse_type(ASTNode& parent)
+NonnullRefPtr<Type const> Parser::parse_type(ASTNode const& parent)
 {
     LOG_SCOPE();
 
@@ -1284,7 +1305,7 @@ NonnullRefPtr<Type> Parser::parse_type(ASTNode& parent)
     return type;
 }
 
-NonnullRefPtr<ForStatement> Parser::parse_for_statement(ASTNode& parent)
+NonnullRefPtr<ForStatement const> Parser::parse_for_statement(ASTNode const& parent)
 {
     LOG_SCOPE();
     auto for_statement = create_ast_node<ForStatement>(parent, position(), {});
@@ -1308,7 +1329,7 @@ NonnullRefPtr<ForStatement> Parser::parse_for_statement(ASTNode& parent)
     return for_statement;
 }
 
-NonnullRefPtr<IfStatement> Parser::parse_if_statement(ASTNode& parent)
+NonnullRefPtr<IfStatement const> Parser::parse_if_statement(ASTNode const& parent)
 {
     LOG_SCOPE();
     auto if_statement = create_ast_node<IfStatement>(parent, position(), {});
@@ -1393,7 +1414,7 @@ bool Parser::match_ellipsis()
     return peek().type() == Token::Type::Dot && peek(1).type() == Token::Type::Dot && peek(2).type() == Token::Type::Dot;
 }
 
-NonnullRefPtr<NamespaceDeclaration> Parser::parse_namespace_declaration(ASTNode& parent, bool is_nested_namespace)
+NonnullRefPtr<NamespaceDeclaration const> Parser::parse_namespace_declaration(ASTNode const& parent, bool is_nested_namespace)
 {
     auto namespace_decl = create_ast_node<NamespaceDeclaration>(parent, position(), {});
 
@@ -1431,7 +1452,7 @@ bool Parser::match_name()
     return type == Token::Type::Identifier || type == Token::Type::KnownType;
 }
 
-NonnullRefPtr<Name> Parser::parse_name(ASTNode& parent)
+NonnullRefPtr<Name const> Parser::parse_name(ASTNode const& parent)
 {
     LOG_SCOPE();
     NonnullRefPtr<Name> name_node = create_ast_node<Name>(parent, position(), {});
@@ -1449,7 +1470,9 @@ NonnullRefPtr<Name> Parser::parse_name(ASTNode& parent)
         return name_node;
     }
 
+    bool is_templatized = false;
     if (match_template_arguments()) {
+        is_templatized = true;
         consume(Token::Type::Less);
         NonnullRefPtr<TemplatizedName> templatized_name = create_ast_node<TemplatizedName>(parent, name_node->start(), {});
         templatized_name->set_name(name_node->name());
@@ -1462,6 +1485,27 @@ NonnullRefPtr<Name> Parser::parse_name(ASTNode& parent)
                 consume(Token::Type::Comma);
         }
         consume(Token::Type::Greater);
+    }
+
+    if (!is_templatized && (peek().type() == Token::Type::LeftBracket)) {
+        NonnullRefPtr<SizedName> sized_name = create_ast_node<SizedName>(parent, name_node->start(), {});
+        sized_name->set_name(name_node->name());
+        sized_name->set_scope(name_node->scope());
+
+        while (peek().type() == Token::Type::LeftBracket) {
+            consume(Token::Type::LeftBracket);
+
+            StringView size = "0"sv;
+            if (peek().type() == Token::Type::Integer) {
+                auto token = consume(Token::Type::Integer);
+                size = token.text();
+            }
+            sized_name->append_dimension(size);
+
+            consume(Token::Type::RightBracket);
+        }
+        name_node->set_end(position());
+        name_node = sized_name;
     }
 
     name_node->set_end(previous_token_end());
@@ -1504,7 +1548,7 @@ bool Parser::match_c_style_cast_expression()
     return true;
 }
 
-NonnullRefPtr<CStyleCastExpression> Parser::parse_c_style_cast_expression(ASTNode& parent)
+NonnullRefPtr<CStyleCastExpression const> Parser::parse_c_style_cast_expression(ASTNode const& parent)
 {
     auto parse_exp = create_ast_node<CStyleCastExpression>(parent, position(), {});
 
@@ -1517,7 +1561,7 @@ NonnullRefPtr<CStyleCastExpression> Parser::parse_c_style_cast_expression(ASTNod
     return parse_exp;
 }
 
-NonnullRefPtr<CppCastExpression> Parser::parse_cpp_cast_expression(ASTNode& parent)
+NonnullRefPtr<CppCastExpression const> Parser::parse_cpp_cast_expression(ASTNode const& parent)
 {
     auto cast_expression = create_ast_node<CppCastExpression>(parent, position(), {});
 
@@ -1541,7 +1585,7 @@ bool Parser::match_sizeof_expression()
     return match_keyword("sizeof");
 }
 
-NonnullRefPtr<SizeofExpression> Parser::parse_sizeof_expression(ASTNode& parent)
+NonnullRefPtr<SizeofExpression const> Parser::parse_sizeof_expression(ASTNode const& parent)
 {
     auto exp = create_ast_node<SizeofExpression>(parent, position(), {});
     consume(Token::Type::Keyword);
@@ -1557,23 +1601,25 @@ bool Parser::match_braced_init_list()
     return match(Token::Type::LeftCurly);
 }
 
-NonnullRefPtr<BracedInitList> Parser::parse_braced_init_list(ASTNode& parent)
+NonnullRefPtr<BracedInitList const> Parser::parse_braced_init_list(ASTNode const& parent)
 {
     auto init_list = create_ast_node<BracedInitList>(parent, position(), {});
 
     consume(Token::Type::LeftCurly);
     while (!eof() && peek().type() != Token::Type::RightCurly) {
         init_list->add_expression(parse_expression(*init_list));
+        if (peek().type() == Token::Type::Comma)
+            consume(Token::Type::Comma);
     }
     consume(Token::Type::RightCurly);
     init_list->set_end(position());
     return init_list;
 }
-NonnullRefPtrVector<Declaration> Parser::parse_class_members(StructOrClassDeclaration& parent)
+Vector<NonnullRefPtr<Declaration const>> Parser::parse_class_members(StructOrClassDeclaration& parent)
 {
     auto class_name = parent.full_name();
 
-    NonnullRefPtrVector<Declaration> members;
+    Vector<NonnullRefPtr<Declaration const>> members;
     while (!eof() && peek().type() != Token::Type::RightCurly) {
         if (match_access_specifier())
             consume_access_specifier(); // FIXME: Do not ignore access specifiers
@@ -1677,7 +1723,7 @@ void Parser::parse_constructor_or_destructor_impl(FunctionDeclaration& func, Cto
 
     // TODO: Parse =default, =delete.
 
-    RefPtr<FunctionDefinition> body;
+    RefPtr<FunctionDefinition const> body;
     Position ctor_end {};
     if (peek(Token::Type::LeftCurly).has_value()) {
         body = parse_function_definition(func);
@@ -1693,14 +1739,14 @@ void Parser::parse_constructor_or_destructor_impl(FunctionDeclaration& func, Cto
     func.set_end(ctor_end);
 }
 
-NonnullRefPtr<Constructor> Parser::parse_constructor(ASTNode& parent)
+NonnullRefPtr<Constructor const> Parser::parse_constructor(ASTNode const& parent)
 {
     auto ctor = create_ast_node<Constructor>(parent, position(), {});
     parse_constructor_or_destructor_impl(*ctor, CtorOrDtor::Ctor);
     return ctor;
 }
 
-NonnullRefPtr<Destructor> Parser::parse_destructor(ASTNode& parent)
+NonnullRefPtr<Destructor const> Parser::parse_destructor(ASTNode const& parent)
 {
     auto ctor = create_ast_node<Destructor>(parent, position(), {});
     parse_constructor_or_destructor_impl(*ctor, CtorOrDtor::Dtor);
@@ -1723,7 +1769,42 @@ bool Parser::match_using_namespace_declaration()
     return true;
 }
 
-NonnullRefPtr<UsingNamespaceDeclaration> Parser::parse_using_namespace_declaration(ASTNode& parent)
+bool Parser::match_using_type_declaration()
+{
+    save_state();
+    ScopeGuard state_guard = [this] { load_state(); };
+
+    if (!match_keyword("using"))
+        return false;
+    consume();
+
+    if (!match(Token::Type::Identifier))
+        return false;
+
+    return true;
+}
+
+bool Parser::match_typedef_declaration()
+{
+    save_state();
+    ScopeGuard state_guard = [this] { load_state(); };
+
+    if (!match_keyword("typedef"))
+        return false;
+    consume();
+
+    // FIXME: typedef void (*fn)()
+
+    if (!match_type())
+        return false;
+
+    if (!match(Token::Type::Identifier))
+        return false;
+
+    return true;
+}
+
+NonnullRefPtr<UsingNamespaceDeclaration const> Parser::parse_using_namespace_declaration(ASTNode const& parent)
 {
     auto decl = create_ast_node<UsingNamespaceDeclaration>(parent, position(), {});
 
@@ -1736,6 +1817,46 @@ NonnullRefPtr<UsingNamespaceDeclaration> Parser::parse_using_namespace_declarati
     consume(Token::Type::Semicolon);
 
     decl->set_name(name);
+
+    return decl;
+}
+
+NonnullRefPtr<TypedefDeclaration const> Parser::parse_typedef_declaration(Cpp::ASTNode const& parent)
+{
+    auto decl = create_ast_node<TypedefDeclaration>(parent, position(), {});
+
+    consume_keyword("typedef");
+
+    auto type = parse_type(*decl);
+    decl->set_alias(type);
+
+    auto name = parse_name(*decl);
+    decl->set_name(name);
+
+    decl->set_end(position());
+    consume(Token::Type::Semicolon);
+
+    return decl;
+}
+
+NonnullRefPtr<TypedefDeclaration const> Parser::parse_using_type_declaration(Cpp::ASTNode const& parent)
+{
+    auto decl = create_ast_node<TypedefDeclaration>(parent, position(), {});
+
+    // FIXME: These can also be templated.
+    consume_keyword("using");
+
+    auto name = parse_name(*decl);
+    decl->set_name(name);
+
+    if (match(Token::Type::Equals)) {
+        consume();
+        auto type = parse_type(*decl);
+        decl->set_alias(type);
+    }
+
+    decl->set_end(position());
+    consume(Token::Type::Semicolon);
 
     return decl;
 }

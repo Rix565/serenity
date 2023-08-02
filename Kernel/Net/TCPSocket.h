@@ -20,7 +20,7 @@ class TCPSocket final : public IPv4Socket {
 public:
     static void for_each(Function<void(TCPSocket const&)>);
     static ErrorOr<void> try_for_each(Function<ErrorOr<void>(TCPSocket const&)>);
-    static ErrorOr<NonnullLockRefPtr<TCPSocket>> try_create(int protocol, NonnullOwnPtr<DoubleBuffer> receive_buffer);
+    static ErrorOr<NonnullRefPtr<TCPSocket>> try_create(int protocol, NonnullOwnPtr<DoubleBuffer> receive_buffer);
     virtual ~TCPSocket() override;
 
     virtual bool unref() const override;
@@ -146,15 +146,15 @@ public:
     bool should_delay_next_ack() const;
 
     static MutexProtected<HashMap<IPv4SocketTuple, TCPSocket*>>& sockets_by_tuple();
-    static LockRefPtr<TCPSocket> from_tuple(IPv4SocketTuple const& tuple);
+    static RefPtr<TCPSocket> from_tuple(IPv4SocketTuple const& tuple);
 
-    static MutexProtected<HashMap<IPv4SocketTuple, LockRefPtr<TCPSocket>>>& closing_sockets();
+    static MutexProtected<HashMap<IPv4SocketTuple, RefPtr<TCPSocket>>>& closing_sockets();
 
-    ErrorOr<NonnullLockRefPtr<TCPSocket>> try_create_client(IPv4Address const& local_address, u16 local_port, IPv4Address const& peer_address, u16 peer_port);
+    ErrorOr<NonnullRefPtr<TCPSocket>> try_create_client(IPv4Address const& local_address, u16 local_port, IPv4Address const& peer_address, u16 peer_port);
     void set_originator(TCPSocket& originator) { m_originator = originator; }
     bool has_originator() { return !!m_originator; }
     void release_to_originator();
-    void release_for_accept(NonnullLockRefPtr<TCPSocket>);
+    void release_for_accept(NonnullRefPtr<TCPSocket>);
 
     void retransmit_packets();
 
@@ -176,20 +176,19 @@ private:
     virtual ErrorOr<size_t> protocol_receive(ReadonlyBytes raw_ipv4_packet, UserOrKernelBuffer& buffer, size_t buffer_size, int flags) override;
     virtual ErrorOr<size_t> protocol_send(UserOrKernelBuffer const&, size_t) override;
     virtual ErrorOr<void> protocol_connect(OpenFileDescription&) override;
-    virtual ErrorOr<u16> protocol_allocate_local_port() override;
     virtual ErrorOr<size_t> protocol_size(ReadonlyBytes raw_ipv4_packet) override;
     virtual bool protocol_is_disconnected() const override;
     virtual ErrorOr<void> protocol_bind() override;
-    virtual ErrorOr<void> protocol_listen(bool did_allocate_port) override;
+    virtual ErrorOr<void> protocol_listen() override;
 
     void enqueue_for_retransmit();
     void dequeue_for_retransmit();
 
     LockWeakPtr<TCPSocket> m_originator;
-    HashMap<IPv4SocketTuple, NonnullLockRefPtr<TCPSocket>> m_pending_release_for_accept;
+    HashMap<IPv4SocketTuple, NonnullRefPtr<TCPSocket>> m_pending_release_for_accept;
     Direction m_direction { Direction::Unspecified };
     Error m_error { Error::None };
-    LockRefPtr<NetworkAdapter> m_adapter;
+    SpinlockProtected<RefPtr<NetworkAdapter>, LockRank::None> m_adapter;
     u32 m_sequence_number { 0 };
     u32 m_ack_number { 0 };
     State m_state { State::Closed };
@@ -200,7 +199,7 @@ private:
 
     struct OutgoingPacket {
         u32 ack_number { 0 };
-        LockRefPtr<PacketWithTimestamp> buffer;
+        RefPtr<PacketWithTimestamp> buffer;
         size_t ipv4_payload_offset;
         LockWeakPtr<NetworkAdapter> adapter;
         int tx_counter { 0 };
@@ -216,14 +215,15 @@ private:
     u32 m_duplicate_acks { 0 };
 
     u32 m_last_ack_number_sent { 0 };
-    Time m_last_ack_sent_time;
+    UnixDateTime m_last_ack_sent_time;
 
     // FIXME: Make this configurable (sysctl)
     static constexpr u32 maximum_retransmits = 5;
-    Time m_last_retransmit_time;
+    UnixDateTime m_last_retransmit_time;
     u32 m_retransmit_attempts { 0 };
 
-    // FIXME: Parse window size TCP option from the peer
+    // Default to maximum window size. receive_tcp_packet() will update from the
+    // peer's advertised window size.
     u32 m_send_window_size { 64 * KiB };
 
     IntrusiveListNode<TCPSocket> m_retransmit_list_node;

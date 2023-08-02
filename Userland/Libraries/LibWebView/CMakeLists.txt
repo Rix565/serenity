@@ -1,5 +1,6 @@
 set(SOURCES
     AccessibilityTreeModel.cpp
+    AriaPropertiesStateModel.cpp
     DOMTreeModel.cpp
     OutOfProcessWebView.cpp
     RequestServerAdapter.cpp
@@ -18,5 +19,3 @@ set(GENERATED_SOURCES
 
 serenity_lib(LibWebView webview)
 target_link_libraries(LibWebView PRIVATE LibCore LibFileSystemAccessClient LibGfx LibGUI LibIPC LibProtocol LibWeb)
-
-add_subdirectory(DumpLayoutTree)

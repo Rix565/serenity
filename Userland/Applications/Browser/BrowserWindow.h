@@ -13,6 +13,7 @@
 #include <LibConfig/Listener.h>
 #include <LibGUI/ActionGroup.h>
 #include <LibGUI/Window.h>
+#include <LibWeb/HTML/ActivateTab.h>
 
 namespace Browser {
 
@@ -28,7 +29,7 @@ public:
 
     GUI::TabWidget& tab_widget();
     Tab& active_tab();
-    void create_new_tab(URL, bool activate);
+    Tab& create_new_tab(URL, Web::HTML::ActivateTab activate);
     void create_new_window(URL);
 
     GUI::Action& go_back_action() { return *m_go_back_action; }
@@ -40,32 +41,27 @@ public:
     GUI::Action& view_source_action() { return *m_view_source_action; }
     GUI::Action& inspect_dom_tree_action() { return *m_inspect_dom_tree_action; }
     GUI::Action& inspect_dom_node_action() { return *m_inspect_dom_node_action; }
-    GUI::Action& take_visible_screenshot_action() { return *m_take_visible_screenshot_action; }
-    GUI::Action& take_full_screenshot_action() { return *m_take_full_screenshot_action; }
 
     void content_filters_changed();
+    void autoplay_allowlist_changed();
     void proxy_mappings_changed();
 
     void broadcast_window_position(Gfx::IntPoint);
     void broadcast_window_size(Gfx::IntSize);
 
 private:
-    explicit BrowserWindow(CookieJar&, URL);
+    BrowserWindow(CookieJar&, URL, WebView::UseJavaScriptBytecode);
 
     void build_menus();
     ErrorOr<void> load_search_engines(GUI::Menu& settings_menu);
     void set_window_title_for_tab(Tab const&);
 
-    virtual void config_string_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, DeprecatedString const& value) override;
-    virtual void config_bool_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, bool value) override;
+    virtual void config_string_did_change(StringView domain, StringView group, StringView key, StringView value) override;
+    virtual void config_bool_did_change(StringView domain, StringView group, StringView key, bool value) override;
 
     virtual void event(Core::Event&) override;
 
-    enum class ScreenshotType {
-        Visible,
-        Full,
-    };
-    ErrorOr<void> take_screenshot(ScreenshotType);
+    void update_displayed_zoom_level();
 
     RefPtr<GUI::Action> m_go_back_action;
     RefPtr<GUI::Action> m_go_forward_action;
@@ -76,8 +72,8 @@ private:
     RefPtr<GUI::Action> m_view_source_action;
     RefPtr<GUI::Action> m_inspect_dom_tree_action;
     RefPtr<GUI::Action> m_inspect_dom_node_action;
-    RefPtr<GUI::Action> m_take_visible_screenshot_action;
-    RefPtr<GUI::Action> m_take_full_screenshot_action;
+
+    RefPtr<GUI::Menu> m_zoom_menu;
 
     CookieJar& m_cookie_jar;
     WindowActions m_window_actions;
@@ -90,6 +86,8 @@ private:
     RefPtr<GUI::Action> m_disable_user_agent_spoofing;
     RefPtr<GUI::Action> m_disable_search_engine_action;
     RefPtr<GUI::Action> m_change_homepage_action;
+
+    WebView::UseJavaScriptBytecode m_use_javascript_bytecode {};
 };
 
 }

@@ -8,15 +8,16 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/Parser/Parser.h>
+#include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/CSS/StyleSheetList.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::CSS {
 
-CSSStyleSheet* CSSStyleSheet::create(JS::Realm& realm, CSSRuleList& rules, MediaList& media, Optional<AK::URL> location)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSStyleSheet>> CSSStyleSheet::create(JS::Realm& realm, CSSRuleList& rules, MediaList& media, Optional<AK::URL> location)
 {
-    return realm.heap().allocate<CSSStyleSheet>(realm, realm, rules, media, move(location)).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<CSSStyleSheet>(realm, realm, rules, media, move(location)));
 }
 
 CSSStyleSheet::CSSStyleSheet(JS::Realm& realm, CSSRuleList& rules, MediaList& media, Optional<AK::URL> location)
@@ -27,7 +28,13 @@ CSSStyleSheet::CSSStyleSheet(JS::Realm& realm, CSSRuleList& rules, MediaList& me
         set_location(location->to_deprecated_string());
 
     for (auto& rule : *m_rules)
-        rule.set_parent_style_sheet(this);
+        rule->set_parent_style_sheet(this);
+
+    recalculate_namespaces();
+
+    m_rules->on_change = [this]() {
+        recalculate_namespaces();
+    };
 }
 
 JS::ThrowCompletionOr<void> CSSStyleSheet::initialize(JS::Realm& realm)
@@ -54,7 +61,8 @@ WebIDL::ExceptionOr<unsigned> CSSStyleSheet::insert_rule(StringView rule, unsign
     // FIXME: 2. If the disallow modification flag is set, throw a NotAllowedError DOMException.
 
     // 3. Let parsed rule be the return value of invoking parse a rule with rule.
-    auto parsed_rule = parse_css_rule(CSS::Parser::ParsingContext {}, rule);
+    auto context = m_style_sheet_list ? CSS::Parser::ParsingContext { m_style_sheet_list->document() } : CSS::Parser::ParsingContext { realm() };
+    auto parsed_rule = parse_css_rule(context, rule);
 
     // 4. If parsed rule is a syntax error, return parsed rule.
     if (!parsed_rule)
@@ -105,17 +113,23 @@ WebIDL::ExceptionOr<void> CSSStyleSheet::remove_rule(unsigned index)
 
 void CSSStyleSheet::for_each_effective_style_rule(Function<void(CSSStyleRule const&)> const& callback) const
 {
-    if (m_media.matches()) {
+    if (m_media->matches()) {
         m_rules->for_each_effective_style_rule(callback);
     }
+}
+
+void CSSStyleSheet::for_each_effective_keyframes_at_rule(Function<void(CSSKeyframesRule const&)> const& callback) const
+{
+    if (m_media->matches())
+        m_rules->for_each_effective_keyframes_at_rule(callback);
 }
 
 bool CSSStyleSheet::evaluate_media_queries(HTML::Window const& window)
 {
     bool any_media_queries_changed_match_state = false;
 
-    bool did_match = m_media.matches();
-    bool now_matches = m_media.evaluate(window);
+    bool did_match = m_media->matches();
+    bool now_matches = m_media->evaluate(window);
     if (did_match != now_matches)
         any_media_queries_changed_match_state = true;
     if (now_matches && m_rules->evaluate_media_queries(window))
@@ -127,6 +141,42 @@ bool CSSStyleSheet::evaluate_media_queries(HTML::Window const& window)
 void CSSStyleSheet::set_style_sheet_list(Badge<StyleSheetList>, StyleSheetList* list)
 {
     m_style_sheet_list = list;
+}
+
+Optional<StringView> CSSStyleSheet::default_namespace() const
+{
+    if (m_default_namespace_rule)
+        return m_default_namespace_rule->namespace_uri().view();
+
+    return {};
+}
+
+void CSSStyleSheet::recalculate_namespaces()
+{
+    for (JS::NonnullGCPtr<CSSRule> rule : *m_rules) {
+        // "Any @namespace rules must follow all @charset and @import rules and precede all other
+        // non-ignored at-rules and style rules in a style sheet.
+        // ...
+        // A syntactically invalid @namespace rule (whether malformed or misplaced) must be ignored."
+        // https://drafts.csswg.org/css-namespaces/#syntax
+        switch (rule->type()) {
+        case CSSRule::Type::Import:
+            continue;
+
+        case CSSRule::Type::Namespace:
+            break;
+
+        default:
+            // Any other types mean that further @namespace rules are invalid, so we can stop here.
+            return;
+        }
+
+        auto& namespace_rule = verify_cast<CSSNamespaceRule>(*rule);
+        if (!namespace_rule.namespace_uri().is_empty() && namespace_rule.prefix().is_empty())
+            m_default_namespace_rule = namespace_rule;
+
+        // FIXME: Store qualified namespace rules.
+    }
 }
 
 }

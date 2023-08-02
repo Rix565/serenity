@@ -8,21 +8,27 @@
 
 #include <Kernel/FileSystem/ProcFS/FileSystem.h>
 #include <Kernel/FileSystem/ProcFS/Inode.h>
-#include <Kernel/ProcessExposed.h>
 
 namespace Kernel {
 
-ErrorOr<NonnullLockRefPtr<FileSystem>> ProcFS::try_create()
+ErrorOr<NonnullRefPtr<FileSystem>> ProcFS::try_create(ReadonlyBytes)
 {
-    return TRY(adopt_nonnull_lock_ref_or_enomem(new (nothrow) ProcFS));
+    return TRY(adopt_nonnull_ref_or_enomem(new (nothrow) ProcFS));
 }
 
 ProcFS::ProcFS() = default;
 ProcFS::~ProcFS() = default;
 
+ErrorOr<NonnullRefPtr<Inode>> ProcFS::get_inode(InodeIdentifier inode_id) const
+{
+    if (inode_id.index() == 1)
+        return *m_root_inode;
+    return TRY(adopt_nonnull_ref_or_enomem(new (nothrow) ProcFSInode(const_cast<ProcFS&>(*this), inode_id.index())));
+}
+
 ErrorOr<void> ProcFS::initialize()
 {
-    m_root_inode = TRY(ProcFSComponentRegistry::the().root_directory().to_inode(*this));
+    m_root_inode = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) ProcFSInode(const_cast<ProcFS&>(*this), 1)));
     return {};
 }
 

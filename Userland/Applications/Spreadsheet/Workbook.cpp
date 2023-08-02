@@ -11,7 +11,6 @@
 #include <AK/ByteBuffer.h>
 #include <AK/StringView.h>
 #include <LibCore/MimeData.h>
-#include <LibCore/Stream.h>
 #include <LibFileSystemAccessClient/Client.h>
 #include <LibGUI/TextBox.h>
 #include <LibGUI/Window.h>
@@ -19,9 +18,9 @@
 
 namespace Spreadsheet {
 
-Workbook::Workbook(NonnullRefPtrVector<Sheet>&& sheets, GUI::Window& parent_window)
+Workbook::Workbook(Vector<NonnullRefPtr<Sheet>>&& sheets, GUI::Window& parent_window)
     : m_sheets(move(sheets))
-    , m_vm(JS::VM::create())
+    , m_vm(JS::VM::create().release_value_but_fixme_should_propagate_errors())
     , m_interpreter(JS::Interpreter::create<JS::GlobalObject>(m_vm))
     , m_interpreter_scope(*m_interpreter)
     , m_main_execution_context(m_vm->heap())
@@ -50,7 +49,7 @@ bool Workbook::set_filename(DeprecatedString const& filename)
     return true;
 }
 
-ErrorOr<void, DeprecatedString> Workbook::open_file(String const& filename, Core::Stream::File& file)
+ErrorOr<void, DeprecatedString> Workbook::open_file(String const& filename, Core::File& file)
 {
     auto mime = Core::guess_mime_type_based_on_filename(filename);
 
@@ -62,7 +61,7 @@ ErrorOr<void, DeprecatedString> Workbook::open_file(String const& filename, Core
     return {};
 }
 
-ErrorOr<void> Workbook::write_to_file(String const& filename, Core::Stream::File& stream)
+ErrorOr<void> Workbook::write_to_file(String const& filename, Core::File& stream)
 {
     auto mime = Core::guess_mime_type_based_on_filename(filename);
 
@@ -74,7 +73,7 @@ ErrorOr<void> Workbook::write_to_file(String const& filename, Core::Stream::File
     return {};
 }
 
-ErrorOr<bool, DeprecatedString> Workbook::import_file(String const& filename, Core::Stream::File& file)
+ErrorOr<bool, DeprecatedString> Workbook::import_file(String const& filename, Core::File& file)
 {
     auto mime = Core::guess_mime_type_based_on_filename(filename);
 

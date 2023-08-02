@@ -51,6 +51,8 @@ u32 Emulator::virt_syscall(u32 function, u32 arg1, u32 arg2, u32 arg3)
         return virt$beep();
     case SC_bind:
         return virt$bind(arg1, arg2, arg3);
+    case SC_bindmount:
+        return virt$bindmount(arg1);
     case SC_chdir:
         return virt$chdir(arg1, arg2);
     case SC_chmod:
@@ -94,14 +96,16 @@ u32 Emulator::virt_syscall(u32 function, u32 arg1, u32 arg2, u32 arg3)
         return virt$fork();
     case SC_fstat:
         return virt$fstat(arg1, arg2);
+    case SC_fsmount:
+        return virt$fsopen(arg1);
+    case SC_fsopen:
+        return virt$fsopen(arg1);
     case SC_ftruncate:
         return virt$ftruncate(arg1, arg2);
     case SC_futex:
         return virt$futex(arg1);
     case SC_get_dir_entries:
         return virt$get_dir_entries(arg1, arg2, arg3);
-    case SC_get_process_name:
-        return virt$get_process_name(arg1, arg2);
     case SC_get_stack_bounds:
         return virt$get_stack_bounds(arg1, arg2);
     case SC_getcwd:
@@ -160,8 +164,6 @@ u32 Emulator::virt_syscall(u32 function, u32 arg1, u32 arg2, u32 arg3)
         return virt$mkdir(arg1, arg2, arg3);
     case SC_mmap:
         return virt$mmap(arg1);
-    case SC_mount:
-        return virt$mount(arg1);
     case SC_mprotect:
         return virt$mprotect(arg1, arg2, arg3);
     case SC_mremap:
@@ -198,6 +200,8 @@ u32 Emulator::virt_syscall(u32 function, u32 arg1, u32 arg2, u32 arg3)
         return virt$recvmsg(arg1, arg2, arg3);
     case SC_rename:
         return virt$rename(arg1);
+    case SC_remount:
+        return virt$remount(arg1);
     case SC_rmdir:
         return virt$rmdir(arg1, arg2);
     case SC_scheduler_get_parameters:
@@ -208,12 +212,8 @@ u32 Emulator::virt_syscall(u32 function, u32 arg1, u32 arg2, u32 arg3)
         return virt$sendfd(arg1, arg2);
     case SC_sendmsg:
         return virt$sendmsg(arg1, arg2, arg3);
-    case SC_set_coredump_metadata:
-        return virt$set_coredump_metadata(arg1);
     case SC_set_mmap_name:
         return virt$set_mmap_name(arg1);
-    case SC_set_process_name:
-        return virt$set_process_name(arg1, arg2);
     case SC_set_thread_name:
         return virt$set_thread_name(arg1, arg2, arg3);
     case SC_setgid:
@@ -397,22 +397,6 @@ int Emulator::virt$rename(FlatPtr params_addr)
     return syscall(SC_rename, &params);
 }
 
-int Emulator::virt$set_coredump_metadata(FlatPtr params_addr)
-{
-    Syscall::SC_set_coredump_metadata_params params;
-    mmu().copy_from_vm(&params, params_addr, sizeof(params));
-
-    auto key = mmu().copy_buffer_from_vm((FlatPtr)params.key.characters, params.key.length);
-    params.key.characters = (char const*)key.data();
-    params.key.length = key.size();
-
-    auto value = mmu().copy_buffer_from_vm((FlatPtr)params.value.characters, params.value.length);
-    params.value.characters = (char const*)value.data();
-    params.value.length = value.size();
-
-    return syscall(SC_set_coredump_metadata, &params);
-}
-
 int Emulator::virt$dbgputstr(FlatPtr characters, int length)
 {
     auto buffer = mmu().copy_buffer_from_vm(characters, length);
@@ -587,28 +571,6 @@ int Emulator::virt$set_mmap_name(FlatPtr params_addr)
         return -EINVAL;
     static_cast<MmapRegion&>(*region).set_name(DeprecatedString::copy(name));
     return 0;
-}
-
-int Emulator::virt$get_process_name(FlatPtr buffer, int size)
-{
-    if (size < 0)
-        return -EINVAL;
-    auto host_buffer_result = ByteBuffer::create_zeroed((size_t)size);
-    if (host_buffer_result.is_error())
-        return -ENOMEM;
-    auto& host_buffer = host_buffer_result.value();
-    int rc = syscall(SC_get_process_name, host_buffer.data(), host_buffer.size());
-    mmu().copy_to_vm(buffer, host_buffer.data(), host_buffer.size());
-    return rc;
-}
-
-int Emulator::virt$set_process_name(FlatPtr user_buffer, int size)
-{
-    if (size < 0)
-        return -EINVAL;
-    auto host_buffer = mmu().copy_buffer_from_vm(user_buffer, size);
-    auto name = DeprecatedString::formatted("(UE) {}", StringView { host_buffer.data(), host_buffer.size() });
-    return syscall(SC_set_process_name, name.characters(), name.length());
 }
 
 int Emulator::virt$lseek(int fd, FlatPtr offset_addr, int whence)
@@ -950,18 +912,48 @@ FlatPtr Emulator::virt$mremap(FlatPtr params_addr)
     return -EINVAL;
 }
 
-u32 Emulator::virt$mount(u32 params_addr)
+u32 Emulator::virt$bindmount(u32 params_addr)
 {
-    Syscall::SC_mount_params params;
+    Syscall::SC_bindmount_params params;
     mmu().copy_from_vm(&params, params_addr, sizeof(params));
     auto target = mmu().copy_buffer_from_vm((FlatPtr)params.target.characters, params.target.length);
-    auto fs_path = mmu().copy_buffer_from_vm((FlatPtr)params.fs_type.characters, params.fs_type.length);
-    params.fs_type.characters = (char*)fs_path.data();
-    params.fs_type.length = fs_path.size();
     params.target.characters = (char*)target.data();
     params.target.length = target.size();
 
-    return syscall(SC_mount, &params);
+    return syscall(SC_bindmount, &params);
+}
+
+u32 Emulator::virt$remount(u32 params_addr)
+{
+    Syscall::SC_remount_params params;
+    mmu().copy_from_vm(&params, params_addr, sizeof(params));
+    auto target = mmu().copy_buffer_from_vm((FlatPtr)params.target.characters, params.target.length);
+    params.target.characters = (char*)target.data();
+    params.target.length = target.size();
+
+    return syscall(SC_remount, &params);
+}
+
+u32 Emulator::virt$fsopen(u32 params_addr)
+{
+    Syscall::SC_fsopen_params params;
+    mmu().copy_from_vm(&params, params_addr, sizeof(params));
+    auto fs_type = mmu().copy_buffer_from_vm((FlatPtr)params.fs_type.characters, params.fs_type.length);
+    params.fs_type.characters = (char*)fs_type.data();
+    params.fs_type.length = fs_type.size();
+
+    return syscall(SC_fsopen, &params);
+}
+
+u32 Emulator::virt$fsmount(u32 params_addr)
+{
+    Syscall::SC_fsmount_params params;
+    mmu().copy_from_vm(&params, params_addr, sizeof(params));
+    auto target = mmu().copy_buffer_from_vm((FlatPtr)params.target.characters, params.target.length);
+    params.target.characters = (char*)target.data();
+    params.target.length = target.size();
+
+    return syscall(SC_fsmount, &params);
 }
 
 u32 Emulator::virt$gettid()

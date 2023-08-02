@@ -14,11 +14,12 @@ die() {
 
 pick_clang() {
     local BEST_VERSION=0
-    for CLANG_CANDIDATE in clang clang-13 clang-14 /usr/local/bin/clang-13 /usr/local/bin/clang-14; do
+    for CLANG_CANDIDATE in clang clang-15 clang-16 /opt/homebrew/opt/llvm/bin/clang ; do
         if ! command -v $CLANG_CANDIDATE >/dev/null 2>&1; then
             continue
         fi
         if $CLANG_CANDIDATE --version 2>&1 | grep "Apple clang" >/dev/null; then
+            echo "Skipping Apple clang, as Apple does not ship libfuzzer with Xcode..."
             continue
         fi
         if ! $CLANG_CANDIDATE -dumpversion >/dev/null 2>&1; then
@@ -32,8 +33,8 @@ pick_clang() {
             BEST_CLANG_CANDIDATE="$CLANG_CANDIDATE"
         fi
     done
-    if [ "$BEST_VERSION" -lt 13 ]; then
-        die "Please make sure that Clang version 13 or higher is installed."
+    if [ "$BEST_VERSION" -lt 14 ]; then
+        die "Please make sure that Clang version 14 or higher is installed."
     fi
 }
 
@@ -45,10 +46,15 @@ unset CFLAGS
 unset CXXFLAGS
 export AFL_NOOPT=1
 
+if [ "$#" -gt "0" ] && [ "--oss-fuzz" = "$1" ] ; then
+    CXXFLAGS="$CXXFLAGS -DOSS_FUZZ=ON"
+fi
+
 # FIXME: Replace these CMake invocations with a CMake superbuild?
 echo "Building Lagom Tools..."
 cmake -GNinja -B Build/tools \
     -DBUILD_LAGOM=OFF \
+    -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
     -DCMAKE_INSTALL_PREFIX=Build/tool-install \
     -Dpackage=LagomTools
 ninja -C Build/tools install
@@ -72,7 +78,14 @@ if [ "$#" -gt "0" ] && [ "--oss-fuzz" = "$1" ] ; then
         -DLINKER_FLAGS="$LIB_FUZZING_ENGINE" \
         -DCMAKE_PREFIX_PATH=Build/tool-install
     ninja -C Build/fuzzers
-    cp Build/fuzzers/Fuzzers/Fuzz* "$OUT"/
+    cp Build/fuzzers/bin/Fuzz* "$OUT"/
+elif [ "$#" -gt "0" ] && [ "--standalone" = "$1" ] ; then
+    echo "Building for standalone fuzz configuration..."
+    cmake -GNinja -B Build/lagom-fuzzers-standalone \
+        -DBUILD_LAGOM=ON \
+        -DENABLE_FUZZERS=ON \
+        -DCMAKE_PREFIX_PATH=Build/tool-install
+    ninja -C Build/lagom-fuzzers-standalone
 else
     echo "Building for local fuzz configuration..."
     pick_clang

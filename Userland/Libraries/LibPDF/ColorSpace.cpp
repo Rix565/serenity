@@ -4,12 +4,15 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGfx/ICC/WellKnownProfiles.h>
 #include <LibPDF/ColorSpace.h>
 #include <LibPDF/CommonNames.h>
 #include <LibPDF/Document.h>
 #include <LibPDF/ObjectDerivatives.h>
 
 namespace PDF {
+
+RefPtr<Gfx::ICC::Profile> ICCBasedColorSpace::s_srgb_profile;
 
 #define ENUMERATE(name, ever_needs_parameters) \
     ColorSpaceFamily ColorSpaceFamily::name { #name, ever_needs_parameters };
@@ -36,8 +39,6 @@ PDFErrorOr<NonnullRefPtr<ColorSpace>> ColorSpace::create(DeprecatedFlyString con
         return DeviceRGBColorSpace::the();
     if (name == CommonNames::DeviceCMYK)
         return DeviceCMYKColorSpace::the();
-    if (name == CommonNames::Pattern)
-        TODO();
     VERIFY_NOT_REACHED();
 }
 
@@ -56,8 +57,17 @@ PDFErrorOr<NonnullRefPtr<ColorSpace>> ColorSpace::create(Document* document, Non
     if (color_space_name == CommonNames::ICCBased)
         return TRY(ICCBasedColorSpace::create(document, move(parameters)));
 
+    if (color_space_name == CommonNames::Indexed)
+        return Error::rendering_unsupported_error("Indexed color spaces not yet implemented");
+
+    if (color_space_name == CommonNames::Pattern)
+        return Error::rendering_unsupported_error("Pattern color spaces not yet implemented");
+
+    if (color_space_name == CommonNames::Separation)
+        return TRY(SeparationColorSpace::create(document, move(parameters)));
+
     dbgln("Unknown color space: {}", color_space_name);
-    TODO();
+    return Error::rendering_unsupported_error("unknown color space");
 }
 
 NonnullRefPtr<DeviceGrayColorSpace> DeviceGrayColorSpace::the()
@@ -66,7 +76,7 @@ NonnullRefPtr<DeviceGrayColorSpace> DeviceGrayColorSpace::the()
     return instance;
 }
 
-Color DeviceGrayColorSpace::color(Vector<Value> const& arguments) const
+PDFErrorOr<Color> DeviceGrayColorSpace::color(Vector<Value> const& arguments) const
 {
     VERIFY(arguments.size() == 1);
     auto gray = static_cast<u8>(arguments[0].to_float() * 255.0f);
@@ -84,7 +94,7 @@ NonnullRefPtr<DeviceRGBColorSpace> DeviceRGBColorSpace::the()
     return instance;
 }
 
-Color DeviceRGBColorSpace::color(Vector<Value> const& arguments) const
+PDFErrorOr<Color> DeviceRGBColorSpace::color(Vector<Value> const& arguments) const
 {
     VERIFY(arguments.size() == 3);
     auto r = static_cast<u8>(arguments[0].to_float() * 255.0f);
@@ -104,7 +114,7 @@ NonnullRefPtr<DeviceCMYKColorSpace> DeviceCMYKColorSpace::the()
     return instance;
 }
 
-Color DeviceCMYKColorSpace::color(Vector<Value> const& arguments) const
+PDFErrorOr<Color> DeviceCMYKColorSpace::color(Vector<Value> const& arguments) const
 {
     VERIFY(arguments.size() == 4);
     auto c = arguments[0].to_float();
@@ -262,7 +272,7 @@ constexpr Array<float, 3> convert_to_srgb(Array<float, 3> xyz)
     return matrix_multiply(conversion_matrix, xyz);
 }
 
-Color CalRGBColorSpace::color(Vector<Value> const& arguments) const
+PDFErrorOr<Color> CalRGBColorSpace::color(Vector<Value> const& arguments) const
 {
     VERIFY(arguments.size() == 3);
     auto a = clamp(arguments[0].to_float(), 0.0f, 1.0f);
@@ -303,39 +313,84 @@ PDFErrorOr<NonnullRefPtr<ColorSpace>> ICCBasedColorSpace::create(Document* docum
     if (!param.has<NonnullRefPtr<Object>>() || !param.get<NonnullRefPtr<Object>>()->is<StreamObject>())
         return Error { Error::Type::MalformedPDF, "ICCBased color space expects a stream parameter" };
 
-    auto dict = param.get<NonnullRefPtr<Object>>()->cast<StreamObject>()->dict();
+    auto stream = param.get<NonnullRefPtr<Object>>()->cast<StreamObject>();
+    auto dict = stream->dict();
 
-    DeprecatedFlyString name;
-    if (!dict->contains(CommonNames::Alternate)) {
-        auto number_of_components = dict->get_value(CommonNames::N).to_int();
-        if (number_of_components == 1)
-            name = CommonNames::DeviceGray;
-        else if (number_of_components == 3)
-            name = CommonNames::DeviceRGB;
-        else if (number_of_components == 4)
-            name = CommonNames::DeviceCMYK;
-        else
-            VERIFY_NOT_REACHED();
-        return ColorSpace::create(name);
+    auto maybe_profile = Gfx::ICC::Profile::try_load_from_externally_owned_memory(stream->bytes());
+    if (!maybe_profile.is_error())
+        return adopt_ref(*new ICCBasedColorSpace(maybe_profile.release_value()));
+
+    if (dict->contains(CommonNames::Alternate)) {
+        auto alternate_color_space_object = MUST(dict->get_object(document, CommonNames::Alternate));
+        if (alternate_color_space_object->is<NameObject>())
+            return ColorSpace::create(alternate_color_space_object->cast<NameObject>()->name());
+
+        return Error { Error::Type::Internal, "Alternate color spaces in array format are not supported" };
     }
 
-    auto alternate_color_space_object = MUST(dict->get_object(document, CommonNames::Alternate));
-    if (alternate_color_space_object->is<NameObject>()) {
-        return ColorSpace::create(alternate_color_space_object->cast<NameObject>()->name());
-    }
-
-    dbgln("Alternate color spaces in array format not supported yet ");
-    TODO();
+    return Error { Error::Type::MalformedPDF, "Failed to load ICC color space with malformed profile and no alternate" };
 }
 
-Color ICCBasedColorSpace::color(Vector<Value> const&) const
+ICCBasedColorSpace::ICCBasedColorSpace(NonnullRefPtr<Gfx::ICC::Profile> profile)
+    : m_profile(profile)
 {
-    VERIFY_NOT_REACHED();
+}
+
+PDFErrorOr<Color> ICCBasedColorSpace::color(Vector<Value> const& arguments) const
+{
+    if (!s_srgb_profile)
+        s_srgb_profile = TRY(Gfx::ICC::sRGB());
+
+    Vector<u8> bytes;
+    for (auto const& arg : arguments) {
+        VERIFY(arg.has_number());
+        bytes.append(static_cast<u8>(arg.to_float() * 255.0f));
+    }
+
+    auto pcs = TRY(m_profile->to_pcs(bytes));
+    Array<u8, 3> output;
+    TRY(s_srgb_profile->from_pcs(pcs, output.span()));
+
+    return Color(output[0], output[1], output[2]);
 }
 
 Vector<float> ICCBasedColorSpace::default_decode() const
 {
-    VERIFY_NOT_REACHED();
+    auto color_space = m_profile->data_color_space();
+    switch (color_space) {
+    case Gfx::ICC::ColorSpace::Gray:
+        return { 0.0, 1.0 };
+    case Gfx::ICC::ColorSpace::RGB:
+        return { 0.0, 1.0, 0.0, 1.0, 0.0, 1.0 };
+    case Gfx::ICC::ColorSpace::CMYK:
+        return { 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0 };
+    default:
+        warnln("PDF: Unknown default_decode params for color space {}", Gfx::ICC::data_color_space_name(color_space));
+        Vector<float> decoding_ranges;
+        for (u8 i = 0; i < Gfx::ICC::number_of_components_in_color_space(color_space); i++) {
+            decoding_ranges.append(0.0);
+            decoding_ranges.append(1.0);
+        }
+        return decoding_ranges;
+    }
+}
+
+PDFErrorOr<NonnullRefPtr<SeparationColorSpace>> SeparationColorSpace::create(Document*, Vector<Value>&&)
+{
+    auto color_space = adopt_ref(*new SeparationColorSpace());
+    // FIXME: Implement.
+    return color_space;
+}
+
+PDFErrorOr<Color> SeparationColorSpace::color(Vector<Value> const&) const
+{
+    return Error::rendering_unsupported_error("Separation color spaces not yet implemented");
+}
+
+Vector<float> SeparationColorSpace::default_decode() const
+{
+    warnln("PDF: TODO implement SeparationColorSpace::default_decode()");
+    return {};
 }
 
 }

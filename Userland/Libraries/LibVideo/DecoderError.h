@@ -10,11 +10,10 @@
 #include <AK/Error.h>
 #include <AK/Format.h>
 #include <AK/SourceLocation.h>
+#include <LibVideo/Forward.h>
 #include <errno.h>
 
 namespace Video {
-
-struct DecoderError;
 
 template<typename T>
 using DecoderErrorOr = ErrorOr<T, DecoderError>;
@@ -33,7 +32,7 @@ enum class DecoderErrorCategory : u32 {
     NotImplemented,
 };
 
-struct DecoderError {
+class DecoderError {
 public:
     static DecoderError with_description(DecoderErrorCategory category, StringView description)
     {
@@ -79,7 +78,7 @@ private:
 
 #define DECODER_TRY(category, expression)                                                  \
     ({                                                                                     \
-        auto _result = ((expression));                                                     \
+        auto&& _result = ((expression));                                                   \
         if (_result.is_error()) [[unlikely]] {                                             \
             auto _error_string = _result.release_error().string_literal();                 \
             return DecoderError::from_source_location(                                     \

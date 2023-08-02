@@ -22,7 +22,7 @@ FontPicker::FontPicker(Window* parent_window, Gfx::Font const* current_font, boo
     : Dialog(parent_window)
     , m_fixed_width_only(fixed_width_only)
 {
-    set_title("Font picker");
+    set_title("Font Picker");
     resize(430, 280);
     set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-font-editor.png"sv).release_value_but_fixme_should_propagate_errors());
 
@@ -95,7 +95,9 @@ FontPicker::FontPicker(Window* parent_window, Gfx::Font const* current_font, boo
                     m_size_spin_box->set_visible(true);
 
                     m_sizes.append(8);
+                    m_sizes.append(9);
                     m_sizes.append(10);
+                    m_sizes.append(11);
                     m_sizes.append(12);
                     m_sizes.append(14);
                     m_sizes.append(16);

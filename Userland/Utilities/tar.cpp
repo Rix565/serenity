@@ -5,17 +5,20 @@
  */
 
 #include <AK/Assertions.h>
+#include <AK/DeprecatedString.h>
+#include <AK/HashMap.h>
 #include <AK/LexicalPath.h>
 #include <AK/Span.h>
 #include <AK/Vector.h>
 #include <LibArchive/TarStream.h>
 #include <LibCompress/Gzip.h>
+#include <LibCompress/Lzma.h>
+#include <LibCompress/Xz.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/Directory.h>
-#include <LibCore/File.h>
-#include <LibCore/Stream.h>
 #include <LibCore/System.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibMain/Main.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -31,6 +34,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     bool list = false;
     bool verbose = false;
     bool gzip = false;
+    bool lzma = false;
+    bool xz = false;
     bool no_auto_compress = false;
     StringView archive_file;
     bool dereference;
@@ -43,6 +48,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_option(list, "List contents", "list", 't');
     args_parser.add_option(verbose, "Print paths", "verbose", 'v');
     args_parser.add_option(gzip, "Compress or decompress file using gzip", "gzip", 'z');
+    args_parser.add_option(lzma, "Compress or decompress file using lzma", "lzma", 0);
+    args_parser.add_option(xz, "Compress or decompress file using xz", "xz", 'J');
     args_parser.add_option(no_auto_compress, "Do not use the archive suffix to select the compression algorithm", "no-auto-compress", 0);
     args_parser.add_option(directory, "Directory to extract to/create from", "directory", 'C', "DIRECTORY");
     args_parser.add_option(archive_file, "Archive file", "file", 'f', "FILE");
@@ -58,16 +65,26 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     if (!no_auto_compress && !archive_file.is_empty()) {
         if (archive_file.ends_with(".gz"sv) || archive_file.ends_with(".tgz"sv))
             gzip = true;
+        if (archive_file.ends_with(".lzma"sv))
+            lzma = true;
+        if (archive_file.ends_with(".xz"sv))
+            xz = true;
     }
 
     if (list || extract) {
         if (!directory.is_empty())
             TRY(Core::System::chdir(directory));
 
-        NonnullOwnPtr<Core::Stream::Stream> input_stream = TRY(Core::Stream::File::open_file_or_standard_stream(archive_file, Core::Stream::OpenMode::Read));
+        NonnullOwnPtr<Stream> input_stream = TRY(Core::InputBufferedFile::create(TRY(Core::File::open_file_or_standard_stream(archive_file, Core::File::OpenMode::Read))));
 
         if (gzip)
             input_stream = make<Compress::GzipDecompressor>(move(input_stream));
+
+        if (lzma)
+            input_stream = TRY(Compress::LzmaDecompressor::create_from_container(move(input_stream)));
+
+        if (xz)
+            input_stream = TRY(Compress::XzDecompressor::create(move(input_stream)));
 
         auto tar_stream = TRY(Archive::TarInputStream::construct(move(input_stream)));
 
@@ -128,7 +145,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                 Array<u8, buffer_size> buffer;
 
                 while (!file_stream.is_eof()) {
-                    auto slice = TRY(file_stream.read(buffer));
+                    auto slice = TRY(file_stream.read_some(buffer));
                     long_name.append(reinterpret_cast<char*>(slice.data()), slice.size());
                 }
 
@@ -150,7 +167,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                 outln("{}", filename);
 
             if (extract) {
-                DeprecatedString absolute_path = Core::File::absolute_path(filename);
+                DeprecatedString absolute_path = TRY(FileSystem::absolute_path(filename)).to_deprecated_string();
                 auto parent_path = LexicalPath(absolute_path).parent();
                 auto header_mode = TRY(header.mode());
 
@@ -163,7 +180,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
                     Array<u8, buffer_size> buffer;
                     while (!file_stream.is_eof()) {
-                        auto slice = TRY(file_stream.read(buffer));
+                        auto slice = TRY(file_stream.read_some(buffer));
                         TRY(Core::System::write(fd, slice));
                     }
 
@@ -181,7 +198,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
                     auto result_or_error = Core::System::mkdir(absolute_path, header_mode);
                     if (result_or_error.is_error() && result_or_error.error().code() != EEXIST)
-                        return result_or_error.error();
+                        return result_or_error.release_error();
                     break;
                 }
                 default:
@@ -206,10 +223,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             return 1;
         }
 
-        NonnullOwnPtr<Core::Stream::Stream> output_stream = TRY(Core::Stream::File::standard_output());
+        NonnullOwnPtr<Stream> output_stream = TRY(Core::File::standard_output());
 
         if (!archive_file.is_empty())
-            output_stream = TRY(Core::Stream::File::open(archive_file, Core::Stream::OpenMode::Write));
+            output_stream = TRY(Core::File::open(archive_file, Core::File::OpenMode::Write));
 
         if (!directory.is_empty())
             TRY(Core::System::chdir(directory));
@@ -217,18 +234,27 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         if (gzip)
             output_stream = TRY(try_make<Compress::GzipCompressor>(move(output_stream)));
 
+        if (lzma)
+            output_stream = TRY(Compress::LzmaCompressor::create_container(move(output_stream), {}));
+
+        if (xz)
+            TODO();
+
         Archive::TarOutputStream tar_stream(move(output_stream));
 
         auto add_file = [&](DeprecatedString path) -> ErrorOr<void> {
-            auto file = Core::File::construct(path);
-            if (!file->open(Core::OpenMode::ReadOnly)) {
-                warnln("Failed to open {}: {}", path, file->error_string());
+            auto file_or_error = Core::File::open(path, Core::File::OpenMode::Read);
+            if (file_or_error.is_error()) {
+                warnln("Failed to open {}: {}", path, file_or_error.error());
                 return {};
             }
+            auto file = file_or_error.release_value();
 
             auto statbuf = TRY(Core::System::lstat(path));
             auto canonicalized_path = TRY(String::from_deprecated_string(LexicalPath::canonicalized_path(path)));
-            TRY(tar_stream.add_file(canonicalized_path, statbuf.st_mode, file->read_all()));
+            // FIXME: We should stream instead of reading the entire file in one go, but TarOutputStream does not have any interface to do so.
+            auto file_content = TRY(file->read_until_eof());
+            TRY(tar_stream.add_file(canonicalized_path, statbuf.st_mode, file_content));
             if (verbose)
                 outln("{}", canonicalized_path);
 
@@ -257,9 +283,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             Core::DirIterator it(path, Core::DirIterator::Flags::SkipParentAndBaseDir);
             while (it.has_next()) {
                 auto child_path = it.next_full_path();
-                if (!dereference && Core::File::is_link(child_path)) {
+                if (!dereference && FileSystem::is_link(child_path)) {
                     TRY(add_link(child_path));
-                } else if (!Core::File::is_directory(child_path)) {
+                } else if (!FileSystem::is_directory(child_path)) {
                     TRY(add_file(child_path));
                 } else {
                     TRY(handle_directory(child_path, handle_directory));
@@ -270,7 +296,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         };
 
         for (auto const& path : paths) {
-            if (Core::File::is_directory(path)) {
+            if (FileSystem::is_directory(path)) {
                 TRY(add_directory(path, add_directory));
             } else {
                 TRY(add_file(path));

@@ -14,8 +14,8 @@
 #include <Kernel/FileSystem/Inode.h>
 #include <Kernel/FileSystem/InodeMetadata.h>
 #include <Kernel/Forward.h>
-#include <Kernel/KBuffer.h>
-#include <Kernel/VirtualAddress.h>
+#include <Kernel/Library/KBuffer.h>
+#include <Kernel/Memory/VirtualAddress.h>
 
 namespace Kernel {
 
@@ -26,8 +26,8 @@ public:
 
 class OpenFileDescription final : public AtomicRefCounted<OpenFileDescription> {
 public:
-    static ErrorOr<NonnullLockRefPtr<OpenFileDescription>> try_create(Custody&);
-    static ErrorOr<NonnullLockRefPtr<OpenFileDescription>> try_create(File&);
+    static ErrorOr<NonnullRefPtr<OpenFileDescription>> try_create(Custody&);
+    static ErrorOr<NonnullRefPtr<OpenFileDescription>> try_create(File&);
     ~OpenFileDescription();
 
     Thread::FileBlocker::BlockFlags should_unblock(Thread::FileBlocker::BlockFlags) const;
@@ -58,8 +58,6 @@ public:
 
     ErrorOr<size_t> get_dir_entries(UserOrKernelBuffer& buffer, size_t);
 
-    ErrorOr<NonnullOwnPtr<KBuffer>> read_entire_file();
-
     ErrorOr<NonnullOwnPtr<KString>> original_absolute_path() const;
     ErrorOr<NonnullOwnPtr<KString>> pseudo_path() const;
 
@@ -81,6 +79,10 @@ public:
     bool is_inode_watcher() const;
     InodeWatcher const* inode_watcher() const;
     InodeWatcher* inode_watcher();
+
+    bool is_mount_file() const;
+    MountFile const* mount_file() const;
+    MountFile* mount_file();
 
     bool is_master_pty() const;
     MasterPTY const* master_pty() const;
@@ -114,7 +116,7 @@ public:
 
     OwnPtr<OpenFileDescriptionData>& data();
 
-    void set_original_inode(Badge<VirtualFileSystem>, NonnullLockRefPtr<Inode>&& inode) { m_inode = move(inode); }
+    void set_original_inode(Badge<VirtualFileSystem>, NonnullRefPtr<Inode> inode) { m_inode = move(inode); }
     void set_original_custody(Badge<VirtualFileSystem>, Custody& custody);
 
     ErrorOr<void> truncate(u64);
@@ -140,8 +142,8 @@ private:
         blocker_set().unblock_all_blockers_whose_conditions_are_met();
     }
 
-    LockRefPtr<Inode> m_inode;
-    NonnullLockRefPtr<File> m_file;
+    RefPtr<Inode> m_inode;
+    NonnullRefPtr<File> const m_file;
 
     struct State {
         OwnPtr<OpenFileDescriptionData> data;

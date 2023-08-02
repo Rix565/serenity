@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2020, Emanuel Sprung <emanuel.sprung@gmail.com>
  * Copyright (c) 2022, networkException <networkexception@serenityos.org>
+ * Copyright (c) 2023, Cameron Youell <cameronyouell@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,6 +16,7 @@
 #include <LibGUI/Event.h>
 #include <LibGUI/JsonArrayModel.h>
 #include <LibGUI/Menu.h>
+#include <LibGUI/MessageBox.h>
 #include <LibGUI/Model.h>
 #include <LibGUI/TextBox.h>
 #include <LibGUI/Widget.h>
@@ -30,10 +32,14 @@ class BookmarkEditor final : public GUI::Dialog {
 
 public:
     static Vector<JsonValue>
-    edit_bookmark(Window* parent_window, StringView title, StringView url)
+    edit_bookmark(Window* parent_window, StringView title, StringView url, BookmarksBarWidget::PerformEditOn perform_edit_on)
     {
         auto editor = BookmarkEditor::construct(parent_window, title, url);
-        editor->set_title("Edit Bookmark");
+        if (perform_edit_on == BookmarksBarWidget::PerformEditOn::NewBookmark) {
+            editor->set_title("Add Bookmark");
+        } else {
+            editor->set_title("Edit Bookmark");
+        }
         editor->set_icon(g_icon_bag.bookmark_filled);
 
         if (editor->exec() == ExecResult::OK) {
@@ -58,14 +64,18 @@ private:
         m_title_textbox->set_focus(true);
         m_title_textbox->select_all();
 
-        m_url_textbox = *widget->find_descendant_of_type_named<GUI::TextBox>("url_textbox");
-        m_url_textbox->set_text(url);
-
         auto& ok_button = *widget->find_descendant_of_type_named<GUI::Button>("ok_button");
         ok_button.on_click = [this](auto) {
             done(ExecResult::OK);
         };
         ok_button.set_default(true);
+
+        m_url_textbox = *widget->find_descendant_of_type_named<GUI::TextBox>("url_textbox");
+        m_url_textbox->set_text(url);
+        m_url_textbox->on_change = [this, &ok_button]() {
+            auto has_url = !m_url_textbox->text().is_empty();
+            ok_button.set_enabled(has_url);
+        };
 
         auto& cancel_button = *widget->find_descendant_of_type_named<GUI::Button>("cancel_button");
         cancel_button.on_click = [this](auto) {
@@ -99,9 +109,7 @@ BookmarksBarWidget& BookmarksBarWidget::the()
 BookmarksBarWidget::BookmarksBarWidget(DeprecatedString const& bookmarks_file, bool enabled)
 {
     s_the = this;
-    set_layout<GUI::HorizontalBoxLayout>();
-    layout()->set_spacing(0);
-    layout()->set_margins(2);
+    set_layout<GUI::HorizontalBoxLayout>(2, 0);
 
     set_fixed_height(20);
 
@@ -145,18 +153,20 @@ BookmarksBarWidget::BookmarksBarWidget(DeprecatedString const& bookmarks_file, b
     m_context_menu->add_separator();
     m_context_menu->add_action(GUI::Action::create(
         "&Edit...", g_icon_bag.rename, [this](auto&) {
-            edit_bookmark(m_context_menu_url);
+            if (auto result = edit_bookmark(m_context_menu_url); result.is_error())
+                GUI::MessageBox::show_error(this->window(), MUST(String::formatted("Failed to edit bookmark: {}", result.error())));
         },
         this));
     m_context_menu->add_action(GUI::CommonActions::make_delete_action(
         [this](auto&) {
-            remove_bookmark(m_context_menu_url);
+            if (auto result = remove_bookmark(m_context_menu_url); result.is_error())
+                GUI::MessageBox::show_error(this->window(), MUST(String::formatted("Failed to remove bookmark: {}", result.error())));
         },
         this));
 
     Vector<GUI::JsonArrayModel::FieldSpec> fields;
-    fields.empend("title", "Title", Gfx::TextAlignment::CenterLeft);
-    fields.empend("url", "Url", Gfx::TextAlignment::CenterRight);
+    fields.empend("title", "Title"_short_string, Gfx::TextAlignment::CenterLeft);
+    fields.empend("url", "Url"_short_string, Gfx::TextAlignment::CenterRight);
     set_model(GUI::JsonArrayModel::create(bookmarks_file, move(fields)));
     model()->invalidate();
 }
@@ -195,13 +205,13 @@ void BookmarksBarWidget::model_did_update(unsigned)
         auto title = model()->index(item_index, 0).data().to_deprecated_string();
         auto url = model()->index(item_index, 1).data().to_deprecated_string();
 
-        Gfx::IntRect rect { width, 0, static_cast<int>(ceilf(font().width(title))) + 32, height() };
+        Gfx::IntRect rect { width, 0, font().width_rounded_up(title) + 32, height() };
 
         auto& button = add<GUI::Button>();
         m_bookmarks.append(button);
 
         button.set_button_style(Gfx::ButtonStyle::Coolbar);
-        button.set_text(title);
+        button.set_text(String::from_deprecated_string(title).release_value_but_fixme_should_propagate_errors());
         button.set_icon(g_icon_bag.filetype_html);
         button.set_fixed_size(font().width(title) + 32, 20);
         button.set_relative_rect(rect);
@@ -241,13 +251,13 @@ void BookmarksBarWidget::update_content_size()
 
     for (size_t i = 0; i < m_bookmarks.size(); ++i) {
         auto& bookmark = m_bookmarks.at(i);
-        if (x_position + bookmark.width() + m_additional->width() > width()) {
+        if (x_position + bookmark->width() + m_additional->width() > width()) {
             m_last_visible_index = i;
             break;
         }
-        bookmark.set_x(x_position);
-        bookmark.set_visible(true);
-        x_position += bookmark.width();
+        bookmark->set_x(x_position);
+        bookmark->set_visible(true);
+        x_position += bookmark->width();
     }
 
     if (m_last_visible_index < 0) {
@@ -255,21 +265,20 @@ void BookmarksBarWidget::update_content_size()
     } else {
         // hide all items > m_last_visible_index and create new bookmarks menu for them
         m_additional->set_visible(true);
-        m_additional_menu = GUI::Menu::construct("Additional Bookmarks");
+        m_additional_menu = GUI::Menu::construct("Additional Bookmarks"_string.release_value_but_fixme_should_propagate_errors());
         m_additional->set_menu(m_additional_menu);
         for (size_t i = m_last_visible_index; i < m_bookmarks.size(); ++i) {
             auto& bookmark = m_bookmarks.at(i);
-            bookmark.set_visible(false);
-            m_additional_menu->add_action(GUI::Action::create(bookmark.text(), g_icon_bag.filetype_html, [&](auto&) { bookmark.on_click(0); }));
+            bookmark->set_visible(false);
+            m_additional_menu->add_action(GUI::Action::create(bookmark->text().to_deprecated_string(), g_icon_bag.filetype_html, [&](auto&) { bookmark->on_click(0); }));
         }
     }
 }
 
-bool BookmarksBarWidget::contains_bookmark(DeprecatedString const& url)
+bool BookmarksBarWidget::contains_bookmark(StringView url)
 {
     for (int item_index = 0; item_index < model()->row_count(); ++item_index) {
 
-        auto item_title = model()->index(item_index, 0).data().to_deprecated_string();
         auto item_url = model()->index(item_index, 1).data().to_deprecated_string();
         if (item_url == url) {
             return true;
@@ -278,63 +287,102 @@ bool BookmarksBarWidget::contains_bookmark(DeprecatedString const& url)
     return false;
 }
 
-bool BookmarksBarWidget::remove_bookmark(DeprecatedString const& url)
+ErrorOr<void> BookmarksBarWidget::remove_bookmark(StringView url)
 {
     for (int item_index = 0; item_index < model()->row_count(); ++item_index) {
 
-        auto item_title = model()->index(item_index, 0).data().to_deprecated_string();
         auto item_url = model()->index(item_index, 1).data().to_deprecated_string();
         if (item_url == url) {
             auto& json_model = *static_cast<GUI::JsonArrayModel*>(model());
 
-            auto const item_removed = json_model.remove(item_index);
-            if (item_removed)
-                json_model.store();
+            TRY(json_model.remove(item_index));
+            TRY(json_model.store());
 
-            return item_removed;
+            if (on_bookmark_change)
+                on_bookmark_change();
+
+            return {};
         }
     }
 
-    return false;
+    return Error::from_string_view("Bookmark not found"sv);
 }
 
-bool BookmarksBarWidget::add_bookmark(DeprecatedString const& url, DeprecatedString const& title)
+ErrorOr<void> BookmarksBarWidget::add_bookmark(StringView url, StringView title)
 {
     Vector<JsonValue> values;
-    values.append(title);
-    values.append(url);
+    TRY(values.try_append(title));
+    TRY(values.try_append(url));
 
-    auto& json_model = *static_cast<GUI::JsonArrayModel*>(model());
-    if (json_model.add(move(values))) {
-        json_model.store();
-        return true;
+    TRY(update_model(values, [](auto& model, auto&& values) -> ErrorOr<void> {
+        return TRY(model.add(move(values)));
+    }));
+
+    if (on_bookmark_change)
+        on_bookmark_change();
+
+    values = BookmarkEditor::edit_bookmark(window(), title, url, PerformEditOn::NewBookmark);
+    if (values.is_empty())
+        return remove_bookmark(url);
+
+    auto model_has_updated = false;
+    for (int item_index = 0; item_index < model()->row_count(); item_index++) {
+        auto item_url = model()->index(item_index, 1).data().to_deprecated_string();
+
+        if (item_url == url) {
+            TRY(update_model(values, [item_index](auto& model, auto&& values) {
+                return model.set(item_index, move(values));
+            }));
+            model_has_updated = true;
+            break;
+        }
     }
-    return false;
+
+    if (!model_has_updated)
+        return Error::from_string_view("Bookmark not found"sv);
+
+    if (on_bookmark_change)
+        on_bookmark_change();
+
+    return {};
 }
 
-bool BookmarksBarWidget::edit_bookmark(DeprecatedString const& url)
+ErrorOr<void> BookmarksBarWidget::edit_bookmark(StringView url)
 {
     for (int item_index = 0; item_index < model()->row_count(); ++item_index) {
         auto item_title = model()->index(item_index, 0).data().to_deprecated_string();
         auto item_url = model()->index(item_index, 1).data().to_deprecated_string();
 
         if (item_url == url) {
-            auto values = BookmarkEditor::edit_bookmark(window(), item_title, item_url);
-            bool item_replaced = false;
+            auto values = BookmarkEditor::edit_bookmark(window(), item_title, item_url, PerformEditOn::ExistingBookmark);
+            if (values.is_empty())
+                return {};
 
-            if (!values.is_empty()) {
-                auto& json_model = *static_cast<GUI::JsonArrayModel*>(model());
-                item_replaced = json_model.set(item_index, move(values));
+            TRY(update_model(values, [item_index](auto& model, auto&& values) {
+                return model.set(item_index, move(values));
+            }));
 
-                if (item_replaced)
-                    json_model.store();
-            }
+            if (on_bookmark_change)
+                on_bookmark_change();
 
-            return item_replaced;
+            return {};
         }
     }
 
-    return false;
+    return Error::from_string_view("Bookmark not found"sv);
+}
+
+ErrorOr<void> BookmarksBarWidget::update_model(Vector<JsonValue>& values, Function<ErrorOr<void>(GUI::JsonArrayModel& model, Vector<JsonValue>&& values)> perform_model_change)
+{
+    if (values.is_empty())
+        return Error::from_string_view("No values to update model with"sv);
+
+    auto& json_model = *static_cast<GUI::JsonArrayModel*>(model());
+
+    TRY(perform_model_change(json_model, move(values)));
+    TRY(json_model.store());
+
+    return {};
 }
 
 }

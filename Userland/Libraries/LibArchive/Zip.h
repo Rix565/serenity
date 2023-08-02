@@ -8,11 +8,15 @@
 #pragma once
 
 #include <AK/Array.h>
+#include <AK/DOSPackedTime.h>
 #include <AK/Function.h>
 #include <AK/IterationDecision.h>
+#include <AK/NonnullOwnPtr.h>
+#include <AK/Stream.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
-#include <LibCore/Stream.h>
+#include <LibArchive/Statistics.h>
+#include <LibCore/DateTime.h>
 #include <string.h>
 
 namespace Archive {
@@ -55,13 +59,13 @@ struct [[gnu::packed]] EndOfCentralDirectory {
         return true;
     }
 
-    ErrorOr<void> write(Core::Stream::Stream& stream) const
+    ErrorOr<void> write(Stream& stream) const
     {
         auto write_value = [&stream](auto value) {
-            return stream.write_entire_buffer({ &value, sizeof(value) });
+            return stream.write_until_depleted({ &value, sizeof(value) });
         };
 
-        TRY(stream.write_entire_buffer(signature));
+        TRY(stream.write_until_depleted(signature));
         TRY(write_value(disk_number));
         TRY(write_value(central_directory_start_disk));
         TRY(write_value(disk_records_count));
@@ -70,7 +74,7 @@ struct [[gnu::packed]] EndOfCentralDirectory {
         TRY(write_value(central_directory_offset));
         TRY(write_value(comment_length));
         if (comment_length > 0)
-            TRY(stream.write_entire_buffer({ comment, comment_length }));
+            TRY(stream.write_until_depleted({ comment, comment_length }));
         return {};
     }
 };
@@ -112,8 +116,8 @@ struct [[gnu::packed]] CentralDirectoryRecord {
     u16 minimum_version;
     ZipGeneralPurposeFlags general_purpose_flags;
     ZipCompressionMethod compression_method;
-    u16 modification_time;
-    u16 modification_date;
+    DOSPackedTime modification_time;
+    DOSPackedDate modification_date;
     u32 crc32;
     u32 compressed_size;
     u32 uncompressed_size;
@@ -141,13 +145,13 @@ struct [[gnu::packed]] CentralDirectoryRecord {
         return true;
     }
 
-    ErrorOr<void> write(Core::Stream::Stream& stream) const
+    ErrorOr<void> write(Stream& stream) const
     {
         auto write_value = [&stream](auto value) {
-            return stream.write_entire_buffer({ &value, sizeof(value) });
+            return stream.write_until_depleted({ &value, sizeof(value) });
         };
 
-        TRY(stream.write_entire_buffer(signature));
+        TRY(stream.write_until_depleted(signature));
         TRY(write_value(made_by_version));
         TRY(write_value(minimum_version));
         TRY(write_value(general_purpose_flags.flags));
@@ -165,11 +169,11 @@ struct [[gnu::packed]] CentralDirectoryRecord {
         TRY(write_value(external_attributes));
         TRY(write_value(local_file_header_offset));
         if (name_length > 0)
-            TRY(stream.write_entire_buffer({ name, name_length }));
+            TRY(stream.write_until_depleted({ name, name_length }));
         if (extra_data_length > 0)
-            TRY(stream.write_entire_buffer({ extra_data, extra_data_length }));
+            TRY(stream.write_until_depleted({ extra_data, extra_data_length }));
         if (comment_length > 0)
-            TRY(stream.write_entire_buffer({ comment, comment_length }));
+            TRY(stream.write_until_depleted({ comment, comment_length }));
         return {};
     }
 
@@ -186,8 +190,8 @@ struct [[gnu::packed]] LocalFileHeader {
     u16 minimum_version;
     ZipGeneralPurposeFlags general_purpose_flags;
     u16 compression_method;
-    u16 modification_time;
-    u16 modification_date;
+    DOSPackedTime modification_time;
+    DOSPackedDate modification_date;
     u32 crc32;
     u32 compressed_size;
     u32 uncompressed_size;
@@ -210,13 +214,13 @@ struct [[gnu::packed]] LocalFileHeader {
         return true;
     }
 
-    ErrorOr<void> write(Core::Stream::Stream& stream) const
+    ErrorOr<void> write(Stream& stream) const
     {
         auto write_value = [&stream](auto value) {
-            return stream.write_entire_buffer({ &value, sizeof(value) });
+            return stream.write_until_depleted({ &value, sizeof(value) });
         };
 
-        TRY(stream.write_entire_buffer(signature));
+        TRY(stream.write_until_depleted(signature));
         TRY(write_value(minimum_version));
         TRY(write_value(general_purpose_flags.flags));
         TRY(write_value(compression_method));
@@ -228,11 +232,11 @@ struct [[gnu::packed]] LocalFileHeader {
         TRY(write_value(name_length));
         TRY(write_value(extra_data_length));
         if (name_length > 0)
-            TRY(stream.write_entire_buffer({ name, name_length }));
+            TRY(stream.write_until_depleted({ name, name_length }));
         if (extra_data_length > 0)
-            TRY(stream.write_entire_buffer({ extra_data, extra_data_length }));
+            TRY(stream.write_until_depleted({ extra_data, extra_data_length }));
         if (compressed_size > 0)
-            TRY(stream.write_entire_buffer({ compressed_data, compressed_size }));
+            TRY(stream.write_until_depleted({ compressed_data, compressed_size }));
         return {};
     }
 };
@@ -244,12 +248,15 @@ struct ZipMember {
     u32 uncompressed_size;
     u32 crc32;
     bool is_directory;
+    DOSPackedTime modification_time;
+    DOSPackedDate modification_date;
 };
 
 class Zip {
 public:
     static Optional<Zip> try_create(ReadonlyBytes buffer);
-    ErrorOr<bool> for_each_member(Function<IterationDecision(ZipMember const&)>);
+    ErrorOr<bool> for_each_member(Function<ErrorOr<IterationDecision>(ZipMember const&)>) const;
+    ErrorOr<Statistics> calculate_statistics() const;
 
 private:
     static bool find_end_of_central_directory_offset(ReadonlyBytes, size_t& offset);
@@ -267,13 +274,24 @@ private:
 
 class ZipOutputStream {
 public:
-    ZipOutputStream(NonnullOwnPtr<Core::Stream::Stream>);
+    struct MemberInformation {
+        float compression_ratio;
+        size_t compressed_size;
+    };
+
+    ZipOutputStream(NonnullOwnPtr<Stream>);
 
     ErrorOr<void> add_member(ZipMember const&);
+    ErrorOr<MemberInformation> add_member_from_stream(StringView, Stream&, Optional<Core::DateTime> const& = {});
+
+    // NOTE: This does not add any of the files within the directory,
+    //       it just adds an entry for it.
+    ErrorOr<void> add_directory(StringView, Optional<Core::DateTime> const& = {});
+
     ErrorOr<void> finish();
 
 private:
-    NonnullOwnPtr<Core::Stream::Stream> m_stream;
+    NonnullOwnPtr<Stream> m_stream;
     Vector<ZipMember> m_members;
 
     bool m_finished { false };

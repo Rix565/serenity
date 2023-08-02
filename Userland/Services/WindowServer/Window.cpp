@@ -19,6 +19,7 @@
 #include <LibCore/Account.h>
 #include <LibCore/ProcessStatisticsReader.h>
 #include <LibCore/SessionManagement.h>
+#include <LibKeyboard/CharacterMap.h>
 
 namespace WindowServer {
 
@@ -379,18 +380,6 @@ void Window::start_launch_animation(Gfx::IntRect const& launch_origin_rect)
     m_animation->start();
 }
 
-void Window::set_opacity(float opacity)
-{
-    if (m_opacity == opacity)
-        return;
-    bool was_opaque = is_opaque();
-    m_opacity = opacity;
-    if (was_opaque != is_opaque())
-        Compositor::the().invalidate_occlusions();
-    invalidate(false);
-    WindowManager::the().notify_opacity_changed(*this);
-}
-
 void Window::set_has_alpha_channel(bool value)
 {
     if (m_has_alpha_channel == value)
@@ -420,8 +409,8 @@ void Window::set_maximized(bool maximized)
     else
         set_rect(m_floating_rect);
     m_frame.did_set_maximized({}, maximized);
-    Core::EventLoop::current().post_event(*this, make<ResizeEvent>(m_rect));
-    Core::EventLoop::current().post_event(*this, make<MoveEvent>(m_rect));
+    send_resize_event_to_client();
+    send_move_event_to_client();
     set_default_positioned(false);
 
     WindowManager::the().notify_minimization_state_changed(*this);
@@ -511,25 +500,37 @@ void Window::event(Core::Event& event)
 void Window::handle_keydown_event(KeyEvent const& event)
 {
     if (event.modifiers() == Mod_Alt && event.key() == Key_Space && type() == WindowType::Normal && !is_frameless()) {
-        auto position = frame().titlebar_rect().bottom_left().translated(frame().rect().location());
+        auto position = frame().titlebar_rect().bottom_left().moved_up(1).translated(frame().rect().location());
         popup_window_menu(position, WindowMenuDefaultAction::Close);
         return;
     }
     if (event.modifiers() == Mod_Alt && event.code_point() && m_menubar.has_menus()) {
-        Menu* menu_to_open = nullptr;
-        m_menubar.for_each_menu([&](Menu& menu) {
-            if (to_ascii_lowercase(menu.alt_shortcut_character()) == to_ascii_lowercase(event.code_point())) {
-                menu_to_open = &menu;
-                return IterationDecision::Break;
-            }
-            return IterationDecision::Continue;
-        });
+        // When handling alt shortcuts, we only care about the key that has been pressed in addition
+        // to alt, not the code point that has been mapped to alt+[key], so we have to look up the
+        // scancode directly from the "unmodified" character map.
+        auto character_map_or_error = Keyboard::CharacterMap::fetch_system_map();
+        if (!character_map_or_error.is_error()) {
+            auto& character_map = character_map_or_error.value();
 
-        if (menu_to_open) {
-            frame().open_menubar_menu(*menu_to_open);
-            if (!menu_to_open->is_empty())
-                menu_to_open->set_hovered_index(0);
-            return;
+            // The lowest byte serves as our index into the character table.
+            auto index = event.scancode() & 0xff;
+            u32 character = to_ascii_lowercase(character_map.character_map_data().map[index]);
+
+            Menu* menu_to_open = nullptr;
+            m_menubar.for_each_menu([&](Menu& menu) {
+                if (to_ascii_lowercase(menu.alt_shortcut_character()) == character) {
+                    menu_to_open = &menu;
+                    return IterationDecision::Break;
+                }
+                return IterationDecision::Continue;
+            });
+
+            if (menu_to_open) {
+                frame().open_menubar_menu(*menu_to_open);
+                if (!menu_to_open->is_empty())
+                    menu_to_open->set_hovered_index(0);
+                return;
+            }
         }
     }
     m_client->async_key_down(m_window_id, (u32)event.code_point(), (u32)event.key(), event.modifiers(), (u32)event.scancode());
@@ -676,6 +677,8 @@ bool Window::is_active() const
 Window* Window::blocking_modal_window()
 {
     auto maybe_blocker = WindowManager::the().for_each_window_in_modal_chain(*this, [&](auto& window) {
+        if (parent_window() == window.parent_window() && is_blocking())
+            return IterationDecision::Continue;
         if (is_descendant_of(window))
             return IterationDecision::Continue;
         if (window.is_blocking() && this != &window)
@@ -705,7 +708,7 @@ void Window::request_update(Gfx::IntRect const& rect, bool ignore_occlusion)
 void Window::ensure_window_menu()
 {
     if (!m_window_menu) {
-        m_window_menu = Menu::construct(nullptr, -1, "(Window Menu)");
+        m_window_menu = Menu::construct(nullptr, -1, "(Window Menu)"_string.release_value_but_fixme_should_propagate_errors());
         m_window_menu->set_window_menu_of(*this);
 
         auto minimize_item = make<MenuItem>(*m_window_menu, (unsigned)WindowMenuAction::MinimizeOrUnminimize, "");
@@ -842,9 +845,9 @@ void Window::set_fullscreen(bool fullscreen)
         new_window_rect = m_saved_nonfullscreen_rect;
     }
 
-    Core::EventLoop::current().post_event(*this, make<ResizeEvent>(new_window_rect));
-    Core::EventLoop::current().post_event(*this, make<MoveEvent>(new_window_rect));
     set_rect(new_window_rect);
+    send_resize_event_to_client();
+    send_move_event_to_client();
 }
 
 WindowTileType Window::tile_type_based_on_rect(Gfx::IntRect const& rect) const
@@ -858,7 +861,7 @@ WindowTileType Window::tile_type_based_on_rect(Gfx::IntRect const& rect) const
         bool tiling_to_left = current_tile_type == WindowTileType::Left || current_tile_type == WindowTileType::TopLeft || current_tile_type == WindowTileType::BottomLeft;
         bool tiling_to_right = current_tile_type == WindowTileType::Right || current_tile_type == WindowTileType::TopRight || current_tile_type == WindowTileType::BottomRight;
 
-        auto ideal_tiled_rect = WindowManager::the().tiled_window_rect(*this, current_tile_type);
+        auto ideal_tiled_rect = WindowManager::the().tiled_window_rect(*this, window_screen, current_tile_type);
         bool same_top = ideal_tiled_rect.top() == rect.top();
         bool same_left = ideal_tiled_rect.left() == rect.left();
         bool same_right = ideal_tiled_rect.right() == rect.right();
@@ -870,9 +873,9 @@ WindowTileType Window::tile_type_based_on_rect(Gfx::IntRect const& rect) const
         if (tiling_to_top && same_top && same_left && same_right)
             return WindowTileType::Top;
         else if ((tiling_to_top || tiling_to_left) && same_top && same_left)
-            return rect.bottom() == WindowManager::the().tiled_window_rect(*this, WindowTileType::Bottom).bottom() ? WindowTileType::Left : WindowTileType::TopLeft;
+            return rect.bottom() == WindowManager::the().tiled_window_rect(*this, window_screen, WindowTileType::Bottom).bottom() ? WindowTileType::Left : WindowTileType::TopLeft;
         else if ((tiling_to_top || tiling_to_right) && same_top && same_right)
-            return rect.bottom() == WindowManager::the().tiled_window_rect(*this, WindowTileType::Bottom).bottom() ? WindowTileType::Right : WindowTileType::TopRight;
+            return rect.bottom() == WindowManager::the().tiled_window_rect(*this, window_screen, WindowTileType::Bottom).bottom() ? WindowTileType::Right : WindowTileType::TopRight;
         else if (tiling_to_left && same_left && same_top && same_bottom)
             return WindowTileType::Left;
         else if (tiling_to_right && same_right && same_top && same_bottom)
@@ -880,9 +883,9 @@ WindowTileType Window::tile_type_based_on_rect(Gfx::IntRect const& rect) const
         else if (tiling_to_bottom && same_bottom && same_left && same_right)
             return WindowTileType::Bottom;
         else if ((tiling_to_bottom || tiling_to_left) && same_bottom && same_left)
-            return rect.top() == WindowManager::the().tiled_window_rect(*this, WindowTileType::Left).top() ? WindowTileType::Left : WindowTileType::BottomLeft;
+            return rect.top() == WindowManager::the().tiled_window_rect(*this, window_screen, WindowTileType::Left).top() ? WindowTileType::Left : WindowTileType::BottomLeft;
         else if ((tiling_to_bottom || tiling_to_right) && same_bottom && same_right)
-            return rect.top() == WindowManager::the().tiled_window_rect(*this, WindowTileType::Right).top() ? WindowTileType::Right : WindowTileType::BottomRight;
+            return rect.top() == WindowManager::the().tiled_window_rect(*this, window_screen, WindowTileType::Right).top() ? WindowTileType::Right : WindowTileType::BottomRight;
     }
     return tile_type;
 }
@@ -911,15 +914,11 @@ bool Window::set_untiled()
     VERIFY(!resize_aspect_ratio().has_value());
 
     m_tile_type = WindowTileType::None;
-    set_rect(m_floating_rect);
-
-    Core::EventLoop::current().post_event(*this, make<ResizeEvent>(m_rect));
-    Core::EventLoop::current().post_event(*this, make<MoveEvent>(m_rect));
-
+    tile_type_changed();
     return true;
 }
 
-void Window::set_tiled(WindowTileType tile_type)
+void Window::set_tiled(WindowTileType tile_type, Optional<Screen const&> tile_on_screen)
 {
     VERIFY(tile_type != WindowTileType::None);
 
@@ -933,9 +932,26 @@ void Window::set_tiled(WindowTileType tile_type)
         set_maximized(false);
 
     m_tile_type = tile_type;
+    tile_type_changed(tile_on_screen);
+}
 
-    set_rect(WindowManager::the().tiled_window_rect(*this, tile_type));
+void Window::tile_type_changed(Optional<Screen const&> tile_on_screen)
+{
+    if (m_tile_type != WindowTileType::None)
+        set_rect(WindowManager::the().tiled_window_rect(*this, tile_on_screen, m_tile_type));
+    else
+        set_rect(m_floating_rect);
+    send_resize_event_to_client();
+    send_move_event_to_client();
+}
+
+void Window::send_resize_event_to_client()
+{
     Core::EventLoop::current().post_event(*this, make<ResizeEvent>(m_rect));
+}
+
+void Window::send_move_event_to_client()
+{
     Core::EventLoop::current().post_event(*this, make<MoveEvent>(m_rect));
 }
 
@@ -951,7 +967,7 @@ void Window::recalculate_rect()
 
     bool send_event = true;
     if (is_tiled()) {
-        set_rect(WindowManager::the().tiled_window_rect(*this, m_tile_type));
+        set_rect(WindowManager::the().tiled_window_rect(*this, {}, m_tile_type));
     } else if (type() == WindowType::Desktop) {
         set_rect(WindowManager::the().arena_rect_for_type(Screen::main(), WindowType::Desktop));
     } else {
@@ -959,7 +975,7 @@ void Window::recalculate_rect()
     }
 
     if (send_event) {
-        Core::EventLoop::current().post_event(*this, make<ResizeEvent>(m_rect));
+        send_resize_event_to_client();
     }
 }
 

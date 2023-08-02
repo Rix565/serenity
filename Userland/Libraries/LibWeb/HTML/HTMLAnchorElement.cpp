@@ -7,6 +7,7 @@
 #include <LibWeb/ARIA/Roles.h>
 #include <LibWeb/HTML/HTMLAnchorElement.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/ReferrerPolicy/ReferrerPolicy.h>
 
 namespace Web::HTML {
 
@@ -28,9 +29,9 @@ JS::ThrowCompletionOr<void> HTMLAnchorElement::initialize(JS::Realm& realm)
     return {};
 }
 
-void HTMLAnchorElement::parse_attribute(DeprecatedFlyString const& name, DeprecatedString const& value)
+void HTMLAnchorElement::attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value)
 {
-    HTMLElement::parse_attribute(name, value);
+    HTMLElement::attribute_changed(name, value);
     if (name == HTML::AttributeNames::href) {
         set_the_url();
     }
@@ -41,9 +42,9 @@ DeprecatedString HTMLAnchorElement::hyperlink_element_utils_href() const
     return attribute(HTML::AttributeNames::href);
 }
 
-void HTMLAnchorElement::set_hyperlink_element_utils_href(DeprecatedString href)
+WebIDL::ExceptionOr<void> HTMLAnchorElement::set_hyperlink_element_utils_href(DeprecatedString href)
 {
-    MUST(set_attribute(HTML::AttributeNames::href, move(href)));
+    return set_attribute(HTML::AttributeNames::href, move(href));
 }
 
 void HTMLAnchorElement::run_activation_behavior(Web::DOM::Event const&)
@@ -52,6 +53,11 @@ void HTMLAnchorElement::run_activation_behavior(Web::DOM::Event const&)
 
     // 1. If element has no href attribute, then return.
     if (href().is_empty())
+        return;
+
+    // AD-HOC: follow_the_hyperlink currently doesn't navigate properly with javascript urls
+    // EventHandler::handle_mouseup performs the navigation steps for javascript urls instead
+    if (href().starts_with("javascript:"sv))
         return;
 
     // 2. Let hyperlinkSuffix be null.
@@ -98,6 +104,38 @@ Optional<ARIA::Role> HTMLAnchorElement::default_role() const
         return ARIA::Role::link;
     // https://www.w3.org/TR/html-aria/#el-a
     return ARIA::Role::generic;
+}
+
+// https://html.spec.whatwg.org/multipage/text-level-semantics.html#dom-a-text
+DeprecatedString HTMLAnchorElement::text() const
+{
+    // The text attribute's getter must return this element's descendant text content.
+    return descendant_text_content();
+}
+
+// https://html.spec.whatwg.org/multipage/text-level-semantics.html#dom-a-text
+void HTMLAnchorElement::set_text(DeprecatedString const& text)
+{
+    // The text attribute's setter must string replace all with the given value within this element.
+    string_replace_all(text);
+}
+
+// https://html.spec.whatwg.org/multipage/text-level-semantics.html#dom-a-referrerpolicy
+DeprecatedString HTMLAnchorElement::referrer_policy() const
+{
+    // The IDL attribute referrerPolicy must reflect the referrerpolicy content attribute, limited to only known values.
+    auto policy_string = attribute(HTML::AttributeNames::referrerpolicy);
+    auto maybe_policy = ReferrerPolicy::from_string(policy_string);
+    if (maybe_policy.has_value())
+        return ReferrerPolicy::to_string(maybe_policy.value());
+    return "";
+}
+
+// https://html.spec.whatwg.org/multipage/text-level-semantics.html#dom-a-referrerpolicy
+WebIDL::ExceptionOr<void> HTMLAnchorElement::set_referrer_policy(DeprecatedString const& referrer_policy)
+{
+    // The IDL attribute referrerPolicy must reflect the referrerpolicy content attribute, limited to only known values.
+    return set_attribute(HTML::AttributeNames::referrerpolicy, referrer_policy);
 }
 
 }

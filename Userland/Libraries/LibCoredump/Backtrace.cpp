@@ -9,12 +9,12 @@
 #include <AK/Platform.h>
 #include <AK/StringBuilder.h>
 #include <AK/Types.h>
-#include <LibCore/File.h>
 #include <LibCore/MappedFile.h>
 #include <LibCoredump/Backtrace.h>
 #include <LibCoredump/Reader.h>
 #include <LibELF/Core.h>
 #include <LibELF/Image.h>
+#include <LibFileSystem/FileSystem.h>
 
 namespace Coredump {
 
@@ -26,7 +26,7 @@ ELFObjectInfo const* Backtrace::object_info_for_region(Reader const& coredump, M
     if (maybe_ptr.has_value())
         return *maybe_ptr;
 
-    if (!Core::File::exists(path))
+    if (!FileSystem::exists(path))
         return nullptr;
 
     auto file_or_error = Core::MappedFile::map(path);
@@ -48,9 +48,8 @@ Backtrace::Backtrace(Reader const& coredump, const ELF::Core::ThreadInfo& thread
     auto start_bp = m_thread_info.regs.rbp;
     auto start_ip = m_thread_info.regs.rip;
 #elif ARCH(AARCH64)
-    auto start_bp = 0;
-    auto start_ip = 0;
-    TODO_AARCH64();
+    auto start_bp = m_thread_info.regs.x[29];
+    auto start_ip = m_thread_info.regs.pc;
 #else
 #    error Unknown architecture
 #endif

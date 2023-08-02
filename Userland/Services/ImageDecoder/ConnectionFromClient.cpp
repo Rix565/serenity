@@ -8,11 +8,11 @@
 #include <ImageDecoder/ConnectionFromClient.h>
 #include <ImageDecoder/ImageDecoderClientEndpoint.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/ImageDecoder.h>
+#include <LibGfx/ImageFormats/ImageDecoder.h>
 
 namespace ImageDecoder {
 
-ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket> socket)
     : IPC::ConnectionFromClient<ImageDecoderClientEndpoint, ImageDecoderServerEndpoint>(*this, move(socket), 1)
 {
 }

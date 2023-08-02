@@ -14,8 +14,7 @@
 #    include <AK/DeprecatedString.h>
 #endif
 
-namespace Crypto {
-namespace Cipher {
+namespace Crypto::Cipher {
 
 /*
  * Heads up: CTR is a *family* of modes, because the "counter" function is
@@ -97,7 +96,7 @@ public:
     // Encryption, even when decrypting AES-CTR.
     // TODO: How to deal with ciphers that take different arguments?
     // FIXME: Add back the default intent parameter once clang-11 is the default in GitHub Actions.
-    //        Once added back, remove the parameter where it's constructed in get_random_bytes in Kernel/Random.h.
+    //        Once added back, remove the parameter where it's constructed in get_random_bytes in Kernel/Security/Random.h.
     template<typename KeyType, typename... Args>
     explicit constexpr CTR(KeyType const& user_key, size_t key_bits, Intent, Args... args)
         : Mode<T>(user_key, key_bits, Intent::Encryption, args...)
@@ -193,5 +192,4 @@ protected:
     }
 };
 
-}
 }

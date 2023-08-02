@@ -12,16 +12,17 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSImportRule.h>
 #include <LibWeb/CSS/Parser/Parser.h>
+#include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 
 namespace Web::CSS {
 
-CSSImportRule* CSSImportRule::create(AK::URL url, DOM::Document& document)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSImportRule>> CSSImportRule::create(AK::URL url, DOM::Document& document)
 {
     auto& realm = document.realm();
-    return realm.heap().allocate<CSSImportRule>(realm, move(url), document).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<CSSImportRule>(realm, move(url), document));
 }
 
 CSSImportRule::CSSImportRule(AK::URL url, DOM::Document& document)

@@ -24,7 +24,7 @@
 #include <spawn.h>
 #include <unistd.h>
 
-using StringViewListModel = GUI::ItemListModel<StringView, Span<StringView const>>;
+using StringViewListModel = GUI::ItemListModel<StringView, ReadonlySpan<StringView>>;
 
 static constexpr auto PI_OVER_180 = M_PIf32 / 180.0f;
 static constexpr auto PI_OVER_4 = M_PIf32 / 4.0f;
@@ -133,7 +133,7 @@ void TimeZoneSettingsWidget::set_time_zone_location()
     m_time_zone_location = compute_time_zone_location();
 
     auto locale = Locale::default_locale();
-    auto now = AK::Time::now_realtime();
+    auto now = AK::UnixDateTime::now();
 
     auto name = Locale::format_time_zone(locale, m_time_zone, Locale::CalendarPatternStyle::Long, now).release_value_but_fixme_should_propagate_errors();
     auto offset = Locale::format_time_zone(locale, m_time_zone, Locale::CalendarPatternStyle::LongOffset, now).release_value_but_fixme_should_propagate_errors();

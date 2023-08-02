@@ -129,12 +129,13 @@ int const key_code_count = Key_Menu;
 
 enum KeyModifier {
     Mod_None = 0x00,
-    Mod_Alt = 0x01,
-    Mod_Ctrl = 0x02,
-    Mod_Shift = 0x04,
-    Mod_Super = 0x08,
-    Mod_AltGr = 0x10,
-    Mod_Mask = 0x1f,
+    Mod_Alt = (1 << 0),
+    Mod_Ctrl = (1 << 1),
+    Mod_Shift = (1 << 2),
+    Mod_Super = (1 << 3),
+    Mod_AltGr = (1 << 4),
+    Mod_Keypad = (1 << 5),
+    Mod_Mask = Mod_Alt | Mod_Ctrl | Mod_Shift | Mod_Super | Mod_AltGr | Mod_Keypad,
 
     Is_Press = 0x80,
 };
@@ -151,6 +152,7 @@ struct KeyEvent {
     bool shift() const { return flags & Mod_Shift; }
     bool super() const { return flags & Mod_Super; }
     bool altgr() const { return flags & Mod_AltGr; }
+    bool keypad() const { return flags & Mod_Keypad; }
     unsigned modifiers() const { return flags & Mod_Mask; }
     bool is_press() const { return flags & Is_Press; }
 };

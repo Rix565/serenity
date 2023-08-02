@@ -13,6 +13,7 @@
     A(Alternate)                  \
     A(ASCII85Decode)              \
     A(ASCIIHexDecode)             \
+    A(Author)                     \
     A(BG)                         \
     A(BG2)                        \
     A(BM)                         \
@@ -23,7 +24,11 @@
     A(C)                          \
     A(CA)                         \
     A(CCITTFaxDecode)             \
+    A(CF)                         \
+    A(CFM)                        \
     A(CalRGB)                     \
+    A(CIDFontType0)               \
+    A(CIDFontType2)               \
     A(CIDSystemInfo)              \
     A(CIDToGIDMap)                \
     A(Colors)                     \
@@ -31,6 +36,8 @@
     A(Columns)                    \
     A(Contents)                   \
     A(Count)                      \
+    A(CreationDate)               \
+    A(Creator)                    \
     A(CropBox)                    \
     A(Crypt)                      \
     A(D)                          \
@@ -79,8 +86,11 @@
     A(Image)                      \
     A(ImageMask)                  \
     A(Index)                      \
+    A(Indexed)                    \
+    A(Info)                       \
     A(JBIG2Decode)                \
     A(JPXDecode)                  \
+    A(Keywords)                   \
     A(Kids)                       \
     A(L)                          \
     A(LC)                         \
@@ -99,10 +109,12 @@
     A(Matrix)                     \
     A(MediaBox)                   \
     A(MissingWidth)               \
+    A(ModDate)                    \
     A(N)                          \
     A(Names)                      \
     A(Next)                       \
     A(O)                          \
+    A(OE)                         \
     A(OP)                         \
     A(OPM)                        \
     A(Ordering)                   \
@@ -111,8 +123,10 @@
     A(Pages)                      \
     A(Parent)                     \
     A(Pattern)                    \
+    A(Perms)                      \
     A(Predictor)                  \
     A(Prev)                       \
+    A(Producer)                   \
     A(R)                          \
     A(RI)                         \
     A(Registry)                   \
@@ -123,6 +137,10 @@
     A(SA)                         \
     A(SM)                         \
     A(SMask)                      \
+    A(Separation)                 \
+    A(StmF)                       \
+    A(StrF)                       \
+    A(Subject)                    \
     A(Subtype)                    \
     A(Supplement)                 \
     A(T)                          \
@@ -134,6 +152,7 @@
     A(Type)                       \
     A(Type1C)                     \
     A(U)                          \
+    A(UE)                         \
     A(UCR)                        \
     A(UseBlackPTComp)             \
     A(UserUnit)                   \

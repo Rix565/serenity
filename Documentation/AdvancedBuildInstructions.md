@@ -48,9 +48,9 @@ There are some optional features that can be enabled during compilation that are
 - `ENABLE_MEMORY_SANITIZER`: enables runtime checks for uninitialized memory accesses in Lagom test cases.
 - `ENABLE_UNDEFINED_SANITIZER`: builds in runtime checks for [undefined behavior](https://en.wikipedia.org/wiki/Undefined_behavior) (like null pointer dereferences and signed integer overflows) in Lagom test cases.
 - `ENABLE_COMPILER_EXPLORER_BUILD`: Skip building non-library entities in Lagom (this only applies to Lagom).
-- `ENABLE_FUZZERS`: builds [fuzzers](https://en.wikipedia.org/wiki/Fuzzing) for various parts of the system.
-- `ENABLE_FUZZERS_LIBFUZZER`: builds Clang libFuzzer-based [fuzzers](https://en.wikipedia.org/wiki/Fuzzing) for various parts of the system.
-- `ENABLE_FUZZERS_OSSFUZZ`: builds OSS-Fuzz compatible [fuzzers](https://en.wikipedia.org/wiki/Fuzzing) for various parts of the system.
+- `ENABLE_FUZZERS`: builds [fuzzers](../Meta/Lagom/ReadMe.md#fuzzing) for various parts of the system.
+- `ENABLE_FUZZERS_LIBFUZZER`: builds Clang libFuzzer-based [fuzzers](../Meta/Lagom/ReadMe.md#fuzzing) for various parts of the system.
+- `ENABLE_FUZZERS_OSSFUZZ`: builds OSS-Fuzz compatible [fuzzers](../Meta/Lagom/ReadMe.md#fuzzing) for various parts of the system.
 - `ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS`: sets -Og and -ggdb3 compile options for building the Kernel. Allows for easier debugging of Kernel code. By default, the Kernel is built with -O2 instead.
 - `ENABLE_ALL_THE_DEBUG_MACROS`: used for checking whether debug code compiles on CI. This should not be set normally, as it clutters the console output and makes the system run very slowly. Instead, enable only the needed debug macros, as described below.
 - `ENABLE_ALL_DEBUG_FACILITIES`: used for checking whether debug code compiles on CI. Enables both `ENABLE_ALL_THE_DEBUG_MACROS` and `ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS`.
@@ -212,6 +212,8 @@ of parallel compile tasks be setting the `MAKEJOBS` environment variable to a nu
 Once the build script finishes, you can use it to compile SerenityOS. Either set the `SERENITY_TOOLCHAIN` build
 option to `Clang` as shown [above](#cmake-build-options), or pass `Clang` as the TOOLCHAIN option to
 `Meta/serenity.sh`, for example: `Meta/serenity.sh run x86_64 Clang`.
+
+### Serenity-aware clang tools
 
 Building the clang-based toolchain also builds libTooling-based tools such as clang-format, clang-tidy and (optionally)
 clangd that are aware of SerenityOS as a valid target. These tools will be installed into ``Toolchain/Local/clang/bin`` by

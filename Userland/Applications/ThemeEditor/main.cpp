@@ -9,9 +9,10 @@
  */
 
 #include "MainWidget.h"
-#include "PreviewWidget.h"
+#include <LibConfig/Client.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/System.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibFileSystemAccessClient/Client.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Icon.h>
@@ -25,7 +26,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd thread rpath cpath wpath unix"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
+
+    Config::pledge_domain("ThemeEditor");
+    app->set_config_domain(TRY("ThemeEditor"_string));
 
     StringView file_to_edit;
 
@@ -33,10 +37,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     parser.add_positional_argument(file_to_edit, "Theme file to edit", "file", Core::ArgsParser::Required::No);
     parser.parse(arguments);
 
-    Optional<DeprecatedString> path = {};
+    Optional<String> path = {};
 
-    if (!file_to_edit.is_empty())
-        path = Core::File::absolute_path(file_to_edit);
+    if (auto error_or_path = FileSystem::absolute_path(file_to_edit); !file_to_edit.is_empty() && !error_or_path.is_error())
+        path = error_or_path.release_value();
 
     TRY(Core::System::pledge("stdio recvfd sendfd thread rpath unix"));
     TRY(Core::System::unveil("/tmp/session/%sid/portal/filesystemaccess", "rw"));
@@ -49,13 +53,11 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto main_widget = TRY(window->set_main_widget<ThemeEditor::MainWidget>());
 
     if (path.has_value()) {
-        // Note: This is deferred to ensure that the window has already popped and thus proper window stealing can be performed.
+        // Note: This is deferred to ensure that the window has already popped and any error dialog boxes would show up correctly.
         app->event_loop().deferred_invoke(
             [&window, &path, &main_widget]() {
-                auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(window, path.value());
-                if (response.is_error())
-                    GUI::MessageBox::show_error(window, DeprecatedString::formatted("Opening \"{}\" failed: {}", path.value(), response.error()));
-                else {
+                auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(window, path.value().to_deprecated_string());
+                if (!response.is_error()) {
                     auto load_from_file_result = main_widget->load_from_file(response.value().filename(), response.value().release_stream());
                     if (load_from_file_result.is_error())
                         GUI::MessageBox::show_error(window, DeprecatedString::formatted("Loading theme from file has failed: {}", load_from_file_result.error()));

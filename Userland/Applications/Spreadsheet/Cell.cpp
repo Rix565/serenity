@@ -41,7 +41,7 @@ void Cell::set_data(JS::Value new_data)
 
     StringBuilder builder;
 
-    builder.append(new_data.to_string_without_side_effects());
+    builder.append(new_data.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors());
     m_data = builder.to_deprecated_string();
 
     m_evaluated_data = move(new_data);
@@ -60,6 +60,11 @@ void Cell::set_type(StringView name)
     }
 
     VERIFY_NOT_REACHED();
+}
+
+void Cell::set_type_metadata(CellTypeMetadata const& metadata)
+{
+    m_type_metadata = metadata;
 }
 
 void Cell::set_type_metadata(CellTypeMetadata&& metadata)

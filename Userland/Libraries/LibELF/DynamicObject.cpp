@@ -8,9 +8,9 @@
 #include <AK/Debug.h>
 #include <AK/DeprecatedString.h>
 #include <AK/StringBuilder.h>
-#include <LibC/elf.h>
 #include <LibELF/DynamicLoader.h>
 #include <LibELF/DynamicObject.h>
+#include <LibELF/ELFABI.h>
 #include <LibELF/Hashes.h>
 #include <string.h>
 
@@ -177,7 +177,7 @@ void DynamicObject::parse()
         case DT_SYMBOLIC:
             break;
         default:
-            dbgln("DynamicObject: DYNAMIC tag handling not implemented for DT_{} ({})", name_for_dtag(entry.tag()), entry.tag());
+            dbgln("DynamicObject: DYNAMIC tag handling not implemented for DT_{} ({}) in {}", name_for_dtag(entry.tag()), entry.tag(), m_filepath);
             break;
         }
     });
@@ -478,33 +478,6 @@ auto DynamicObject::lookup_symbol(HashSymbol const& symbol) const -> Optional<Sy
 NonnullRefPtr<DynamicObject> DynamicObject::create(DeprecatedString const& filepath, VirtualAddress base_address, VirtualAddress dynamic_section_address)
 {
     return adopt_ref(*new DynamicObject(filepath, base_address, dynamic_section_address));
-}
-
-// offset is in PLT relocation table
-VirtualAddress DynamicObject::patch_plt_entry(u32 relocation_offset)
-{
-    auto relocation = plt_relocation_section().relocation_at_offset(relocation_offset);
-    VERIFY(relocation.type() == R_X86_64_JUMP_SLOT);
-    auto symbol = relocation.symbol();
-    auto relocation_address = (FlatPtr*)relocation.address().as_ptr();
-
-    VirtualAddress symbol_location;
-    auto result = DynamicLoader::lookup_symbol(symbol);
-    if (result.has_value()) {
-        symbol_location = result.value().address;
-
-        if (result.value().type == STT_GNU_IFUNC)
-            symbol_location = VirtualAddress { reinterpret_cast<IfuncResolver>(symbol_location.get())() };
-    } else if (symbol.bind() != STB_WEAK) {
-        dbgln("did not find symbol while doing relocations for library {}: {}", m_filepath, symbol.name());
-        VERIFY_NOT_REACHED();
-    }
-
-    dbgln_if(DYNAMIC_LOAD_DEBUG, "DynamicLoader: Jump slot relocation: putting {} ({}) into PLT at {}", symbol.name(), symbol_location, (void*)relocation_address);
-
-    *relocation_address = symbol_location.get();
-
-    return symbol_location;
 }
 
 u32 DynamicObject::HashSymbol::gnu_hash() const

@@ -29,7 +29,7 @@
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
     auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-hearts"sv));
 
     Config::pledge_domains({ "Games", "Hearts" });
@@ -57,19 +57,16 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     game.set_focus(true);
 
     auto& statusbar = *widget->find_descendant_of_type_named<GUI::Statusbar>("statusbar");
-    statusbar.set_text(0, "Score: 0");
+    statusbar.set_text(0, TRY("Score: 0"_string));
 
     DeprecatedString player_name = Config::read_string("Hearts"sv, ""sv, "player_name"sv, "Gunnar"sv);
 
-    game.on_status_change = [&](const AK::StringView& status) {
+    game.on_status_change = [&](String const& status) {
         statusbar.set_override_text(status);
     };
 
     app->on_action_enter = [&](GUI::Action& action) {
-        auto text = action.status_tip();
-        if (text.is_empty())
-            text = Gfx::parse_ampersand_string(action.text());
-        statusbar.set_override_text(move(text));
+        statusbar.set_override_text(action.status_tip());
     };
 
     app->on_action_leave = [&](GUI::Action&) {
@@ -88,20 +85,20 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         GUI::MessageBox::show(settings_dialog, "Settings have been successfully saved and will take effect in the next game."sv, "Settings Changed Successfully"sv, GUI::MessageBox::Type::Information);
     };
 
-    auto game_menu = TRY(window->try_add_menu("&Game"));
+    auto game_menu = TRY(window->try_add_menu("&Game"_short_string));
 
     TRY(game_menu->try_add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
         game.setup(player_name);
     })));
     TRY(game_menu->try_add_separator());
     TRY(game_menu->try_add_action(TRY(Cards::make_cards_settings_action(window))));
-    TRY(game_menu->try_add_action(GUI::Action::create("Hearts &Settings", TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/settings.png"sv)), [&](auto&) {
+    TRY(game_menu->try_add_action(GUI::Action::create("&Settings", TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/settings.png"sv)), [&](auto&) {
         change_settings();
     })));
     TRY(game_menu->try_add_separator());
     TRY(game_menu->try_add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); })));
 
-    auto help_menu = TRY(window->try_add_menu("&Help"));
+    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man6/Hearts.md"), "/bin/Help");

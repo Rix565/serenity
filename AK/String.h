@@ -20,6 +20,7 @@
 #include <AK/Traits.h>
 #include <AK/Types.h>
 #include <AK/UnicodeUtils.h>
+#include <AK/Utf8View.h>
 #include <AK/Vector.h>
 
 namespace AK {
@@ -28,8 +29,10 @@ namespace Detail {
 class StringData;
 }
 
-// FIXME: Remove this when Apple Clang fully supports consteval.
-#if defined(AK_OS_MACOS)
+// FIXME: Remove this when OpenBSD Clang fully supports consteval.
+//        And once oss-fuzz updates to clang >15.
+//        And once Android ships an NDK with clang >14
+#if defined(AK_OS_OPENBSD) || defined(OSS_FUZZ) || defined(AK_OS_ANDROID)
 #    define AK_SHORT_STRING_CONSTEVAL constexpr
 #else
 #    define AK_SHORT_STRING_CONSTEVAL consteval
@@ -63,12 +66,19 @@ public:
 
     // Creates a new String from a sequence of UTF-8 encoded code points.
     static ErrorOr<String> from_utf8(StringView);
+    template<typename T>
+    requires(IsOneOf<RemoveCVReference<T>, DeprecatedString, DeprecatedFlyString>)
+    static ErrorOr<String> from_utf8(T&&) = delete;
+
+    // Creates a new String by reading byte_count bytes from a UTF-8 encoded Stream.
+    static ErrorOr<String> from_stream(Stream&, size_t byte_count);
 
     // Creates a new String from a short sequence of UTF-8 encoded code points. If the provided string
     // does not fit in the short string storage, a compilation error will be emitted.
     static AK_SHORT_STRING_CONSTEVAL String from_utf8_short_string(StringView string)
     {
         VERIFY(string.length() <= MAX_SHORT_STRING_BYTE_COUNT);
+        VERIFY(Utf8View { string }.validate());
 
         ShortString short_string;
         for (size_t i = 0; i < string.length(); ++i)
@@ -104,7 +114,13 @@ public:
     ErrorOr<String> to_casefold() const;
 
     // Compare this String against another string with caseless matching. Using this method requires linking LibUnicode into your application.
-    ErrorOr<bool> equals_ignoring_case(String const&) const;
+    [[nodiscard]] bool equals_ignoring_case(String const&) const;
+
+    [[nodiscard]] bool starts_with(u32 code_point) const;
+    [[nodiscard]] bool starts_with_bytes(StringView) const;
+
+    [[nodiscard]] bool ends_with(u32 code_point) const;
+    [[nodiscard]] bool ends_with_bytes(StringView) const;
 
     // Creates a substring with a deep copy of the specified data window.
     ErrorOr<String> substring_from_byte_offset(size_t start, size_t byte_count) const;
@@ -126,6 +142,8 @@ public:
 
     // Returns a StringView covering the full length of the string. Note that iterating this will go byte-at-a-time, not code-point-at-a-time.
     [[nodiscard]] StringView bytes_as_string_view() const;
+
+    [[nodiscard]] size_t count(StringView needle) const { return StringUtils::count(bytes_as_string_view(), needle); }
 
     ErrorOr<String> replace(StringView needle, StringView replacement, ReplaceMode replace_mode) const;
     ErrorOr<String> reverse() const;
@@ -161,7 +179,7 @@ public:
     }
 
     [[nodiscard]] bool contains(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
-    [[nodiscard]] bool contains(char, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
+    [[nodiscard]] bool contains(u32, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
 
     [[nodiscard]] u32 hash() const;
 
@@ -202,6 +220,7 @@ public:
 
     [[nodiscard]] static String fly_string_data_to_string(Badge<FlyString>, uintptr_t const&);
     [[nodiscard]] static StringView fly_string_data_to_string_view(Badge<FlyString>, uintptr_t const&);
+    [[nodiscard]] static u32 fly_string_data_to_hash(Badge<FlyString>, uintptr_t const&);
     [[nodiscard]] uintptr_t to_fly_string_data(Badge<FlyString>) const;
 
     static void ref_fly_string_data(Badge<FlyString>, uintptr_t);
@@ -211,6 +230,9 @@ public:
     // FIXME: Remove these once all code has been ported to String
     [[nodiscard]] DeprecatedString to_deprecated_string() const;
     static ErrorOr<String> from_deprecated_string(DeprecatedString const&);
+    template<typename T>
+    requires(IsSame<RemoveCVReference<T>, StringView>)
+    static ErrorOr<String> from_deprecated_string(T&&) = delete;
 
 private:
     // NOTE: If the least significant bit of the pointer is set, this is a short string.
@@ -230,7 +252,7 @@ private:
         u8 storage[MAX_SHORT_STRING_BYTE_COUNT] = { 0 };
     };
 
-    explicit String(NonnullRefPtr<Detail::StringData>);
+    explicit String(NonnullRefPtr<Detail::StringData const>);
 
     explicit constexpr String(ShortString short_string)
         : m_short_string(short_string)
@@ -241,7 +263,7 @@ private:
 
     union {
         ShortString m_short_string;
-        Detail::StringData* m_data { nullptr };
+        Detail::StringData const* m_data { nullptr };
     };
 };
 
@@ -255,4 +277,14 @@ struct Formatter<String> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder&, String const&);
 };
 
+}
+
+[[nodiscard]] ALWAYS_INLINE AK::ErrorOr<AK::String> operator""_string(char const* cstring, size_t length)
+{
+    return AK::String::from_utf8(AK::StringView(cstring, length));
+}
+
+[[nodiscard]] ALWAYS_INLINE AK_SHORT_STRING_CONSTEVAL AK::String operator""_short_string(char const* cstring, size_t length)
+{
+    return AK::String::from_utf8_short_string(AK::StringView(cstring, length));
 }

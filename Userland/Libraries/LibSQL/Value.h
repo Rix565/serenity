@@ -57,6 +57,9 @@ public:
     {
     }
 
+    explicit Value(UnixDateTime);
+    explicit Value(Duration);
+
     static ResultOr<Value> create_tuple(NonnullRefPtr<TupleDescriptor>);
     static ResultOr<Value> create_tuple(Vector<Value>);
 
@@ -68,7 +71,6 @@ public:
 
     [[nodiscard]] auto const& value() const
     {
-        VERIFY(m_value.has_value());
         return *m_value;
     }
 

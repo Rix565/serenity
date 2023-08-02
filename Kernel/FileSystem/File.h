@@ -13,9 +13,9 @@
 #include <Kernel/Forward.h>
 #include <Kernel/Library/LockWeakable.h>
 #include <Kernel/Library/NonnullLockRefPtr.h>
+#include <Kernel/Library/UserOrKernelBuffer.h>
+#include <Kernel/Memory/VirtualAddress.h>
 #include <Kernel/UnixTypes.h>
-#include <Kernel/UserOrKernelBuffer.h>
-#include <Kernel/VirtualAddress.h>
 
 namespace Kernel {
 
@@ -78,7 +78,7 @@ public:
     virtual void will_be_destroyed() { }
     virtual ~File();
 
-    virtual ErrorOr<NonnullLockRefPtr<OpenFileDescription>> open(int options);
+    virtual ErrorOr<NonnullRefPtr<OpenFileDescription>> open(int options);
     virtual ErrorOr<void> close();
 
     virtual bool can_read(OpenFileDescription const&, u64) const = 0;
@@ -114,6 +114,7 @@ public:
     virtual bool is_character_device() const { return false; }
     virtual bool is_socket() const { return false; }
     virtual bool is_inode_watcher() const { return false; }
+    virtual bool is_mount_file() const { return false; }
 
     virtual bool is_regular_file() const { return false; }
 

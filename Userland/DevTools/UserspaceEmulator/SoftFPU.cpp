@@ -437,7 +437,7 @@ void SoftFPU::FCMOVNU(const X86::Instruction& insn)
 // BASIC ARITHMETIC
 void SoftFPU::FADD_RM32(const X86::Instruction& insn)
 {
-    // XXX look at ::INC_foo for how mem/reg stuff is handled, and use that here too to make sure this is only called for mem32 ops
+    // FIXME look at ::INC_foo for how mem/reg stuff is handled, and use that here too to make sure this is only called for mem32 ops
     if (insn.modrm().is_register()) {
         fpu_set(0, fpu_get(insn.modrm().register_index()) + fpu_get(0));
     } else {
@@ -449,7 +449,7 @@ void SoftFPU::FADD_RM32(const X86::Instruction& insn)
 }
 void SoftFPU::FADD_RM64(const X86::Instruction& insn)
 {
-    // XXX look at ::INC_foo for how mem/reg stuff is handled, and use that here too to make sure this is only called for mem64 ops
+    // FIXME look at ::INC_foo for how mem/reg stuff is handled, and use that here too to make sure this is only called for mem64 ops
     if (insn.modrm().is_register()) {
         fpu_set(insn.modrm().register_index(), fpu_get(insn.modrm().register_index()) + fpu_get(0));
     } else {
@@ -573,7 +573,7 @@ void SoftFPU::FISUBR_RM32(const X86::Instruction& insn)
 
 void SoftFPU::FMUL_RM32(const X86::Instruction& insn)
 {
-    // XXX look at ::INC_foo for how mem/reg stuff is handled, and use that here too to make sure this is only called for mem32 ops
+    // FIXME look at ::INC_foo for how mem/reg stuff is handled, and use that here too to make sure this is only called for mem32 ops
     if (insn.modrm().is_register()) {
         fpu_set(0, fpu_get(0) * fpu_get(insn.modrm().register_index()));
     } else {
@@ -585,7 +585,7 @@ void SoftFPU::FMUL_RM32(const X86::Instruction& insn)
 }
 void SoftFPU::FMUL_RM64(const X86::Instruction& insn)
 {
-    // XXX look at ::INC_foo for how mem/reg stuff is handled, and use that here too to make sure this is only called for mem64 ops
+    // FIXME look at ::INC_foo for how mem/reg stuff is handled, and use that here too to make sure this is only called for mem64 ops
     if (insn.modrm().is_register()) {
         fpu_set(insn.modrm().register_index(), fpu_get(insn.modrm().register_index()) * fpu_get(0));
     } else {
@@ -1133,7 +1133,7 @@ void SoftFPU::FNINIT(const X86::Instruction&)
     m_fpu_ds = 0;
 
     m_fpu_iop = 0;
-};
+}
 void SoftFPU::FNCLEX(const X86::Instruction&)
 {
     m_fpu_error_invalid = 0;
@@ -1718,7 +1718,7 @@ void SoftFPU::MOVD_mm1_rm32(const X86::Instruction& insn)
     // upper half is zeroed out
     mmx_set(mmx_index, { .raw = insn.modrm().read32(m_cpu, insn).value() });
     mmx_common();
-};
+}
 void SoftFPU::MOVD_rm32_mm2(const X86::Instruction& insn)
 {
     VERIFY(!insn.has_operand_size_override_prefix()); /* SSE2 */
@@ -1727,7 +1727,7 @@ void SoftFPU::MOVD_rm32_mm2(const X86::Instruction& insn)
     insn.modrm().write32(m_cpu, insn,
         shadow_wrap_as_initialized(static_cast<u32>(mmx_get(mmx_index).raw)));
     mmx_common();
-};
+}
 
 void SoftFPU::MOVQ_mm1_mm2m64(const X86::Instruction& insn)
 {
@@ -1757,8 +1757,8 @@ void SoftFPU::MOVQ_mm1m64_mm2(const X86::Instruction& insn)
     }
     mmx_common();
 }
-void SoftFPU::MOVQ_mm1_rm64(const X86::Instruction&) { TODO_INSN(); }; // long mode
-void SoftFPU::MOVQ_rm64_mm2(const X86::Instruction&) { TODO_INSN(); }; // long mode
+void SoftFPU::MOVQ_mm1_rm64(const X86::Instruction&) { TODO_INSN(); } // long mode
+void SoftFPU::MOVQ_rm64_mm2(const X86::Instruction&) { TODO_INSN(); } // long mode
 
 // EMPTY MMX STATE
 void SoftFPU::EMMS(const X86::Instruction&)

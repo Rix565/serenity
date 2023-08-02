@@ -11,8 +11,8 @@
 #include <AK/DeprecatedString.h>
 #include <AK/OwnPtr.h>
 #include <AK/RefCounted.h>
-#include <LibC/elf.h>
 #include <LibELF/DynamicObject.h>
+#include <LibELF/ELFABI.h>
 #include <LibELF/Image.h>
 #include <bits/dlfcn_integration.h>
 #include <sys/mman.h>
@@ -40,6 +40,13 @@ enum class ShouldInitializeWeak {
     No
 };
 
+enum class ShouldCallIfuncResolver {
+    Yes,
+    No
+};
+
+extern "C" FlatPtr _fixup_plt_entry(DynamicObject* object, u32 relocation_offset);
+
 class DynamicLoader : public RefCounted<DynamicLoader> {
 public:
     static Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> try_create(int fd, DeprecatedString filepath);
@@ -65,7 +72,7 @@ public:
     // Stage 4 of loading: initializers
     void load_stage_4();
 
-    void set_tls_offset(size_t offset) { m_tls_offset = offset; };
+    void set_tls_offset(size_t offset) { m_tls_offset = offset; }
     size_t tls_size_of_current_object() const { return m_tls_size_of_current_object; }
     size_t tls_alignment_of_current_object() const { return m_tls_alignment_of_current_object; }
     size_t tls_offset() const { return m_tls_offset; }
@@ -128,12 +135,17 @@ private:
 
     bool validate();
 
+    friend FlatPtr _fixup_plt_entry(DynamicObject*, u32);
+
     enum class RelocationResult : uint8_t {
         Failed = 0,
         Success = 1,
         ResolveLater = 2,
+        CallIfuncResolver = 3,
     };
-    RelocationResult do_relocation(DynamicObject::Relocation const&, ShouldInitializeWeak should_initialize_weak);
+    RelocationResult do_direct_relocation(DynamicObject::Relocation const&, ShouldInitializeWeak, ShouldCallIfuncResolver);
+    // Will be called from _fixup_plt_entry, as part of the PLT trampoline
+    static RelocationResult do_plt_relocation(DynamicObject::Relocation const&, ShouldCallIfuncResolver);
     void do_relr_relocations();
     void find_tls_size_and_alignment();
 
@@ -159,6 +171,8 @@ private:
     size_t m_tls_alignment_of_current_object { 0 };
 
     Vector<DynamicObject::Relocation> m_unresolved_relocations;
+    Vector<DynamicObject::Relocation> m_direct_ifunc_relocations;
+    Vector<DynamicObject::Relocation> m_plt_ifunc_relocations;
 
     mutable RefPtr<DynamicObject> m_cached_dynamic_object;
 

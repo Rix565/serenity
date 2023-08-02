@@ -5,11 +5,16 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ScopeGuard.h>
 #include <AK/SourceLocation.h>
+#include <LibIPC/Decoder.h>
+#include <LibIPC/Encoder.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
+#include <LibWeb/HTML/HTMLMediaElement.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
+#include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 
@@ -50,6 +55,11 @@ void Page::load_html(StringView html, const AK::URL& url)
     top_level_browsing_context().loader().load_html(html, url);
 }
 
+bool Page::has_ongoing_navigation() const
+{
+    return top_level_browsing_context().loader().is_pending();
+}
+
 Gfx::Palette Page::palette() const
 {
     return m_client.palette();
@@ -84,8 +94,8 @@ CSSPixelPoint Page::device_to_css_point(DevicePixelPoint point) const
 DevicePixelPoint Page::css_to_device_point(CSSPixelPoint point) const
 {
     return {
-        point.x().value() * client().device_pixels_per_css_pixel(),
-        point.y().value() * client().device_pixels_per_css_pixel(),
+        point.x() * client().device_pixels_per_css_pixel(),
+        point.y() * client().device_pixels_per_css_pixel(),
     };
 }
 
@@ -103,22 +113,21 @@ CSSPixelRect Page::device_to_css_rect(DevicePixelRect rect) const
 DevicePixelRect Page::enclosing_device_rect(CSSPixelRect rect) const
 {
     auto scale = client().device_pixels_per_css_pixel();
-    return {
-        floorf(rect.x().value() * scale),
-        floorf(rect.y().value() * scale),
-        ceilf(rect.width().value() * scale),
-        ceilf(rect.height().value() * scale)
-    };
+    return DevicePixelRect(
+        floor(rect.x().to_double() * scale),
+        floor(rect.y().to_double() * scale),
+        ceil(rect.width().to_double() * scale),
+        ceil(rect.height().to_double() * scale));
 }
 
 DevicePixelRect Page::rounded_device_rect(CSSPixelRect rect) const
 {
     auto scale = client().device_pixels_per_css_pixel();
     return {
-        roundf(rect.x().value() * scale),
-        roundf(rect.y().value() * scale),
-        roundf(rect.width().value() * scale),
-        roundf(rect.height().value() * scale)
+        roundf(rect.x().to_double() * scale),
+        roundf(rect.y().to_double() * scale),
+        roundf(rect.width().to_double() * scale),
+        roundf(rect.height().to_double() * scale)
     };
 }
 
@@ -157,6 +166,11 @@ bool Page::handle_keyup(KeyCode key, unsigned modifiers, u32 code_point)
     return focused_context().event_handler().handle_keyup(key, modifiers, code_point);
 }
 
+bool Page::top_level_browsing_context_is_initialized() const
+{
+    return m_top_level_browsing_context;
+}
+
 HTML::BrowsingContext& Page::top_level_browsing_context()
 {
     return *m_top_level_browsing_context;
@@ -187,7 +201,7 @@ static ResponseType spin_event_loop_until_dialog_closed(PageClient& client, Opti
     return response.release_value();
 }
 
-void Page::did_request_alert(DeprecatedString const& message)
+void Page::did_request_alert(String const& message)
 {
     m_pending_dialog = PendingDialog::Alert;
     m_client.page_did_request_alert(message);
@@ -207,7 +221,7 @@ void Page::alert_closed()
     }
 }
 
-bool Page::did_request_confirm(DeprecatedString const& message)
+bool Page::did_request_confirm(String const& message)
 {
     m_pending_dialog = PendingDialog::Confirm;
     m_client.page_did_request_confirm(message);
@@ -227,7 +241,7 @@ void Page::confirm_closed(bool accepted)
     }
 }
 
-DeprecatedString Page::did_request_prompt(DeprecatedString const& message, DeprecatedString const& default_)
+Optional<String> Page::did_request_prompt(String const& message, String const& default_)
 {
     m_pending_dialog = PendingDialog::Prompt;
     m_client.page_did_request_prompt(message, default_);
@@ -238,7 +252,7 @@ DeprecatedString Page::did_request_prompt(DeprecatedString const& message, Depre
     return spin_event_loop_until_dialog_closed(m_client, m_pending_prompt_response);
 }
 
-void Page::prompt_closed(DeprecatedString response)
+void Page::prompt_closed(Optional<String> response)
 {
     if (m_pending_dialog == PendingDialog::Prompt) {
         m_pending_dialog = PendingDialog::None;
@@ -275,4 +289,112 @@ void Page::accept_dialog()
     }
 }
 
+void Page::did_request_media_context_menu(i32 media_id, CSSPixelPoint position, DeprecatedString const& target, unsigned modifiers, MediaContextMenu menu)
+{
+    m_media_context_menu_element_id = media_id;
+    client().page_did_request_media_context_menu(position, target, modifiers, move(menu));
+}
+
+WebIDL::ExceptionOr<void> Page::toggle_media_play_state()
+{
+    auto media_element = media_context_menu_element();
+    if (!media_element)
+        return {};
+
+    // AD-HOC: An execution context is required for Promise creation hooks.
+    HTML::TemporaryExecutionContext execution_context { media_element->document().relevant_settings_object() };
+
+    if (media_element->potentially_playing())
+        TRY(media_element->pause());
+    else
+        TRY(media_element->play());
+
+    return {};
+}
+
+void Page::toggle_media_mute_state()
+{
+    auto media_element = media_context_menu_element();
+    if (!media_element)
+        return;
+
+    // AD-HOC: An execution context is required for Promise creation hooks.
+    HTML::TemporaryExecutionContext execution_context { media_element->document().relevant_settings_object() };
+
+    media_element->set_muted(!media_element->muted());
+}
+
+WebIDL::ExceptionOr<void> Page::toggle_media_loop_state()
+{
+    auto media_element = media_context_menu_element();
+    if (!media_element)
+        return {};
+
+    // AD-HOC: An execution context is required for Promise creation hooks.
+    HTML::TemporaryExecutionContext execution_context { media_element->document().relevant_settings_object() };
+
+    if (media_element->has_attribute(HTML::AttributeNames::loop))
+        media_element->remove_attribute(HTML::AttributeNames::loop);
+    else
+        TRY(media_element->set_attribute(HTML::AttributeNames::loop, {}));
+
+    return {};
+}
+
+WebIDL::ExceptionOr<void> Page::toggle_media_controls_state()
+{
+    auto media_element = media_context_menu_element();
+    if (!media_element)
+        return {};
+
+    HTML::TemporaryExecutionContext execution_context { media_element->document().relevant_settings_object() };
+
+    if (media_element->has_attribute(HTML::AttributeNames::controls))
+        media_element->remove_attribute(HTML::AttributeNames::controls);
+    else
+        TRY(media_element->set_attribute(HTML::AttributeNames::controls, {}));
+
+    return {};
+}
+
+JS::GCPtr<HTML::HTMLMediaElement> Page::media_context_menu_element()
+{
+    if (!m_media_context_menu_element_id.has_value())
+        return nullptr;
+
+    auto* dom_node = DOM::Node::from_id(*m_media_context_menu_element_id);
+    if (dom_node == nullptr)
+        return nullptr;
+
+    if (!is<HTML::HTMLMediaElement>(dom_node))
+        return nullptr;
+
+    return static_cast<HTML::HTMLMediaElement*>(dom_node);
+}
+
+}
+
+template<>
+ErrorOr<void> IPC::encode(Encoder& encoder, Web::Page::MediaContextMenu const& menu)
+{
+    TRY(encoder.encode(menu.media_url));
+    TRY(encoder.encode(menu.is_video));
+    TRY(encoder.encode(menu.is_playing));
+    TRY(encoder.encode(menu.is_muted));
+    TRY(encoder.encode(menu.has_user_agent_controls));
+    TRY(encoder.encode(menu.is_looping));
+    return {};
+}
+
+template<>
+ErrorOr<Web::Page::MediaContextMenu> IPC::decode(Decoder& decoder)
+{
+    return Web::Page::MediaContextMenu {
+        .media_url = TRY(decoder.decode<AK::URL>()),
+        .is_video = TRY(decoder.decode<bool>()),
+        .is_playing = TRY(decoder.decode<bool>()),
+        .is_muted = TRY(decoder.decode<bool>()),
+        .has_user_agent_controls = TRY(decoder.decode<bool>()),
+        .is_looping = TRY(decoder.decode<bool>()),
+    };
 }

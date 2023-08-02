@@ -9,7 +9,6 @@
 
 #include <AK/DeprecatedString.h>
 #include <AK/HashMap.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/Vector.h>
 #include <LibGUI/Icon.h>
 #include <LibGUI/Model.h>
@@ -56,6 +55,8 @@ public:
         __Count
     };
 
+    static ErrorOr<String> read_command_line(pid_t pid);
+
     static ProcessModel& the();
 
     static NonnullRefPtr<ProcessModel> create() { return adopt_ref(*new ProcessModel); }
@@ -64,7 +65,7 @@ public:
     virtual int tree_column() const override { return Column::Name; }
     virtual int row_count(GUI::ModelIndex const&) const override;
     virtual int column_count(GUI::ModelIndex const&) const override;
-    virtual DeprecatedString column_name(int column) const override;
+    virtual ErrorOr<String> column_name(int) const override;
     virtual GUI::Variant data(GUI::ModelIndex const&, GUI::ModelRole) const override;
     virtual GUI::ModelIndex index(int row, int column, GUI::ModelIndex const& parent = {}) const override;
     virtual GUI::ModelIndex parent_index(GUI::ModelIndex const&) const override;
@@ -85,15 +86,20 @@ public:
         }
     };
 
-    Function<void(NonnullOwnPtrVector<CpuInfo> const&)> on_cpu_info_change;
+    Function<void(Vector<NonnullOwnPtr<CpuInfo>> const&)> on_cpu_info_change;
     Function<void(int process_count, int thread_count)> on_state_update;
 
-    NonnullOwnPtrVector<CpuInfo> const& cpus() const { return m_cpus; }
+    Vector<NonnullOwnPtr<CpuInfo>> const& cpus() const { return m_cpus; }
 
 private:
     ProcessModel();
 
     struct Process;
+
+    enum class EmptyCommand : u8 {
+        NotInitialized,
+        PermissionError,
+    };
 
     struct ThreadState {
         pid_t tid { 0 };
@@ -106,7 +112,7 @@ private:
         bool kernel { false };
         DeprecatedString executable { "" };
         DeprecatedString name { "" };
-        DeprecatedString command { "" };
+        Variant<String, EmptyCommand> command { EmptyCommand::NotInitialized };
         uid_t uid { 0 };
         DeprecatedString state { "" };
         DeprecatedString user { "" };
@@ -124,12 +130,12 @@ private:
         unsigned inode_faults { 0 };
         unsigned zero_faults { 0 };
         unsigned cow_faults { 0 };
-        unsigned unix_socket_read_bytes { 0 };
-        unsigned unix_socket_write_bytes { 0 };
-        unsigned ipv4_socket_read_bytes { 0 };
-        unsigned ipv4_socket_write_bytes { 0 };
-        unsigned file_read_bytes { 0 };
-        unsigned file_write_bytes { 0 };
+        u64 unix_socket_read_bytes { 0 };
+        u64 unix_socket_write_bytes { 0 };
+        u64 ipv4_socket_read_bytes { 0 };
+        u64 ipv4_socket_write_bytes { 0 };
+        u64 file_read_bytes { 0 };
+        u64 file_write_bytes { 0 };
         float cpu_percent { 0 };
         float cpu_percent_kernel { 0 };
         Process& process;
@@ -203,11 +209,31 @@ private:
         {
             return current_state.tid == current_state.process.pid;
         }
+
+        void read_command_line_if_necessary()
+        {
+            // Most likely the previous state still has a command line which we can copy over.
+            // Or, reading the command line was not allowed, e.g. on a Kernel process.
+            if ((previous_state.command.has<String>() && !current_state.command.has<String>())
+                || (previous_state.command.has<EmptyCommand>() && previous_state.command.get<EmptyCommand>() == EmptyCommand::PermissionError)) {
+                current_state.command = previous_state.command;
+                return;
+            }
+
+            auto maybe_command_line = read_command_line(current_state.pid);
+            if (!maybe_command_line.is_error()) {
+                current_state.command = maybe_command_line.value();
+                previous_state.command = maybe_command_line.release_value();
+            } else if (maybe_command_line.error().code() == EPERM || maybe_command_line.error().code() == EACCES) {
+                current_state.command = EmptyCommand::PermissionError;
+                previous_state.command = EmptyCommand::PermissionError;
+            }
+        }
     };
 
     struct Process {
         pid_t pid;
-        NonnullRefPtrVector<Thread> threads;
+        Vector<NonnullRefPtr<Thread>> threads;
 
         bool operator==(Process const& other) const
         {
@@ -224,7 +250,7 @@ private:
         {
             auto main_thread_index = -1;
             for (size_t i = 0; i < threads.size(); ++i) {
-                if (threads[i].is_main_thread()) {
+                if (threads[i]->is_main_thread()) {
                     main_thread_index = static_cast<int>(i);
                     break;
                 }
@@ -241,11 +267,14 @@ private:
 
     int thread_model_row(Thread const& thread) const;
 
+    ErrorOr<void> ensure_process_statistics_file();
+
+    OwnPtr<Core::File> m_process_statistics_file;
+
     // The thread list contains the same threads as the Process structs.
     HashMap<int, NonnullRefPtr<Thread>> m_threads;
-    NonnullOwnPtrVector<Process> m_processes;
-    NonnullOwnPtrVector<CpuInfo> m_cpus;
-    RefPtr<Core::File> m_proc_all;
+    Vector<NonnullOwnPtr<Process>> m_processes;
+    Vector<NonnullOwnPtr<CpuInfo>> m_cpus;
     GUI::Icon m_kernel_process_icon;
     u64 m_total_time_scheduled { 0 };
     u64 m_total_time_scheduled_kernel { 0 };

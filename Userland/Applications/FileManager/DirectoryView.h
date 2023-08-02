@@ -21,7 +21,7 @@
 
 namespace FileManager {
 
-void spawn_terminal(DeprecatedString const& directory);
+void spawn_terminal(GUI::Window* window, StringView directory);
 
 class LauncherHandler : public RefCounted<LauncherHandler> {
 public:
@@ -58,9 +58,9 @@ public:
     void open_next_directory();
     int path_history_size() const { return m_path_history.size(); }
     int path_history_position() const { return m_path_history_position; }
-    static RefPtr<LauncherHandler> get_default_launch_handler(NonnullRefPtrVector<LauncherHandler> const& handlers);
-    static NonnullRefPtrVector<LauncherHandler> get_launch_handlers(URL const& url);
-    static NonnullRefPtrVector<LauncherHandler> get_launch_handlers(DeprecatedString const& path);
+    static RefPtr<LauncherHandler> get_default_launch_handler(Vector<NonnullRefPtr<LauncherHandler>> const& handlers);
+    static Vector<NonnullRefPtr<LauncherHandler>> get_launch_handlers(URL const& url);
+    static Vector<NonnullRefPtr<LauncherHandler>> get_launch_handlers(DeprecatedString const& path);
 
     void refresh();
 
@@ -133,7 +133,7 @@ public:
     GUI::Action& view_as_columns_action() { return *m_view_as_columns_action; }
 
     // ^Config::Listener
-    virtual void config_string_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, DeprecatedString const& value) override;
+    virtual void config_string_did_change(StringView domain, StringView group, StringView key, StringView value) override;
 
 private:
     explicit DirectoryView(Mode);

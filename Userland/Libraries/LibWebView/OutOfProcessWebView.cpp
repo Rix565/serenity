@@ -19,12 +19,14 @@
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/SystemTheme.h>
+#include <LibWeb/Crypto/Crypto.h>
 
 REGISTER_WIDGET(WebView, OutOfProcessWebView)
 
 namespace WebView {
 
-OutOfProcessWebView::OutOfProcessWebView()
+OutOfProcessWebView::OutOfProcessWebView(UseJavaScriptBytecode use_javascript_bytecode)
+    : ViewImplementation(use_javascript_bytecode)
 {
     set_should_hide_unnecessary_scrollbars(true);
     set_focus_policy(GUI::FocusPolicy::StrongFocus);
@@ -34,31 +36,7 @@ OutOfProcessWebView::OutOfProcessWebView()
 
 OutOfProcessWebView::~OutOfProcessWebView() = default;
 
-void OutOfProcessWebView::handle_web_content_process_crash()
-{
-    create_client();
-    VERIFY(m_client_state.client);
-
-    // Don't keep a stale backup bitmap around.
-    m_backup_bitmap = nullptr;
-
-    handle_resize();
-    StringBuilder builder;
-    builder.append("<html><head><title>Crashed: "sv);
-    builder.append(escape_html_entities(m_url.to_deprecated_string()));
-    builder.append("</title></head><body>"sv);
-    builder.append("<h1>Web page crashed"sv);
-    if (!m_url.host().is_empty()) {
-        builder.appendff(" on {}", escape_html_entities(m_url.host()));
-    }
-    builder.append("</h1>"sv);
-    auto escaped_url = escape_html_entities(m_url.to_deprecated_string());
-    builder.appendff("The web page <a href=\"{}\">{}</a> has crashed.<br><br>You can reload the page to try again.", escaped_url, escaped_url);
-    builder.append("</body></html>"sv);
-    load_html(builder.to_deprecated_string(), m_url);
-}
-
-void OutOfProcessWebView::create_client()
+void OutOfProcessWebView::create_client(EnableCallgrindProfiling)
 {
     m_client_state = {};
 
@@ -68,6 +46,11 @@ void OutOfProcessWebView::create_client()
             handle_web_content_process_crash();
         });
     };
+
+    client().async_set_use_javascript_bytecode(use_javascript_bytecode() == UseJavaScriptBytecode::Yes);
+
+    m_client_state.client_handle = Web::Crypto::generate_random_uuid().release_value_but_fixme_should_propagate_errors();
+    client().async_set_window_handle(m_client_state.client_handle);
 
     client().async_update_system_theme(Gfx::current_system_theme_buffer());
     client().async_update_system_fonts(Gfx::FontDatabase::default_font_query(), Gfx::FontDatabase::fixed_width_font_query(), Gfx::FontDatabase::window_title_font_query());
@@ -88,10 +71,17 @@ void OutOfProcessWebView::paint_event(GUI::PaintEvent& event)
     if (auto* bitmap = m_client_state.has_usable_bitmap ? m_client_state.front_bitmap.bitmap.ptr() : m_backup_bitmap.ptr()) {
         painter.add_clip_rect(frame_inner_rect());
         painter.translate(frame_thickness(), frame_thickness());
-        if (m_content_scales_to_viewport)
-            painter.draw_scaled_bitmap(rect(), *bitmap, bitmap->rect());
-        else
+        if (m_content_scales_to_viewport) {
+            auto bitmap_rect = Gfx::IntRect {
+                {},
+                m_client_state.has_usable_bitmap
+                    ? m_client_state.front_bitmap.last_painted_size
+                    : m_backup_bitmap_size
+            };
+            painter.draw_scaled_bitmap(rect(), *bitmap, bitmap_rect);
+        } else {
             painter.blit({ 0, 0 }, *bitmap, bitmap->rect());
+        }
         return;
     }
 
@@ -101,44 +91,23 @@ void OutOfProcessWebView::paint_event(GUI::PaintEvent& event)
 void OutOfProcessWebView::resize_event(GUI::ResizeEvent& event)
 {
     Super::resize_event(event);
+    client().async_set_viewport_rect(Gfx::IntRect({ horizontal_scrollbar().value(), vertical_scrollbar().value() }, available_size()));
     handle_resize();
 }
 
-void OutOfProcessWebView::handle_resize()
+Gfx::IntRect OutOfProcessWebView::viewport_rect() const
 {
-    client().async_set_viewport_rect(Gfx::IntRect({ horizontal_scrollbar().value(), vertical_scrollbar().value() }, available_size()));
+    return visible_content_rect();
+}
 
-    if (m_client_state.has_usable_bitmap) {
-        // NOTE: We keep the outgoing front bitmap as a backup so we have something to paint until we get a new one.
-        m_backup_bitmap = m_client_state.front_bitmap.bitmap;
-    }
+Gfx::IntPoint OutOfProcessWebView::to_content_position(Gfx::IntPoint widget_position) const
+{
+    return GUI::AbstractScrollableWidget::to_content_position(widget_position);
+}
 
-    if (m_client_state.front_bitmap.bitmap)
-        client().async_remove_backing_store(m_client_state.front_bitmap.id);
-
-    if (m_client_state.back_bitmap.bitmap)
-        client().async_remove_backing_store(m_client_state.back_bitmap.id);
-
-    m_client_state.front_bitmap = {};
-    m_client_state.back_bitmap = {};
-    m_client_state.has_usable_bitmap = false;
-
-    if (available_size().is_empty())
-        return;
-
-    if (auto new_bitmap_or_error = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::BGRx8888, available_size()); !new_bitmap_or_error.is_error()) {
-        m_client_state.front_bitmap.bitmap = new_bitmap_or_error.release_value();
-        m_client_state.front_bitmap.id = m_client_state.next_bitmap_id++;
-        client().async_add_backing_store(m_client_state.front_bitmap.id, m_client_state.front_bitmap.bitmap->to_shareable_bitmap());
-    }
-
-    if (auto new_bitmap_or_error = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::BGRx8888, available_size()); !new_bitmap_or_error.is_error()) {
-        m_client_state.back_bitmap.bitmap = new_bitmap_or_error.release_value();
-        m_client_state.back_bitmap.id = m_client_state.next_bitmap_id++;
-        client().async_add_backing_store(m_client_state.back_bitmap.id, m_client_state.back_bitmap.bitmap->to_shareable_bitmap());
-    }
-
-    request_repaint();
+Gfx::IntPoint OutOfProcessWebView::to_widget_position(Gfx::IntPoint content_position) const
+{
+    return GUI::AbstractScrollableWidget::to_widget_position(content_position);
 }
 
 void OutOfProcessWebView::update_zoom()
@@ -167,10 +136,12 @@ void OutOfProcessWebView::mouseup_event(GUI::MouseEvent& event)
 {
     enqueue_input_event(event);
 
-    if (event.button() == GUI::MouseButton::Backward && on_back_button) {
-        on_back_button();
-    } else if (event.button() == GUI::MouseButton::Forward && on_forward_button) {
-        on_forward_button();
+    if (event.button() == GUI::MouseButton::Backward) {
+        if (on_back_button)
+            on_back_button();
+    } else if (event.button() == GUI::MouseButton::Forward) {
+        if (on_forward_button)
+            on_forward_button();
     }
 }
 
@@ -201,11 +172,12 @@ void OutOfProcessWebView::screen_rects_change_event(GUI::ScreenRectsChangeEvent&
     client().async_update_screen_rects(event.rects(), event.main_screen_index());
 }
 
-void OutOfProcessWebView::notify_server_did_paint(Badge<WebContentClient>, i32 bitmap_id)
+void OutOfProcessWebView::notify_server_did_paint(Badge<WebContentClient>, i32 bitmap_id, Gfx::IntSize size)
 {
     if (m_client_state.back_bitmap.id == bitmap_id) {
         m_client_state.has_usable_bitmap = true;
         m_client_state.back_bitmap.pending_paints--;
+        m_client_state.back_bitmap.last_painted_size = size;
         swap(m_client_state.back_bitmap, m_client_state.front_bitmap);
         // We don't need the backup bitmap anymore, so drop it.
         m_backup_bitmap = nullptr;
@@ -238,12 +210,6 @@ void OutOfProcessWebView::notify_server_did_layout(Badge<WebContentClient>, Gfx:
     set_content_size(content_size);
 }
 
-void OutOfProcessWebView::notify_server_did_change_title(Badge<WebContentClient>, DeprecatedString const& title)
-{
-    if (on_title_change)
-        on_title_change(title);
-}
-
 void OutOfProcessWebView::notify_server_did_request_scroll(Badge<WebContentClient>, i32 x_delta, i32 y_delta)
 {
     horizontal_scrollbar().increase_slider_by(x_delta);
@@ -271,84 +237,9 @@ void OutOfProcessWebView::notify_server_did_leave_tooltip_area(Badge<WebContentC
     GUI::Application::the()->hide_tooltip();
 }
 
-void OutOfProcessWebView::notify_server_did_hover_link(Badge<WebContentClient>, const AK::URL& url)
+void OutOfProcessWebView::notify_server_did_request_alert(Badge<WebContentClient>, String const& message)
 {
-    if (on_link_hover)
-        on_link_hover(url);
-}
-
-void OutOfProcessWebView::notify_server_did_unhover_link(Badge<WebContentClient>)
-{
-    set_override_cursor(Gfx::StandardCursor::None);
-    if (on_link_hover)
-        on_link_hover({});
-}
-
-void OutOfProcessWebView::notify_server_did_click_link(Badge<WebContentClient>, const AK::URL& url, DeprecatedString const& target, unsigned int modifiers)
-{
-    if (on_link_click)
-        on_link_click(url, target, modifiers);
-}
-
-void OutOfProcessWebView::notify_server_did_middle_click_link(Badge<WebContentClient>, const AK::URL& url, DeprecatedString const& target, unsigned int modifiers)
-{
-    if (on_link_middle_click)
-        on_link_middle_click(url, target, modifiers);
-}
-
-void OutOfProcessWebView::notify_server_did_start_loading(Badge<WebContentClient>, const AK::URL& url, bool is_redirect)
-{
-    m_url = url;
-    if (on_load_start)
-        on_load_start(url, is_redirect);
-}
-
-void OutOfProcessWebView::notify_server_did_finish_loading(Badge<WebContentClient>, const AK::URL& url)
-{
-    m_url = url;
-    if (on_load_finish)
-        on_load_finish(url);
-}
-
-void OutOfProcessWebView::notify_server_did_request_navigate_back(Badge<WebContentClient>)
-{
-    if (on_navigate_back)
-        on_navigate_back();
-}
-
-void OutOfProcessWebView::notify_server_did_request_navigate_forward(Badge<WebContentClient>)
-{
-    if (on_navigate_forward)
-        on_navigate_forward();
-}
-
-void OutOfProcessWebView::notify_server_did_request_refresh(Badge<WebContentClient>)
-{
-    if (on_refresh)
-        on_refresh();
-}
-
-void OutOfProcessWebView::notify_server_did_request_context_menu(Badge<WebContentClient>, Gfx::IntPoint content_position)
-{
-    if (on_context_menu_request)
-        on_context_menu_request(screen_relative_rect().location().translated(to_widget_position(content_position)));
-}
-
-void OutOfProcessWebView::notify_server_did_request_link_context_menu(Badge<WebContentClient>, Gfx::IntPoint content_position, const AK::URL& url, DeprecatedString const&, unsigned)
-{
-    if (on_link_context_menu_request)
-        on_link_context_menu_request(url, screen_relative_rect().location().translated(to_widget_position(content_position)));
-}
-
-void OutOfProcessWebView::notify_server_did_request_image_context_menu(Badge<WebContentClient>, Gfx::IntPoint content_position, const AK::URL& url, DeprecatedString const&, unsigned, Gfx::ShareableBitmap const& bitmap)
-{
-    if (on_image_context_menu_request)
-        on_image_context_menu_request(url, screen_relative_rect().location().translated(to_widget_position(content_position)), bitmap);
-}
-
-void OutOfProcessWebView::notify_server_did_request_alert(Badge<WebContentClient>, DeprecatedString const& message)
-{
-    m_dialog = GUI::MessageBox::construct(window(), message, "Alert"sv, GUI::MessageBox::Type::Information, GUI::MessageBox::InputType::OK);
+    m_dialog = GUI::MessageBox::create(window(), message, "Alert"sv, GUI::MessageBox::Type::Information, GUI::MessageBox::InputType::OK).release_value_but_fixme_should_propagate_errors();
     m_dialog->set_icon(window()->icon());
     m_dialog->exec();
 
@@ -356,29 +247,34 @@ void OutOfProcessWebView::notify_server_did_request_alert(Badge<WebContentClient
     m_dialog = nullptr;
 }
 
-void OutOfProcessWebView::notify_server_did_request_confirm(Badge<WebContentClient>, DeprecatedString const& message)
+void OutOfProcessWebView::notify_server_did_request_confirm(Badge<WebContentClient>, String const& message)
 {
-    m_dialog = GUI::MessageBox::construct(window(), message, "Confirm"sv, GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::OKCancel);
+    m_dialog = GUI::MessageBox::create(window(), message, "Confirm"sv, GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::OKCancel).release_value_but_fixme_should_propagate_errors();
     m_dialog->set_icon(window()->icon());
 
     client().async_confirm_closed(m_dialog->exec() == GUI::Dialog::ExecResult::OK);
     m_dialog = nullptr;
 }
 
-void OutOfProcessWebView::notify_server_did_request_prompt(Badge<WebContentClient>, DeprecatedString const& message, DeprecatedString const& default_)
+void OutOfProcessWebView::notify_server_did_request_prompt(Badge<WebContentClient>, String const& message, String const& default_)
 {
-    m_dialog = GUI::InputBox::construct(window(), default_, message, "Prompt"sv, StringView {}, GUI::InputType::Text);
+    String mutable_value = default_;
+    m_dialog = GUI::InputBox::create(window(), mutable_value, message, "Prompt"sv, GUI::InputType::Text).release_value_but_fixme_should_propagate_errors();
     m_dialog->set_icon(window()->icon());
 
-    if (m_dialog->exec() == GUI::InputBox::ExecResult::OK)
-        client().async_prompt_closed(static_cast<GUI::InputBox&>(*m_dialog).text_value());
-    else
+    if (m_dialog->exec() == GUI::InputBox::ExecResult::OK) {
+        auto const& dialog = static_cast<GUI::InputBox const&>(*m_dialog);
+        auto response = dialog.text_value();
+
+        client().async_prompt_closed(move(response));
+    } else {
         client().async_prompt_closed({});
+    }
 
     m_dialog = nullptr;
 }
 
-void OutOfProcessWebView::notify_server_did_request_set_prompt_text(Badge<WebContentClient>, DeprecatedString const& message)
+void OutOfProcessWebView::notify_server_did_request_set_prompt_text(Badge<WebContentClient>, String const& message)
 {
     if (m_dialog && is<GUI::InputBox>(*m_dialog))
         static_cast<GUI::InputBox&>(*m_dialog).set_text_value(message);
@@ -396,122 +292,6 @@ void OutOfProcessWebView::notify_server_did_request_dismiss_dialog(Badge<WebCont
         m_dialog->done(GUI::Dialog::ExecResult::Cancel);
 }
 
-void OutOfProcessWebView::notify_server_did_get_source(const AK::URL& url, DeprecatedString const& source)
-{
-    if (on_get_source)
-        on_get_source(url, source);
-}
-
-void OutOfProcessWebView::notify_server_did_get_dom_tree(DeprecatedString const& dom_tree)
-{
-    if (on_get_dom_tree)
-        on_get_dom_tree(dom_tree);
-}
-
-void OutOfProcessWebView::notify_server_did_get_dom_node_properties(i32 node_id, DeprecatedString const& computed_style, DeprecatedString const& resolved_style, DeprecatedString const& custom_properties, DeprecatedString const& node_box_sizing)
-{
-    if (on_get_dom_node_properties)
-        on_get_dom_node_properties(node_id, computed_style, resolved_style, custom_properties, node_box_sizing);
-}
-
-void OutOfProcessWebView::notify_server_did_output_js_console_message(i32 message_index)
-{
-    if (on_js_console_new_message)
-        on_js_console_new_message(message_index);
-}
-
-void OutOfProcessWebView::notify_server_did_get_js_console_messages(i32 start_index, Vector<DeprecatedString> const& message_types, Vector<DeprecatedString> const& messages)
-{
-    if (on_get_js_console_messages)
-        on_get_js_console_messages(start_index, message_types, messages);
-}
-
-void OutOfProcessWebView::notify_server_did_change_favicon(Gfx::Bitmap const& favicon)
-{
-    if (on_favicon_change)
-        on_favicon_change(favicon);
-}
-
-Vector<Web::Cookie::Cookie> OutOfProcessWebView::notify_server_did_request_all_cookies(Badge<WebContentClient>, AK::URL const& url)
-{
-    if (on_get_all_cookies)
-        return on_get_all_cookies(url);
-    return {};
-}
-
-Optional<Web::Cookie::Cookie> OutOfProcessWebView::notify_server_did_request_named_cookie(Badge<WebContentClient>, AK::URL const& url, DeprecatedString const& name)
-{
-    if (on_get_named_cookie)
-        return on_get_named_cookie(url, name);
-    return {};
-}
-
-DeprecatedString OutOfProcessWebView::notify_server_did_request_cookie(Badge<WebContentClient>, const AK::URL& url, Web::Cookie::Source source)
-{
-    if (on_get_cookie)
-        return on_get_cookie(url, source);
-    return {};
-}
-
-void OutOfProcessWebView::notify_server_did_set_cookie(Badge<WebContentClient>, const AK::URL& url, Web::Cookie::ParsedCookie const& cookie, Web::Cookie::Source source)
-{
-    if (on_set_cookie)
-        on_set_cookie(url, cookie, source);
-}
-
-void OutOfProcessWebView::notify_server_did_update_cookie(Badge<WebContentClient>, Web::Cookie::Cookie const& cookie)
-{
-    if (on_update_cookie)
-        on_update_cookie(cookie);
-}
-
-void OutOfProcessWebView::notify_server_did_update_resource_count(i32 count_waiting)
-{
-    if (on_resource_status_change)
-        on_resource_status_change(count_waiting);
-}
-
-void OutOfProcessWebView::notify_server_did_request_restore_window()
-{
-    if (on_restore_window)
-        on_restore_window();
-}
-
-Gfx::IntPoint OutOfProcessWebView::notify_server_did_request_reposition_window(Gfx::IntPoint position)
-{
-    if (on_reposition_window)
-        return on_reposition_window(position);
-    return {};
-}
-
-Gfx::IntSize OutOfProcessWebView::notify_server_did_request_resize_window(Gfx::IntSize size)
-{
-    if (on_resize_window)
-        return on_resize_window(size);
-    return {};
-}
-
-Gfx::IntRect OutOfProcessWebView::notify_server_did_request_maximize_window()
-{
-    if (on_maximize_window)
-        return on_maximize_window();
-    return {};
-}
-
-Gfx::IntRect OutOfProcessWebView::notify_server_did_request_minimize_window()
-{
-    if (on_minimize_window)
-        return on_minimize_window();
-    return {};
-}
-
-Gfx::IntRect OutOfProcessWebView::notify_server_did_request_fullscreen_window()
-{
-    if (on_fullscreen_window)
-        return on_fullscreen_window();
-    return {};
-}
-
 void OutOfProcessWebView::notify_server_did_request_file(Badge<WebContentClient>, DeprecatedString const& path, i32 request_id)
 {
     auto file = FileSystemAccessClient::Client::the().request_file_read_only_approved(window(), path);
@@ -525,31 +305,6 @@ void OutOfProcessWebView::did_scroll()
 {
     client().async_set_viewport_rect(visible_content_rect());
     request_repaint();
-}
-
-void OutOfProcessWebView::request_repaint()
-{
-    // If this widget was instantiated but not yet added to a window,
-    // it won't have a back bitmap yet, so we can just skip repaint requests.
-    if (!m_client_state.back_bitmap.bitmap)
-        return;
-    // Don't request a repaint until pending paint requests have finished.
-    if (m_client_state.back_bitmap.pending_paints) {
-        m_client_state.got_repaint_requests_while_painting = true;
-        return;
-    }
-    m_client_state.back_bitmap.pending_paints++;
-    client().async_paint(m_client_state.back_bitmap.bitmap->rect().translated(horizontal_scrollbar().value(), vertical_scrollbar().value()), m_client_state.back_bitmap.id);
-}
-
-void OutOfProcessWebView::js_console_input(DeprecatedString const& js_source)
-{
-    client().async_js_console_input(js_source);
-}
-
-void OutOfProcessWebView::js_console_request_messages(i32 start_index)
-{
-    client().async_js_console_request_messages(start_index);
 }
 
 DeprecatedString OutOfProcessWebView::dump_layout_tree()
@@ -567,9 +322,19 @@ OrderedHashMap<DeprecatedString, DeprecatedString> OutOfProcessWebView::get_sess
     return client().get_session_storage_entries();
 }
 
-void OutOfProcessWebView::set_content_filters(Vector<DeprecatedString> filters)
+void OutOfProcessWebView::set_content_filters(Vector<String> filters)
 {
-    client().async_set_content_filters(filters);
+    client().async_set_content_filters(move(filters));
+}
+
+void OutOfProcessWebView::set_autoplay_allowed_on_all_websites()
+{
+    client().async_set_autoplay_allowed_on_all_websites();
+}
+
+void OutOfProcessWebView::set_autoplay_allowlist(Vector<String> allowlist)
+{
+    client().async_set_autoplay_allowlist(move(allowlist));
 }
 
 void OutOfProcessWebView::set_proxy_mappings(Vector<DeprecatedString> proxies, HashMap<DeprecatedString, size_t> mappings)
@@ -590,18 +355,6 @@ void OutOfProcessWebView::set_window_position(Gfx::IntPoint position)
 void OutOfProcessWebView::set_window_size(Gfx::IntSize size)
 {
     client().async_set_window_size(size);
-}
-
-Gfx::ShareableBitmap OutOfProcessWebView::take_screenshot() const
-{
-    if (auto* bitmap = m_client_state.has_usable_bitmap ? m_client_state.front_bitmap.bitmap.ptr() : m_backup_bitmap.ptr())
-        return bitmap->to_shareable_bitmap();
-    return {};
-}
-
-Gfx::ShareableBitmap OutOfProcessWebView::take_document_screenshot()
-{
-    return client().take_document_screenshot();
 }
 
 void OutOfProcessWebView::focusin_event(GUI::FocusEvent&)
@@ -724,7 +477,7 @@ void OutOfProcessWebView::notify_server_did_finish_handling_input_event(bool eve
 
                     // NOTE: If other events can ever trigger shortcuts, propagate those here.
                     if (!event.is_accepted() && event.type() == GUI::Event::Type::KeyDown)
-                        window()->propagate_shortcuts_up_to_application(event, this);
+                        window()->propagate_shortcuts(event, this);
                 }
             },
             [this](GUI::MouseEvent& event) {
@@ -756,12 +509,6 @@ void OutOfProcessWebView::notify_server_did_finish_handling_input_event(bool eve
     }
 
     process_next_input_event();
-}
-
-void OutOfProcessWebView::notify_server_did_get_accessibility_tree(DeprecatedString const& accessibility_tree)
-{
-    if (on_get_accessibility_tree)
-        on_get_accessibility_tree(accessibility_tree);
 }
 
 void OutOfProcessWebView::set_content_scales_to_viewport(bool b)

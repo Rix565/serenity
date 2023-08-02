@@ -1,13 +1,12 @@
-.github @bgianfo
-/AK @bgianfo
-/Kernel @bgianfo
 /Kernel/Devices/Audio @GMTA
-/Toolchain @bgianfo
-/Tests @bgianfo
+/Ladybird @linusg
+/Ports/neofetch @linusg
+/Ports/python3 @linusg
+/Userland/Applications/Browser @linusg
 /Userland/Applications/CrashReporter @linusg
 /Userland/Applications/Spreadsheet @alimpfard
-/Userland/Libraries/LibC @bgianfo
 /Userland/Libraries/LibCrypto @alimpfard
+/Userland/Libraries/LibGfx/Font/Emoji.* @linusg
 /Userland/Libraries/LibGL @GMTA
 /Userland/Libraries/LibGPU @GMTA
 /Userland/Libraries/LibHTTP @alimpfard
@@ -16,7 +15,7 @@
 /Userland/Libraries/LibLocale @trflynn89
 /Userland/Libraries/LibRegex @alimpfard
 /Userland/Libraries/LibSoftGPU @GMTA
-/Userland/Libraries/LibSQL @trflynn89
+/Userland/Libraries/LibSQL @GMTA @trflynn89
 /Userland/Libraries/LibTLS @alimpfard
 /Userland/Libraries/LibTimeZone @trflynn89
 /Userland/Libraries/LibUnicode @trflynn89

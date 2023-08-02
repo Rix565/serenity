@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -38,7 +38,7 @@ static constexpr AK::Array<char, 36> digits = {
 };
 
 NumberPrototype::NumberPrototype(Realm& realm)
-    : NumberObject(0, *realm.intrinsics().object_prototype())
+    : NumberObject(0, realm.intrinsics().object_prototype())
 {
 }
 
@@ -286,7 +286,7 @@ JS_DEFINE_NATIVE_FUNCTION(NumberPrototype::to_locale_string)
     auto number_value = TRY(this_number_value(vm, vm.this_value()));
 
     // 2. Let numberFormat be ? Construct(%NumberFormat%, « locales, options »).
-    auto* number_format = static_cast<Intl::NumberFormat*>(TRY(construct(vm, *realm.intrinsics().intl_number_format_constructor(), locales, options)).ptr());
+    auto* number_format = static_cast<Intl::NumberFormat*>(TRY(construct(vm, realm.intrinsics().intl_number_format_constructor(), locales, options)).ptr());
 
     // 3. Return ? FormatNumeric(numberFormat, x).
     auto formatted = TRY(Intl::format_numeric(vm, *number_format, number_value));
@@ -446,20 +446,20 @@ JS_DEFINE_NATIVE_FUNCTION(NumberPrototype::to_string)
 
     // 6. Return the String representation of this Number value using the radix specified by radixMV. Letters a-z are used for digits with values 10 through 35. The precise algorithm is implementation-defined, however the algorithm should be a generalization of that specified in 6.1.6.1.20.
     if (number_value.is_positive_infinity())
-        return PrimitiveString::create(vm, "Infinity");
+        return MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Infinity"sv));
     if (number_value.is_negative_infinity())
-        return PrimitiveString::create(vm, "-Infinity");
+        return MUST_OR_THROW_OOM(PrimitiveString::create(vm, "-Infinity"sv));
     if (number_value.is_nan())
-        return PrimitiveString::create(vm, "NaN");
+        return PrimitiveString::create(vm, "NaN"_short_string);
     if (number_value.is_positive_zero() || number_value.is_negative_zero())
-        return PrimitiveString::create(vm, "0");
+        return PrimitiveString::create(vm, "0"_short_string);
 
     double number = number_value.as_double();
     bool negative = number < 0;
     if (negative)
         number *= -1;
 
-    u64 int_part = floor(number);
+    double int_part = floor(number);
     double decimal_part = number - int_part;
 
     int radix = (int)radix_mv;
@@ -469,8 +469,9 @@ JS_DEFINE_NATIVE_FUNCTION(NumberPrototype::to_string)
         backwards_characters.append('0');
     } else {
         while (int_part > 0) {
-            backwards_characters.append(digits[int_part % radix]);
+            backwards_characters.append(digits[floor(fmod(int_part, radix))]);
             int_part /= radix;
+            int_part = floor(int_part);
         }
     }
 

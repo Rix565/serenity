@@ -8,6 +8,7 @@
 #include <LibCore/System.h>
 #include <LibIPC/Connection.h>
 #include <LibIPC/Stub.h>
+#include <sched.h>
 #include <sys/select.h>
 
 namespace IPC {
@@ -21,7 +22,7 @@ struct CoreEventLoopDeferredInvoker final : public DeferredInvoker {
     }
 };
 
-ConnectionBase::ConnectionBase(IPC::Stub& local_stub, NonnullOwnPtr<Core::Stream::LocalSocket> socket, u32 local_endpoint_magic)
+ConnectionBase::ConnectionBase(IPC::Stub& local_stub, NonnullOwnPtr<Core::LocalSocket> socket, u32 local_endpoint_magic)
     : m_local_stub(local_stub)
     , m_socket(move(socket))
     , m_local_endpoint_magic(local_endpoint_magic)
@@ -35,12 +36,12 @@ void ConnectionBase::set_deferred_invoker(NonnullOwnPtr<DeferredInvoker> deferre
     m_deferred_invoker = move(deferred_invoker);
 }
 
-void ConnectionBase::set_fd_passing_socket(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+void ConnectionBase::set_fd_passing_socket(NonnullOwnPtr<Core::LocalSocket> socket)
 {
     m_fd_passing_socket = move(socket);
 }
 
-Core::Stream::LocalSocket& ConnectionBase::fd_passing_socket()
+Core::LocalSocket& ConnectionBase::fd_passing_socket()
 {
     if (m_fd_passing_socket)
         return *m_fd_passing_socket;
@@ -64,7 +65,7 @@ ErrorOr<void> ConnectionBase::post_message(MessageBuffer buffer)
     TRY(buffer.data.try_prepend(reinterpret_cast<u8 const*>(&message_size), sizeof(message_size)));
 
     for (auto& fd : buffer.fds) {
-        if (auto result = fd_passing_socket().send_fd(fd.value()); result.is_error()) {
+        if (auto result = fd_passing_socket().send_fd(fd->value()); result.is_error()) {
             shutdown_with_error(result.error());
             return result;
         }
@@ -74,7 +75,7 @@ ErrorOr<void> ConnectionBase::post_message(MessageBuffer buffer)
     int writes_done = 0;
     size_t initial_size = bytes_to_write.size();
     while (!bytes_to_write.is_empty()) {
-        auto maybe_nwritten = m_socket->write(bytes_to_write);
+        auto maybe_nwritten = m_socket->write_some(bytes_to_write);
         writes_done++;
         if (maybe_nwritten.is_error()) {
             auto error = maybe_nwritten.release_error();
@@ -105,10 +106,7 @@ ErrorOr<void> ConnectionBase::post_message(MessageBuffer buffer)
         dbgln("LibIPC::Connection FIXME Warning, needed {} writes needed to send message of size {}B, this is pretty bad, as it spins on the EventLoop", writes_done, initial_size);
     }
 
-    // Note: This disables responsiveness detection when an event loop is absent.
-    //       There are no users which both need this feature but don't have an event loop.
-    if (Core::EventLoop::has_been_instantiated())
-        m_responsiveness_timer->start();
+    m_responsiveness_timer->start();
     return {};
 }
 
@@ -128,8 +126,8 @@ void ConnectionBase::handle_messages()
 {
     auto messages = move(m_unprocessed_messages);
     for (auto& message : messages) {
-        if (message.endpoint_magic() == m_local_endpoint_magic) {
-            auto handler_result = m_local_stub.handle(message);
+        if (message->endpoint_magic() == m_local_endpoint_magic) {
+            auto handler_result = m_local_stub.handle(*message);
             if (handler_result.is_error()) {
                 dbgln("IPC::ConnectionBase::handle_messages: {}", handler_result.error());
                 continue;
@@ -246,9 +244,9 @@ OwnPtr<IPC::Message> ConnectionBase::wait_for_specific_endpoint_message_impl(u32
         // Otherwise we might end up blocked for a while for no reason.
         for (size_t i = 0; i < m_unprocessed_messages.size(); ++i) {
             auto& message = m_unprocessed_messages[i];
-            if (message.endpoint_magic() != endpoint_magic)
+            if (message->endpoint_magic() != endpoint_magic)
                 continue;
-            if (message.message_id() == message_id)
+            if (message->message_id() == message_id)
                 return m_unprocessed_messages.take(i);
         }
 

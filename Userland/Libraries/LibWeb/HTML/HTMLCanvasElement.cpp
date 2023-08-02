@@ -7,7 +7,7 @@
 #include <AK/Base64.h>
 #include <AK/Checked.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/PNGWriter.h>
+#include <LibGfx/ImageFormats/PNGWriter.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/CanvasRenderingContext2D.h>
@@ -71,18 +71,20 @@ void HTMLCanvasElement::reset_context_to_default_state()
         });
 }
 
-void HTMLCanvasElement::set_width(unsigned value)
+WebIDL::ExceptionOr<void> HTMLCanvasElement::set_width(unsigned value)
 {
-    MUST(set_attribute(HTML::AttributeNames::width, DeprecatedString::number(value)));
+    TRY(set_attribute(HTML::AttributeNames::width, DeprecatedString::number(value)));
     m_bitmap = nullptr;
     reset_context_to_default_state();
+    return {};
 }
 
-void HTMLCanvasElement::set_height(unsigned value)
+WebIDL::ExceptionOr<void> HTMLCanvasElement::set_height(unsigned value)
 {
-    MUST(set_attribute(HTML::AttributeNames::height, DeprecatedString::number(value)));
+    TRY(set_attribute(HTML::AttributeNames::height, DeprecatedString::number(value)));
     m_bitmap = nullptr;
     reset_context_to_default_state();
+    return {};
 }
 
 JS::GCPtr<Layout::Node> HTMLCanvasElement::create_layout_node(NonnullRefPtr<CSS::StyleProperties> style)
@@ -95,7 +97,7 @@ HTMLCanvasElement::HasOrCreatedContext HTMLCanvasElement::create_2d_context()
     if (!m_context.has<Empty>())
         return m_context.has<JS::NonnullGCPtr<CanvasRenderingContext2D>>() ? HasOrCreatedContext::Yes : HasOrCreatedContext::No;
 
-    m_context = CanvasRenderingContext2D::create(realm(), *this);
+    m_context = CanvasRenderingContext2D::create(realm(), *this).release_value_but_fixme_should_propagate_errors();
     return HasOrCreatedContext::Yes;
 }
 
@@ -193,7 +195,7 @@ DeprecatedString HTMLCanvasElement::to_data_url(DeprecatedString const& type, [[
         // FIXME: propagate error
         return {};
     }
-    return AK::URL::create_with_data(type, base64_encoded_or_error.release_value().to_deprecated_string(), true).to_deprecated_string();
+    return AK::URL::create_with_data(type, base64_encoded_or_error.release_value(), true).to_deprecated_string();
 }
 
 void HTMLCanvasElement::present()

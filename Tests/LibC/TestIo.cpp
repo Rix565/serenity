@@ -7,7 +7,7 @@
 
 #include <AK/Assertions.h>
 #include <AK/Types.h>
-#include <LibCore/File.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibTest/TestCase.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -217,11 +217,8 @@ TEST_CASE(unlink_symlink)
         perror("symlink");
     }
 
-    auto target_or_error = Core::File::read_link("/tmp/linky");
-    EXPECT(!target_or_error.is_error());
-
-    auto target = target_or_error.release_value();
-    EXPECT_EQ(target, "/proc/2/foo");
+    auto target = TRY_OR_FAIL(FileSystem::read_link("/tmp/linky"sv));
+    EXPECT_EQ(target.bytes_as_string_view(), "/proc/2/foo"sv);
 
     rc = unlink("/tmp/linky");
     EXPECT(rc >= 0);

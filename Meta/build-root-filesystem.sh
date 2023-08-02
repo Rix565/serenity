@@ -8,15 +8,6 @@ utmp_gid=5
 window_uid=13
 window_gid=13
 
-CP="cp"
-
-# cp on macOS and BSD systems do not support the --preserve= option.
-# gcp comes with coreutils, which is already a dependency.
-OS="$(uname -s)"
-if [ "$OS" = "Darwin" ] || echo "$OS" | grep -qe 'BSD$'; then
-	CP="gcp"
-fi
-
 die() {
     echo "die: $*"
     exit 1
@@ -42,17 +33,16 @@ else
 fi
 
 SERENITY_ARCH="${SERENITY_ARCH:-x86_64}"
-LLVM_VERSION="${LLVM_VERSION:-14.0.1}"
 
 if [ "$SERENITY_TOOLCHAIN" = "Clang" ]; then
     TOOLCHAIN_DIR="$SERENITY_SOURCE_DIR"/Toolchain/Local/clang/
-    $CP --preserve=timestamps "$TOOLCHAIN_DIR"/lib/"$SERENITY_ARCH"-pc-serenity/* mnt/usr/lib
+    rsync -aH --update -t "$TOOLCHAIN_DIR"/lib/"$SERENITY_ARCH"-pc-serenity/* mnt/usr/lib
     mkdir -p mnt/usr/include/"$SERENITY_ARCH"-pc-serenity
-    $CP --preserve=timestamps -r "$TOOLCHAIN_DIR"/include/c++ mnt/usr/include
-    $CP --preserve=timestamps -r "$TOOLCHAIN_DIR"/include/"$SERENITY_ARCH"-pc-serenity/c++ mnt/usr/include/"$SERENITY_ARCH"-pc-serenity
+    rsync -aH --update -t -r "$TOOLCHAIN_DIR"/include/c++ mnt/usr/include
+    rsync -aH --update -t -r "$TOOLCHAIN_DIR"/include/"$SERENITY_ARCH"-pc-serenity/c++ mnt/usr/include/"$SERENITY_ARCH"-pc-serenity
 else
-    $CP --preserve=timestamps -r "$SERENITY_SOURCE_DIR"/Toolchain/Local/"$SERENITY_ARCH"/"$SERENITY_ARCH"-pc-serenity/lib/* mnt/usr/lib
-    $CP --preserve=timestamps -r "$SERENITY_SOURCE_DIR"/Toolchain/Local/"$SERENITY_ARCH"/"$SERENITY_ARCH"-pc-serenity/include/c++ mnt/usr/include
+    rsync -aH --update -t -r "$SERENITY_SOURCE_DIR"/Toolchain/Local/"$SERENITY_ARCH"/"$SERENITY_ARCH"-pc-serenity/lib/* mnt/usr/lib
+    rsync -aH --update -t -r "$SERENITY_SOURCE_DIR"/Toolchain/Local/"$SERENITY_ARCH"/"$SERENITY_ARCH"-pc-serenity/include/c++ mnt/usr/include
 fi
 
 # If umask was 027 or similar when the repo was cloned,
@@ -117,15 +107,29 @@ if [ -f mnt/usr/Tests/Kernel/TestProcFSWrite ]; then
     chmod 4755 mnt/usr/Tests/Kernel/TestProcFSWrite
 fi
 
-chmod 0400 mnt/res/kernel.map
-chmod 0400 mnt/boot/Kernel
-chmod 0400 mnt/boot/Kernel.debug
+if [ -f mnt/res/kernel.map ]; then
+    chmod 0400 mnt/res/kernel.map
+fi
+
+if [ -f mnt/boot/Kernel ]; then
+    chmod 0400 mnt/boot/Kernel
+fi
+
+if [ -f mnt/boot/Kernel.debug ]; then
+    chmod 0400 mnt/boot/Kernel.debug
+fi
+
+if [ -f mnt/bin/network-settings ]; then
+    chown 0:0 mnt/bin/network-settings
+    chmod 500 mnt/bin/network-settings
+fi
+
 chmod 600 mnt/etc/shadow
 chmod 755 mnt/res/devel/templates/*.postcreate
 echo "done"
 
 printf "creating initial filesystem structure... "
-for dir in bin etc proc mnt tmp boot mod var/run usr/local; do
+for dir in bin etc proc mnt tmp boot mod var/run usr/local usr/bin; do
     mkdir -p mnt/$dir
 done
 chmod 700 mnt/boot
@@ -177,11 +181,11 @@ chmod 700 mnt/root
 chmod 700 mnt/home/anon
 chmod 700 mnt/home/nona
 chown -R 100:100 mnt/home/anon
-chown -R 200:200 mnt/home/nona
+chown -R 200:100 mnt/home/nona
 echo "done"
 
 printf "adding some desktop icons... "
-ln -sf /bin/Browser mnt/home/anon/Desktop/
+ln -sf /bin/Browser mnt/home/anon/Desktop/Ladybird
 ln -sf /bin/TextEditor mnt/home/anon/Desktop/Text\ Editor
 ln -sf /bin/Help mnt/home/anon/Desktop/
 ln -sf /home/anon mnt/home/anon/Desktop/Home
@@ -191,6 +195,8 @@ echo "done"
 printf "installing shortcuts... "
 ln -sf Shell mnt/bin/sh
 ln -sf test mnt/bin/[
+ln -sf less mnt/bin/more
+ln -sf /bin/env mnt/usr/bin/env
 echo "done"
 
 printf "installing 'checksum' variants... "

@@ -19,8 +19,7 @@ TimelineHeader::TimelineHeader(Profile& profile, Process const& process)
     : m_profile(profile)
     , m_process(process)
 {
-    set_frame_shape(Gfx::FrameShape::Panel);
-    set_frame_shadow(Gfx::FrameShadow::Raised);
+    set_frame_style(Gfx::FrameStyle::RaisedPanel);
     set_fixed_size(200, 40);
     update_selection();
 
@@ -43,7 +42,7 @@ void TimelineHeader::paint_event(GUI::PaintEvent& event)
         painter.blit(icon_rect.location(), *m_icon, m_icon->rect());
 
     Gfx::IntRect text_rect {
-        icon_rect.right() + 6,
+        icon_rect.right() + 5,
         icon_rect.y(),
         width() - 32,
         32

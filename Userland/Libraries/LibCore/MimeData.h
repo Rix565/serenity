@@ -34,14 +34,14 @@ public:
     // Convenience helpers for "text/uri-list"
     bool has_urls() const { return has_format("text/uri-list"); }
     Vector<URL> urls() const;
-    void set_urls(Vector<URL> const&);
+    ErrorOr<void> set_urls(Vector<URL> const&);
 
     HashMap<DeprecatedString, ByteBuffer> const& all_data() const { return m_data; }
 
 private:
     MimeData() = default;
     explicit MimeData(HashMap<DeprecatedString, ByteBuffer> const& data)
-        : m_data(data)
+        : m_data(data.clone().release_value_but_fixme_should_propagate_errors())
     {
     }
 
@@ -50,6 +50,17 @@ private:
 
 StringView guess_mime_type_based_on_filename(StringView);
 
-Optional<DeprecatedString> guess_mime_type_based_on_sniffed_bytes(ReadonlyBytes);
+Optional<StringView> guess_mime_type_based_on_sniffed_bytes(ReadonlyBytes);
+Optional<StringView> guess_mime_type_based_on_sniffed_bytes(Core::File&);
+
+struct MimeType {
+    StringView name {};
+    Vector<StringView> common_extensions {};
+    StringView description {};
+    Optional<Vector<u8>> magic_bytes {};
+    u64 offset { 0 };
+};
+
+Optional<StringView> get_description_from_mime_type(StringView);
 
 }

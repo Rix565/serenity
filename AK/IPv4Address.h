@@ -14,9 +14,10 @@
 
 #ifdef KERNEL
 #    include <AK/Error.h>
-#    include <Kernel/KString.h>
+#    include <Kernel/Library/KString.h>
 #else
 #    include <AK/DeprecatedString.h>
+#    include <AK/String.h>
 #endif
 
 namespace AK {
@@ -82,6 +83,15 @@ public:
             octet(SubnetClass::B),
             octet(SubnetClass::A));
     }
+
+    ErrorOr<String> to_string() const
+    {
+        return String::formatted("{}.{}.{}.{}",
+            octet(SubnetClass::A),
+            octet(SubnetClass::B),
+            octet(SubnetClass::C),
+            octet(SubnetClass::D));
+    }
 #endif
 
     static Optional<IPv4Address> from_string(StringView string)
@@ -140,7 +150,6 @@ public:
 private:
     constexpr u32 octet(const SubnetClass subnet) const
     {
-        NetworkOrdered<u32> address(m_data);
         constexpr auto bits_per_byte = 8;
         auto const bits_to_shift = bits_per_byte * int(subnet);
         return (m_data >> bits_to_shift) & 0x0000'00FF;

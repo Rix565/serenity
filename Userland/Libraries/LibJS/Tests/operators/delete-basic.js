@@ -87,6 +87,12 @@ test("deleting super property", () => {
         }
     }
 
+    class C {
+        static foo() {
+            delete super.bar;
+        }
+    }
+
     const obj = new B();
     expect(() => {
         obj.bar();
@@ -94,6 +100,11 @@ test("deleting super property", () => {
 
     expect(() => {
         obj.baz();
+    }).toThrowWithMessage(ReferenceError, "Can't delete a property on 'super'");
+
+    Object.setPrototypeOf(C, null);
+    expect(() => {
+        C.foo();
     }).toThrowWithMessage(ReferenceError, "Can't delete a property on 'super'");
 });
 
@@ -187,7 +198,7 @@ test("deleting a symbol returned by @@toPrimitive", () => {
 });
 
 // FIXME: This currently does not work with the AST interpreter, but works with Bytecode.
-test.skip("delete always evaluates the lhs", () => {
+test.xfailIf(!isBytecodeInterpreterEnabled(), "delete always evaluates the lhs", () => {
     const obj = { prop: 1 };
     let called = false;
     function a() {

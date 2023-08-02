@@ -6,6 +6,7 @@
 
 #include <AK/Singleton.h>
 #include <AK/StringBuilder.h>
+#include <AK/StringView.h>
 #include <Kernel/API/Ioctl.h>
 #include <Kernel/API/POSIX/errno.h>
 #include <Kernel/Debug.h>
@@ -21,7 +22,7 @@
 #include <Kernel/Net/TCPSocket.h>
 #include <Kernel/Net/UDP.h>
 #include <Kernel/Net/UDPSocket.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 #include <Kernel/UnixTypes.h>
 
 namespace Kernel {
@@ -40,7 +41,7 @@ ErrorOr<NonnullOwnPtr<DoubleBuffer>> IPv4Socket::try_create_receive_buffer()
     return DoubleBuffer::try_create("IPv4Socket: Receive buffer"sv, 256 * KiB);
 }
 
-ErrorOr<NonnullLockRefPtr<Socket>> IPv4Socket::create(int type, int protocol)
+ErrorOr<NonnullRefPtr<Socket>> IPv4Socket::create(int type, int protocol)
 {
     auto receive_buffer = TRY(IPv4Socket::try_create_receive_buffer());
 
@@ -49,7 +50,7 @@ ErrorOr<NonnullLockRefPtr<Socket>> IPv4Socket::create(int type, int protocol)
     if (type == SOCK_DGRAM)
         return TRY(UDPSocket::try_create(protocol, move(receive_buffer)));
     if (type == SOCK_RAW) {
-        auto raw_socket = adopt_lock_ref_if_nonnull(new (nothrow) IPv4Socket(type, protocol, move(receive_buffer), {}));
+        auto raw_socket = adopt_ref_if_nonnull(new (nothrow) IPv4Socket(type, protocol, move(receive_buffer), {}));
         if (raw_socket)
             return raw_socket.release_nonnull();
         return ENOMEM;
@@ -94,8 +95,23 @@ void IPv4Socket::get_peer_address(sockaddr* address, socklen_t* address_size)
     *address_size = sizeof(sockaddr_in);
 }
 
+ErrorOr<void> IPv4Socket::ensure_bound()
+{
+    dbgln_if(IPV4_SOCKET_DEBUG, "IPv4Socket::ensure_bound() m_bound {}", m_bound);
+    if (m_bound)
+        return {};
+
+    auto result = protocol_bind();
+    if (!result.is_error())
+        m_bound = true;
+    return result;
+}
+
 ErrorOr<void> IPv4Socket::bind(Credentials const& credentials, Userspace<sockaddr const*> user_address, socklen_t address_size)
 {
+    if (m_bound)
+        return set_so_error(EINVAL);
+
     VERIFY(setup_state() == SetupState::Unstarted);
     if (address_size != sizeof(sockaddr_in))
         return set_so_error(EINVAL);
@@ -119,23 +135,20 @@ ErrorOr<void> IPv4Socket::bind(Credentials const& credentials, Userspace<sockadd
 
     dbgln_if(IPV4_SOCKET_DEBUG, "IPv4Socket::bind {}({}) to {}:{}", class_name(), this, m_local_address, m_local_port);
 
-    return protocol_bind();
+    return ensure_bound();
 }
 
 ErrorOr<void> IPv4Socket::listen(size_t backlog)
 {
     MutexLocker locker(mutex());
-    auto result = allocate_local_port_if_needed();
-    if (result.error_or_port.is_error() && result.error_or_port.error().code() != ENOPROTOOPT)
-        return result.error_or_port.release_error();
-
+    TRY(ensure_bound());
     set_backlog(backlog);
     set_role(Role::Listener);
     evaluate_block_conditions();
 
     dbgln_if(IPV4_SOCKET_DEBUG, "IPv4Socket({}) listening with backlog={}", this, backlog);
 
-    return protocol_listen(result.did_allocate);
+    return protocol_listen();
 }
 
 ErrorOr<void> IPv4Socket::connect(Credentials const&, OpenFileDescription& description, Userspace<sockaddr const*> address, socklen_t address_size)
@@ -175,18 +188,6 @@ bool IPv4Socket::can_write(OpenFileDescription const&, u64) const
     return true;
 }
 
-PortAllocationResult IPv4Socket::allocate_local_port_if_needed()
-{
-    MutexLocker locker(mutex());
-    if (m_local_port)
-        return { m_local_port, false };
-    auto port_or_error = protocol_allocate_local_port();
-    if (port_or_error.is_error())
-        return { port_or_error.release_error(), false };
-    m_local_port = port_or_error.release_value();
-    return { m_local_port, true };
-}
-
 ErrorOr<size_t> IPv4Socket::sendto(OpenFileDescription&, UserOrKernelBuffer const& data, size_t data_length, [[maybe_unused]] int flags, Userspace<sockaddr const*> addr, socklen_t addr_length)
 {
     MutexLocker locker(mutex());
@@ -211,15 +212,15 @@ ErrorOr<size_t> IPv4Socket::sendto(OpenFileDescription&, UserOrKernelBuffer cons
         return set_so_error(EPIPE);
 
     auto allow_using_gateway = ((flags & MSG_DONTROUTE) || m_routing_disabled) ? AllowUsingGateway::No : AllowUsingGateway::Yes;
-    auto routing_decision = route_to(m_peer_address, m_local_address, bound_interface(), allow_using_gateway);
+    auto adapter = bound_interface().with([](auto& bound_device) -> RefPtr<NetworkAdapter> { return bound_device; });
+    auto routing_decision = route_to(m_peer_address, m_local_address, adapter, allow_using_gateway);
     if (routing_decision.is_zero())
         return set_so_error(EHOSTUNREACH);
 
     if (m_local_address.to_u32() == 0)
         m_local_address = routing_decision.adapter->ipv4_address();
 
-    if (auto result = allocate_local_port_if_needed(); result.error_or_port.is_error() && result.error_or_port.error().code() != ENOPROTOOPT)
-        return result.error_or_port.release_error();
+    TRY(ensure_bound());
 
     dbgln_if(IPV4_SOCKET_DEBUG, "sendto: destination={}:{}", m_peer_address, m_peer_port);
 
@@ -285,7 +286,7 @@ ErrorOr<size_t> IPv4Socket::receive_byte_buffered(OpenFileDescription& descripti
     return nreceived_or_error;
 }
 
-ErrorOr<size_t> IPv4Socket::receive_packet_buffered(OpenFileDescription& description, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*> addr, Userspace<socklen_t*> addr_length, Time& packet_timestamp, bool blocking)
+ErrorOr<size_t> IPv4Socket::receive_packet_buffered(OpenFileDescription& description, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*> addr, Userspace<socklen_t*> addr_length, UnixDateTime& packet_timestamp, bool blocking)
 {
     MutexLocker locker(mutex());
     ReceivedPacket taken_packet;
@@ -380,7 +381,7 @@ ErrorOr<size_t> IPv4Socket::receive_packet_buffered(OpenFileDescription& descrip
     return protocol_receive(packet->data->bytes(), buffer, buffer_length, flags);
 }
 
-ErrorOr<size_t> IPv4Socket::recvfrom(OpenFileDescription& description, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*> user_addr, Userspace<socklen_t*> user_addr_length, Time& packet_timestamp, bool blocking)
+ErrorOr<size_t> IPv4Socket::recvfrom(OpenFileDescription& description, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*> user_addr, Userspace<socklen_t*> user_addr_length, UnixDateTime& packet_timestamp, bool blocking)
 {
     if (user_addr_length) {
         socklen_t addr_length;
@@ -403,7 +404,7 @@ ErrorOr<size_t> IPv4Socket::recvfrom(OpenFileDescription& description, UserOrKer
             nreceived = receive_packet_buffered(description, offset_buffer, offset_buffer_length, flags, user_addr, user_addr_length, packet_timestamp, blocking);
 
         if (nreceived.is_error())
-            total_nreceived = nreceived;
+            total_nreceived = move(nreceived);
         else
             total_nreceived.value() += nreceived.value();
     } while ((flags & MSG_WAITALL) && !total_nreceived.is_error() && total_nreceived.value() < buffer_length);
@@ -413,7 +414,7 @@ ErrorOr<size_t> IPv4Socket::recvfrom(OpenFileDescription& description, UserOrKer
     return total_nreceived;
 }
 
-bool IPv4Socket::did_receive(IPv4Address const& source_address, u16 source_port, ReadonlyBytes packet, Time const& packet_timestamp)
+bool IPv4Socket::did_receive(IPv4Address const& source_address, u16 source_port, ReadonlyBytes packet, UnixDateTime const& packet_timestamp)
 {
     MutexLocker locker(mutex());
 
@@ -693,9 +694,54 @@ ErrorOr<void> IPv4Socket::ioctl(OpenFileDescription&, unsigned request, Userspac
         ifreq ifr;
         TRY(copy_from_user(&ifr, user_ifr));
 
+        if (request == SIOCGIFNAME) {
+            // NOTE: Network devices are 1-indexed since index 0 denotes an invalid device
+            if (ifr.ifr_index == 0)
+                return EINVAL;
+
+            size_t index = 1;
+            Optional<StringView> result {};
+
+            NetworkingManagement::the().for_each([&ifr, &index, &result](auto& adapter) {
+                if (index == ifr.ifr_index)
+                    result = adapter.name();
+                ++index;
+            });
+
+            if (result.has_value()) {
+                auto name = result.release_value();
+                auto succ = name.copy_characters_to_buffer(ifr.ifr_name, IFNAMSIZ);
+                if (!succ) {
+                    return EFAULT;
+                }
+                return copy_to_user(user_ifr, &ifr);
+            }
+
+            return ENODEV;
+        }
+
         char namebuf[IFNAMSIZ + 1];
         memcpy(namebuf, ifr.ifr_name, IFNAMSIZ);
         namebuf[sizeof(namebuf) - 1] = '\0';
+
+        if (request == SIOCGIFINDEX) {
+            StringView name { namebuf, strlen(namebuf) };
+            size_t index = 1;
+            Optional<size_t> result {};
+
+            NetworkingManagement::the().for_each([&name, &index, &result](auto& adapter) {
+                if (adapter.name() == name)
+                    result = index;
+                ++index;
+            });
+
+            if (result.has_value()) {
+                ifr.ifr_index = result.release_value();
+                return copy_to_user(user_ifr, &ifr);
+            }
+
+            return ENODEV;
+        }
 
         auto adapter = NetworkingManagement::the().lookup_by_name({ namebuf, strlen(namebuf) });
         if (!adapter)
@@ -800,6 +846,8 @@ ErrorOr<void> IPv4Socket::ioctl(OpenFileDescription&, unsigned request, Userspac
     case SIOCGIFMTU:
     case SIOCGIFFLAGS:
     case SIOCGIFCONF:
+    case SIOCGIFNAME:
+    case SIOCGIFINDEX:
         return ioctl_interface();
 
     case SIOCADDRT:

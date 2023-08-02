@@ -7,7 +7,8 @@
 #pragma once
 
 #include <AK/DeprecatedString.h>
-#include <LibCore/Stream.h>
+#include <AK/Time.h>
+#include <AK/Vector.h>
 #include <unistd.h>
 
 namespace Core {
@@ -21,12 +22,12 @@ struct ThreadStatistics {
     unsigned inode_faults;
     unsigned zero_faults;
     unsigned cow_faults;
-    unsigned unix_socket_read_bytes;
-    unsigned unix_socket_write_bytes;
-    unsigned ipv4_socket_read_bytes;
-    unsigned ipv4_socket_write_bytes;
-    unsigned file_read_bytes;
-    unsigned file_write_bytes;
+    u64 unix_socket_read_bytes;
+    u64 unix_socket_write_bytes;
+    u64 ipv4_socket_read_bytes;
+    u64 ipv4_socket_write_bytes;
+    u64 file_read_bytes;
+    u64 file_write_bytes;
     DeprecatedString state;
     u32 cpu;
     u32 priority;
@@ -43,13 +44,13 @@ struct ProcessStatistics {
     uid_t uid;
     gid_t gid;
     pid_t ppid;
-    unsigned nfds;
     bool kernel;
     DeprecatedString name;
     DeprecatedString executable;
     DeprecatedString tty;
     DeprecatedString pledge;
     DeprecatedString veil;
+    UnixDateTime creation_time;
     size_t amount_virtual;
     size_t amount_resident;
     size_t amount_shared;
@@ -72,7 +73,7 @@ struct AllProcessesStatistics {
 
 class ProcessStatisticsReader {
 public:
-    static ErrorOr<AllProcessesStatistics> get_all(Core::Stream::SeekableStream&, bool include_usernames = true);
+    static ErrorOr<AllProcessesStatistics> get_all(SeekableStream&, bool include_usernames = true);
     static ErrorOr<AllProcessesStatistics> get_all(bool include_usernames = true);
 
 private:

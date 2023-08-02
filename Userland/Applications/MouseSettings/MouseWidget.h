@@ -12,15 +12,17 @@
 #include <LibGUI/Window.h>
 
 class MouseWidget final : public GUI::SettingsWindow::Tab {
-    C_OBJECT(MouseWidget)
+    C_OBJECT_ABSTRACT(MouseWidget)
 public:
+    static ErrorOr<NonnullRefPtr<MouseWidget>> try_create();
     virtual ~MouseWidget() override = default;
 
     virtual void apply_settings() override;
     virtual void reset_default_values() override;
 
 private:
-    MouseWidget();
+    MouseWidget() = default;
+    ErrorOr<void> setup();
 
     void update_speed_label();
     void update_double_click_speed_label();
@@ -32,7 +34,7 @@ private:
     RefPtr<GUI::HorizontalSlider> m_double_click_speed_slider;
     RefPtr<GUI::Label> m_double_click_speed_label;
     RefPtr<GUI::CheckBox> m_switch_buttons_checkbox;
-    RefPtr<GUI::Label> m_switch_buttons_image_label;
+    RefPtr<GUI::ImageWidget> m_switch_buttons_image;
     RefPtr<GUI::CheckBox> m_natural_scroll_checkbox;
     RefPtr<MouseSettings::DoubleClickArrowWidget> m_double_click_arrow_widget;
 };

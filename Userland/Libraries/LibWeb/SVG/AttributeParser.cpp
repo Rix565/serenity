@@ -1,20 +1,28 @@
 /*
  * Copyright (c) 2020, Matthew Olsson <mattco@serenityos.org>
  * Copyright (c) 2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2023, MacDue <macdue@dueutil.tech>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "AttributeParser.h"
 #include <AK/FloatingPointStringConversions.h>
+#include <AK/GenericShorthands.h>
 #include <AK/StringBuilder.h>
 #include <ctype.h>
 
 namespace Web::SVG {
 
 AttributeParser::AttributeParser(StringView source)
-    : m_source(move(source))
+    : m_lexer(source)
 {
+}
+
+Optional<Vector<Transform>> AttributeParser::parse_transform(StringView input)
+{
+    AttributeParser parser { input };
+    return parser.parse_transform();
 }
 
 Vector<PathInstruction> AttributeParser::parse_path_data(StringView input)
@@ -53,6 +61,30 @@ Optional<float> AttributeParser::parse_length(StringView input)
         parser.parse_whitespace();
         if (parser.done())
             return result;
+    }
+
+    return {};
+}
+
+float NumberPercentage::resolve_relative_to(float length) const
+{
+    if (!m_is_percentage)
+        return m_value;
+    return m_value * length;
+}
+
+Optional<NumberPercentage> AttributeParser::parse_number_percentage(StringView input)
+{
+    AttributeParser parser { input };
+    parser.parse_whitespace();
+    if (parser.match_number()) {
+        float number = parser.parse_number();
+        bool is_percentage = parser.match('%');
+        if (is_percentage)
+            parser.consume();
+        parser.parse_whitespace();
+        if (parser.done())
+            return NumberPercentage(number, is_percentage);
     }
 
     return {};
@@ -122,12 +154,19 @@ void AttributeParser::parse_drawto()
     }
 }
 
+// https://www.w3.org/TR/SVG2/paths.html#PathDataMovetoCommands
 void AttributeParser::parse_moveto()
 {
     bool absolute = consume() == 'M';
     parse_whitespace();
-    for (auto& pair : parse_coordinate_pair_sequence())
-        m_instructions.append({ PathInstructionType::Move, absolute, pair });
+
+    bool is_first = true;
+    for (auto& pair : parse_coordinate_pair_sequence()) {
+        // NOTE: "M 1 2 3 4" is equivalent to "M 1 2 L 3 4".
+        auto type = is_first ? PathInstructionType::Move : PathInstructionType::Line;
+        m_instructions.append({ type, absolute, pair });
+        is_first = false;
+    }
 }
 
 void AttributeParser::parse_closepath()
@@ -149,14 +188,16 @@ void AttributeParser::parse_horizontal_lineto()
 {
     bool absolute = consume() == 'H';
     parse_whitespace();
-    m_instructions.append({ PathInstructionType::HorizontalLine, absolute, parse_coordinate_sequence() });
+    for (auto coordinate : parse_coordinate_sequence())
+        m_instructions.append({ PathInstructionType::HorizontalLine, absolute, { coordinate } });
 }
 
 void AttributeParser::parse_vertical_lineto()
 {
     bool absolute = consume() == 'V';
     parse_whitespace();
-    m_instructions.append({ PathInstructionType::VerticalLine, absolute, parse_coordinate_sequence() });
+    for (auto coordinate : parse_coordinate_sequence())
+        m_instructions.append({ PathInstructionType::VerticalLine, absolute, { coordinate } });
 }
 
 void AttributeParser::parse_curveto()
@@ -304,10 +345,10 @@ Vector<float> AttributeParser::parse_coordinate_pair_triplet()
 Vector<float> AttributeParser::parse_elliptical_arg_argument()
 {
     Vector<float> numbers;
-    numbers.append(parse_nonnegative_number());
+    numbers.append(parse_number());
     if (match_comma_whitespace())
         parse_comma_whitespace();
-    numbers.append(parse_nonnegative_number());
+    numbers.append(parse_number());
     if (match_comma_whitespace())
         parse_comma_whitespace();
     numbers.append(parse_number());
@@ -361,12 +402,12 @@ float AttributeParser::parse_nonnegative_number()
     //       at the start. That condition should have been checked by the caller.
     VERIFY(!match('+') && !match('-'));
 
-    auto remaining_source_text = m_source.substring_view(m_cursor);
+    auto remaining_source_text = m_lexer.remaining();
     char const* start = remaining_source_text.characters_without_null_termination();
 
     auto maybe_float = parse_first_floating_point<float>(start, start + remaining_source_text.length());
     VERIFY(maybe_float.parsed_value());
-    m_cursor += maybe_float.end_ptr - start;
+    m_lexer.ignore(maybe_float.end_ptr - start);
 
     return maybe_float.value;
 }
@@ -389,6 +430,225 @@ int AttributeParser::parse_sign()
     return 1;
 }
 
+static bool whitespace(char c)
+{
+    // wsp:
+    // Either a U+000A LINE FEED, U+000D CARRIAGE RETURN, U+0009 CHARACTER TABULATION, or U+0020 SPACE.
+    return AK::first_is_one_of(c, '\n', '\r', '\t', '\f', ' ');
+}
+
+// https://svgwg.org/svg2-draft/coords.html#PreserveAspectRatioAttribute
+Optional<PreserveAspectRatio> AttributeParser::parse_preserve_aspect_ratio(StringView input)
+{
+    // <align> <meetOrSlice>?
+    GenericLexer lexer { input };
+    lexer.ignore_while(whitespace);
+    auto align_string = lexer.consume_until(whitespace);
+    if (align_string.is_empty())
+        return {};
+    lexer.ignore_while(whitespace);
+    auto meet_or_slice_string = lexer.consume_until(whitespace);
+
+    // <align> =
+    //     none
+    //     | xMinYMin | xMidYMin | xMaxYMin
+    //     | xMinYMid | xMidYMid | xMaxYMid
+    //     | xMinYMax | xMidYMax | xMaxYMax
+    auto align = [&]() -> Optional<PreserveAspectRatio::Align> {
+        if (align_string == "none"sv)
+            return PreserveAspectRatio::Align::None;
+        if (align_string == "xMinYMin"sv)
+            return PreserveAspectRatio::Align::xMinYMin;
+        if (align_string == "xMidYMin"sv)
+            return PreserveAspectRatio::Align::xMidYMin;
+        if (align_string == "xMaxYMin"sv)
+            return PreserveAspectRatio::Align::xMaxYMin;
+        if (align_string == "xMinYMid"sv)
+            return PreserveAspectRatio::Align::xMinYMid;
+        if (align_string == "xMidYMid"sv)
+            return PreserveAspectRatio::Align::xMidYMid;
+        if (align_string == "xMaxYMid"sv)
+            return PreserveAspectRatio::Align::xMaxYMid;
+        if (align_string == "xMinYMax"sv)
+            return PreserveAspectRatio::Align::xMinYMax;
+        if (align_string == "xMidYMax"sv)
+            return PreserveAspectRatio::Align::xMidYMax;
+        if (align_string == "xMaxYMax"sv)
+            return PreserveAspectRatio::Align::xMaxYMax;
+        return {};
+    }();
+
+    if (!align.has_value())
+        return {};
+
+    // <meetOrSlice> = meet | slice
+    auto meet_or_slice = [&]() -> Optional<PreserveAspectRatio::MeetOrSlice> {
+        if (meet_or_slice_string.is_empty() || meet_or_slice_string == "meet"sv)
+            return PreserveAspectRatio::MeetOrSlice::Meet;
+        if (meet_or_slice_string == "slice"sv)
+            return PreserveAspectRatio::MeetOrSlice::Slice;
+        return {};
+    }();
+
+    if (!meet_or_slice.has_value())
+        return {};
+
+    return PreserveAspectRatio { *align, *meet_or_slice };
+}
+
+// https://svgwg.org/svg2-draft/pservers.html#LinearGradientElementGradientUnitsAttribute
+Optional<GradientUnits> AttributeParser::parse_gradient_units(StringView input)
+{
+    GenericLexer lexer { input };
+    lexer.ignore_while(whitespace);
+    auto gradient_units_string = lexer.consume_until(whitespace);
+    if (gradient_units_string == "userSpaceOnUse"sv)
+        return GradientUnits::UserSpaceOnUse;
+    if (gradient_units_string == "objectBoundingBox"sv)
+        return GradientUnits::ObjectBoundingBox;
+    return {};
+}
+
+// https://drafts.csswg.org/css-transforms/#svg-syntax
+Optional<Vector<Transform>> AttributeParser::parse_transform()
+{
+    auto consume_whitespace = [&] {
+        m_lexer.ignore_while(whitespace);
+    };
+
+    auto consume_comma_whitespace = [&] {
+        consume_whitespace();
+        m_lexer.consume_specific(',');
+        consume_whitespace();
+    };
+
+    // FIXME: This parsing is quite lenient, so will accept (with default values) some transforms that should be rejected.
+    auto parse_optional_number = [&](float default_value = 0.0f) {
+        consume_comma_whitespace();
+        if (match_number())
+            return parse_number();
+        return default_value;
+    };
+
+    auto try_parse_number = [&]() -> Optional<float> {
+        if (match_number())
+            return parse_number();
+        return {};
+    };
+
+    auto parse_function = [&](auto body) -> Optional<Transform> {
+        consume_whitespace();
+        if (!m_lexer.consume_specific('('))
+            return {};
+        consume_whitespace();
+        auto maybe_operation = body();
+        if (!maybe_operation.has_value())
+            return {};
+        Transform transform { .operation = Transform::Operation { *maybe_operation } };
+        consume_whitespace();
+        if (m_lexer.consume_specific(')'))
+            return transform;
+        return {};
+    };
+
+    // NOTE: This looks very similar to the CSS transform but the syntax is not compatible.
+    Vector<Transform> transform_list;
+    consume_whitespace();
+    while (!done()) {
+        Optional<Transform> maybe_transform;
+        if (m_lexer.consume_specific("translate"sv)) {
+            maybe_transform = parse_function([&]() -> Optional<Transform::Translate> {
+                Transform::Translate translate {};
+                auto maybe_x = try_parse_number();
+                if (!maybe_x.has_value())
+                    return {};
+                translate.x = *maybe_x;
+                translate.y = parse_optional_number();
+                return translate;
+            });
+        } else if (m_lexer.consume_specific("scale"sv)) {
+            maybe_transform = parse_function([&]() -> Optional<Transform::Scale> {
+                Transform::Scale scale {};
+                auto maybe_x = try_parse_number();
+                if (!maybe_x.has_value())
+                    return {};
+                scale.x = *maybe_x;
+                scale.y = parse_optional_number(scale.x);
+                return scale;
+            });
+        } else if (m_lexer.consume_specific("rotate"sv)) {
+            maybe_transform = parse_function([&]() -> Optional<Transform::Rotate> {
+                Transform::Rotate rotate {};
+                auto maybe_a = try_parse_number();
+                if (!maybe_a.has_value())
+                    return {};
+                rotate.a = *maybe_a;
+                rotate.x = parse_optional_number();
+                rotate.y = parse_optional_number();
+                return rotate;
+            });
+        } else if (m_lexer.consume_specific("skewX"sv)) {
+            maybe_transform = parse_function([&]() -> Optional<Transform::SkewX> {
+                Transform::SkewX skew_x {};
+                auto maybe_a = try_parse_number();
+                if (!maybe_a.has_value())
+                    return {};
+                skew_x.a = *maybe_a;
+                return skew_x;
+            });
+        } else if (m_lexer.consume_specific("skewY"sv)) {
+            maybe_transform = parse_function([&]() -> Optional<Transform::SkewY> {
+                Transform::SkewY skew_y {};
+                auto maybe_a = try_parse_number();
+                if (!maybe_a.has_value())
+                    return {};
+                skew_y.a = *maybe_a;
+                return skew_y;
+            });
+        } else if (m_lexer.consume_specific("matrix"sv)) {
+            maybe_transform = parse_function([&]() -> Optional<Transform::Matrix> {
+                Transform::Matrix matrix;
+                auto maybe_a = try_parse_number();
+                if (!maybe_a.has_value())
+                    return {};
+                matrix.a = *maybe_a;
+                consume_comma_whitespace();
+                auto maybe_b = try_parse_number();
+                if (!maybe_b.has_value())
+                    return {};
+                matrix.b = *maybe_b;
+                consume_comma_whitespace();
+                auto maybe_c = try_parse_number();
+                if (!maybe_c.has_value())
+                    return {};
+                matrix.c = *maybe_c;
+                consume_comma_whitespace();
+                auto maybe_d = try_parse_number();
+                if (!maybe_d.has_value())
+                    return {};
+                matrix.d = *maybe_d;
+                consume_comma_whitespace();
+                auto maybe_e = try_parse_number();
+                if (!maybe_e.has_value())
+                    return {};
+                matrix.e = *maybe_e;
+                consume_comma_whitespace();
+                auto maybe_f = try_parse_number();
+                if (!maybe_f.has_value())
+                    return {};
+                matrix.f = *maybe_f;
+                return matrix;
+            });
+        }
+        if (maybe_transform.has_value())
+            transform_list.append(*maybe_transform);
+        else
+            return {};
+        consume_comma_whitespace();
+    }
+    return transform_list;
+}
+
 bool AttributeParser::match_whitespace() const
 {
     if (done())
@@ -403,6 +663,11 @@ bool AttributeParser::match_comma_whitespace() const
 }
 
 bool AttributeParser::match_coordinate() const
+{
+    return match_length();
+}
+
+bool AttributeParser::match_number() const
 {
     return match_length();
 }

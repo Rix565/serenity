@@ -45,9 +45,9 @@ void HTMLBaseElement::removed_from(Node* parent)
     document().update_base_element({});
 }
 
-void HTMLBaseElement::parse_attribute(DeprecatedFlyString const& name, DeprecatedString const& value)
+void HTMLBaseElement::attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value)
 {
-    HTMLElement::parse_attribute(name, value);
+    HTMLElement::attribute_changed(name, value);
 
     // The frozen base URL must be immediately set for an element whenever any of the following situations occur:
     // - The base element is the first base element in tree order with an href content attribute in its Document, and its href content attribute is changed.
@@ -105,10 +105,10 @@ DeprecatedString HTMLBaseElement::href() const
 }
 
 // https://html.spec.whatwg.org/multipage/semantics.html#dom-base-href
-void HTMLBaseElement::set_href(DeprecatedString const& href)
+WebIDL::ExceptionOr<void> HTMLBaseElement::set_href(DeprecatedString const& href)
 {
     // The href IDL attribute, on setting, must set the href content attribute to the given new value.
-    MUST(set_attribute(AttributeNames::href, href));
+    return set_attribute(AttributeNames::href, href);
 }
 
 }

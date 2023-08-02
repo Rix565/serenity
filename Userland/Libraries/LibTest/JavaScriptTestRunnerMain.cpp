@@ -7,6 +7,7 @@
  */
 
 #include <LibCore/ArgsParser.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibTest/JavaScriptTestRunner.h>
 #include <signal.h>
 #include <stdio.h>
@@ -19,7 +20,6 @@ namespace JS {
 
 RefPtr<::JS::VM> g_vm;
 bool g_collect_on_every_allocation = false;
-bool g_run_bytecode = false;
 DeprecatedString g_currently_running_test;
 HashMap<DeprecatedString, FunctionWithLength> s_exposed_global_functions;
 Function<void()> g_main_hook;
@@ -55,6 +55,11 @@ static void handle_sigabrt(int)
 
 int main(int argc, char** argv)
 {
+    Vector<StringView> arguments;
+    arguments.ensure_capacity(argc);
+    for (auto i = 0; i < argc; ++i)
+        arguments.append({ argv[i], strlen(argv[i]) });
+
     g_test_argc = argc;
     g_test_argv = argv;
     auto program_name = LexicalPath::basename(argv[0]);
@@ -88,7 +93,8 @@ int main(int argc, char** argv)
 #endif
     bool print_json = false;
     bool per_file = false;
-    char const* specified_test_root = nullptr;
+    bool use_ast_interpreter = false;
+    StringView specified_test_root;
     DeprecatedString common_path;
     DeprecatedString test_glob;
 
@@ -99,7 +105,7 @@ int main(int argc, char** argv)
         .help_string = "Show progress with OSC 9 (true, false)",
         .long_name = "show-progress",
         .short_name = 'p',
-        .accept_value = [&](auto* str) {
+        .accept_value = [&](StringView str) {
             if ("true"sv == str)
                 print_progress = true;
             else if ("false"sv == str)
@@ -109,17 +115,18 @@ int main(int argc, char** argv)
             return true;
         },
     });
+
     args_parser.add_option(print_json, "Show results as JSON", "json", 'j');
     args_parser.add_option(per_file, "Show detailed per-file results as JSON (implies -j)", "per-file", 0);
     args_parser.add_option(g_collect_on_every_allocation, "Collect garbage after every allocation", "collect-often", 'g');
-    args_parser.add_option(g_run_bytecode, "Use the bytecode interpreter", "run-bytecode", 'b');
+    args_parser.add_option(use_ast_interpreter, "Enable JavaScript AST interpreter (deprecated)", "ast", 0);
     args_parser.add_option(JS::Bytecode::g_dump_bytecode, "Dump the bytecode", "dump-bytecode", 'd');
     args_parser.add_option(test_glob, "Only run tests matching the given glob", "filter", 'f', "glob");
     for (auto& entry : g_extra_args)
         args_parser.add_option(*entry.key, entry.value.get<0>().characters(), entry.value.get<1>().characters(), entry.value.get<2>());
     args_parser.add_positional_argument(specified_test_root, "Tests root directory", "path", Core::ArgsParser::Required::No);
     args_parser.add_positional_argument(common_path, "Path to tests-common.js", "common-path", Core::ArgsParser::Required::No);
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     if (per_file)
         print_json = true;
@@ -130,14 +137,16 @@ int main(int argc, char** argv)
         AK::set_debug_enabled(false);
     }
 
-    if (JS::Bytecode::g_dump_bytecode && !g_run_bytecode) {
-        warnln("--dump-bytecode can only be used when --run-bytecode is specified.");
+    if (JS::Bytecode::g_dump_bytecode && use_ast_interpreter) {
+        warnln("--dump-bytecode can not be used when --ast is specified.");
         return 1;
     }
 
+    JS::Bytecode::Interpreter::set_enabled(!use_ast_interpreter);
+
     DeprecatedString test_root;
 
-    if (specified_test_root) {
+    if (!specified_test_root.is_empty()) {
         test_root = DeprecatedString { specified_test_root };
     } else {
 #ifdef AK_OS_SERENITY
@@ -152,7 +161,7 @@ int main(int argc, char** argv)
         common_path = DeprecatedString::formatted("{}/Userland/Libraries/LibJS/Tests/test-common.js", serenity_source_dir);
 #endif
     }
-    if (!Core::File::is_directory(test_root)) {
+    if (!FileSystem::is_directory(test_root)) {
         warnln("Test root is not a directory: {}", test_root);
         return 1;
     }
@@ -170,8 +179,19 @@ int main(int argc, char** argv)
 #endif
     }
 
-    test_root = Core::File::real_path_for(test_root);
-    common_path = Core::File::real_path_for(common_path);
+    auto test_root_or_error = FileSystem::real_path(test_root);
+    if (test_root_or_error.is_error()) {
+        warnln("Failed to resolve test root: {}", test_root_or_error.error());
+        return 1;
+    }
+    test_root = test_root_or_error.release_value().to_deprecated_string();
+
+    auto common_path_or_error = FileSystem::real_path(common_path);
+    if (common_path_or_error.is_error()) {
+        warnln("Failed to resolve common path: {}", common_path_or_error.error());
+        return 1;
+    }
+    common_path = common_path_or_error.release_value().to_deprecated_string();
 
     if (chdir(test_root.characters()) < 0) {
         auto saved_errno = errno;
@@ -183,7 +203,7 @@ int main(int argc, char** argv)
         g_main_hook();
 
     if (!g_vm) {
-        g_vm = JS::VM::create();
+        g_vm = MUST(JS::VM::create());
         g_vm->enable_default_host_import_module_dynamically_hook();
     }
 

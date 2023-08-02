@@ -10,6 +10,7 @@
 #include <LibWeb/Forward.h>
 #include <LibWeb/Layout/BlockContainer.h>
 #include <LibWeb/Layout/FormattingContext.h>
+#include <LibWeb/Layout/InlineFormattingContext.h>
 
 namespace Web::Layout {
 
@@ -22,9 +23,8 @@ public:
     ~BlockFormattingContext();
 
     virtual void run(Box const&, LayoutMode, AvailableSpace const&) override;
+    virtual CSSPixels automatic_content_width() const override;
     virtual CSSPixels automatic_content_height() const override;
-
-    bool is_initial() const;
 
     auto const& left_side_floats() const { return m_left_floats; }
     auto const& right_side_floats() const { return m_right_floats; }
@@ -40,37 +40,50 @@ public:
 
     void add_absolutely_positioned_box(Box const& box) { m_absolutely_positioned_boxes.append(box); }
 
-    SpaceUsedByFloats space_used_by_floats(CSSPixels y) const;
+    SpaceUsedAndContainingMarginForFloats space_used_and_containing_margin_for_floats(CSSPixels y) const;
+    SpaceUsedByFloats intrusion_by_floats_into_box(Box const&, CSSPixels y_in_box) const;
 
-    virtual CSSPixels greatest_child_width(Box const&) override;
+    virtual CSSPixels greatest_child_width(Box const&) const override;
 
     void layout_floating_box(Box const& child, BlockContainer const& containing_block, LayoutMode, AvailableSpace const&, CSSPixels y, LineBuilder* = nullptr);
 
-    void layout_block_level_box(Box const&, BlockContainer const&, LayoutMode, CSSPixels& bottom_of_lowest_margin_box, AvailableSpace const&, CSSPixels& current_y);
+    void layout_block_level_box(Box const&, BlockContainer const&, LayoutMode, CSSPixels& bottom_of_lowest_margin_box, AvailableSpace const&);
 
     virtual bool can_determine_size_of_child() const override { return true; }
     virtual void determine_width_of_child(Box const&, AvailableSpace const&) override;
     virtual void determine_height_of_child(Box const&, AvailableSpace const&) override;
+
+    void resolve_vertical_box_model_metrics(Box const&);
+
+    enum class DidIntroduceClearance {
+        Yes,
+        No,
+    };
+
+    [[nodiscard]] DidIntroduceClearance clear_floating_boxes(Node const& child_box, Optional<InlineFormattingContext&> inline_formatting_context);
+
+    void reset_margin_state() { m_margin_state.reset(); }
 
 private:
     CSSPixels compute_auto_height_for_block_level_element(Box const&, AvailableSpace const&);
 
     void compute_width_for_floating_box(Box const&, AvailableSpace const&);
 
-    void compute_width_for_block_level_replaced_element_in_normal_flow(ReplacedBox const&, AvailableSpace const&);
+    void compute_width_for_block_level_replaced_element_in_normal_flow(Box const&, AvailableSpace const&);
 
-    CSSPixels compute_width_for_table_wrapper(Box const&, AvailableSpace const&);
+    CSSPixels compute_table_box_width_inside_table_wrapper(Box const&, AvailableSpace const&);
 
-    void layout_initial_containing_block(LayoutMode, AvailableSpace const&);
+    void layout_viewport(LayoutMode, AvailableSpace const&);
 
     void layout_block_level_children(BlockContainer const&, LayoutMode, AvailableSpace const&);
     void layout_inline_children(BlockContainer const&, LayoutMode, AvailableSpace const&);
 
-    static void resolve_vertical_box_model_metrics(Box const& box, LayoutState&);
     void place_block_level_element_in_normal_flow_horizontally(Box const& child_box, AvailableSpace const&);
     void place_block_level_element_in_normal_flow_vertically(Box const&, CSSPixels y);
 
     void layout_list_item_marker(ListItemBox const&);
+
+    void measure_scrollable_overflow(Box const&, CSSPixels& bottom_edge, CSSPixels& right_edge) const;
 
     enum class FloatSide {
         Left,
@@ -78,7 +91,7 @@ private:
     };
 
     struct FloatingBox {
-        Box const& box;
+        JS::NonnullGCPtr<Box const> box;
         // Offset from left/right edge to the left content edge of `box`.
         CSSPixels offset_from_edge { 0 };
 
@@ -150,12 +163,14 @@ private:
         }
     };
 
+    Optional<CSSPixels> m_y_offset_of_current_block_container;
+
     BlockMarginState m_margin_state;
 
     FloatSideData m_left_floats;
     FloatSideData m_right_floats;
 
-    Vector<Box const&> m_absolutely_positioned_boxes;
+    Vector<JS::NonnullGCPtr<Box const>> m_absolutely_positioned_boxes;
 
     bool m_was_notified_after_parent_dimensioned_my_root_box { false };
 };

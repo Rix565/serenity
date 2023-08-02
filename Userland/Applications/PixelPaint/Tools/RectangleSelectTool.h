@@ -26,8 +26,8 @@ public:
     virtual bool on_keydown(GUI::KeyEvent&) override;
     virtual void on_keyup(GUI::KeyEvent&) override;
     virtual void on_second_paint(Layer const*, GUI::PaintEvent&) override;
-    virtual GUI::Widget* get_properties_widget() override;
-    virtual Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> cursor() override { return Gfx::StandardCursor::Crosshair; }
+    virtual ErrorOr<GUI::Widget*> get_properties_widget() override;
+    virtual Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap const>> cursor() override { return Gfx::StandardCursor::Crosshair; }
     virtual Gfx::IntPoint point_position_to_preferred_cell(Gfx::FloatPoint position) const override;
 
 private:
@@ -47,6 +47,8 @@ private:
     MovingMode m_moving_mode { MovingMode::None };
     Gfx::IntPoint m_selection_start;
     Gfx::IntPoint m_selection_end;
+
+    Gfx::IntRect selection_rect() const;
 };
 
 }

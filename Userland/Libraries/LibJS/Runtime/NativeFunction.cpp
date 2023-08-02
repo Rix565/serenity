@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -53,7 +53,7 @@ NonnullGCPtr<NativeFunction> NativeFunction::create(Realm& allocating_realm, Saf
 
 NonnullGCPtr<NativeFunction> NativeFunction::create(Realm& realm, DeprecatedFlyString const& name, SafeFunction<ThrowCompletionOr<Value>(VM&)> function)
 {
-    return realm.heap().allocate<NativeFunction>(realm, name, move(function), *realm.intrinsics().function_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<NativeFunction>(realm, name, move(function), realm.intrinsics().function_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
 }
 
 NativeFunction::NativeFunction(SafeFunction<ThrowCompletionOr<Value>(VM&)> native_function, Object* prototype, Realm& realm)
@@ -111,7 +111,7 @@ ThrowCompletionOr<Value> NativeFunction::internal_call(Value this_argument, Mark
     callee_context.function_name = m_name;
 
     // 5. Let calleeRealm be F.[[Realm]].
-    auto* callee_realm = m_realm;
+    auto callee_realm = m_realm;
     // NOTE: This non-standard fallback is needed until we can guarantee that literally
     // every function has a realm - especially in LibWeb that's sometimes not the case
     // when a function is created while no JS is running, as we currently need to rely on
@@ -178,7 +178,7 @@ ThrowCompletionOr<NonnullGCPtr<Object>> NativeFunction::internal_construct(Marke
     callee_context.function_name = m_name;
 
     // 5. Let calleeRealm be F.[[Realm]].
-    auto* callee_realm = m_realm;
+    auto callee_realm = m_realm;
     // NOTE: This non-standard fallback is needed until we can guarantee that literally
     // every function has a realm - especially in LibWeb that's sometimes not the case
     // when a function is created while no JS is running, as we currently need to rely on

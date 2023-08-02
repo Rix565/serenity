@@ -12,7 +12,6 @@
 #include <LibSQL/Serializer.h>
 #include <LibSQL/TupleDescriptor.h>
 #include <LibSQL/Value.h>
-#include <string.h>
 
 namespace SQL {
 
@@ -31,7 +30,7 @@ static_assert(to_underlying(SQLTypeWithCount::Count) <= 0x0f, "Too many SQL type
 
 // Adding to this list is fine, but changing the order of any value here will result in LibSQL
 // becoming unable to read existing .db files. If the order must absolutely be changed, be sure
-// to bump Heap::current_version.
+// to bump Heap::VERSION.
 enum class TypeData : u8 {
     Null = 1 << 4,
     Int8 = 2 << 4,
@@ -141,6 +140,17 @@ Value::Value(Value&& other)
 {
 }
 
+Value::Value(Duration duration)
+    : m_type(SQLType::Integer)
+    , m_value(duration.to_milliseconds())
+{
+}
+
+Value::Value(UnixDateTime time)
+    : Value(time.offset_to_epoch())
+{
+}
+
 Value::~Value() = default;
 
 ResultOr<Value> Value::create_tuple(NonnullRefPtr<TupleDescriptor> descriptor)
@@ -245,9 +255,9 @@ Optional<bool> Value::to_bool() const
 
     return m_value->visit(
         [](DeprecatedString const& value) -> Optional<bool> {
-            if (value.equals_ignoring_case("true"sv) || value.equals_ignoring_case("t"sv))
+            if (value.equals_ignoring_ascii_case("true"sv) || value.equals_ignoring_ascii_case("t"sv))
                 return true;
-            if (value.equals_ignoring_case("false"sv) || value.equals_ignoring_case("f"sv))
+            if (value.equals_ignoring_ascii_case("false"sv) || value.equals_ignoring_ascii_case("f"sv))
                 return false;
             return {};
         },
@@ -738,7 +748,6 @@ void Value::deserialize(Serializer& serializer)
     switch (m_type) {
     case SQLType::Null:
         VERIFY_NOT_REACHED();
-        break;
     case SQLType::Text:
         m_value = serializer.deserialize<DeprecatedString>();
         break;
@@ -770,7 +779,6 @@ void Value::deserialize(Serializer& serializer)
             break;
         default:
             VERIFY_NOT_REACHED();
-            break;
         }
         break;
     case SQLType::Float:

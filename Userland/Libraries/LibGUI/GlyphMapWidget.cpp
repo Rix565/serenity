@@ -49,6 +49,7 @@ void GlyphMapWidget::Selection::extend_to(int glyph)
 }
 
 GlyphMapWidget::GlyphMapWidget()
+    : AbstractScrollableWidget()
 {
     set_focus_policy(FocusPolicy::StrongFocus);
     horizontal_scrollbar().set_visible(false);
@@ -102,9 +103,9 @@ Gfx::IntRect GlyphMapWidget::get_outer_rect(int glyph) const
     int column = glyph % columns();
     return Gfx::IntRect {
         column * (font().max_glyph_width() + m_horizontal_spacing),
-        row * (font().glyph_height() + m_vertical_spacing),
+        row * (font().pixel_size_rounded_up() + m_vertical_spacing),
         font().max_glyph_width() + m_horizontal_spacing,
-        font().glyph_height() + m_vertical_spacing
+        font().pixel_size_rounded_up() + m_vertical_spacing
     }
         .translated(frame_thickness() - horizontal_scrollbar().value(), frame_thickness() - vertical_scrollbar().value());
 }
@@ -118,6 +119,9 @@ void GlyphMapWidget::update_glyph(int glyph)
 void GlyphMapWidget::paint_event(PaintEvent& event)
 {
     Frame::paint_event(event);
+
+    if (!is_enabled())
+        return;
 
     Painter painter(*this);
     painter.add_clip_rect(widget_inner_rect());
@@ -136,7 +140,7 @@ void GlyphMapWidget::paint_event(PaintEvent& event)
             outer_rect.x() + m_horizontal_spacing / 2,
             outer_rect.y() + m_vertical_spacing / 2,
             font().max_glyph_width(),
-            font().glyph_height());
+            font().pixel_size_rounded_up());
         if (m_selection.contains(glyph)) {
             painter.fill_rect(outer_rect, is_focused() ? palette().selection() : palette().inactive_selection());
             if (font().contains_glyph(glyph))
@@ -145,7 +149,7 @@ void GlyphMapWidget::paint_event(PaintEvent& event)
                 painter.draw_emoji(inner_rect.location(), *emoji, font());
         } else if (font().contains_glyph(glyph)) {
             if (m_highlight_modifications && m_modified_glyphs.contains(glyph)) {
-                if (m_original_font->contains_glyph(glyph)) {
+                if (m_original_font && m_original_font->contains_glyph(glyph)) {
                     // Modified
                     if (palette().is_dark())
                         painter.fill_rect(outer_rect, Gfx::Color { 0, 65, 159 });
@@ -165,7 +169,7 @@ void GlyphMapWidget::paint_event(PaintEvent& event)
         } else if (auto* emoji = Gfx::Emoji::emoji_for_code_point(glyph); emoji && m_show_system_emoji) {
             painter.draw_emoji(inner_rect.location(), *emoji, font());
         } else {
-            if (m_highlight_modifications && m_original_font->contains_glyph(glyph)) {
+            if (m_highlight_modifications && m_original_font && m_original_font->contains_glyph(glyph)) {
                 // Deleted
                 if (palette().is_dark())
                     painter.fill_rect(outer_rect, Gfx::Color { 127, 0, 0 });
@@ -184,7 +188,7 @@ Optional<int> GlyphMapWidget::glyph_at_position(Gfx::IntPoint position) const
     Gfx::IntPoint map_offset { frame_thickness() - horizontal_scrollbar().value(), frame_thickness() - vertical_scrollbar().value() };
     auto map_position = position - map_offset;
     auto col = (map_position.x() - 1) / ((font().max_glyph_width() + m_horizontal_spacing));
-    auto row = (map_position.y() - 1) / ((font().glyph_height() + m_vertical_spacing));
+    auto row = (map_position.y() - 1) / ((font().pixel_size_rounded_up() + m_vertical_spacing));
     auto glyph = row * columns() + col + m_active_range.first;
     if (row >= 0 && row < rows() && col >= 0 && col < columns() && glyph < m_glyph_count + m_active_range.first)
         return glyph;
@@ -197,7 +201,7 @@ int GlyphMapWidget::glyph_at_position_clamped(Gfx::IntPoint position) const
     Gfx::IntPoint map_offset { frame_thickness() - horizontal_scrollbar().value(), frame_thickness() - vertical_scrollbar().value() };
     auto map_position = position - map_offset;
     auto col = clamp((map_position.x() - 1) / ((font().max_glyph_width() + m_horizontal_spacing)), 0, columns() - 1);
-    auto row = clamp((map_position.y() - 1) / ((font().glyph_height() + m_vertical_spacing)), 0, rows() - 1);
+    auto row = clamp((map_position.y() - 1) / ((font().pixel_size_rounded_up() + m_vertical_spacing)), 0, rows() - 1);
     auto glyph = row * columns() + col + m_active_range.first;
     if (row == rows() - 1)
         glyph = min(glyph, m_glyph_count + m_active_range.first - 1);
@@ -333,6 +337,8 @@ void GlyphMapWidget::keydown_event(KeyEvent& event)
     }
 
     if (event.key() == KeyCode::Key_Left) {
+        if (event.alt())
+            return event.ignore();
         if (m_active_glyph - 1 < first_glyph)
             return;
         if (event.ctrl() && selection.start() - 1 < first_glyph)
@@ -347,6 +353,8 @@ void GlyphMapWidget::keydown_event(KeyEvent& event)
     }
 
     if (event.key() == KeyCode::Key_Right) {
+        if (event.alt())
+            return event.ignore();
         if (m_active_glyph + 1 > last_glyph)
             return;
         if (event.ctrl() && selection.start() + selection.size() > last_glyph)
@@ -448,7 +456,7 @@ void GlyphMapWidget::keydown_event(KeyEvent& event)
 void GlyphMapWidget::did_change_font()
 {
     recalculate_content_size();
-    vertical_scrollbar().set_step(font().glyph_height() + m_vertical_spacing);
+    vertical_scrollbar().set_step(font().pixel_size_rounded_up() + m_vertical_spacing);
 }
 
 void GlyphMapWidget::scroll_to_glyph(int glyph)
@@ -458,9 +466,9 @@ void GlyphMapWidget::scroll_to_glyph(int glyph)
     int column = glyph % columns();
     auto scroll_rect = Gfx::IntRect {
         column * (font().max_glyph_width() + m_horizontal_spacing),
-        row * (font().glyph_height() + m_vertical_spacing),
+        row * (font().pixel_size_rounded_up() + m_vertical_spacing),
         font().max_glyph_width() + m_horizontal_spacing,
-        font().glyph_height() + m_vertical_spacing
+        font().pixel_size_rounded_up() + m_vertical_spacing
     };
     scroll_into_view(scroll_rect, true, true);
 }
@@ -515,12 +523,12 @@ void GlyphMapWidget::recalculate_content_size()
     m_rows = ceil_div(m_glyph_count, m_columns);
 
     constexpr auto overdraw_margins = 2;
-    auto max_visible_rows = event_height / (font().glyph_height() + m_vertical_spacing);
+    auto max_visible_rows = event_height / (font().pixel_size_rounded_up() + m_vertical_spacing);
     m_visible_rows = min(max_visible_rows, m_rows);
     m_visible_glyphs = (m_visible_rows + overdraw_margins) * m_columns;
 
     int content_width = columns() * (font().max_glyph_width() + m_horizontal_spacing);
-    int content_height = rows() * (font().glyph_height() + m_vertical_spacing);
+    int content_height = rows() * (font().pixel_size_rounded_up() + m_vertical_spacing);
     set_content_size({ content_width, content_height });
 
     scroll_to_glyph(m_active_glyph);
@@ -568,9 +576,12 @@ bool GlyphMapWidget::glyph_is_modified(u32 glyph)
     return m_modified_glyphs.contains(glyph);
 }
 
-ErrorOr<void> GlyphMapWidget::set_font(Gfx::Font const& font)
+ErrorOr<void> GlyphMapWidget::initialize(Gfx::Font const* font)
 {
-    m_original_font = TRY(font.try_clone());
+    if (font)
+        m_original_font = TRY(font->try_clone());
+    else
+        m_original_font = nullptr;
     m_modified_glyphs.clear();
     AbstractScrollableWidget::set_font(font);
     return {};
@@ -590,7 +601,7 @@ void GlyphMapWidget::leave_event(Core::Event&)
 Optional<UISize> GlyphMapWidget::calculated_min_size() const
 {
     auto scrollbar = vertical_scrollbar().effective_min_size().height().as_int();
-    auto min_height = max(font().glyph_height() + m_vertical_spacing, scrollbar);
+    auto min_height = max(font().pixel_size_rounded_up() + m_vertical_spacing, scrollbar);
     auto min_width = font().max_glyph_width() + m_horizontal_spacing + width_occupied_by_vertical_scrollbar();
     return { { min_width + frame_thickness() * 2, min_height + frame_thickness() * 2 } };
 }

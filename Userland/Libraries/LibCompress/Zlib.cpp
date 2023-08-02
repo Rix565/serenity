@@ -5,12 +5,12 @@
  */
 
 #include <AK/IntegralMath.h>
+#include <AK/MemoryStream.h>
 #include <AK/Span.h>
 #include <AK/TypeCasts.h>
 #include <AK/Types.h>
 #include <LibCompress/Deflate.h>
 #include <LibCompress/Zlib.h>
-#include <LibCore/MemoryStream.h>
 
 namespace Compress {
 
@@ -69,13 +69,13 @@ u32 ZlibDecompressor::checksum()
     return m_checksum;
 }
 
-ErrorOr<NonnullOwnPtr<ZlibCompressor>> ZlibCompressor::construct(Core::Stream::Handle<Core::Stream::Stream> stream, ZlibCompressionLevel compression_level)
+ErrorOr<NonnullOwnPtr<ZlibCompressor>> ZlibCompressor::construct(MaybeOwned<Stream> stream, ZlibCompressionLevel compression_level)
 {
     // Zlib only defines Deflate as a compression method.
     auto compression_method = ZlibCompressionMethod::Deflate;
 
     // FIXME: Find a way to compress with Deflate's "Best" compression level.
-    auto compressor_stream = TRY(DeflateCompressor::construct(Core::Stream::Handle(*stream), static_cast<DeflateCompressor::CompressionLevel>(compression_level)));
+    auto compressor_stream = TRY(DeflateCompressor::construct(MaybeOwned(*stream), static_cast<DeflateCompressor::CompressionLevel>(compression_level)));
 
     auto zlib_compressor = TRY(adopt_nonnull_own_or_enomem(new (nothrow) ZlibCompressor(move(stream), move(compressor_stream))));
     TRY(zlib_compressor->write_header(compression_method, compression_level));
@@ -83,7 +83,7 @@ ErrorOr<NonnullOwnPtr<ZlibCompressor>> ZlibCompressor::construct(Core::Stream::H
     return zlib_compressor;
 }
 
-ZlibCompressor::ZlibCompressor(Core::Stream::Handle<Core::Stream::Stream> stream, NonnullOwnPtr<Core::Stream::Stream> compressor_stream)
+ZlibCompressor::ZlibCompressor(MaybeOwned<Stream> stream, NonnullOwnPtr<Stream> compressor_stream)
     : m_output_stream(move(stream))
     , m_compressor(move(compressor_stream))
 {
@@ -113,21 +113,21 @@ ErrorOr<void> ZlibCompressor::write_header(ZlibCompressionMethod compression_met
 
     // FIXME: Support pre-defined dictionaries.
 
-    TRY(m_output_stream->write(header.as_u16.bytes()));
+    TRY(m_output_stream->write_value(header.as_u16));
 
     return {};
 }
 
-ErrorOr<Bytes> ZlibCompressor::read(Bytes)
+ErrorOr<Bytes> ZlibCompressor::read_some(Bytes)
 {
     return Error::from_errno(EBADF);
 }
 
-ErrorOr<size_t> ZlibCompressor::write(ReadonlyBytes bytes)
+ErrorOr<size_t> ZlibCompressor::write_some(ReadonlyBytes bytes)
 {
     VERIFY(!m_finished);
 
-    size_t n_written = TRY(m_compressor->write(bytes));
+    size_t n_written = TRY(m_compressor->write_some(bytes));
     m_adler32_checksum.update(bytes.trim(n_written));
     return n_written;
 }
@@ -154,7 +154,7 @@ ErrorOr<void> ZlibCompressor::finish()
         TRY(static_cast<DeflateCompressor*>(m_compressor.ptr())->final_flush());
 
     NetworkOrdered<u32> adler_sum = m_adler32_checksum.digest();
-    TRY(m_output_stream->write(adler_sum.bytes()));
+    TRY(m_output_stream->write_value(adler_sum));
 
     m_finished = true;
 
@@ -163,15 +163,15 @@ ErrorOr<void> ZlibCompressor::finish()
 
 ErrorOr<ByteBuffer> ZlibCompressor::compress_all(ReadonlyBytes bytes, ZlibCompressionLevel compression_level)
 {
-    auto output_stream = TRY(try_make<Core::Stream::AllocatingMemoryStream>());
-    auto zlib_stream = TRY(ZlibCompressor::construct(Core::Stream::Handle<Core::Stream::Stream>(*output_stream), compression_level));
+    auto output_stream = TRY(try_make<AllocatingMemoryStream>());
+    auto zlib_stream = TRY(ZlibCompressor::construct(MaybeOwned<Stream>(*output_stream), compression_level));
 
-    TRY(zlib_stream->write_entire_buffer(bytes));
+    TRY(zlib_stream->write_until_depleted(bytes));
 
     TRY(zlib_stream->finish());
 
     auto buffer = TRY(ByteBuffer::create_uninitialized(output_stream->used_buffer_size()));
-    TRY(output_stream->read_entire_buffer(buffer.bytes()));
+    TRY(output_stream->read_until_filled(buffer.bytes()));
 
     return buffer;
 }

@@ -5,7 +5,6 @@
  */
 
 #include <AK/Assertions.h>
-#include <AK/DeprecatedString.h>
 #include <LibGUI/Event.h>
 #include <LibGUI/TextEditor.h>
 #include <LibGUI/VimEditingEngine.h>
@@ -949,9 +948,7 @@ bool VimEditingEngine::on_key_in_normal_mode(KeyEvent const& event)
         // Handle first any key codes that are to be applied regardless of modifiers.
         switch (event.key()) {
         case (KeyCode::Key_Escape):
-            if (m_editor->on_escape_pressed)
-                m_editor->on_escape_pressed();
-            return true;
+            return false;
         default:
             break;
         }
@@ -1137,9 +1134,7 @@ bool VimEditingEngine::on_key_in_visual_mode(KeyEvent const& event)
     switch (event.key()) {
     case (KeyCode::Key_Escape):
         switch_to_normal_mode();
-        if (m_editor->on_escape_pressed)
-            m_editor->on_escape_pressed();
-        return true;
+        return false;
     default:
         break;
     }
@@ -1269,9 +1264,7 @@ bool VimEditingEngine::on_key_in_visual_line_mode(KeyEvent const& event)
     switch (event.key()) {
     case (KeyCode::Key_Escape):
         switch_to_normal_mode();
-        if (m_editor->on_escape_pressed)
-            m_editor->on_escape_pressed();
-        return true;
+        return false;
     default:
         break;
     }
@@ -1372,7 +1365,7 @@ void VimEditingEngine::switch_to_normal_mode()
     m_previous_key = {};
     clear_visual_mode_data();
     m_motion.reset();
-};
+}
 
 void VimEditingEngine::switch_to_insert_mode()
 {
@@ -1381,7 +1374,7 @@ void VimEditingEngine::switch_to_insert_mode()
     m_previous_key = {};
     clear_visual_mode_data();
     m_motion.reset();
-};
+}
 
 void VimEditingEngine::switch_to_visual_mode()
 {
@@ -1449,12 +1442,12 @@ void VimEditingEngine::clear_visual_mode_data()
 void VimEditingEngine::move_half_page_up()
 {
     move_up(0.5);
-};
+}
 
 void VimEditingEngine::move_half_page_down()
 {
     move_down(0.5);
-};
+}
 
 void VimEditingEngine::yank(YankType type)
 {
@@ -1545,7 +1538,7 @@ void VimEditingEngine::move_to_previous_empty_lines_block()
     TextPosition new_cursor = { line_idx, 0 };
 
     m_editor->set_cursor(new_cursor);
-};
+}
 
 void VimEditingEngine::move_to_next_empty_lines_block()
 {
@@ -1565,7 +1558,7 @@ void VimEditingEngine::move_to_next_empty_lines_block()
     TextPosition new_cursor = { line_idx, 0 };
 
     m_editor->set_cursor(new_cursor);
-};
+}
 
 void VimEditingEngine::casefold_selection(Casing casing)
 {

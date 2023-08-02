@@ -13,13 +13,13 @@
 #include <AK/Types.h>
 
 #include <Kernel/Arch/x86_64/Interrupts/APIC.h>
-#include <Kernel/InterruptDisabler.h>
-#include <Kernel/Process.h>
-#include <Kernel/Random.h>
-#include <Kernel/Scheduler.h>
+#include <Kernel/Interrupts/InterruptDisabler.h>
+#include <Kernel/Library/StdLib.h>
 #include <Kernel/Sections.h>
-#include <Kernel/StdLib.h>
-#include <Kernel/Thread.h>
+#include <Kernel/Security/Random.h>
+#include <Kernel/Tasks/Process.h>
+#include <Kernel/Tasks/Scheduler.h>
+#include <Kernel/Tasks/Thread.h>
 
 #include <Kernel/Arch/Interrupts.h>
 #include <Kernel/Arch/Processor.h>
@@ -28,7 +28,7 @@
 #include <Kernel/Arch/x86_64/CPUID.h>
 #include <Kernel/Arch/x86_64/MSR.h>
 #include <Kernel/Arch/x86_64/ProcessorInfo.h>
-#include <Kernel/ScopedCritical.h>
+#include <Kernel/Library/ScopedCritical.h>
 
 #include <Kernel/Arch/PageDirectory.h>
 #include <Kernel/Memory/ScopedAddressSpaceSwitcher.h>
@@ -626,7 +626,7 @@ UNMAP_AFTER_INIT void Processor::early_initialize(u32 cpu)
         g_total_processors.fetch_add(1u, AK::MemoryOrder::memory_order_acq_rel);
     }
 
-    deferred_call_pool_init();
+    m_deferred_call_pool.init();
 
     cpu_setup();
     gdt_init();
@@ -863,23 +863,11 @@ ErrorOr<Vector<FlatPtr, 32>> Processor::capture_stack_trace(Thread& thread, size
         case Thread::State::Blocked:
         case Thread::State::Dying:
         case Thread::State::Dead: {
-            // We need to retrieve ebp from what was last pushed to the kernel
-            // stack. Before switching out of that thread, it switch_context
-            // pushed the callee-saved registers, and the last of them happens
-            // to be ebp.
             ScopedAddressSpaceSwitcher switcher(thread.process());
             auto& regs = thread.regs();
-            auto* stack_top = reinterpret_cast<FlatPtr*>(regs.sp());
-            if (Memory::is_user_range(VirtualAddress(stack_top), sizeof(FlatPtr))) {
-                if (copy_from_user(&frame_ptr, &((FlatPtr*)stack_top)[0]).is_error())
-                    frame_ptr = 0;
-            } else {
-                void* fault_at;
-                if (!safe_memcpy(&frame_ptr, &((FlatPtr*)stack_top)[0], sizeof(FlatPtr), fault_at))
-                    frame_ptr = 0;
-            }
 
             ip = regs.ip();
+            frame_ptr = regs.rbp;
 
             // TODO: We need to leave the scheduler lock here, but we also
             //       need to prevent the target thread from being run while
@@ -948,7 +936,7 @@ void Processor::exit_trap(TrapFrame& trap)
 
     // Process the deferred call queue. Among other things, this ensures
     // that any pending thread unblocks happen before we enter the scheduler.
-    deferred_call_execute_pending();
+    m_deferred_call_pool.execute_pending();
 
     auto* current_thread = Processor::current_thread();
     if (current_thread) {
@@ -1345,92 +1333,6 @@ void Processor::Processor::halt()
     halt_this();
 }
 
-UNMAP_AFTER_INIT void Processor::deferred_call_pool_init()
-{
-    size_t pool_count = sizeof(m_deferred_call_pool) / sizeof(m_deferred_call_pool[0]);
-    for (size_t i = 0; i < pool_count; i++) {
-        auto& entry = m_deferred_call_pool[i];
-        entry.next = i < pool_count - 1 ? &m_deferred_call_pool[i + 1] : nullptr;
-        new (entry.handler_storage) DeferredCallEntry::HandlerFunction;
-        entry.was_allocated = false;
-    }
-    m_pending_deferred_calls = nullptr;
-    m_free_deferred_call_pool_entry = &m_deferred_call_pool[0];
-}
-
-void Processor::deferred_call_return_to_pool(DeferredCallEntry* entry)
-{
-    VERIFY(m_in_critical);
-    VERIFY(!entry->was_allocated);
-
-    entry->handler_value() = {};
-
-    entry->next = m_free_deferred_call_pool_entry;
-    m_free_deferred_call_pool_entry = entry;
-}
-
-DeferredCallEntry* Processor::deferred_call_get_free()
-{
-    VERIFY(m_in_critical);
-
-    if (m_free_deferred_call_pool_entry) {
-        // Fast path, we have an entry in our pool
-        auto* entry = m_free_deferred_call_pool_entry;
-        m_free_deferred_call_pool_entry = entry->next;
-        VERIFY(!entry->was_allocated);
-        return entry;
-    }
-
-    auto* entry = new DeferredCallEntry;
-    new (entry->handler_storage) DeferredCallEntry::HandlerFunction;
-    entry->was_allocated = true;
-    return entry;
-}
-
-void Processor::deferred_call_execute_pending()
-{
-    VERIFY(m_in_critical);
-
-    if (!m_pending_deferred_calls)
-        return;
-    auto* pending_list = m_pending_deferred_calls;
-    m_pending_deferred_calls = nullptr;
-
-    // We pulled the stack of pending deferred calls in LIFO order, so we need to reverse the list first
-    auto reverse_list =
-        [](DeferredCallEntry* list) -> DeferredCallEntry* {
-        DeferredCallEntry* rev_list = nullptr;
-        while (list) {
-            auto next = list->next;
-            list->next = rev_list;
-            rev_list = list;
-            list = next;
-        }
-        return rev_list;
-    };
-    pending_list = reverse_list(pending_list);
-
-    do {
-        pending_list->invoke_handler();
-
-        // Return the entry back to the pool, or free it
-        auto* next = pending_list->next;
-        if (pending_list->was_allocated) {
-            pending_list->handler_value().~Function();
-            delete pending_list;
-        } else
-            deferred_call_return_to_pool(pending_list);
-        pending_list = next;
-    } while (pending_list);
-}
-
-void Processor::deferred_call_queue_entry(DeferredCallEntry* entry)
-{
-    VERIFY(m_in_critical);
-    entry->next = m_pending_deferred_calls;
-    m_pending_deferred_calls = entry;
-}
-
 void Processor::deferred_call_queue(Function<void()> callback)
 {
     // NOTE: If we are called outside of a critical section and outside
@@ -1438,10 +1340,10 @@ void Processor::deferred_call_queue(Function<void()> callback)
     ScopedCritical critical;
     auto& cur_proc = Processor::current();
 
-    auto* entry = cur_proc.deferred_call_get_free();
+    auto* entry = cur_proc.m_deferred_call_pool.get_free();
     entry->handler_value() = move(callback);
 
-    cur_proc.deferred_call_queue_entry(entry);
+    cur_proc.m_deferred_call_pool.queue_entry(entry);
 }
 
 UNMAP_AFTER_INIT void Processor::gdt_init()
@@ -1543,8 +1445,7 @@ extern "C" void enter_thread_context(Thread* from_thread, Thread* to_thread)
     }
 
     auto& processor = Processor::current();
-    MSR fs_base_msr(MSR_FS_BASE);
-    fs_base_msr.set(to_thread->thread_specific_data().get());
+    Processor::set_thread_specific_data(to_thread->thread_specific_data());
 
     if (from_regs.cr3 != to_regs.cr3)
         write_cr3(to_regs.cr3);
@@ -1570,7 +1471,7 @@ extern "C" FlatPtr do_init_context(Thread* thread, u32 flags)
     return Processor::current().init_context(*thread, true);
 }
 
-void Processor::assume_context(Thread& thread, FlatPtr flags)
+void Processor::assume_context(Thread& thread, InterruptsState new_interrupts_state)
 {
     dbgln_if(CONTEXT_SWITCH_DEBUG, "Assume context for thread {} {}", VirtualAddress(&thread), thread);
 
@@ -1580,6 +1481,7 @@ void Processor::assume_context(Thread& thread, FlatPtr flags)
     // and then the scheduler lock
     VERIFY(Processor::in_critical() == 2);
 
+    u32 flags = 2 | (new_interrupts_state == InterruptsState::Enabled ? 0x200 : 0);
     do_assume_context(&thread, flags);
 
     VERIFY_NOT_REACHED();
@@ -1601,7 +1503,7 @@ void Processor::do_leave_critical()
     VERIFY(m_in_critical > 0);
     if (m_in_critical == 1) {
         if (m_in_irq == 0) {
-            deferred_call_execute_pending();
+            m_deferred_call_pool.execute_pending();
             VERIFY(m_in_critical == 1);
         }
         m_in_critical = 0;
@@ -1636,7 +1538,7 @@ NAKED void thread_context_first_enter(void)
         "    cld \n"
         "    call context_first_init \n"
         "    jmp common_trap_exit \n");
-};
+}
 
 NAKED void do_assume_context(Thread*, u32)
 {
@@ -1809,6 +1711,7 @@ void Processor::switch_context(Thread*& from_thread, Thread*& to_thread)
         "shrq $32, %%rbx \n"
         "movl %%ebx, %[tss_rsp0h] \n"
         "movq %[to_rsp], %%rsp \n"
+        "movq %%rbp, %[from_rbp] \n"
         "pushq %[to_thread] \n"
         "pushq %[from_thread] \n"
         "pushq %[to_rip] \n"
@@ -1834,6 +1737,7 @@ void Processor::switch_context(Thread*& from_thread, Thread*& to_thread)
         "popq %%rbx \n"
         "popfq \n"
         : [from_rsp] "=m" (from_thread->regs().rsp),
+        [from_rbp] "=m" (from_thread->regs().rbp),
         [from_rip] "=m" (from_thread->regs().rip),
         [tss_rsp0l] "=m" (m_tss.rsp0l),
         [tss_rsp0h] "=m" (m_tss.rsp0h),
@@ -1885,6 +1789,12 @@ UNMAP_AFTER_INIT void Processor::initialize_context_switching(Thread& initial_th
     // clang-format on
 
     VERIFY_NOT_REACHED();
+}
+
+void Processor::set_thread_specific_data(VirtualAddress thread_specific_data)
+{
+    MSR fs_base_msr(MSR_FS_BASE);
+    fs_base_msr.set(thread_specific_data.get());
 }
 
 }

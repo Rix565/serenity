@@ -200,3 +200,72 @@ describe("await cannot be used in class static init blocks", () => {
         expect("class A{ static { async function* await() {} } }").not.toEval();
     });
 });
+
+describe("await thenables", () => {
+    // FIXME: This test crashes for AST, and fails for bytecode.
+    test.skip("async returning a thanable variable without fulfilling", () => {
+        let isCalled = false;
+        const obj = {
+            then() {
+                isCalled = true;
+            },
+        };
+
+        const f = async () => await obj;
+        f();
+        runQueuedPromiseJobs();
+        expect(isCalled).toBe(true);
+    });
+
+    test.xfailIf(
+        isBytecodeInterpreterEnabled(),
+        "async returning a thanable variable that fulfills",
+        () => {
+            let isCalled = false;
+            const obj = {
+                then(fulfill) {
+                    isCalled = true;
+                    fulfill(isCalled);
+                },
+            };
+
+            const f = async () => await obj;
+            f();
+            runQueuedPromiseJobs();
+            expect(isCalled).toBe(true);
+        }
+    );
+
+    test.xfailIf(
+        isBytecodeInterpreterEnabled(),
+        "async returning a thenable directly without fulfilling",
+        () => {
+            let isCalled = false;
+            const f = async () => ({
+                then() {
+                    isCalled = true;
+                },
+            });
+            f();
+            runQueuedPromiseJobs();
+            expect(isCalled).toBe(true);
+        }
+    );
+
+    test.xfailIf(
+        isBytecodeInterpreterEnabled(),
+        "async returning a thenable directly that fulfills",
+        () => {
+            let isCalled = false;
+            const f = async () => ({
+                then(fulfill) {
+                    isCalled = true;
+                    fulfill(isCalled);
+                },
+            });
+            f();
+            runQueuedPromiseJobs();
+            expect(isCalled).toBe(true);
+        }
+    );
+});

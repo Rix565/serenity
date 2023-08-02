@@ -9,7 +9,7 @@
 #include <Kernel/FileSystem/SysFS/Inode.h>
 #include <Kernel/FileSystem/SysFS/LinkInode.h>
 #include <Kernel/FileSystem/SysFS/Registry.h>
-#include <Kernel/KLexicalPath.h>
+#include <Kernel/Library/KLexicalPath.h>
 
 namespace Kernel {
 
@@ -74,8 +74,6 @@ ErrorOr<size_t> SysFSSymbolicLink::read_bytes(off_t offset, size_t count, UserOr
 ErrorOr<NonnullOwnPtr<KBuffer>> SysFSSymbolicLink::try_to_generate_buffer() const
 {
     auto return_path_to_mount_point = TRY(try_generate_return_path_to_mount_point());
-    if (!m_pointed_component)
-        return Error::from_errno(EIO);
     auto pointed_component_base_name = MUST(KString::try_create(m_pointed_component->name()));
     auto pointed_component_relative_path = MUST(m_pointed_component->relative_path(move(pointed_component_base_name), 0));
     auto full_return_and_target_path = TRY(KString::formatted("{}{}", return_path_to_mount_point->view(), pointed_component_relative_path->view()));
@@ -126,9 +124,9 @@ ErrorOr<void> SysFSDirectory::traverse_as_directory(FileSystemID fsid, Function<
     });
 }
 
-LockRefPtr<SysFSComponent> SysFSDirectory::lookup(StringView name)
+RefPtr<SysFSComponent> SysFSDirectory::lookup(StringView name)
 {
-    return m_child_components.with([&](auto& list) -> LockRefPtr<SysFSComponent> {
+    return m_child_components.with([&](auto& list) -> RefPtr<SysFSComponent> {
         for (auto& child_component : list) {
             if (child_component.name() == name) {
                 return child_component;
@@ -143,17 +141,17 @@ SysFSDirectory::SysFSDirectory(SysFSDirectory const& parent_directory)
 {
 }
 
-ErrorOr<NonnullLockRefPtr<SysFSInode>> SysFSDirectory::to_inode(SysFS const& sysfs_instance) const
+ErrorOr<NonnullRefPtr<SysFSInode>> SysFSDirectory::to_inode(SysFS const& sysfs_instance) const
 {
     return TRY(SysFSDirectoryInode::try_create(sysfs_instance, *this));
 }
 
-ErrorOr<NonnullLockRefPtr<SysFSInode>> SysFSSymbolicLink::to_inode(SysFS const& sysfs_instance) const
+ErrorOr<NonnullRefPtr<SysFSInode>> SysFSSymbolicLink::to_inode(SysFS const& sysfs_instance) const
 {
     return TRY(SysFSLinkInode::try_create(sysfs_instance, *this));
 }
 
-ErrorOr<NonnullLockRefPtr<SysFSInode>> SysFSComponent::to_inode(SysFS const& sysfs_instance) const
+ErrorOr<NonnullRefPtr<SysFSInode>> SysFSComponent::to_inode(SysFS const& sysfs_instance) const
 {
     return SysFSInode::try_create(sysfs_instance, *this);
 }

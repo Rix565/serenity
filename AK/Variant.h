@@ -130,15 +130,16 @@ struct VariantConstructTag {
 
 template<typename T, typename Base>
 struct VariantConstructors {
+    // The pointless `typename Base` constraints are a workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=109683
     ALWAYS_INLINE VariantConstructors(T&& t)
-    requires(requires { T(move(t)); })
+    requires(requires { T(move(t)); typename Base; })
     {
         internal_cast().clear_without_destruction();
         internal_cast().set(move(t), VariantNoClearTag {});
     }
 
     ALWAYS_INLINE VariantConstructors(T const& t)
-    requires(requires { T(t); })
+    requires(requires { T(t); typename Base; })
     {
         internal_cast().clear_without_destruction();
         internal_cast().set(t, VariantNoClearTag {});
@@ -216,11 +217,11 @@ using MergeAndDeduplicatePacks = InheritFromPacks<MakeIndexSequence<sizeof...(Ps
 namespace AK {
 
 struct Empty {
+    constexpr bool operator==(Empty const&) const = default;
 };
 
 template<typename T>
-concept NotLvalueReference = !
-IsLvalueReference<T>;
+concept NotLvalueReference = !IsLvalueReference<T>;
 
 template<NotLvalueReference... Ts>
 struct Variant
@@ -416,6 +417,15 @@ public:
     requires(can_contain<T>())
     {
         return index_of<T>() == m_index;
+    }
+
+    bool operator==(Variant const& other) const
+    {
+        return this->visit([&]<typename T>(T const& self) {
+            if (auto const* p = other.get_pointer<T>())
+                return static_cast<T const&>(self) == static_cast<T const&>(*p);
+            return false;
+        });
     }
 
     template<typename... Fs>

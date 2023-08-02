@@ -7,12 +7,10 @@
 #pragma once
 
 #include <AK/Platform.h>
+#include <AK/Span.h>
 #include <AK/StdLibExtras.h>
 #include <AK/Types.h>
-
-#if defined(AK_OS_SERENITY) || defined(AK_OS_ANDROID)
-#    include <stdlib.h>
-#endif
+#include <stdlib.h>
 
 #if defined(__unix__)
 #    include <unistd.h>
@@ -22,24 +20,38 @@
 #    include <sys/random.h>
 #endif
 
-#if defined(AK_OS_WINDOWS)
-#    include <stdlib.h>
-#endif
-
 namespace AK {
 
-inline void fill_with_random([[maybe_unused]] void* buffer, [[maybe_unused]] size_t length)
+inline void fill_with_random([[maybe_unused]] Bytes bytes)
 {
 #if defined(AK_OS_SERENITY) || defined(AK_OS_ANDROID)
-    arc4random_buf(buffer, length);
+    arc4random_buf(bytes.data(), bytes.size());
 #elif defined(OSS_FUZZ)
-#elif defined(__unix__) or defined(AK_OS_MACOS)
-    [[maybe_unused]] int rc = getentropy(buffer, length);
 #else
-    char* char_buffer = static_cast<char*>(buffer);
-    for (size_t i = 0; i < length; i++) {
-        char_buffer[i] = rand();
+    auto fill_with_random_fallback = [&]() {
+        for (auto& byte : bytes)
+            byte = rand();
+    };
+
+#    if defined(__unix__) or defined(AK_OS_MACOS)
+    // The maximum permitted value for the getentropy length argument.
+    static constexpr size_t getentropy_length_limit = 256;
+    auto iterations = bytes.size() / getentropy_length_limit;
+
+    for (size_t i = 0; i < iterations; ++i) {
+        if (getentropy(bytes.data(), getentropy_length_limit) != 0) {
+            fill_with_random_fallback();
+            return;
+        }
+
+        bytes = bytes.slice(getentropy_length_limit);
     }
+
+    if (bytes.is_empty() || getentropy(bytes.data(), bytes.size()) == 0)
+        return;
+#    endif
+
+    fill_with_random_fallback();
 #endif
 }
 
@@ -47,7 +59,7 @@ template<typename T>
 inline T get_random()
 {
     T t;
-    fill_with_random(&t, sizeof(T));
+    fill_with_random({ &t, sizeof(T) });
     return t;
 }
 
@@ -60,19 +72,6 @@ inline void shuffle(Collection& collection)
     for (size_t i = collection.size() - 1; i >= 1; --i) {
         size_t j = get_random_uniform(i + 1);
         AK::swap(collection[i], collection[j]);
-    }
-}
-
-// shuffle() implementation for NonnullPtrVector, since its operator[] returns a reference to the pointed-at value
-// instead of the pointer itself.
-template<typename Collection>
-requires(requires(Collection collection) { collection.ptr_at(0); })
-inline void shuffle(Collection& collection)
-{
-    // Fisher-Yates shuffle
-    for (size_t i = collection.size() - 1; i >= 1; --i) {
-        size_t j = get_random_uniform(i + 1);
-        AK::swap(collection.ptr_at(i), collection.ptr_at(j));
     }
 }
 

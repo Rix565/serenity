@@ -11,7 +11,7 @@
 namespace JS {
 
 ArgumentsObject::ArgumentsObject(Realm& realm, Environment& environment)
-    : Object(ConstructWithPrototypeTag::Tag, *realm.intrinsics().object_prototype())
+    : Object(ConstructWithPrototypeTag::Tag, realm.intrinsics().object_prototype())
     , m_environment(environment)
 {
 }
@@ -28,12 +28,12 @@ ThrowCompletionOr<void> ArgumentsObject::initialize(Realm& realm)
 void ArgumentsObject::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(&m_environment);
+    visitor.visit(m_environment);
     visitor.visit(m_parameter_map);
 }
 
 // 10.4.4.3 [[Get]] ( P, Receiver ), https://tc39.es/ecma262/#sec-arguments-exotic-objects-get-p-receiver
-ThrowCompletionOr<Value> ArgumentsObject::internal_get(PropertyKey const& property_key, Value receiver) const
+ThrowCompletionOr<Value> ArgumentsObject::internal_get(PropertyKey const& property_key, Value receiver, CacheablePropertyMetadata* cacheable_metadata) const
 {
     // 1. Let map be args.[[ParameterMap]].
     auto& map = *m_parameter_map;
@@ -44,7 +44,7 @@ ThrowCompletionOr<Value> ArgumentsObject::internal_get(PropertyKey const& proper
     // 3. If isMapped is false, then
     if (!is_mapped) {
         // a. Return ? OrdinaryGet(args, P, Receiver).
-        return Object::internal_get(property_key, receiver);
+        return Object::internal_get(property_key, receiver, cacheable_metadata);
     }
 
     // FIXME: a. Assert: map contains a formal parameter mapping for P.

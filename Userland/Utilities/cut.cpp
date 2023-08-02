@@ -9,6 +9,7 @@
 #include <AK/StdLibExtras.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/File.h>
 #include <LibMain/Main.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,7 +35,7 @@ struct Range {
 
 static bool expand_list(DeprecatedString& list, Vector<Range>& ranges)
 {
-    Vector<DeprecatedString> tokens = list.split(',');
+    Vector<DeprecatedString> tokens = list.split(',', SplitBehavior::KeepEmpty);
 
     for (auto& token : tokens) {
         if (token.length() == 0) {
@@ -74,7 +75,7 @@ static bool expand_list(DeprecatedString& list, Vector<Range>& ranges)
 
             ranges.append({ index.value(), SIZE_MAX });
         } else {
-            auto range = token.split('-');
+            auto range = token.split('-', SplitBehavior::KeepEmpty);
             if (range.size() == 2) {
                 auto index1 = range[0].to_uint();
                 if (!index1.has_value()) {
@@ -120,24 +121,30 @@ static bool expand_list(DeprecatedString& list, Vector<Range>& ranges)
     return true;
 }
 
-static void process_line_bytes(char* line, size_t length, Vector<Range> const& ranges)
+static void process_line_bytes(StringView line, Vector<Range> const& ranges)
 {
     for (auto& i : ranges) {
-        if (i.m_from >= length)
+        if (i.m_from >= line.length())
             continue;
 
-        auto to = min(i.m_to, length);
+        auto to = min(i.m_to, line.length());
         auto sub_string = DeprecatedString(line).substring(i.m_from - 1, to - i.m_from + 1);
         out("{}", sub_string);
     }
     outln();
 }
 
-static void process_line_fields(char* line, size_t length, Vector<Range> const& ranges, char delimiter)
+static void process_line_fields(StringView line, Vector<Range> const& ranges, char delimiter, bool only_print_delimited_lines)
 {
-    auto string_split = DeprecatedString(line, length).split(delimiter);
-    Vector<DeprecatedString> output_fields;
+    auto string_split = DeprecatedString(line).split(delimiter, SplitBehavior::KeepEmpty);
+    if (string_split.size() == 1) {
+        if (!only_print_delimited_lines)
+            outln("{}", line);
 
+        return;
+    }
+
+    Vector<DeprecatedString> output_fields;
     for (auto& range : ranges) {
         for (size_t i = range.m_from - 1; i < min(range.m_to, string_split.size()); i++) {
             output_fields.append(string_split[i]);
@@ -152,6 +159,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     DeprecatedString byte_list = "";
     DeprecatedString fields_list = "";
     DeprecatedString delimiter = "\t";
+    bool only_print_delimited_lines = false;
 
     Vector<StringView> files;
 
@@ -160,6 +168,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_option(byte_list, "select only these bytes", "bytes", 'b', "list");
     args_parser.add_option(fields_list, "select only these fields", "fields", 'f', "list");
     args_parser.add_option(delimiter, "set a custom delimiter", "delimiter", 'd', "delimiter");
+    args_parser.add_option(only_print_delimited_lines, "suppress lines which don't contain any field delimiter characters", "only-delimited", 's');
     args_parser.parse(arguments);
 
     bool selected_bytes = (byte_list != "");
@@ -169,19 +178,19 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     if (selected_options_count == 0) {
         warnln("cut: you must specify a list of bytes, or fields");
-        args_parser.print_usage(stderr, arguments.strings[0].characters_without_null_termination());
+        args_parser.print_usage(stderr, arguments.strings[0]);
         return 1;
     }
 
     if (selected_options_count > 1) {
         warnln("cut: you must specify only one of bytes, or fields");
-        args_parser.print_usage(stderr, arguments.strings[0].characters_without_null_termination());
+        args_parser.print_usage(stderr, arguments.strings[0]);
         return 1;
     }
 
     if (delimiter.length() != 1) {
         warnln("cut: the delimiter must be a single character");
-        args_parser.print_usage(stderr, arguments.strings[0].characters_without_null_termination());
+        args_parser.print_usage(stderr, arguments.strings[0]);
         return 1;
     }
 
@@ -200,7 +209,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto expansion_successful = expand_list(ranges_list, ranges_vector);
 
     if (!expansion_successful) {
-        args_parser.print_usage(stderr, arguments.strings[0].characters_without_null_termination());
+        args_parser.print_usage(stderr, arguments.strings[0]);
         return 1;
     }
 
@@ -224,44 +233,31 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     }
 
     if (files.is_empty())
-        files.append(DeprecatedString());
+        files.append(""sv);
 
     /* Process each file */
-    for (auto& file : files) {
-        FILE* fp = stdin;
-        if (!file.is_null()) {
-            fp = fopen(DeprecatedString(file).characters(), "r");
-            if (!fp) {
-                warnln("cut: Could not open file '{}'", file);
-                continue;
-            }
+    for (auto const filename : files) {
+        auto maybe_file = Core::File::open_file_or_standard_stream(filename, Core::File::OpenMode::Read);
+        if (maybe_file.is_error()) {
+            warnln("cut: Could not open file '{}'", filename.is_empty() ? "stdin"sv : filename);
+            continue;
         }
+        auto file = TRY(Core::InputBufferedFile::create(maybe_file.release_value()));
 
-        char* line = nullptr;
-        ssize_t line_length = 0;
-        size_t line_capacity = 0;
-        while ((line_length = getline(&line, &line_capacity, fp)) != -1) {
-            if (line_length < 0) {
-                warnln("cut: Failed to read line from file '{}'", file);
+        Array<u8, PAGE_SIZE> buffer;
+        while (TRY(file->can_read_line())) {
+            auto line = TRY(file->read_line(buffer));
+            if (line == "\n" && TRY(file->can_read_line()))
                 break;
-            }
-            line[line_length - 1] = '\0';
-            line_length--;
 
             if (selected_bytes) {
-                process_line_bytes(line, line_length, disjoint_ranges);
+                process_line_bytes(line, disjoint_ranges);
             } else if (selected_fields) {
-                process_line_fields(line, line_length, disjoint_ranges, delimiter[0]);
+                process_line_fields(line, disjoint_ranges, delimiter[0], only_print_delimited_lines);
             } else {
                 VERIFY_NOT_REACHED();
             }
         }
-
-        if (line)
-            free(line);
-
-        if (!file.is_null())
-            fclose(fp);
     }
 
     return 0;

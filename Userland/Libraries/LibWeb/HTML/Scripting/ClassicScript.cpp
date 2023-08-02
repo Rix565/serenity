@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
 #include <LibCore/ElapsedTimer.h>
+#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Interpreter.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
@@ -42,8 +43,9 @@ JS::NonnullGCPtr<ClassicScript> ClassicScript::create(DeprecatedString filename,
     // 8. Set script's muted errors to muted errors.
     script->m_muted_errors = muted_errors;
 
-    // FIXME: 9. Set script's parse error and error to rethrow to null.
-    // NOTE: Error to rethrow was set to null in the construction of ClassicScript. We do not have parse error as it would currently go unused.
+    // 9. Set script's parse error and error to rethrow to null.
+    script->set_parse_error(JS::js_null());
+    script->set_error_to_rethrow(JS::js_null());
 
     // 10. Let result be ParseScript(source, settings's Realm, script).
     auto parse_timer = Core::ElapsedTimer::start_new();
@@ -55,9 +57,9 @@ JS::NonnullGCPtr<ClassicScript> ClassicScript::create(DeprecatedString filename,
         auto& parse_error = result.error().first();
         dbgln_if(HTML_SCRIPT_DEBUG, "ClassicScript: Failed to parse: {}", parse_error.to_deprecated_string());
 
-        // FIXME: 1. Set script's parse error and its error to rethrow to result[0].
-        //           We do not have parse error as it would currently go unused.
-        script->m_error_to_rethrow = parse_error;
+        // 1. Set script's parse error and its error to rethrow to result[0].
+        script->set_parse_error(JS::SyntaxError::create(environment_settings_object.realm(), parse_error.to_string().release_value_but_fixme_should_propagate_errors()));
+        script->set_error_to_rethrow(script->parse_error());
 
         // 2. Return script.
         return script;
@@ -73,8 +75,6 @@ JS::NonnullGCPtr<ClassicScript> ClassicScript::create(DeprecatedString filename,
 // https://html.spec.whatwg.org/multipage/webappapis.html#run-a-classic-script
 JS::Completion ClassicScript::run(RethrowErrors rethrow_errors, JS::GCPtr<JS::Environment> lexical_environment_override)
 {
-    auto& vm = settings_object().realm().vm();
-
     // 1. Let settings be the settings object of script.
     auto& settings = settings_object();
 
@@ -89,15 +89,18 @@ JS::Completion ClassicScript::run(RethrowErrors rethrow_errors, JS::GCPtr<JS::En
     JS::Completion evaluation_status;
 
     // 5. If script's error to rethrow is not null, then set evaluationStatus to Completion { [[Type]]: throw, [[Value]]: script's error to rethrow, [[Target]]: empty }.
-    if (m_error_to_rethrow.has_value()) {
-        evaluation_status = vm.throw_completion<JS::SyntaxError>(m_error_to_rethrow.value().to_deprecated_string());
+    if (!error_to_rethrow().is_null()) {
+        evaluation_status = JS::Completion { JS::Completion::Type::Throw, error_to_rethrow(), {} };
     } else {
         auto timer = Core::ElapsedTimer::start_new();
 
         // 6. Otherwise, set evaluationStatus to ScriptEvaluation(script's record).
-        auto interpreter = JS::Interpreter::create_with_existing_realm(m_script_record->realm());
-
-        evaluation_status = interpreter->run(*m_script_record, lexical_environment_override);
+        if (auto* bytecode_interpreter = vm().bytecode_interpreter_if_exists()) {
+            evaluation_status = bytecode_interpreter->run(*m_script_record, lexical_environment_override);
+        } else {
+            auto interpreter = JS::Interpreter::create_with_existing_realm(m_script_record->realm());
+            evaluation_status = interpreter->run(*m_script_record, lexical_environment_override);
+        }
 
         // FIXME: If ScriptEvaluation does not complete because the user agent has aborted the running script, leave evaluationStatus as null.
 

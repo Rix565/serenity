@@ -16,7 +16,7 @@
 #include <Kernel/FileSystem/ISO9660FS/Definitions.h>
 #include <Kernel/FileSystem/ISO9660FS/DirectoryEntry.h>
 #include <Kernel/FileSystem/Inode.h>
-#include <Kernel/KBuffer.h>
+#include <Kernel/Library/KBuffer.h>
 #include <Kernel/Library/NonnullLockRefPtr.h>
 
 namespace Kernel {
@@ -29,7 +29,7 @@ class ISO9660FS final : public BlockBasedFileSystem {
     friend ISO9660DirectoryIterator;
 
 public:
-    static ErrorOr<NonnullLockRefPtr<FileSystem>> try_create(OpenFileDescription&);
+    static ErrorOr<NonnullRefPtr<FileSystem>> try_create(OpenFileDescription&, ReadonlyBytes);
 
     virtual ~ISO9660FS() override;
     virtual StringView class_name() const override { return "ISO9660FS"sv; }
@@ -45,7 +45,7 @@ public:
 private:
     ISO9660FS(OpenFileDescription&);
 
-    virtual ErrorOr<void> prepare_to_clear_last_mount() override;
+    virtual ErrorOr<void> prepare_to_clear_last_mount(Inode&) override;
 
     virtual bool is_initialized_while_locked() override;
     virtual ErrorOr<void> initialize_while_locked() override;
@@ -59,7 +59,7 @@ private:
     ErrorOr<void> visit_directory_record(ISO::DirectoryRecordHeader const& record, Function<ErrorOr<RecursionDecision>(ISO::DirectoryRecordHeader const*)> const& visitor) const;
 
     OwnPtr<ISO::PrimaryVolumeDescriptor> m_primary_volume;
-    LockRefPtr<ISO9660Inode> m_root_inode;
+    RefPtr<ISO9660Inode> m_root_inode;
 
     mutable u32 m_cached_inode_count { 0 };
     HashMap<u32, NonnullLockRefPtr<ISO9660FSDirectoryEntry>> m_directory_entry_cache;

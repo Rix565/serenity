@@ -17,7 +17,7 @@ NonnullGCPtr<CollatorCompareFunction> CollatorCompareFunction::create(Realm& rea
 }
 
 CollatorCompareFunction::CollatorCompareFunction(Realm& realm, Collator& collator)
-    : NativeFunction(*realm.intrinsics().function_prototype())
+    : NativeFunction(realm.intrinsics().function_prototype())
     , m_collator(collator)
 {
 }
@@ -71,7 +71,7 @@ ThrowCompletionOr<Value> CollatorCompareFunction::call()
 void CollatorCompareFunction::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(&m_collator);
+    visitor.visit(m_collator);
 }
 
 }

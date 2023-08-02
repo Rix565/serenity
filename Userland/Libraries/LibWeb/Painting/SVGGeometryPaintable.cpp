@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, MacDue <macdue@dueutil.tech>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -26,6 +27,33 @@ Layout::SVGGeometryBox const& SVGGeometryPaintable::layout_box() const
     return static_cast<Layout::SVGGeometryBox const&>(layout_node());
 }
 
+Optional<HitTestResult> SVGGeometryPaintable::hit_test(CSSPixelPoint position, HitTestType type) const
+{
+    auto result = SVGGraphicsPaintable::hit_test(position, type);
+    if (!result.has_value())
+        return {};
+    auto& geometry_element = layout_box().dom_node();
+    if (auto transform = layout_box().layout_transform(); transform.has_value()) {
+        auto transformed_bounding_box = transform->map_to_quad(
+            const_cast<SVG::SVGGeometryElement&>(geometry_element).get_path().bounding_box());
+        if (!transformed_bounding_box.contains(position.to_type<double>().to_type<float>()))
+            return {};
+    }
+    return result;
+}
+
+static Gfx::Painter::WindingRule to_gfx_winding_rule(SVG::FillRule fill_rule)
+{
+    switch (fill_rule) {
+    case SVG::FillRule::Nonzero:
+        return Gfx::Painter::WindingRule::Nonzero;
+    case SVG::FillRule::Evenodd:
+        return Gfx::Painter::WindingRule::EvenOdd;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+}
+
 void SVGGeometryPaintable::paint(PaintContext& context, PaintPhase phase) const
 {
     if (!is_visible())
@@ -38,85 +66,84 @@ void SVGGeometryPaintable::paint(PaintContext& context, PaintPhase phase) const
 
     auto& geometry_element = layout_box().dom_node();
 
-    Gfx::AntiAliasingPainter painter { context.painter() };
-    auto& svg_context = context.svg_context();
+    auto const* svg_element = geometry_element.shadow_including_first_ancestor_of_type<SVG::SVGSVGElement>();
+    auto svg_element_rect = svg_element->paintable_box()->absolute_rect();
 
-    auto offset = svg_context.svg_element_position();
+    Gfx::AntiAliasingPainter painter { context.painter() };
+
+    // FIXME: This should not be trucated to an int.
+    Gfx::PainterStateSaver save_painter { context.painter() };
+    auto offset = context.floored_device_point(svg_element_rect.location()).to_type<int>().to_type<float>();
     painter.translate(offset);
 
-    auto const* svg_element = geometry_element.first_ancestor_of_type<SVG::SVGSVGElement>();
-    auto maybe_view_box = svg_element->view_box();
+    auto maybe_view_box = geometry_element.view_box();
 
-    context.painter().add_clip_rect(context.enclosing_device_rect(absolute_rect()).to_type<int>());
+    auto transform = layout_box().layout_transform();
+    if (!transform.has_value())
+        return;
 
-    Gfx::Path path = const_cast<SVG::SVGGeometryElement&>(geometry_element).get_path();
+    auto css_scale = context.device_pixels_per_css_pixel();
+    auto paint_transform = Gfx::AffineTransform {}.scale(css_scale, css_scale).multiply(*transform);
+    auto const& original_path = const_cast<SVG::SVGGeometryElement&>(geometry_element).get_path();
+    Gfx::Path path = original_path.copy_transformed(paint_transform);
 
-    if (maybe_view_box.has_value()) {
-        Gfx::Path new_path;
-        auto scaling = layout_box().viewbox_scaling();
-        auto origin = layout_box().viewbox_origin();
-
-        auto transform_point = [&scaling, &origin](Gfx::FloatPoint point) -> Gfx::FloatPoint {
-            auto new_point = point;
-            new_point.translate_by({ -origin.x(), -origin.y() });
-            new_point.scale_by(scaling);
-            return new_point;
-        };
-
-        for (auto& segment : path.segments()) {
-            switch (segment.type()) {
-            case Gfx::Segment::Type::Invalid:
-                break;
-            case Gfx::Segment::Type::MoveTo:
-                new_path.move_to(transform_point(segment.point()));
-                break;
-            case Gfx::Segment::Type::LineTo:
-                new_path.line_to(transform_point(segment.point()));
-                break;
-            case Gfx::Segment::Type::QuadraticBezierCurveTo: {
-                auto& quadratic_bezier_segment = static_cast<Gfx::QuadraticBezierCurveSegment const&>(segment);
-                new_path.quadratic_bezier_curve_to(transform_point(quadratic_bezier_segment.through()), transform_point(quadratic_bezier_segment.point()));
-                break;
-            }
-            case Gfx::Segment::Type::CubicBezierCurveTo: {
-                auto& cubic_bezier_segment = static_cast<Gfx::CubicBezierCurveSegment const&>(segment);
-                new_path.cubic_bezier_curve_to(transform_point(cubic_bezier_segment.through_0()), transform_point(cubic_bezier_segment.through_1()), transform_point(cubic_bezier_segment.point()));
-                break;
-            }
-            case Gfx::Segment::Type::EllipticalArcTo: {
-                auto& elliptical_arc_segment = static_cast<Gfx::EllipticalArcSegment const&>(segment);
-                new_path.elliptical_arc_to(transform_point(elliptical_arc_segment.point()), elliptical_arc_segment.radii().scaled(scaling, scaling), elliptical_arc_segment.x_axis_rotation(), elliptical_arc_segment.large_arc(), elliptical_arc_segment.sweep());
-                break;
-            }
-            }
-        }
-
-        path = new_path;
-    }
-
-    if (auto fill_color = geometry_element.fill_color().value_or(svg_context.fill_color()); fill_color.alpha() > 0) {
+    // Fills are computed as though all subpaths are closed (https://svgwg.org/svg2-draft/painting.html#FillProperties)
+    auto closed_path = [&] {
         // We need to fill the path before applying the stroke, however the filled
         // path must be closed, whereas the stroke path may not necessary be closed.
         // Copy the path and close it for filling, but use the previous path for stroke
-        auto closed_path = path;
-        closed_path.close();
+        auto copy = path;
+        copy.close_all_subpaths();
+        return copy;
+    };
 
-        // Fills are computed as though all paths are closed (https://svgwg.org/svg2-draft/painting.html#FillProperties)
+    // Note: This is assuming .x_scale() == .y_scale() (which it does currently).
+    auto viewbox_scale = paint_transform.x_scale();
+
+    auto svg_viewport = [&] {
+        if (maybe_view_box.has_value())
+            return Gfx::FloatRect { maybe_view_box->min_x, maybe_view_box->min_y, maybe_view_box->width, maybe_view_box->height };
+        return Gfx::FloatRect { { 0, 0 }, svg_element_rect.size().to_type<double>().to_type<float>() };
+    }();
+
+    SVG::SVGPaintContext paint_context {
+        .viewport = svg_viewport,
+        .path_bounding_box = original_path.bounding_box(),
+        .transform = paint_transform
+    };
+
+    auto fill_opacity = geometry_element.fill_opacity().value_or(1);
+    auto winding_rule = to_gfx_winding_rule(geometry_element.fill_rule().value_or(SVG::FillRule::Nonzero));
+    if (auto paint_style = geometry_element.fill_paint_style(paint_context); paint_style.has_value()) {
         painter.fill_path(
-            closed_path,
-            fill_color,
-            Gfx::Painter::WindingRule::EvenOdd);
+            closed_path(),
+            *paint_style,
+            fill_opacity,
+            winding_rule);
+    } else if (auto fill_color = geometry_element.fill_color(); fill_color.has_value()) {
+        painter.fill_path(
+            closed_path(),
+            fill_color->with_opacity(fill_opacity),
+            winding_rule);
     }
 
-    if (auto stroke_color = geometry_element.stroke_color().value_or(svg_context.stroke_color()); stroke_color.alpha() > 0) {
+    auto stroke_opacity = geometry_element.stroke_opacity().value_or(1);
+
+    // Note: This is assuming .x_scale() == .y_scale() (which it does currently).
+    float stroke_thickness = geometry_element.stroke_width().value_or(1) * viewbox_scale;
+
+    if (auto paint_style = geometry_element.stroke_paint_style(paint_context); paint_style.has_value()) {
         painter.stroke_path(
             path,
-            stroke_color,
-            geometry_element.stroke_width().value_or(svg_context.stroke_width()));
+            *paint_style,
+            stroke_thickness,
+            stroke_opacity);
+    } else if (auto stroke_color = geometry_element.stroke_color(); stroke_color.has_value()) {
+        painter.stroke_path(
+            path,
+            stroke_color->with_opacity(stroke_opacity),
+            stroke_thickness);
     }
-
-    painter.translate(-offset);
-    context.painter().clear_clip_rect();
 }
 
 }

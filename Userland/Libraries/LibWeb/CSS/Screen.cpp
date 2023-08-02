@@ -13,9 +13,9 @@
 
 namespace Web::CSS {
 
-JS::NonnullGCPtr<Screen> Screen::create(HTML::Window& window)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Screen>> Screen::create(HTML::Window& window)
 {
-    return window.heap().allocate<Screen>(window.realm(), window).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(window.heap().allocate<Screen>(window.realm(), window));
 }
 
 Screen::Screen(HTML::Window& window)
@@ -42,10 +42,10 @@ Gfx::IntRect Screen::screen_rect() const
 {
     auto screen_rect_in_css_pixels = window().page()->web_exposed_screen_area();
     return {
-        screen_rect_in_css_pixels.x().value(),
-        screen_rect_in_css_pixels.y().value(),
-        screen_rect_in_css_pixels.width().value(),
-        screen_rect_in_css_pixels.height().value()
+        screen_rect_in_css_pixels.x().to_int(),
+        screen_rect_in_css_pixels.y().to_int(),
+        screen_rect_in_css_pixels.width().to_int(),
+        screen_rect_in_css_pixels.height().to_int()
     };
 }
 

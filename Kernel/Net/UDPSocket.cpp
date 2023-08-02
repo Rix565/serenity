@@ -5,13 +5,13 @@
  */
 
 #include <AK/Singleton.h>
-#include <Kernel/Devices/RandomDevice.h>
+#include <Kernel/Devices/Generic/RandomDevice.h>
 #include <Kernel/Net/NetworkAdapter.h>
 #include <Kernel/Net/Routing.h>
 #include <Kernel/Net/UDP.h>
 #include <Kernel/Net/UDPSocket.h>
-#include <Kernel/Process.h>
-#include <Kernel/Random.h>
+#include <Kernel/Security/Random.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
@@ -38,9 +38,9 @@ MutexProtected<HashMap<u16, UDPSocket*>>& UDPSocket::sockets_by_port()
     return *s_map;
 }
 
-LockRefPtr<UDPSocket> UDPSocket::from_port(u16 port)
+RefPtr<UDPSocket> UDPSocket::from_port(u16 port)
 {
-    return sockets_by_port().with_shared([&](auto const& table) -> LockRefPtr<UDPSocket> {
+    return sockets_by_port().with_shared([&](auto const& table) -> RefPtr<UDPSocket> {
         auto it = table.find(port);
         if (it == table.end())
             return {};
@@ -60,9 +60,9 @@ UDPSocket::~UDPSocket()
     });
 }
 
-ErrorOr<NonnullLockRefPtr<UDPSocket>> UDPSocket::try_create(int protocol, NonnullOwnPtr<DoubleBuffer> receive_buffer)
+ErrorOr<NonnullRefPtr<UDPSocket>> UDPSocket::try_create(int protocol, NonnullOwnPtr<DoubleBuffer> receive_buffer)
 {
-    return adopt_nonnull_lock_ref_or_enomem(new (nothrow) UDPSocket(protocol, move(receive_buffer)));
+    return adopt_nonnull_ref_or_enomem(new (nothrow) UDPSocket(protocol, move(receive_buffer)));
 }
 
 ErrorOr<size_t> UDPSocket::protocol_size(ReadonlyBytes raw_ipv4_packet)
@@ -84,7 +84,8 @@ ErrorOr<size_t> UDPSocket::protocol_receive(ReadonlyBytes raw_ipv4_packet, UserO
 
 ErrorOr<size_t> UDPSocket::protocol_send(UserOrKernelBuffer const& data, size_t data_length)
 {
-    auto routing_decision = route_to(peer_address(), local_address(), bound_interface());
+    auto adapter = bound_interface().with([](auto& bound_device) -> RefPtr<NetworkAdapter> { return bound_device; });
+    auto routing_decision = route_to(peer_address(), local_address(), adapter);
     if (routing_decision.is_zero())
         return set_so_error(EHOSTUNREACH);
     auto ipv4_payload_offset = routing_decision.adapter->ipv4_payload_offset();
@@ -107,44 +108,47 @@ ErrorOr<size_t> UDPSocket::protocol_send(UserOrKernelBuffer const& data, size_t 
 
 ErrorOr<void> UDPSocket::protocol_connect(OpenFileDescription&)
 {
+    TRY(ensure_bound());
     set_role(Role::Connected);
     set_connected(true);
     return {};
 }
 
-ErrorOr<u16> UDPSocket::protocol_allocate_local_port()
-{
-    constexpr u16 first_ephemeral_port = 32768;
-    constexpr u16 last_ephemeral_port = 60999;
-    constexpr u16 ephemeral_port_range_size = last_ephemeral_port - first_ephemeral_port;
-    u16 first_scan_port = first_ephemeral_port + get_good_random<u16>() % ephemeral_port_range_size;
-
-    return sockets_by_port().with_exclusive([&](auto& table) -> ErrorOr<u16> {
-        for (u16 port = first_scan_port;;) {
-            auto it = table.find(port);
-            if (it == table.end()) {
-                set_local_port(port);
-                table.set(port, this);
-                return port;
-            }
-            ++port;
-            if (port > last_ephemeral_port)
-                port = first_ephemeral_port;
-            if (port == first_scan_port)
-                break;
-        }
-        return set_so_error(EADDRINUSE);
-    });
-}
-
 ErrorOr<void> UDPSocket::protocol_bind()
 {
-    return sockets_by_port().with_exclusive([&](auto& table) -> ErrorOr<void> {
-        if (table.contains(local_port()))
+    if (local_port() == 0) {
+        // Allocate an unused ephemeral port.
+        constexpr u16 first_ephemeral_port = 32768;
+        constexpr u16 last_ephemeral_port = 60999;
+        constexpr u16 ephemeral_port_range_size = last_ephemeral_port - first_ephemeral_port;
+        u16 first_scan_port = first_ephemeral_port + get_good_random<u16>() % ephemeral_port_range_size;
+
+        return sockets_by_port().with_exclusive([&](auto& table) -> ErrorOr<void> {
+            u16 port = first_scan_port;
+            while (true) {
+                auto it = table.find(port);
+                if (it == table.end()) {
+                    set_local_port(port);
+                    table.set(port, this);
+                    return {};
+                }
+                ++port;
+                if (port > last_ephemeral_port)
+                    port = first_ephemeral_port;
+                if (port == first_scan_port)
+                    break;
+            }
             return set_so_error(EADDRINUSE);
-        table.set(local_port(), this);
-        return {};
-    });
+        });
+    } else {
+        // Verify that the user-supplied port is not already used by someone else.
+        return sockets_by_port().with_exclusive([&](auto& table) -> ErrorOr<void> {
+            if (table.contains(local_port()))
+                return set_so_error(EADDRINUSE);
+            table.set(local_port(), this);
+            return {};
+        });
+    }
 }
 
 }

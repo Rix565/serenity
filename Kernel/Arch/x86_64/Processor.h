@@ -12,6 +12,7 @@
 #include <AK/Types.h>
 
 #include <Kernel/Arch/DeferredCallEntry.h>
+#include <Kernel/Arch/DeferredCallPool.h>
 #include <Kernel/Arch/ProcessorSpecificDataID.h>
 #include <Kernel/Arch/x86_64/ASM_wrapper.h>
 #include <Kernel/Arch/x86_64/CPUID.h>
@@ -19,7 +20,7 @@
 #include <Kernel/Arch/x86_64/SIMDState.h>
 #include <Kernel/Arch/x86_64/TSS.h>
 #include <Kernel/Forward.h>
-#include <Kernel/KString.h>
+#include <Kernel/Library/KString.h>
 
 #include <AK/Platform.h>
 VALIDATE_IS_X86()
@@ -44,8 +45,7 @@ extern "C" void thread_context_first_enter(void);
 extern "C" void exit_kernel_thread(void);
 extern "C" void do_assume_context(Thread* thread, u32 flags);
 
-struct [[gnu::aligned(64), gnu::packed]] FPUState
-{
+struct [[gnu::aligned(64), gnu::packed]] FPUState {
     SIMD::LegacyRegion legacy_region;
     SIMD::Header xsave_header;
 
@@ -55,6 +55,7 @@ struct [[gnu::aligned(64), gnu::packed]] FPUState
     u8 ext_save_area[256];
 };
 
+enum class InterruptsState;
 class Processor;
 // Note: We only support 64 processors at most at the moment,
 // so allocate 64 slots of inline capacity in the container.
@@ -101,9 +102,7 @@ class Processor {
     bool m_in_scheduler;
     Atomic<bool> m_halt_requested;
 
-    DeferredCallEntry* m_pending_deferred_calls; // in reverse order
-    DeferredCallEntry* m_free_deferred_call_pool_entry;
-    DeferredCallEntry m_deferred_call_pool[5];
+    DeferredCallPool m_deferred_call_pool {};
 
     void* m_processor_specific_data[(size_t)ProcessorSpecificDataID::__Count];
 
@@ -120,12 +119,6 @@ class Processor {
     static void smp_broadcast_message(ProcessorMessage& msg);
     static void smp_broadcast_wait_sync(ProcessorMessage& msg);
     static void smp_broadcast_halt();
-
-    void deferred_call_pool_init();
-    void deferred_call_execute_pending();
-    DeferredCallEntry* deferred_call_get_free();
-    void deferred_call_return_to_pool(DeferredCallEntry*);
-    void deferred_call_queue_entry(DeferredCallEntry*);
 
     void cpu_detect();
     void cpu_setup();
@@ -414,11 +407,13 @@ public:
 
     [[noreturn]] void initialize_context_switching(Thread& initial_thread);
     NEVER_INLINE void switch_context(Thread*& from_thread, Thread*& to_thread);
-    [[noreturn]] static void assume_context(Thread& thread, FlatPtr flags);
+    [[noreturn]] static void assume_context(Thread& thread, InterruptsState new_interrupts_state);
     FlatPtr init_context(Thread& thread, bool leave_crit);
     static ErrorOr<Vector<FlatPtr, 32>> capture_stack_trace(Thread& thread, size_t max_frames = 0);
 
     static StringView platform_string();
+
+    static void set_thread_specific_data(VirtualAddress thread_specific_data);
 };
 
 }

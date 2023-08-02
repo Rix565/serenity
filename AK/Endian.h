@@ -77,20 +77,8 @@ ALWAYS_INLINE T convert_between_host_and_network_endian(T value)
 }
 
 template<typename T>
-class LittleEndian;
-
-template<typename T>
-InputStream& operator>>(InputStream&, LittleEndian<T>&);
-
-template<typename T>
-OutputStream& operator<<(OutputStream&, LittleEndian<T>);
-
-template<typename T>
 class [[gnu::packed]] LittleEndian {
 public:
-    friend InputStream& operator>><T>(InputStream&, LittleEndian<T>&);
-    friend OutputStream& operator<< <T>(OutputStream&, LittleEndian<T>);
-
     constexpr LittleEndian() = default;
 
     constexpr LittleEndian(T value)
@@ -100,29 +88,13 @@ public:
 
     constexpr operator T() const { return convert_between_host_and_little_endian(m_value); }
 
-    // This returns the internal representation. In this case, that is the value stored in little endian format.
-    constexpr Bytes bytes() { return Bytes { &m_value, sizeof(m_value) }; }
-    constexpr ReadonlyBytes bytes() const { return ReadonlyBytes { &m_value, sizeof(m_value) }; }
-
 private:
     T m_value { 0 };
 };
 
 template<typename T>
-class BigEndian;
-
-template<typename T>
-InputStream& operator>>(InputStream&, BigEndian<T>&);
-
-template<typename T>
-OutputStream& operator<<(OutputStream&, BigEndian<T>);
-
-template<typename T>
 class [[gnu::packed]] BigEndian {
 public:
-    friend InputStream& operator>><T>(InputStream&, BigEndian<T>&);
-    friend OutputStream& operator<< <T>(OutputStream&, BigEndian<T>);
-
     constexpr BigEndian() = default;
 
     constexpr BigEndian(T value)
@@ -131,10 +103,6 @@ public:
     }
 
     constexpr operator T() const { return convert_between_host_and_big_endian(m_value); }
-
-    // This returns the internal representation. In this case, that is the value stored in big endian format.
-    constexpr Bytes bytes() { return Bytes { &m_value, sizeof(m_value) }; }
-    constexpr ReadonlyBytes bytes() const { return ReadonlyBytes { &m_value, sizeof(m_value) }; }
 
 private:
     T m_value { 0 };

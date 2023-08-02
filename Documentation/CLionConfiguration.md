@@ -12,10 +12,11 @@ After opening the `serenity` repository in CLion as a new project, the "`Open Pr
 
 `CMake Options`:
 ```
--GNinja
--DCMAKE_TOOLCHAIN_FILE=$CMakeProjectDir$/Build/x86_64/CMakeToolchain.txt
 -DCMAKE_PREFIX_PATH=$CMakeProjectDir$/Build/lagom-install
+-DCMAKE_TOOLCHAIN_FILE=$CMakeProjectDir$/Build/x86_64/CMakeToolchain.txt
 -DSERENITY_ARCH=x86_64
+-DSERENITY_CACHE_DIR=$CMakeProjectDir$/Build/caches
+-GNinja
 ```
 
 > CLion will complain that the toolchain file doesn't exist yet, if you haven't `cmake` for the SuperBuild step before. The SuperBuild configure step creates the Toolchain file.
@@ -23,7 +24,7 @@ After opening the `serenity` repository in CLion as a new project, the "`Open Pr
 
 `Build Directory`: `Build/x86_64`
 
-> _If you have not built the Toolchain at this point, please do so: `./Toolchain/BuildIt.sh`_
+> _If you have not built the Toolchain at this point, please do so: `./Toolchain/BuildGNU.sh`_
 
 > _If you have not built host tools from Lagom at this point, please do so: `./Meta/serenity.sh build` or `ninja -C Build/superbuild-x86_64` after running `cmake -GNinja -S Meta/CMake/Superbuild -B Build/superbuild-x86_64`_
 

@@ -7,7 +7,7 @@
 #include <AK/Singleton.h>
 #include <AK/Time.h>
 #include <Kernel/Debug.h>
-#include <Kernel/Devices/RandomDevice.h>
+#include <Kernel/Devices/Generic/RandomDevice.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
 #include <Kernel/Locking/MutexProtected.h>
 #include <Kernel/Net/EthernetFrameHeader.h>
@@ -17,8 +17,8 @@
 #include <Kernel/Net/Routing.h>
 #include <Kernel/Net/TCP.h>
 #include <Kernel/Net/TCPSocket.h>
-#include <Kernel/Process.h>
-#include <Kernel/Random.h>
+#include <Kernel/Security/Random.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
@@ -88,9 +88,9 @@ void TCPSocket::set_state(State new_state)
         evaluate_block_conditions();
 }
 
-static Singleton<MutexProtected<HashMap<IPv4SocketTuple, LockRefPtr<TCPSocket>>>> s_socket_closing;
+static Singleton<MutexProtected<HashMap<IPv4SocketTuple, RefPtr<TCPSocket>>>> s_socket_closing;
 
-MutexProtected<HashMap<IPv4SocketTuple, LockRefPtr<TCPSocket>>>& TCPSocket::closing_sockets()
+MutexProtected<HashMap<IPv4SocketTuple, RefPtr<TCPSocket>>>& TCPSocket::closing_sockets()
 {
     return *s_socket_closing;
 }
@@ -102,9 +102,9 @@ MutexProtected<HashMap<IPv4SocketTuple, TCPSocket*>>& TCPSocket::sockets_by_tupl
     return *s_socket_tuples;
 }
 
-LockRefPtr<TCPSocket> TCPSocket::from_tuple(IPv4SocketTuple const& tuple)
+RefPtr<TCPSocket> TCPSocket::from_tuple(IPv4SocketTuple const& tuple)
 {
-    return sockets_by_tuple().with_shared([&](auto const& table) -> LockRefPtr<TCPSocket> {
+    return sockets_by_tuple().with_shared([&](auto const& table) -> RefPtr<TCPSocket> {
         auto exact_match = table.get(tuple);
         if (exact_match.has_value())
             return { *exact_match.value() };
@@ -122,10 +122,10 @@ LockRefPtr<TCPSocket> TCPSocket::from_tuple(IPv4SocketTuple const& tuple)
         return {};
     });
 }
-ErrorOr<NonnullLockRefPtr<TCPSocket>> TCPSocket::try_create_client(IPv4Address const& new_local_address, u16 new_local_port, IPv4Address const& new_peer_address, u16 new_peer_port)
+ErrorOr<NonnullRefPtr<TCPSocket>> TCPSocket::try_create_client(IPv4Address const& new_local_address, u16 new_local_port, IPv4Address const& new_peer_address, u16 new_peer_port)
 {
     auto tuple = IPv4SocketTuple(new_local_address, new_local_port, new_peer_address, new_peer_port);
-    return sockets_by_tuple().with_exclusive([&](auto& table) -> ErrorOr<NonnullLockRefPtr<TCPSocket>> {
+    return sockets_by_tuple().with_exclusive([&](auto& table) -> ErrorOr<NonnullRefPtr<TCPSocket>> {
         if (table.contains(tuple))
             return EEXIST;
 
@@ -137,6 +137,7 @@ ErrorOr<NonnullLockRefPtr<TCPSocket>> TCPSocket::try_create_client(IPv4Address c
         client->set_local_port(new_local_port);
         client->set_peer_address(new_peer_address);
         client->set_peer_port(new_peer_port);
+        client->set_bound(true);
         client->set_direction(Direction::Incoming);
         client->set_originator(*this);
 
@@ -154,7 +155,7 @@ void TCPSocket::release_to_originator()
     m_originator.clear();
 }
 
-void TCPSocket::release_for_accept(NonnullLockRefPtr<TCPSocket> socket)
+void TCPSocket::release_for_accept(NonnullRefPtr<TCPSocket> socket)
 {
     VERIFY(m_pending_release_for_accept.contains(socket->tuple()));
     m_pending_release_for_accept.remove(socket->tuple());
@@ -175,11 +176,11 @@ TCPSocket::~TCPSocket()
     dbgln_if(TCP_SOCKET_DEBUG, "~TCPSocket in state {}", to_string(state()));
 }
 
-ErrorOr<NonnullLockRefPtr<TCPSocket>> TCPSocket::try_create(int protocol, NonnullOwnPtr<DoubleBuffer> receive_buffer)
+ErrorOr<NonnullRefPtr<TCPSocket>> TCPSocket::try_create(int protocol, NonnullOwnPtr<DoubleBuffer> receive_buffer)
 {
     // Note: Scratch buffer is only used for SOCK_STREAM sockets.
     auto scratch_buffer = TRY(KBuffer::try_create_with_size("TCPSocket: Scratch buffer"sv, 65536));
-    return adopt_nonnull_lock_ref_or_enomem(new (nothrow) TCPSocket(protocol, move(receive_buffer), move(scratch_buffer)));
+    return adopt_nonnull_ref_or_enomem(new (nothrow) TCPSocket(protocol, move(receive_buffer), move(scratch_buffer)));
 }
 
 ErrorOr<size_t> TCPSocket::protocol_size(ReadonlyBytes raw_ipv4_packet)
@@ -202,7 +203,8 @@ ErrorOr<size_t> TCPSocket::protocol_receive(ReadonlyBytes raw_ipv4_packet, UserO
 
 ErrorOr<size_t> TCPSocket::protocol_send(UserOrKernelBuffer const& data, size_t data_length)
 {
-    RoutingDecision routing_decision = route_to(peer_address(), local_address(), bound_interface());
+    auto adapter = bound_interface().with([](auto& bound_device) -> RefPtr<NetworkAdapter> { return bound_device; });
+    RoutingDecision routing_decision = route_to(peer_address(), local_address(), adapter);
     if (routing_decision.is_zero())
         return set_so_error(EHOSTUNREACH);
     size_t mss = routing_decision.adapter->mtu() - sizeof(IPv4Packet) - sizeof(TCPPacket);
@@ -220,7 +222,8 @@ ErrorOr<void> TCPSocket::send_ack(bool allow_duplicate)
 
 ErrorOr<void> TCPSocket::send_tcp_packet(u16 flags, UserOrKernelBuffer const* payload, size_t payload_size, RoutingDecision* user_routing_decision)
 {
-    RoutingDecision routing_decision = user_routing_decision ? *user_routing_decision : route_to(peer_address(), local_address(), bound_interface());
+    auto adapter = bound_interface().with([](auto& bound_device) -> RefPtr<NetworkAdapter> { return bound_device; });
+    RoutingDecision routing_decision = user_routing_decision ? *user_routing_decision : route_to(peer_address(), local_address(), adapter);
     if (routing_decision.is_zero())
         return set_so_error(EHOSTUNREACH);
 
@@ -319,6 +322,9 @@ void TCPSocket::receive_tcp_packet(TCPPacket const& packet, u16 size)
                     if (old_adapter)
                         old_adapter->release_packet_buffer(*packet.buffer);
                     TCPPacket& tcp_packet = *(TCPPacket*)(packet.buffer->buffer->data() + packet.ipv4_payload_offset);
+                    if (m_send_window_size != tcp_packet.window_size()) {
+                        m_send_window_size = tcp_packet.window_size();
+                    }
                     auto payload_size = packet.buffer->buffer->data() + packet.buffer->buffer->size() - (u8*)tcp_packet.payload();
                     unacked_packets.size -= payload_size;
                     evaluate_block_conditions();
@@ -352,7 +358,7 @@ bool TCPSocket::should_delay_next_ack() const
         return false;
 
     // RFC 1122 says we should not delay ACKs for more than 500 milliseconds.
-    if (kgettimeofday() >= m_last_ack_sent_time + Time::from_milliseconds(500))
+    if (kgettimeofday() >= m_last_ack_sent_time + Duration::from_milliseconds(500))
         return false;
 
     return true;
@@ -409,18 +415,46 @@ NetworkOrdered<u16> TCPSocket::compute_tcp_checksum(IPv4Address const& source, I
 
 ErrorOr<void> TCPSocket::protocol_bind()
 {
-    if (has_specific_local_address() && !m_adapter) {
-        m_adapter = NetworkingManagement::the().from_ipv4_address(local_address());
-        if (!m_adapter)
-            return set_so_error(EADDRNOTAVAIL);
-    }
+    dbgln_if(TCP_SOCKET_DEBUG, "TCPSocket::protocol_bind(), local_port() is {}", local_port());
+    // Check that we do have the address we're trying to bind to.
+    TRY(m_adapter.with([this](auto& adapter) -> ErrorOr<void> {
+        if (has_specific_local_address() && !adapter) {
+            adapter = NetworkingManagement::the().from_ipv4_address(local_address());
+            if (!adapter)
+                return set_so_error(EADDRNOTAVAIL);
+        }
+        return {};
+    }));
 
-    return {};
-}
+    if (local_port() == 0) {
+        // Allocate an unused ephemeral port.
+        constexpr u16 first_ephemeral_port = 32768;
+        constexpr u16 last_ephemeral_port = 60999;
+        constexpr u16 ephemeral_port_range_size = last_ephemeral_port - first_ephemeral_port;
+        u16 first_scan_port = first_ephemeral_port + get_good_random<u16>() % ephemeral_port_range_size;
 
-ErrorOr<void> TCPSocket::protocol_listen(bool did_allocate_port)
-{
-    if (!did_allocate_port) {
+        return sockets_by_tuple().with_exclusive([&](auto& table) -> ErrorOr<void> {
+            u16 port = first_scan_port;
+            while (true) {
+                IPv4SocketTuple proposed_tuple(local_address(), port, peer_address(), peer_port());
+
+                auto it = table.find(proposed_tuple);
+                if (it == table.end()) {
+                    set_local_port(port);
+                    table.set(proposed_tuple, this);
+                    dbgln_if(TCP_SOCKET_DEBUG, "...allocated port {}, tuple {}", port, proposed_tuple.to_string());
+                    return {};
+                }
+                ++port;
+                if (port > last_ephemeral_port)
+                    port = first_ephemeral_port;
+                if (port == first_scan_port)
+                    break;
+            }
+            return set_so_error(EADDRINUSE);
+        });
+    } else {
+        // Verify that the user-supplied port is not already used by someone else.
         bool ok = sockets_by_tuple().with_exclusive([&](auto& table) -> bool {
             if (table.contains(tuple()))
                 return false;
@@ -429,8 +463,12 @@ ErrorOr<void> TCPSocket::protocol_listen(bool did_allocate_port)
         });
         if (!ok)
             return set_so_error(EADDRINUSE);
+        return {};
     }
+}
 
+ErrorOr<void> TCPSocket::protocol_listen()
+{
     set_direction(Direction::Passive);
     set_state(State::Listen);
     set_setup_state(SetupState::Completed);
@@ -447,8 +485,7 @@ ErrorOr<void> TCPSocket::protocol_connect(OpenFileDescription& description)
     if (!has_specific_local_address())
         set_local_address(routing_decision.adapter->ipv4_address());
 
-    if (auto result = allocate_local_port_if_needed(); result.error_or_port.is_error())
-        return result.error_or_port.release_error();
+    TRY(ensure_bound());
 
     m_sequence_number = get_good_random<u32>();
     m_ack_number = 0;
@@ -481,33 +518,6 @@ ErrorOr<void> TCPSocket::protocol_connect(OpenFileDescription& description)
     return set_so_error(EINPROGRESS);
 }
 
-ErrorOr<u16> TCPSocket::protocol_allocate_local_port()
-{
-    constexpr u16 first_ephemeral_port = 32768;
-    constexpr u16 last_ephemeral_port = 60999;
-    constexpr u16 ephemeral_port_range_size = last_ephemeral_port - first_ephemeral_port;
-    u16 first_scan_port = first_ephemeral_port + get_good_random<u16>() % ephemeral_port_range_size;
-
-    return sockets_by_tuple().with_exclusive([&](auto& table) -> ErrorOr<u16> {
-        for (u16 port = first_scan_port;;) {
-            IPv4SocketTuple proposed_tuple(local_address(), port, peer_address(), peer_port());
-
-            auto it = table.find(proposed_tuple);
-            if (it == table.end()) {
-                set_local_port(port);
-                table.set(proposed_tuple, this);
-                return port;
-            }
-            ++port;
-            if (port > last_ephemeral_port)
-                port = first_ephemeral_port;
-            if (port == first_scan_port)
-                break;
-        }
-        return set_so_error(EADDRINUSE);
-    });
-}
-
 bool TCPSocket::protocol_is_disconnected() const
 {
     switch (m_state) {
@@ -528,7 +538,7 @@ void TCPSocket::shut_down_for_writing()
 {
     if (state() == State::Established) {
         dbgln_if(TCP_SOCKET_DEBUG, " Sending FIN from Established and moving into FinWait1");
-        (void)send_tcp_packet(TCPFlags::FIN);
+        (void)send_tcp_packet(TCPFlags::FIN | TCPFlags::ACK);
         set_state(State::FinWait1);
     } else {
         dbgln(" Shutting down TCPSocket for writing but not moving to FinWait1 since state is {}", to_string(state()));
@@ -583,7 +593,7 @@ void TCPSocket::retransmit_packets()
     for (decltype(m_retransmit_attempts) i = 0; i < m_retransmit_attempts; i++)
         retransmit_interval *= 2;
 
-    if (m_last_retransmit_time > now - Time::from_seconds(retransmit_interval))
+    if (m_last_retransmit_time > now - Duration::from_seconds(retransmit_interval))
         return;
 
     dbgln_if(TCP_SOCKET_DEBUG, "TCPSocket({}) handling retransmit", this);
@@ -598,7 +608,8 @@ void TCPSocket::retransmit_packets()
         return;
     }
 
-    auto routing_decision = route_to(peer_address(), local_address(), bound_interface());
+    auto adapter = bound_interface().with([](auto& bound_device) -> RefPtr<NetworkAdapter> { return bound_device; });
+    auto routing_decision = route_to(peer_address(), local_address(), adapter);
     if (routing_decision.is_zero())
         return;
 

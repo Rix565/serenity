@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,8 +11,8 @@
 #include <LibCore/AnonymousBuffer.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/Proxy.h>
+#include <LibCore/Socket.h>
 #include <LibIPC/Decoder.h>
-#include <LibIPC/Dictionary.h>
 #include <LibIPC/File.h>
 #include <fcntl.h>
 
@@ -20,6 +21,13 @@ namespace IPC {
 ErrorOr<size_t> Decoder::decode_size()
 {
     return static_cast<size_t>(TRY(decode<u32>()));
+}
+
+template<>
+ErrorOr<String> decode(Decoder& decoder)
+{
+    auto length = TRY(decoder.decode_size());
+    return String::from_stream(decoder.stream(), length);
 }
 
 template<>
@@ -62,25 +70,24 @@ ErrorOr<JsonValue> decode(Decoder& decoder)
 }
 
 template<>
+ErrorOr<Duration> decode(Decoder& decoder)
+{
+    auto nanoseconds = TRY(decoder.decode<i64>());
+    return AK::Duration::from_nanoseconds(nanoseconds);
+}
+
+template<>
+ErrorOr<UnixDateTime> decode(Decoder& decoder)
+{
+    auto nanoseconds = TRY(decoder.decode<i64>());
+    return AK::UnixDateTime::from_nanoseconds_since_epoch(nanoseconds);
+}
+
+template<>
 ErrorOr<URL> decode(Decoder& decoder)
 {
     auto url = TRY(decoder.decode<DeprecatedString>());
     return URL { url };
-}
-
-template<>
-ErrorOr<Dictionary> decode(Decoder& decoder)
-{
-    auto size = TRY(decoder.decode_size());
-    Dictionary dictionary {};
-
-    for (size_t i = 0; i < size; ++i) {
-        auto key = TRY(decoder.decode<DeprecatedString>());
-        auto value = TRY(decoder.decode<DeprecatedString>());
-        dictionary.add(move(key), move(value));
-    }
-
-    return dictionary;
 }
 
 template<>

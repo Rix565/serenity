@@ -6,8 +6,9 @@
 
 #pragma once
 
+#include <AK/Error.h>
+#include <AK/Stream.h>
 #include <AK/Types.h>
-#include <LibCore/Stream.h>
 
 namespace Debug::Dwarf {
 
@@ -54,14 +55,14 @@ struct [[gnu::packed]] CompilationUnitHeader {
     u32 abbrev_offset() const { return (common.version <= 4) ? v4.abbrev_offset : v5.abbrev_offset; }
     u8 address_size() const { return (common.version <= 4) ? v4.address_size : v5.address_size; }
 
-    static ErrorOr<CompilationUnitHeader> read_from_stream(Core::Stream::Stream& stream)
+    static ErrorOr<CompilationUnitHeader> read_from_stream(Stream& stream)
     {
         CompilationUnitHeader header;
-        TRY(stream.read_entire_buffer(Bytes { &header.common, sizeof(header.common) }));
+        TRY(stream.read_until_filled(Bytes { &header.common, sizeof(header.common) }));
         if (header.common.version <= 4)
-            TRY(stream.read_entire_buffer(Bytes { &header.v4, sizeof(header.v4) }));
+            TRY(stream.read_until_filled(Bytes { &header.v4, sizeof(header.v4) }));
         else
-            TRY(stream.read_entire_buffer(Bytes { &header.v5, sizeof(header.v5) }));
+            TRY(stream.read_until_filled(Bytes { &header.v5, sizeof(header.v5) }));
         return header;
     }
 };

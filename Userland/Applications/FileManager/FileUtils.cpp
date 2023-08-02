@@ -8,8 +8,10 @@
 #include "FileUtils.h"
 #include "FileOperationProgressWidget.h"
 #include <AK/LexicalPath.h>
-#include <LibCore/Stream.h>
+#include <LibCore/MimeData.h>
 #include <LibCore/System.h>
+#include <LibFileSystem/FileSystem.h>
+#include <LibGUI/Event.h>
 #include <LibGUI/MessageBox.h>
 #include <unistd.h>
 
@@ -21,7 +23,7 @@ void delete_paths(Vector<DeprecatedString> const& paths, bool should_confirm, GU
 {
     DeprecatedString message;
     if (paths.size() == 1) {
-        message = DeprecatedString::formatted("Are you sure you want to delete {}?", LexicalPath::basename(paths[0]));
+        message = DeprecatedString::formatted("Are you sure you want to delete \"{}\"?", LexicalPath::basename(paths[0]));
     } else {
         message = DeprecatedString::formatted("Are you sure you want to delete {} files?", paths.size());
     }
@@ -29,7 +31,7 @@ void delete_paths(Vector<DeprecatedString> const& paths, bool should_confirm, GU
     if (should_confirm) {
         auto result = GUI::MessageBox::show(parent_window,
             message,
-            "Confirm deletion"sv,
+            "Confirm Deletion"sv,
             GUI::MessageBox::Type::Warning,
             GUI::MessageBox::InputType::OKCancel);
         if (result == GUI::MessageBox::ExecResult::Cancel)
@@ -96,8 +98,8 @@ ErrorOr<void> run_file_operation(FileOperation operation, Vector<DeprecatedStrin
         VERIFY_NOT_REACHED();
     }
 
-    auto pipe_input_file = TRY(Core::Stream::File::adopt_fd(pipe_fds[0], Core::Stream::OpenMode::Read));
-    auto buffered_pipe = TRY(Core::Stream::BufferedFile::create(move(pipe_input_file)));
+    auto pipe_input_file = TRY(Core::File::adopt_fd(pipe_fds[0], Core::File::OpenMode::Read));
+    auto buffered_pipe = TRY(Core::InputBufferedFile::create(move(pipe_input_file)));
 
     (void)TRY(window->set_main_widget<FileOperationProgressWidget>(operation, move(buffered_pipe), pipe_fds[0]));
     window->resize(320, 190);
@@ -106,6 +108,42 @@ ErrorOr<void> run_file_operation(FileOperation operation, Vector<DeprecatedStrin
     window->show();
 
     return {};
+}
+
+ErrorOr<bool> handle_drop(GUI::DropEvent const& event, DeprecatedString const& destination, GUI::Window* window)
+{
+    bool has_accepted_drop = false;
+
+    if (!event.mime_data().has_urls())
+        return has_accepted_drop;
+    auto const urls = event.mime_data().urls();
+    if (urls.is_empty()) {
+        dbgln("No files to drop");
+        return has_accepted_drop;
+    }
+
+    auto const target = LexicalPath::canonicalized_path(destination);
+
+    if (!FileSystem::is_directory(target))
+        return has_accepted_drop;
+
+    Vector<DeprecatedString> paths_to_copy;
+    for (auto& url_to_copy : urls) {
+        auto file_path = url_to_copy.serialize_path();
+        if (!url_to_copy.is_valid() || file_path == target)
+            continue;
+        auto new_path = DeprecatedString::formatted("{}/{}", target, LexicalPath::basename(file_path));
+        if (file_path == new_path)
+            continue;
+
+        paths_to_copy.append(file_path);
+        has_accepted_drop = true;
+    }
+
+    if (!paths_to_copy.is_empty())
+        TRY(run_file_operation(FileOperation::Copy, paths_to_copy, target, window));
+
+    return has_accepted_drop;
 }
 
 }

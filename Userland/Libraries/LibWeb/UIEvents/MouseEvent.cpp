@@ -13,7 +13,7 @@
 
 namespace Web::UIEvents {
 
-MouseEvent::MouseEvent(JS::Realm& realm, DeprecatedFlyString const& event_name, MouseEventInit const& event_init)
+MouseEvent::MouseEvent(JS::Realm& realm, FlyString const& event_name, MouseEventInit const& event_init)
     : UIEvent(realm, event_name, event_init)
     , m_offset_x(event_init.offset_x)
     , m_offset_y(event_init.offset_y)
@@ -56,20 +56,20 @@ static i16 determine_button(unsigned mouse_button)
     }
 }
 
-MouseEvent* MouseEvent::create(JS::Realm& realm, DeprecatedFlyString const& event_name, MouseEventInit const& event_init)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<MouseEvent>> MouseEvent::create(JS::Realm& realm, FlyString const& event_name, MouseEventInit const& event_init)
 {
-    return realm.heap().allocate<MouseEvent>(realm, realm, event_name, event_init).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<MouseEvent>(realm, realm, event_name, event_init));
 }
 
-MouseEvent* MouseEvent::create_from_platform_event(JS::Realm& realm, DeprecatedFlyString const& event_name, CSSPixelPoint offset, CSSPixelPoint client_offset, CSSPixelPoint page_offset, unsigned buttons, unsigned mouse_button)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<MouseEvent>> MouseEvent::create_from_platform_event(JS::Realm& realm, FlyString const& event_name, CSSPixelPoint offset, CSSPixelPoint client_offset, CSSPixelPoint page_offset, unsigned buttons, unsigned mouse_button)
 {
     MouseEventInit event_init {};
-    event_init.offset_x = static_cast<double>(offset.x().value());
-    event_init.offset_y = static_cast<double>(offset.y().value());
-    event_init.client_x = static_cast<double>(client_offset.x().value());
-    event_init.client_y = static_cast<double>(client_offset.y().value());
-    event_init.page_x = static_cast<double>(page_offset.x().value());
-    event_init.page_y = static_cast<double>(page_offset.y().value());
+    event_init.offset_x = offset.x().to_double();
+    event_init.offset_y = offset.y().to_double();
+    event_init.client_x = client_offset.x().to_double();
+    event_init.client_y = client_offset.y().to_double();
+    event_init.page_x = page_offset.x().to_double();
+    event_init.page_y = page_offset.y().to_double();
     event_init.button = determine_button(mouse_button);
     event_init.buttons = buttons;
     return MouseEvent::create(realm, event_name, event_init);
@@ -77,7 +77,7 @@ MouseEvent* MouseEvent::create_from_platform_event(JS::Realm& realm, DeprecatedF
 
 void MouseEvent::set_event_characteristics()
 {
-    if (type().is_one_of(EventNames::mousedown, EventNames::mousemove, EventNames::mouseout, EventNames::mouseover, EventNames::mouseup, HTML::EventNames::click)) {
+    if (type().is_one_of(EventNames::mousedown, EventNames::mousemove, EventNames::mouseout, EventNames::mouseover, EventNames::mouseup, HTML::EventNames::click, EventNames::dblclick, EventNames::contextmenu)) {
         set_bubbles(true);
         set_cancelable(true);
         set_composed(true);

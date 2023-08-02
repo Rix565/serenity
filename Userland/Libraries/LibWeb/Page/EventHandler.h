@@ -12,6 +12,7 @@
 #include <Kernel/API/KeyCode.h>
 #include <LibGUI/Forward.h>
 #include <LibGfx/Forward.h>
+#include <LibJS/Heap/GCPtr.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Page/EditEventHandler.h>
 #include <LibWeb/PixelUnits.h>
@@ -40,17 +41,20 @@ private:
     bool focus_next_element();
     bool focus_previous_element();
 
-    bool fire_keyboard_event(DeprecatedFlyString const& event_name, HTML::BrowsingContext& browsing_context, KeyCode key, unsigned modifiers, u32 code_point);
+    bool fire_keyboard_event(FlyString const& event_name, HTML::BrowsingContext& browsing_context, KeyCode key, unsigned modifiers, u32 code_point);
     CSSPixelPoint compute_mouse_event_client_offset(CSSPixelPoint event_page_position) const;
     CSSPixelPoint compute_mouse_event_page_offset(CSSPixelPoint event_client_offset) const;
 
-    Layout::InitialContainingBlock* layout_root();
-    Layout::InitialContainingBlock const* layout_root() const;
+    struct Target {
+        JS::GCPtr<Painting::Paintable> paintable;
+        Optional<int> index_in_node;
+    };
+    Optional<Target> target_for_mouse_position(CSSPixelPoint position);
 
     Painting::PaintableBox* paint_root();
     Painting::PaintableBox const* paint_root() const;
 
-    HTML::BrowsingContext& m_browsing_context;
+    JS::NonnullGCPtr<HTML::BrowsingContext> m_browsing_context;
 
     bool m_in_mouse_selection { false };
 

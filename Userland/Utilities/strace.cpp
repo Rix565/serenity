@@ -6,12 +6,13 @@
 
 #include <AK/Assertions.h>
 #include <AK/Format.h>
+#include <AK/HashTable.h>
 #include <AK/IPv4Address.h>
 #include <AK/StdLibExtras.h>
 #include <AK/Types.h>
 #include <Kernel/API/SyscallString.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
 #include <errno.h>
@@ -156,6 +157,8 @@ HANDLE(KEYBOARD_IOCTL_SET_CAPS_LOCK)
 HANDLE(SIOCSIFADDR)
 HANDLE(SIOCGIFADDR)
 HANDLE(SIOCGIFHWADDR)
+HANDLE(SIOCGIFNAME)
+HANDLE(SIOCGIFINDEX)
 HANDLE(SIOCGIFNETMASK)
 HANDLE(SIOCSIFNETMASK)
 HANDLE(SIOCGIFBRDADDR)
@@ -576,6 +579,15 @@ static void format_close(FormattedSyscallBuilder& builder, int fd)
     builder.add_arguments(fd);
 }
 
+static ErrorOr<void> format_pledge(FormattedSyscallBuilder& builder, Syscall::SC_pledge_params* params_p)
+{
+    auto params = TRY(copy_from_process(params_p));
+    builder.add_arguments(
+        StringArgument { params.promises },
+        StringArgument { params.execpromises });
+    return {};
+}
+
 static ErrorOr<void> format_poll(FormattedSyscallBuilder& builder, Syscall::SC_poll_params* params_p)
 {
     // TODO: format fds and sigmask properly
@@ -689,11 +701,6 @@ static void format_dbgputstr(FormattedSyscallBuilder& builder, char* characters,
     builder.add_argument(StringArgument { { characters, size }, "\0\n"sv });
 }
 
-static void format_get_process_name(FormattedSyscallBuilder& builder, char* buffer, size_t buffer_size)
-{
-    builder.add_argument(StringArgument { { buffer, buffer_size }, "\0"sv });
-}
-
 static ErrorOr<void> format_syscall(FormattedSyscallBuilder& builder, Syscall::Function syscall_function, syscall_arg_t arg1, syscall_arg_t arg2, syscall_arg_t arg3, syscall_arg_t res)
 {
     enum ResultType {
@@ -729,9 +736,6 @@ static ErrorOr<void> format_syscall(FormattedSyscallBuilder& builder, Syscall::F
         format_chdir(builder, (char const*)arg1, (size_t)arg2);
         result_type = Int;
         break;
-    case SC_get_process_name:
-        format_get_process_name(builder, (char*)arg1, (size_t)arg2);
-        break;
     case SC_getrandom:
         format_getrandom(builder, (void*)arg1, (size_t)arg2, (unsigned)arg3);
         break;
@@ -753,6 +757,9 @@ static ErrorOr<void> format_syscall(FormattedSyscallBuilder& builder, Syscall::F
         break;
     case SC_open:
         TRY(format_open(builder, (Syscall::SC_open_params*)arg1));
+        break;
+    case SC_pledge:
+        TRY(format_pledge(builder, (Syscall::SC_pledge_params*)arg1));
         break;
     case SC_poll:
         TRY(format_poll(builder, (Syscall::SC_poll_params*)arg1));
@@ -818,8 +825,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     Vector<StringView> child_argv;
 
     StringView output_filename;
-    char const* exclude_syscalls_option = nullptr;
-    char const* include_syscalls_option = nullptr;
+    StringView exclude_syscalls_option;
+    StringView include_syscalls_option;
     HashTable<StringView> exclude_syscalls;
     HashTable<StringView> include_syscalls;
 
@@ -836,12 +843,12 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     parser.parse(arguments);
 
     auto trace_file = output_filename.is_empty()
-        ? TRY(Core::Stream::File::standard_error())
-        : TRY(Core::Stream::File::open(output_filename, Core::Stream::OpenMode::Write));
+        ? TRY(Core::File::standard_error())
+        : TRY(Core::File::open(output_filename, Core::File::OpenMode::Write));
 
-    auto parse_syscalls = [](char const* option, auto& hash_table) {
-        if (option != nullptr) {
-            for (auto syscall : StringView { option, strlen(option) }.split_view(','))
+    auto parse_syscalls = [](StringView option, auto& hash_table) {
+        if (!option.is_empty()) {
+            for (auto syscall : option.split_view(','))
                 hash_table.set(syscall);
         }
     };
@@ -931,6 +938,6 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         FormattedSyscallBuilder builder(syscall_name);
         TRY(format_syscall(builder, syscall_function, arg1, arg2, arg3, res));
 
-        TRY(trace_file->write(builder.string_view().bytes()));
+        TRY(trace_file->write_until_depleted(builder.string_view().bytes()));
     }
 }

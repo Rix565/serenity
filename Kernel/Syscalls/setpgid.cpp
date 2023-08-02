@@ -4,51 +4,59 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <Kernel/InterruptDisabler.h>
-#include <Kernel/Process.h>
 #include <Kernel/TTY/TTY.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
 ErrorOr<FlatPtr> Process::sys$getsid(pid_t pid)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
-    if (pid == 0)
+    if (pid == 0 || pid == this->pid())
         return sid().value();
-    auto process = Process::from_pid_in_same_jail(pid);
-    if (!process)
+    auto peer = Process::from_pid_in_same_jail(pid);
+    if (!peer)
         return ESRCH;
-    if (sid() != process->sid())
+    auto peer_sid = peer->sid();
+    if (sid() != peer_sid)
         return EPERM;
-    return process->sid().value();
+    return peer_sid.value();
 }
 
 ErrorOr<FlatPtr> Process::sys$setsid()
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::proc));
-    InterruptDisabler disabler;
-    bool found_process_with_same_pgid_as_my_pid = false;
-    TRY(Process::for_each_in_pgrp_in_same_jail(pid().value(), [&](auto&) -> ErrorOr<void> {
-        found_process_with_same_pgid_as_my_pid = true;
-        return {};
-    }));
-    if (found_process_with_same_pgid_as_my_pid)
-        return EPERM;
-    // Create a new Session and a new ProcessGroup.
 
-    m_pg = TRY(ProcessGroup::try_create(ProcessGroupID(pid().value())));
-    m_tty = nullptr;
-    return with_mutable_protected_data([&](auto& protected_data) -> ErrorOr<FlatPtr> {
-        protected_data.sid = pid().value();
-        return protected_data.sid.value();
+    // NOTE: ProcessGroup::create_if_unused_pgid() will fail with EPERM
+    //       if a process group with the same PGID already exists.
+    auto process_group = TRY(ProcessGroup::create_if_unused_pgid(ProcessGroupID(pid().value())));
+
+    auto new_sid = SessionID(pid().value());
+    auto credentials = this->credentials();
+    auto new_credentials = TRY(Credentials::create(
+        credentials->uid(),
+        credentials->gid(),
+        credentials->euid(),
+        credentials->egid(),
+        credentials->suid(),
+        credentials->sgid(),
+        credentials->extra_gids(),
+        new_sid,
+        credentials->pgid()));
+
+    with_mutable_protected_data([&](auto& protected_data) {
+        protected_data.tty = nullptr;
+        protected_data.process_group = move(process_group);
+        protected_data.credentials = move(new_credentials);
     });
+    return new_sid.value();
 }
 
 ErrorOr<FlatPtr> Process::sys$getpgid(pid_t pid)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
     if (pid == 0)
         return pgid().value();
@@ -60,7 +68,7 @@ ErrorOr<FlatPtr> Process::sys$getpgid(pid_t pid)
 
 ErrorOr<FlatPtr> Process::sys$getpgrp()
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
     return pgid().value();
 }
@@ -80,7 +88,7 @@ SessionID Process::get_sid_from_pgid(ProcessGroupID pgid)
 
 ErrorOr<FlatPtr> Process::sys$setpgid(pid_t specified_pid, pid_t specified_pgid)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::proc));
     ProcessID pid = specified_pid ? ProcessID(specified_pid) : this->pid();
     if (specified_pgid < 0) {
@@ -119,9 +127,9 @@ ErrorOr<FlatPtr> Process::sys$setpgid(pid_t specified_pid, pid_t specified_pgid)
         return EPERM;
     }
     // FIXME: There are more EPERM conditions to check for here..
-    process->m_pg = TRY(ProcessGroup::try_find_or_create(new_pgid));
-    return with_mutable_protected_data([&](auto& protected_data) -> ErrorOr<FlatPtr> {
-        auto credentials = this->credentials();
+    auto process_group = TRY(ProcessGroup::find_or_create(new_pgid));
+    return process->with_mutable_protected_data([&process, &process_group, new_pgid](auto& protected_data) -> ErrorOr<FlatPtr> {
+        auto credentials = process->credentials();
 
         auto new_credentials = TRY(Credentials::create(
             credentials->uid(),
@@ -131,10 +139,11 @@ ErrorOr<FlatPtr> Process::sys$setpgid(pid_t specified_pid, pid_t specified_pgid)
             credentials->suid(),
             credentials->sgid(),
             credentials->extra_gids(),
-            new_sid,
+            credentials->sid(),
             new_pgid));
 
         protected_data.credentials = move(new_credentials);
+        protected_data.process_group = move(process_group);
         return 0;
     });
 }

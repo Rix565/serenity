@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2020, Nico Weber <thakis@chromium.org>
  * Copyright (c) 2021, Petróczi Zoltán <petroczizoltan@tutanota.com>
  * Copyright (c) 2022, Tim Flynn <trflynn89@serenityos.org>
@@ -131,8 +131,8 @@ static double parse_simplified_iso8601(DeprecatedString const& iso_8601)
 
     // We parsed a valid date simplified ISO 8601 string.
     VERIFY(year.has_value()); // A valid date string always has at least a year.
-    auto time = AK::Time::from_timestamp(*year, month.value_or(1), day.value_or(1), hours.value_or(0), minutes.value_or(0), seconds.value_or(0), milliseconds.value_or(0));
-    auto time_ms = static_cast<double>(time.to_milliseconds());
+    auto time = AK::UnixDateTime::from_unix_time_parts(*year, month.value_or(1), day.value_or(1), hours.value_or(0), minutes.value_or(0), seconds.value_or(0), milliseconds.value_or(0));
+    auto time_ms = static_cast<double>(time.milliseconds_since_epoch());
 
     // https://tc39.es/ecma262/#sec-date.parse:
     // "When the UTC offset representation is absent, date-only forms are interpreted as a UTC time and date-time forms are interpreted as a local time."
@@ -147,10 +147,13 @@ static double parse_simplified_iso8601(DeprecatedString const& iso_8601)
     return time_clip(time_ms);
 }
 
-static constexpr AK::Array<StringView, 3> extra_formats = {
+static constexpr AK::Array<StringView, 6> extra_formats = {
     "%a %b %e %T %z %Y"sv,
     "%m/%e/%Y"sv,
     "%m/%e/%Y %R %z"sv,
+    "%Y/%m/%e %R"sv,
+    "%Y-%m-%e %R"sv,
+    "%B %e, %Y %T"sv,
 };
 
 static double parse_date_string(DeprecatedString const& date_string)
@@ -163,6 +166,8 @@ static double parse_date_string(DeprecatedString const& date_string)
     // Parse formats of this type: "Wed Apr 17 23:08:53 +0000 2019"
     // And: "4/17/2019"
     // And: "12/05/2022 10:00 -0800"
+    // And: "2014/11/14 13:05" or "2014-11-14 13:05"
+    // And: "June 5, 2023 17:00:00"
     // FIXME: Exactly what timezone and which additional formats we should support is unclear.
     //        Both Chrome and Firefox seem to support "4/17/2019 11:08 PM +0000" with most parts
     //        being optional, however this is not clearly documented anywhere.
@@ -176,7 +181,7 @@ static double parse_date_string(DeprecatedString const& date_string)
 }
 
 DateConstructor::DateConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.Date.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.Date.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
@@ -203,7 +208,7 @@ ThrowCompletionOr<Value> DateConstructor::call()
 {
     // 1. If NewTarget is undefined, then
     //     a. Let now be the time value (UTC) identifying the current time.
-    auto now = AK::Time::now_realtime().to_milliseconds();
+    auto now = AK::UnixDateTime::now().milliseconds_since_epoch();
 
     //     b. Return ToDateString(now).
     return PrimitiveString::create(vm(), to_date_string(now));
@@ -220,7 +225,7 @@ ThrowCompletionOr<NonnullGCPtr<Object>> DateConstructor::construct(FunctionObjec
     // 3. If numberOfArgs = 0, then
     if (vm.argument_count() == 0) {
         // a. Let dv be the time value (UTC) identifying the current time.
-        auto now = AK::Time::now_realtime().to_milliseconds();
+        auto now = AK::UnixDateTime::now().milliseconds_since_epoch();
         date_value = static_cast<double>(now);
     }
     // 4. Else if numberOfArgs = 1, then

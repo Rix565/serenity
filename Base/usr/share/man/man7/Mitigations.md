@@ -95,7 +95,7 @@ Kernel: Add a basic implementation of unveil()
 `jails` are mitigation originating from FreeBSD.
 It allows a program to be placed inside a lightweight OS-level virtualization environment.
 
-Current restrictions on jailed processes:
+Current restrictions on jailed processes (configurable when creating a Jail):
 - Process ID view isolation, being limited (both in `/proc` and `/sys/kernel/processes`) to only processes that share the same jail.
 
 Special restrictions on filesystem also apply:
@@ -341,7 +341,7 @@ Build + LibC: Enable -fstack-protector-strong in user space
 
 The kernel applies a exploit mitigation technique where vulnerable data
 related to the state of a process is separated out into it's own region
-in memory which is always remmaped as read-only after it's initialized
+in memory which is always remapped as read-only after it's initialized
 or updated. This means that an attacker needs more than an arbitrary
 kernel write primitive to be able to elevate a process to root for example.
 

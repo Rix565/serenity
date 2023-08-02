@@ -7,20 +7,24 @@
 #include <AK/StringBuilder.h>
 #include <LibJS/Interpreter.h>
 #include <LibWeb/ARIA/Roles.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/IDLEventListener.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/HTML/BrowsingContext.h>
-#include <LibWeb/HTML/BrowsingContextContainer.h>
 #include <LibWeb/HTML/DOMStringMap.h>
 #include <LibWeb/HTML/EventHandler.h>
 #include <LibWeb/HTML/Focus.h>
 #include <LibWeb/HTML/HTMLAnchorElement.h>
 #include <LibWeb/HTML/HTMLAreaElement.h>
+#include <LibWeb/HTML/HTMLBaseElement.h>
 #include <LibWeb/HTML/HTMLBodyElement.h>
 #include <LibWeb/HTML/HTMLElement.h>
+#include <LibWeb/HTML/NavigableContainer.h>
 #include <LibWeb/HTML/VisibilityState.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/Infra/CharacterTypes.h>
+#include <LibWeb/Infra/Strings.h>
 #include <LibWeb/Layout/Box.h>
 #include <LibWeb/Layout/BreakNode.h>
 #include <LibWeb/Layout/TextNode.h>
@@ -45,7 +49,9 @@ JS::ThrowCompletionOr<void> HTMLElement::initialize(JS::Realm& realm)
     MUST_OR_THROW_OOM(Base::initialize(realm));
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLElementPrototype>(realm, "HTMLElement"));
 
-    m_dataset = DOMStringMap::create(*this);
+    m_dataset = TRY(Bindings::throw_dom_exception_if_needed(realm.vm(), [&]() {
+        return DOMStringMap::create(*this);
+    }));
 
     return {};
 }
@@ -61,7 +67,7 @@ DeprecatedString HTMLElement::dir() const
 {
     auto dir = attribute(HTML::AttributeNames::dir);
 #define __ENUMERATE_HTML_ELEMENT_DIR_ATTRIBUTE(keyword) \
-    if (dir.equals_ignoring_case(#keyword##sv))         \
+    if (dir.equals_ignoring_ascii_case(#keyword##sv))   \
         return #keyword##sv;
     ENUMERATE_HTML_ELEMENT_DIR_ATTRIBUTES
 #undef __ENUMERATE_HTML_ELEMENT_DIR_ATTRIBUTE
@@ -74,22 +80,9 @@ void HTMLElement::set_dir(DeprecatedString const& dir)
     MUST(set_attribute(HTML::AttributeNames::dir, dir));
 }
 
-HTMLElement::ContentEditableState HTMLElement::content_editable_state() const
-{
-    auto contenteditable = attribute(HTML::AttributeNames::contenteditable);
-    // "true", an empty string or a missing value map to the "true" state.
-    if ((!contenteditable.is_null() && contenteditable.is_empty()) || contenteditable.equals_ignoring_case("true"sv))
-        return ContentEditableState::True;
-    // "false" maps to the "false" state.
-    if (contenteditable.equals_ignoring_case("false"sv))
-        return ContentEditableState::False;
-    // Having no such attribute or an invalid value maps to the "inherit" state.
-    return ContentEditableState::Inherit;
-}
-
 bool HTMLElement::is_editable() const
 {
-    switch (content_editable_state()) {
+    switch (m_content_editable_state) {
     case ContentEditableState::True:
         return true;
     case ContentEditableState::False:
@@ -103,7 +96,7 @@ bool HTMLElement::is_editable() const
 
 DeprecatedString HTMLElement::content_editable() const
 {
-    switch (content_editable_state()) {
+    switch (m_content_editable_state) {
     case ContentEditableState::True:
         return "true";
     case ContentEditableState::False:
@@ -118,15 +111,15 @@ DeprecatedString HTMLElement::content_editable() const
 // https://html.spec.whatwg.org/multipage/interaction.html#contenteditable
 WebIDL::ExceptionOr<void> HTMLElement::set_content_editable(DeprecatedString const& content_editable)
 {
-    if (content_editable.equals_ignoring_case("inherit"sv)) {
+    if (content_editable.equals_ignoring_ascii_case("inherit"sv)) {
         remove_attribute(HTML::AttributeNames::contenteditable);
         return {};
     }
-    if (content_editable.equals_ignoring_case("true"sv)) {
+    if (content_editable.equals_ignoring_ascii_case("true"sv)) {
         MUST(set_attribute(HTML::AttributeNames::contenteditable, "true"));
         return {};
     }
-    if (content_editable.equals_ignoring_case("false"sv)) {
+    if (content_editable.equals_ignoring_ascii_case("false"sv)) {
         MUST(set_attribute(HTML::AttributeNames::contenteditable, "false"));
         return {};
     }
@@ -174,7 +167,7 @@ int HTMLElement::offset_top() const
         return 0;
     auto position = layout_node()->box_type_agnostic_position();
     auto parent_position = parent_element()->layout_node()->box_type_agnostic_position();
-    return position.y().value() - parent_position.y().value();
+    return position.y().to_int() - parent_position.y().to_int();
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-htmlelement-offsetleft
@@ -187,7 +180,7 @@ int HTMLElement::offset_left() const
         return 0;
     auto position = layout_node()->box_type_agnostic_position();
     auto parent_position = parent_element()->layout_node()->box_type_agnostic_position();
-    return position.x().value() - parent_position.x().value();
+    return position.x().to_int() - parent_position.x().to_int();
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-htmlelement-offsetwidth
@@ -197,13 +190,13 @@ int HTMLElement::offset_width() const
     const_cast<DOM::Document&>(document()).update_layout();
 
     // 1. If the element does not have any associated CSS layout box return zero and terminate this algorithm.
-    if (!paint_box())
+    if (!paintable_box())
         return 0;
 
     // 2. Return the width of the axis-aligned bounding box of the border boxes of all fragments generated by the element’s principal box,
     //    ignoring any transforms that apply to the element and its ancestors.
     // FIXME: Account for inline boxes.
-    return paint_box()->border_box_width().value();
+    return paintable_box()->border_box_width().to_int();
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-htmlelement-offsetheight
@@ -213,13 +206,13 @@ int HTMLElement::offset_height() const
     const_cast<DOM::Document&>(document()).update_layout();
 
     // 1. If the element does not have any associated CSS layout box return zero and terminate this algorithm.
-    if (!paint_box())
+    if (!paintable_box())
         return 0;
 
     // 2. Return the height of the axis-aligned bounding box of the border boxes of all fragments generated by the element’s principal box,
     //    ignoring any transforms that apply to the element and its ancestors.
     // FIXME: Account for inline boxes.
-    return paint_box()->border_box_height().value();
+    return paintable_box()->border_box_height().to_int();
 }
 
 // https://html.spec.whatwg.org/multipage/links.html#cannot-navigate
@@ -235,16 +228,33 @@ bool HTMLElement::cannot_navigate() const
     return !is<HTML::HTMLAnchorElement>(this) && !is_connected();
 }
 
-void HTMLElement::parse_attribute(DeprecatedFlyString const& name, DeprecatedString const& value)
+void HTMLElement::attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value)
 {
-    Element::parse_attribute(name, value);
+    Element::attribute_changed(name, value);
+
+    if (name == HTML::AttributeNames::contenteditable) {
+        if (value.is_null()) {
+            m_content_editable_state = ContentEditableState::Inherit;
+        } else {
+            if (value.is_empty() || value.equals_ignoring_ascii_case("true"sv)) {
+                // "true", an empty string or a missing value map to the "true" state.
+                m_content_editable_state = ContentEditableState::True;
+            } else if (value.equals_ignoring_ascii_case("false"sv)) {
+                // "false" maps to the "false" state.
+                m_content_editable_state = ContentEditableState::False;
+            } else {
+                // Having no such attribute or an invalid value maps to the "inherit" state.
+                m_content_editable_state = ContentEditableState::Inherit;
+            }
+        }
+    }
 
     // 1. If namespace is not null, or localName is not the name of an event handler content attribute on element, then return.
     // FIXME: Add the namespace part once we support attribute namespaces.
 #undef __ENUMERATE
-#define __ENUMERATE(attribute_name, event_name)                     \
-    if (name == HTML::AttributeNames::attribute_name) {             \
-        element_event_handler_attribute_changed(event_name, value); \
+#define __ENUMERATE(attribute_name, event_name)                                                                     \
+    if (name == HTML::AttributeNames::attribute_name) {                                                             \
+        element_event_handler_attribute_changed(event_name, String::from_deprecated_string(value).release_value()); \
     }
     ENUMERATE_GLOBAL_EVENT_HANDLERS(__ENUMERATE)
 #undef __ENUMERATE
@@ -273,12 +283,12 @@ void HTMLElement::focus()
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#fire-a-synthetic-pointer-event
-bool HTMLElement::fire_a_synthetic_pointer_event(DeprecatedFlyString const& type, DOM::Element& target, bool not_trusted)
+bool HTMLElement::fire_a_synthetic_pointer_event(FlyString const& type, DOM::Element& target, bool not_trusted)
 {
     // 1. Let event be the result of creating an event using PointerEvent.
     // 2. Initialize event's type attribute to e.
     // FIXME: Actually create a PointerEvent!
-    auto event = UIEvents::MouseEvent::create(realm(), type);
+    auto event = UIEvents::MouseEvent::create(realm(), type).release_value_but_fixme_should_propagate_errors();
 
     // 3. Initialize event's bubbles and cancelable attributes to true.
     event->set_bubbles(true);
@@ -300,7 +310,7 @@ bool HTMLElement::fire_a_synthetic_pointer_event(DeprecatedFlyString const& type
     // FIXME: 8. event's getModifierState() method is to return values appropriately describing the current state of the key input device.
 
     // 9. Return the result of dispatching event at target.
-    return target.dispatch_event(*event);
+    return target.dispatch_event(event);
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-click
@@ -413,6 +423,43 @@ Optional<ARIA::Role> HTMLElement::default_role() const
         return ARIA::Role::generic;
 
     return {};
+}
+
+// https://html.spec.whatwg.org/multipage/semantics.html#get-an-element's-target
+DeprecatedString HTMLElement::get_an_elements_target() const
+{
+    // To get an element's target, given an a, area, or form element element, run these steps:
+
+    // 1. If element has a target attribute, then return that attribute's value.
+    if (has_attribute(AttributeNames::target))
+        return attribute(AttributeNames::target);
+
+    // FIXME: 2. If element's node document contains a base element with a
+    // target attribute, then return the value of the target attribute of the
+    // first such base element.
+
+    // 3. Return the empty string.
+    return DeprecatedString::empty();
+}
+
+// https://html.spec.whatwg.org/multipage/links.html#get-an-element's-noopener
+TokenizedFeature::NoOpener HTMLElement::get_an_elements_noopener(StringView target) const
+{
+    // To get an element's noopener, given an a, area, or form element element and a string target:
+    auto rel = attribute(HTML::AttributeNames::rel).to_lowercase();
+    auto link_types = rel.view().split_view_if(Infra::is_ascii_whitespace);
+
+    // 1. If element's link types include the noopener or noreferrer keyword, then return true.
+    if (link_types.contains_slow("noopener"sv) || link_types.contains_slow("noreferrer"sv))
+        return TokenizedFeature::NoOpener::Yes;
+
+    // 2. If element's link types do not include the opener keyword and
+    //    target is an ASCII case-insensitive match for "_blank", then return true.
+    if (!link_types.contains_slow("opener"sv) && Infra::is_ascii_case_insensitive_match(target, "_blank"sv))
+        return TokenizedFeature::NoOpener::Yes;
+
+    // 3. Return false.
+    return TokenizedFeature::NoOpener::No;
 }
 
 }

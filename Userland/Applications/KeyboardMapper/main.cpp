@@ -25,10 +25,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     TRY(Core::System::pledge("stdio getkeymap thread rpath cpath wpath recvfd sendfd unix"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
-
-    TRY(Core::System::pledge("stdio getkeymap thread rpath cpath wpath recvfd sendfd"));
-
+    auto app = TRY(GUI::Application::create(arguments));
     auto app_icon = GUI::Icon::default_icon("app-keyboard-mapper"sv);
 
     auto window = GUI::Window::construct();
@@ -43,7 +40,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     else
         TRY(keyboard_mapper_widget->load_map_from_file(path));
 
-    TRY(Core::System::pledge("stdio thread rpath cpath wpath recvfd sendfd"));
+    TRY(Core::System::pledge("stdio thread rpath cpath wpath recvfd sendfd unix"));
 
     auto open_action = GUI::CommonActions::make_open_action(
         [&](auto&) {
@@ -54,16 +51,14 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             if (!path.has_value())
                 return;
 
-            ErrorOr<void> error_or = keyboard_mapper_widget->load_map_from_file(path.value());
-            if (error_or.is_error())
-                keyboard_mapper_widget->show_error_to_user(error_or.error());
+            if (auto error_or = keyboard_mapper_widget->load_map_from_file(path.value()); error_or.is_error())
+                keyboard_mapper_widget->show_error_to_user(error_or.release_error());
         });
 
     auto save_action = GUI::CommonActions::make_save_action(
         [&](auto&) {
-            ErrorOr<void> error_or = keyboard_mapper_widget->save();
-            if (error_or.is_error())
-                keyboard_mapper_widget->show_error_to_user(error_or.error());
+            if (auto error_or = keyboard_mapper_widget->save(); error_or.is_error())
+                keyboard_mapper_widget->show_error_to_user(error_or.release_error());
         });
 
     auto save_as_action = GUI::CommonActions::make_save_as_action([&](auto&) {
@@ -72,9 +67,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         if (!save_path.has_value())
             return;
 
-        ErrorOr<void> error_or = keyboard_mapper_widget->save_to_file(save_path.value());
-        if (error_or.is_error())
-            keyboard_mapper_widget->show_error_to_user(error_or.error());
+        if (auto error_or = keyboard_mapper_widget->save_to_file(save_path.value()); error_or.is_error())
+            keyboard_mapper_widget->show_error_to_user(error_or.release_error());
     });
 
     auto quit_action = GUI::CommonActions::make_quit_action(
@@ -82,24 +76,24 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             app->quit();
         });
 
-    auto auto_modifier_action = GUI::Action::create("Auto Modifier", [&](auto& act) {
+    auto auto_modifier_action = GUI::Action::create("Auto-Modifier", [&](auto& act) {
         keyboard_mapper_widget->set_automatic_modifier(act.is_checked());
     });
-    auto_modifier_action->set_status_tip("Toggle automatic modifier");
+    auto_modifier_action->set_status_tip(TRY("Toggle automatic modifier"_string));
     auto_modifier_action->set_checkable(true);
     auto_modifier_action->set_checked(false);
 
-    auto& file_menu = window->add_menu("&File");
+    auto& file_menu = window->add_menu("&File"_short_string);
     file_menu.add_action(open_action);
     file_menu.add_action(save_action);
     file_menu.add_action(save_as_action);
     file_menu.add_separator();
     file_menu.add_action(quit_action);
 
-    auto& settings_menu = window->add_menu("&Settings");
+    auto& settings_menu = window->add_menu(TRY("&Settings"_string));
     settings_menu.add_action(auto_modifier_action);
 
-    auto& help_menu = window->add_menu("&Help");
+    auto& help_menu = window->add_menu("&Help"_short_string);
     help_menu.add_action(GUI::CommonActions::make_command_palette_action(window));
     help_menu.add_action(GUI::CommonActions::make_about_action("Keyboard Mapper", app_icon, window));
 

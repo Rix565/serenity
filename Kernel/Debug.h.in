@@ -51,10 +51,6 @@
 #cmakedefine01 CONTEXT_SWITCH_DEBUG
 #endif
 
-#ifndef CONTIGUOUS_VMOBJECT_DEBUG
-#cmakedefine01 CONTIGUOUS_VMOBJECT_DEBUG
-#endif
-
 #ifndef DUMP_REGIONS_ON_CRASH
 #cmakedefine01 DUMP_REGIONS_ON_CRASH
 #endif
@@ -63,16 +59,8 @@
 #cmakedefine01 E1000_DEBUG
 #endif
 
-#ifndef E1000E_DEBUG
-#cmakedefine01 E1000E_DEBUG
-#endif
-
 #ifndef ETHERNET_DEBUG
 #cmakedefine01 ETHERNET_DEBUG
-#endif
-
-#ifndef ETHERNET_VERY_DEBUG
-#cmakedefine01 ETHERNET_VERY_DEBUG
 #endif
 
 #ifndef EXEC_DEBUG
@@ -93,14 +81,6 @@
 
 #ifndef FAT_DEBUG
 #cmakedefine01 FAT_DEBUG
-#endif
-
-#ifndef FRAMEBUFFER_DEVICE_DEBUG
-#cmakedefine01 FRAMEBUFFER_DEVICE_DEBUG
-#endif
-
-#ifndef FILEDESCRIPTION_DEBUG
-#cmakedefine01 FILEDESCRIPTION_DEBUG
 #endif
 
 #ifndef FORK_DEBUG
@@ -129,6 +109,10 @@
 
 #ifndef INTEL_GRAPHICS_DEBUG
 #cmakedefine01 INTEL_GRAPHICS_DEBUG
+#endif
+
+#ifndef INTEL_HDA_DEBUG
+#cmakedefine01 INTEL_HDA_DEBUG
 #endif
 
 #ifndef INTERRUPT_DEBUG
@@ -203,6 +187,10 @@
 #cmakedefine01 LOCK_TRACE_DEBUG
 #endif
 
+#ifndef LOOPBACK_DEBUG
+#cmakedefine01 LOOPBACK_DEBUG
+#endif
+
 #ifndef MASTERPTY_DEBUG
 #cmakedefine01 MASTERPTY_DEBUG
 #endif
@@ -269,10 +257,6 @@
 
 #ifndef RTL8168_DEBUG
 #cmakedefine01 RTL8168_DEBUG
-#endif
-
-#ifndef SB16_DEBUG
-#cmakedefine01 SB16_DEBUG
 #endif
 
 #ifndef SCHEDULER_DEBUG
@@ -347,20 +331,12 @@
 #cmakedefine01 VMWARE_BACKDOOR_DEBUG
 #endif
 
-#ifndef VOLATILE_PAGE_RANGES_DEBUG
-#cmakedefine01 VOLATILE_PAGE_RANGES_DEBUG
-#endif
-
 #ifndef VIRTIO_DEBUG
 #cmakedefine01 VIRTIO_DEBUG
 #endif
 
 #ifndef VIRTUAL_CONSOLE_DEBUG
 #cmakedefine01 VIRTUAL_CONSOLE_DEBUG
-#endif
-
-#ifndef VRA_DEBUG
-#cmakedefine01 VRA_DEBUG
 #endif
 
 #ifndef WAITBLOCK_DEBUG

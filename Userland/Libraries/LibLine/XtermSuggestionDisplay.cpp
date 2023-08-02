@@ -7,6 +7,7 @@
 #include <AK/BinarySearch.h>
 #include <AK/Function.h>
 #include <AK/StringBuilder.h>
+#include <LibCore/File.h>
 #include <LibLine/SuggestionDisplay.h>
 #include <LibLine/VT.h>
 #include <stdio.h>
@@ -17,7 +18,7 @@ ErrorOr<void> XtermSuggestionDisplay::display(SuggestionManager const& manager)
 {
     did_display();
 
-    auto stderr_stream = TRY(Core::Stream::File::standard_error());
+    auto stderr_stream = TRY(Core::File::standard_error());
 
     size_t longest_suggestion_length = 0;
     size_t longest_suggestion_byte_length = 0;
@@ -50,7 +51,7 @@ ErrorOr<void> XtermSuggestionDisplay::display(SuggestionManager const& manager)
         // the suggestion list to fit in the prompt line.
         auto start = max_line_count - m_prompt_lines_at_suggestion_initiation;
         for (size_t i = start; i < max_line_count; ++i)
-            TRY(stderr_stream->write("\n"sv.bytes()));
+            TRY(stderr_stream->write_until_depleted("\n"sv.bytes()));
         lines_used += max_line_count;
         longest_suggestion_length = 0;
     }
@@ -98,7 +99,7 @@ ErrorOr<void> XtermSuggestionDisplay::display(SuggestionManager const& manager)
         if (next_column > m_num_columns) {
             auto lines = (suggestion.text_view.length() + m_num_columns - 1) / m_num_columns;
             lines_used += lines;
-            TRY(stderr_stream->write("\n"sv.bytes()));
+            TRY(stderr_stream->write_until_depleted("\n"sv.bytes()));
             num_printed = 0;
         }
 
@@ -114,11 +115,11 @@ ErrorOr<void> XtermSuggestionDisplay::display(SuggestionManager const& manager)
 
         if (spans_entire_line) {
             num_printed += m_num_columns;
-            TRY(stderr_stream->write(suggestion.text_string.bytes()));
-            TRY(stderr_stream->write(suggestion.display_trivia_string.bytes()));
+            TRY(stderr_stream->write_until_depleted(suggestion.text_string.bytes()));
+            TRY(stderr_stream->write_until_depleted(suggestion.display_trivia_string.bytes()));
         } else {
             auto field = DeprecatedString::formatted("{: <{}}  {}", suggestion.text_string, longest_suggestion_byte_length_without_trivia, suggestion.display_trivia_string);
-            TRY(stderr_stream->write(DeprecatedString::formatted("{: <{}}", field, longest_suggestion_byte_length + 2).bytes()));
+            TRY(stderr_stream->write_until_depleted(DeprecatedString::formatted("{: <{}}", field, longest_suggestion_byte_length + 2).bytes()));
             num_printed += longest_suggestion_length + 2;
         }
 
@@ -149,7 +150,7 @@ ErrorOr<void> XtermSuggestionDisplay::display(SuggestionManager const& manager)
 
         TRY(VT::move_absolute(m_origin_row + lines_used, m_num_columns - string.length() - 1, *stderr_stream));
         TRY(VT::apply_style({ Style::Background(Style::XtermColor::Green) }, *stderr_stream));
-        TRY(stderr_stream->write(string.bytes()));
+        TRY(stderr_stream->write_until_depleted(string.bytes()));
         TRY(VT::apply_style(Style::reset_style(), *stderr_stream));
     }
 
@@ -161,7 +162,7 @@ ErrorOr<bool> XtermSuggestionDisplay::cleanup()
     did_cleanup();
 
     if (m_lines_used_for_last_suggestions) {
-        auto stderr_stream = TRY(Core::Stream::File::standard_error());
+        auto stderr_stream = TRY(Core::File::standard_error());
         TRY(VT::clear_lines(0, m_lines_used_for_last_suggestions, *stderr_stream));
         m_lines_used_for_last_suggestions = 0;
         return true;

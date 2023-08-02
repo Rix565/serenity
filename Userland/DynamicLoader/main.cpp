@@ -62,8 +62,12 @@ void _entry(int, char**, char**) __attribute__((used));
 
 NAKED void _start(int, char**, char**)
 {
-#ifdef AK_ARCH_AARCH64
+#if ARCH(AARCH64)
+    // Make sure backtrace computation stops here by setting FP and LR to 0.
+    // FIXME: The kernel should ensure that registers are zeroed on program start
     asm(
+        "mov x29, 0\n"
+        "mov x30, 0\n"
         "bl _entry\n");
 #else
     asm(

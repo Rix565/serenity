@@ -13,7 +13,7 @@
 
 class UndoSelection : public RefCounted<UndoSelection> {
 public:
-    explicit UndoSelection(int const start, int const size, u32 const active_glyph, Gfx::BitmapFont const& font, NonnullRefPtr<GUI::GlyphMapWidget> glyph_map_widget)
+    explicit UndoSelection(int const start, int const size, u32 const active_glyph, Gfx::BitmapFont& font, NonnullRefPtr<GUI::GlyphMapWidget> glyph_map_widget)
         : m_start(start)
         , m_size(size)
         , m_active_glyph(active_glyph)
@@ -74,9 +74,10 @@ private:
 
 class SelectionUndoCommand : public GUI::Command {
 public:
-    SelectionUndoCommand(UndoSelection& selection, NonnullRefPtr<UndoSelection> undo_state)
+    SelectionUndoCommand(UndoSelection& selection, NonnullRefPtr<UndoSelection> undo_state, String action_text)
         : m_undo_state(undo_state)
         , m_undo_selection(selection)
+        , m_action_text(move(action_text))
     {
     }
     virtual void undo() override
@@ -96,9 +97,11 @@ public:
         else
             warnln("Restoring state failed");
     }
+    virtual DeprecatedString action_text() const override { return m_action_text.to_deprecated_string(); }
 
 private:
     NonnullRefPtr<UndoSelection> m_undo_state;
     RefPtr<UndoSelection> m_redo_state;
     UndoSelection& m_undo_selection;
+    String m_action_text;
 };

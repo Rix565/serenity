@@ -223,6 +223,11 @@ public:
         return result;
     }
 
+    constexpr bool is_invertible() const
+    {
+        return determinant() != static_cast<T>(0.0);
+    }
+
 private:
     T m_elements[N][N];
 };

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2022-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,8 +11,8 @@
 #include <LibCore/ArgsParser.h>
 #include <LibMain/Main.h>
 
-ErrorOr<void> generate_header_file(JsonArray& identifier_data, Core::Stream::File& file);
-ErrorOr<void> generate_implementation_file(JsonArray& identifier_data, Core::Stream::File& file);
+ErrorOr<void> generate_header_file(JsonArray& identifier_data, Core::File& file);
+ErrorOr<void> generate_implementation_file(JsonArray& identifier_data, Core::File& file);
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
@@ -30,8 +30,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     VERIFY(json.is_array());
     auto identifier_data = json.as_array();
 
-    auto generated_header_file = TRY(Core::Stream::File::open(generated_header_path, Core::Stream::OpenMode::Write));
-    auto generated_implementation_file = TRY(Core::Stream::File::open(generated_implementation_path, Core::Stream::OpenMode::Write));
+    auto generated_header_file = TRY(Core::File::open(generated_header_path, Core::File::OpenMode::Write));
+    auto generated_implementation_file = TRY(Core::File::open(generated_implementation_path, Core::File::OpenMode::Write));
 
     TRY(generate_header_file(identifier_data, *generated_header_file));
     TRY(generate_implementation_file(identifier_data, *generated_implementation_file));
@@ -39,11 +39,11 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     return 0;
 }
 
-ErrorOr<void> generate_header_file(JsonArray& identifier_data, Core::Stream::File& file)
+ErrorOr<void> generate_header_file(JsonArray& identifier_data, Core::File& file)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
-    generator.append(R"~~~(
+    TRY(generator.try_append(R"~~~(
 #pragma once
 
 #include <AK/StringView.h>
@@ -53,87 +53,89 @@ namespace Web::CSS {
 
 enum class ValueID {
     Invalid,
-)~~~");
+)~~~"));
 
-    identifier_data.for_each([&](auto& name) {
-        auto member_generator = generator.fork();
-        member_generator.set("name:titlecase", title_casify(name.to_deprecated_string()));
+    TRY(identifier_data.try_for_each([&](auto& name) -> ErrorOr<void> {
+        auto member_generator = TRY(generator.fork());
+        TRY(member_generator.set("name:titlecase", TRY(title_casify(name.to_deprecated_string()))));
 
-        member_generator.append(R"~~~(
+        TRY(member_generator.try_append(R"~~~(
     @name:titlecase@,
-)~~~");
-    });
+)~~~"));
+        return {};
+    }));
 
-    generator.append(R"~~~(
+    TRY(generator.try_append(R"~~~(
 };
 
-ValueID value_id_from_string(StringView);
+Optional<ValueID> value_id_from_string(StringView);
 StringView string_from_value_id(ValueID);
 
 }
 
-)~~~");
+)~~~"));
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
-ErrorOr<void> generate_implementation_file(JsonArray& identifier_data, Core::Stream::File& file)
+ErrorOr<void> generate_implementation_file(JsonArray& identifier_data, Core::File& file)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
 
-    generator.append(R"~~~(
+    TRY(generator.try_append(R"~~~(
 #include <AK/Assertions.h>
 #include <AK/HashMap.h>
 #include <LibWeb/CSS/ValueID.h>
 
 namespace Web::CSS {
 
-HashMap<StringView, ValueID, AK::CaseInsensitiveStringViewTraits> g_stringview_to_value_id_map {
-)~~~");
+HashMap<StringView, ValueID, AK::CaseInsensitiveASCIIStringViewTraits> g_stringview_to_value_id_map {
+)~~~"));
 
-    identifier_data.for_each([&](auto& name) {
-        auto member_generator = generator.fork();
-        member_generator.set("name", name.to_deprecated_string());
-        member_generator.set("name:titlecase", title_casify(name.to_deprecated_string()));
-        member_generator.append(R"~~~(
+    TRY(identifier_data.try_for_each([&](auto& name) -> ErrorOr<void> {
+        auto member_generator = TRY(generator.fork());
+        TRY(member_generator.set("name", TRY(String::from_deprecated_string(name.to_deprecated_string()))));
+        TRY(member_generator.set("name:titlecase", TRY(title_casify(name.to_deprecated_string()))));
+        TRY(member_generator.try_append(R"~~~(
     {"@name@"sv, ValueID::@name:titlecase@},
-)~~~");
-    });
+)~~~"));
+        return {};
+    }));
 
-    generator.append(R"~~~(
+    TRY(generator.try_append(R"~~~(
 };
 
-ValueID value_id_from_string(StringView string)
+Optional<ValueID> value_id_from_string(StringView string)
 {
-    auto maybe_value_id = g_stringview_to_value_id_map.get(string);
-    return maybe_value_id.value_or(ValueID::Invalid);
+    return g_stringview_to_value_id_map.get(string);
 }
 
 StringView string_from_value_id(ValueID value_id) {
     switch (value_id) {
-)~~~");
+)~~~"));
 
-    identifier_data.for_each([&](auto& name) {
-        auto member_generator = generator.fork();
-        member_generator.set("name", name.to_deprecated_string());
-        member_generator.set("name:titlecase", title_casify(name.to_deprecated_string()));
-        member_generator.append(R"~~~(
+    TRY(identifier_data.try_for_each([&](auto& name) -> ErrorOr<void> {
+        auto member_generator = TRY(generator.fork());
+        TRY(member_generator.set("name", TRY(String::from_deprecated_string(name.to_deprecated_string()))));
+        TRY(member_generator.set("name:titlecase", TRY(title_casify(name.to_deprecated_string()))));
+        TRY(member_generator.try_append(R"~~~(
     case ValueID::@name:titlecase@:
         return "@name@"sv;
-        )~~~");
-    });
+        )~~~"));
+        return {};
+    }));
 
-    generator.append(R"~~~(
+    TRY(generator.try_append(R"~~~(
     default:
         return "(invalid CSS::ValueID)"sv;
     }
 }
 
 } // namespace Web::CSS
-)~~~");
+)~~~"));
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }

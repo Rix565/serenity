@@ -17,13 +17,13 @@ public:
     virtual ~HTMLBaseElement() override;
 
     DeprecatedString href() const;
-    void set_href(DeprecatedString const& href);
+    WebIDL::ExceptionOr<void> set_href(DeprecatedString const& href);
 
     AK::URL const& frozen_base_url() const { return m_frozen_base_url; }
 
     virtual void inserted() override;
     virtual void removed_from(Node*) override;
-    virtual void parse_attribute(DeprecatedFlyString const& name, DeprecatedString const& value) override;
+    virtual void attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value) override;
 
 private:
     HTMLBaseElement(DOM::Document&, DOM::QualifiedName);

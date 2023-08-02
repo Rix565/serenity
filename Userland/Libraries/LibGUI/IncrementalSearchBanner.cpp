@@ -37,7 +37,7 @@ IncrementalSearchBanner::IncrementalSearchBanner(TextEditor& editor)
     };
 
     m_close_button = find_descendant_of_type_named<Button>("incremental_search_banner_close_button");
-    m_close_button->set_text("\xE2\x9D\x8C");
+    m_close_button->set_text("\xE2\x9D\x8C"_short_string);
     m_close_button->on_click = [this](auto) {
         hide();
     };
@@ -93,7 +93,7 @@ void IncrementalSearchBanner::search(TextEditor::SearchDirection direction)
     auto needle = m_search_textbox->text();
     if (needle.is_empty()) {
         m_editor->reset_search_results();
-        m_index_label->set_text(DeprecatedString::empty());
+        m_index_label->set_text({});
         return;
     }
 
@@ -107,9 +107,9 @@ void IncrementalSearchBanner::search(TextEditor::SearchDirection direction)
     auto result = m_editor->find_text(needle, direction, m_wrap_search, false, m_match_case);
     index = m_editor->search_result_index().value_or(0) + 1;
     if (result.is_valid())
-        m_index_label->set_text(DeprecatedString::formatted("{} of {}", index, m_editor->search_results().size()));
+        m_index_label->set_text(String::formatted("{} of {}", index, m_editor->search_results().size()).release_value_but_fixme_should_propagate_errors());
     else
-        m_index_label->set_text(DeprecatedString::empty());
+        m_index_label->set_text({});
 }
 
 void IncrementalSearchBanner::paint_event(PaintEvent& event)
@@ -118,8 +118,8 @@ void IncrementalSearchBanner::paint_event(PaintEvent& event)
 
     Painter painter(*this);
     painter.add_clip_rect(event.rect());
-    painter.draw_line({ 0, rect().bottom() - 1 }, { width(), rect().bottom() - 1 }, palette().threed_shadow1());
-    painter.draw_line({ 0, rect().bottom() }, { width(), rect().bottom() }, palette().threed_shadow2());
+    painter.draw_line({ 0, rect().bottom() - 2 }, { width(), rect().bottom() - 2 }, palette().threed_shadow1());
+    painter.draw_line({ 0, rect().bottom() - 1 }, { width(), rect().bottom() - 1 }, palette().threed_shadow2());
 }
 
 Optional<UISize> IncrementalSearchBanner::calculated_min_size() const

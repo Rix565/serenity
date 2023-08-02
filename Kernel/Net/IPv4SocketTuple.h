@@ -7,9 +7,9 @@
 #pragma once
 
 #include <AK/HashMap.h>
-#include <Kernel/DoubleBuffer.h>
-#include <Kernel/KBuffer.h>
-#include <Kernel/KString.h>
+#include <Kernel/Library/DoubleBuffer.h>
+#include <Kernel/Library/KBuffer.h>
+#include <Kernel/Library/KString.h>
 #include <Kernel/Locking/Mutex.h>
 #include <Kernel/Net/IPv4.h>
 #include <Kernel/Net/Socket.h>
@@ -24,15 +24,15 @@ public:
         , m_peer_address(peer_address)
         , m_peer_port(peer_port) {};
 
-    IPv4Address local_address() const { return m_local_address; };
-    u16 local_port() const { return m_local_port; };
-    IPv4Address peer_address() const { return m_peer_address; };
-    u16 peer_port() const { return m_peer_port; };
+    IPv4Address local_address() const { return m_local_address; }
+    u16 local_port() const { return m_local_port; }
+    IPv4Address peer_address() const { return m_peer_address; }
+    u16 peer_port() const { return m_peer_port; }
 
     bool operator==(IPv4SocketTuple const& other) const
     {
         return other.local_address() == m_local_address && other.local_port() == m_local_port && other.peer_address() == m_peer_address && other.peer_port() == m_peer_port;
-    };
+    }
 
     ErrorOr<NonnullOwnPtr<KString>> to_string() const
     {

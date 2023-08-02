@@ -11,6 +11,7 @@
 #include <LibWeb/DOM/ElementFactory.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/Text.h>
+#include <LibWeb/Namespace.h>
 #include <LibXML/Parser/Parser.h>
 
 namespace Web {
@@ -36,11 +37,12 @@ private:
     virtual void comment(StringView data) override;
     virtual void document_end() override;
 
-    DOM::Document& m_document;
-    DOM::Node* m_current_node { nullptr };
+    JS::NonnullGCPtr<DOM::Document> m_document;
+    JS::GCPtr<DOM::Node> m_current_node;
     XMLScriptingSupport m_scripting_support { XMLScriptingSupport::Enabled };
     bool m_has_error { false };
     StringBuilder text_builder;
+    DeprecatedFlyString m_namespace { Namespace::HTML };
 };
 
 }

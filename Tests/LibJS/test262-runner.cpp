@@ -12,11 +12,10 @@
 #include <AK/ScopeGuard.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibJS/Bytecode/BasicBlock.h>
 #include <LibJS/Bytecode/Generator.h>
 #include <LibJS/Bytecode/Interpreter.h>
-#include <LibJS/Bytecode/PassManager.h>
 #include <LibJS/Contrib/Test262/GlobalObject.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Parser.h>
@@ -32,8 +31,6 @@
 #endif
 
 static DeprecatedString s_current_test = "";
-static bool s_use_bytecode = false;
-static bool s_enable_bytecode_optimizations = false;
 static bool s_parse_only = false;
 static DeprecatedString s_harness_file_directory;
 static bool s_automatic_harness_detection_mode = false;
@@ -79,29 +76,10 @@ static Result<ScriptOrModuleProgram, TestError> parse_program(JS::Realm& realm, 
 template<typename InterpreterT>
 static Result<void, TestError> run_program(InterpreterT& interpreter, ScriptOrModuleProgram& program)
 {
-    auto result = JS::ThrowCompletionOr<JS::Value> { JS::js_undefined() };
-    if constexpr (IsSame<InterpreterT, JS::Interpreter>) {
-        result = program.visit(
-            [&](auto& visitor) {
-                return interpreter.run(*visitor);
-            });
-    } else {
-        auto program_node = program.visit(
-            [](auto& visitor) -> NonnullRefPtr<JS::Program> {
-                return visitor->parse_node();
-            });
-
-        auto unit_result = JS::Bytecode::Generator::generate(program_node);
-        if (unit_result.is_error()) {
-            result = JS::throw_completion(JS::InternalError::create(interpreter.realm(), DeprecatedString::formatted("TODO({})", unit_result.error().to_deprecated_string())));
-        } else {
-            auto unit = unit_result.release_value();
-            auto optimization_level = s_enable_bytecode_optimizations ? JS::Bytecode::Interpreter::OptimizationLevel::Optimize : JS::Bytecode::Interpreter::OptimizationLevel::Default;
-            auto& passes = JS::Bytecode::Interpreter::optimization_pipeline(optimization_level);
-            passes.perform(*unit);
-            result = interpreter.run(*unit);
-        }
-    }
+    auto result = program.visit(
+        [&](auto& visitor) {
+            return interpreter.run(*visitor);
+        });
 
     if (result.is_error()) {
         auto error_value = *result.throw_completion().value();
@@ -112,22 +90,22 @@ static Result<void, TestError> run_program(InterpreterT& interpreter, ScriptOrMo
 
             auto name = object.get_without_side_effects("name");
             if (!name.is_empty() && !name.is_accessor()) {
-                error.type = name.to_string_without_side_effects();
+                error.type = name.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
             } else {
                 auto constructor = object.get_without_side_effects("constructor");
                 if (constructor.is_object()) {
                     name = constructor.as_object().get_without_side_effects("name");
                     if (!name.is_undefined())
-                        error.type = name.to_string_without_side_effects();
+                        error.type = name.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
                 }
             }
 
             auto message = object.get_without_side_effects("message");
             if (!message.is_empty() && !message.is_accessor())
-                error.details = message.to_string_without_side_effects();
+                error.details = message.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
         }
         if (error.type.is_empty())
-            error.type = error_value.to_string_without_side_effects();
+            error.type = error_value.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
         return error;
     }
     return {};
@@ -139,7 +117,7 @@ static Result<StringView, TestError> read_harness_file(StringView harness_file)
 {
     auto cache = s_cached_harness_files.find(harness_file);
     if (cache == s_cached_harness_files.end()) {
-        auto file_or_error = Core::Stream::File::open(DeprecatedString::formatted("{}{}", s_harness_file_directory, harness_file), Core::Stream::OpenMode::Read);
+        auto file_or_error = Core::File::open(DeprecatedString::formatted("{}{}", s_harness_file_directory, harness_file), Core::File::OpenMode::Read);
         if (file_or_error.is_error()) {
             return TestError {
                 NegativePhase::Harness,
@@ -226,7 +204,7 @@ static Result<void, TestError> run_test(StringView source, StringView filepath, 
         return {};
     }
 
-    auto vm = JS::VM::create();
+    auto vm = MUST(JS::VM::create());
     vm->enable_default_host_import_module_dynamically_hook();
     auto ast_interpreter = JS::Interpreter::create<JS::Test262::GlobalObject>(*vm);
     auto& realm = ast_interpreter->realm();
@@ -235,12 +213,10 @@ static Result<void, TestError> run_test(StringView source, StringView filepath, 
     if (program_or_error.is_error())
         return program_or_error.release_error();
 
-    OwnPtr<JS::Bytecode::Interpreter> bytecode_interpreter = nullptr;
-    if (s_use_bytecode)
-        bytecode_interpreter = make<JS::Bytecode::Interpreter>(realm);
+    auto* bytecode_interpreter = vm->bytecode_interpreter_if_exists();
 
     auto run_with_interpreter = [&](ScriptOrModuleProgram& program) {
-        if (s_use_bytecode)
+        if (bytecode_interpreter)
             return run_program(*bytecode_interpreter, program);
         return run_program(*ast_interpreter, program);
     };
@@ -370,11 +346,6 @@ static Result<TestMetadata, DeprecatedString> extract_metadata(StringView source
 
         if (line.starts_with("flags:"sv)) {
             auto flags = parse_list(line);
-
-            if (flags.is_empty()) {
-                failed_message = DeprecatedString::formatted("Failed to find flags in '{}'", line);
-                break;
-            }
 
             for (auto flag : flags) {
                 if (flag == "raw"sv) {
@@ -583,20 +554,27 @@ constexpr int exit_read_file_failure = 3;
 
 int main(int argc, char** argv)
 {
+    Vector<StringView> arguments;
+    arguments.ensure_capacity(argc);
+    for (auto i = 0; i < argc; ++i)
+        arguments.append({ argv[i], strlen(argv[i]) });
+
     int timeout = 10;
     bool enable_debug_printing = false;
     bool disable_core_dumping = false;
+    bool use_bytecode = false;
 
     Core::ArgsParser args_parser;
     args_parser.set_general_help("LibJS test262 runner for streaming tests");
     args_parser.add_option(s_harness_file_directory, "Directory containing the harness files", "harness-location", 'l', "harness-files");
-    args_parser.add_option(s_use_bytecode, "Use the bytecode interpreter", "use-bytecode", 'b');
-    args_parser.add_option(s_enable_bytecode_optimizations, "Enable the bytecode optimization passes", "enable-bytecode-optimizations", 'e');
+    args_parser.add_option(use_bytecode, "Use the bytecode interpreter", "use-bytecode", 'b');
     args_parser.add_option(s_parse_only, "Only parse the files", "parse-only", 'p');
     args_parser.add_option(timeout, "Seconds before test should timeout", "timeout", 't', "seconds");
     args_parser.add_option(enable_debug_printing, "Enable debug printing", "debug", 'd');
     args_parser.add_option(disable_core_dumping, "Disable core dumping", "disable-core-dump", 0);
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
+
+    JS::Bytecode::Interpreter::set_enabled(use_bytecode);
 
 #if !defined(AK_OS_MACOS) && !defined(AK_OS_EMSCRIPTEN)
     if (disable_core_dumping && prctl(PR_SET_DUMPABLE, 0, 0) < 0) {
@@ -679,12 +657,12 @@ int main(int argc, char** argv)
 #define DISARM_TIMER() \
     alarm(0)
 
-    auto standard_input_or_error = Core::Stream::File::standard_input();
+    auto standard_input_or_error = Core::File::standard_input();
     if (standard_input_or_error.is_error())
         return exit_setup_input_failure;
 
     Array<u8, 1024> input_buffer {};
-    auto buffered_standard_input_or_error = Core::Stream::BufferedFile::create(standard_input_or_error.release_value());
+    auto buffered_standard_input_or_error = Core::InputBufferedFile::create(standard_input_or_error.release_value());
     if (buffered_standard_input_or_error.is_error())
         return exit_setup_input_failure;
 
@@ -708,7 +686,7 @@ int main(int argc, char** argv)
             VERIFY(!s_harness_file_directory.is_empty());
         }
 
-        auto file_or_error = Core::Stream::File::open(path, Core::Stream::OpenMode::Read);
+        auto file_or_error = Core::File::open(path, Core::File::OpenMode::Read);
         if (file_or_error.is_error()) {
             warnln("Could not open file: {}", path);
             return exit_read_file_failure;

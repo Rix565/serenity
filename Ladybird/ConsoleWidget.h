@@ -12,10 +12,11 @@
 #include <AK/DeprecatedString.h>
 #include <AK/Function.h>
 #include <AK/Vector.h>
+#include <QLineEdit>
 #include <QWidget>
 
 class QLineEdit;
-class QTextEdit;
+class WebContentView;
 
 namespace Ladybird {
 
@@ -31,6 +32,8 @@ public:
     void print_html(StringView);
     void reset();
 
+    WebContentView& view() { return *m_output_view; }
+
     Function<void(DeprecatedString const&)> on_js_input;
     Function<void(i32)> on_request_messages;
 
@@ -38,12 +41,29 @@ private:
     void request_console_messages();
     void clear_output();
 
-    QTextEdit* m_output_view { nullptr };
+    WebContentView* m_output_view { nullptr };
     QLineEdit* m_input { nullptr };
 
     i32 m_highest_notified_message_index { -1 };
     i32 m_highest_received_message_index { -1 };
     bool m_waiting_for_messages { false };
+};
+
+class ConsoleInputEdit final : public QLineEdit {
+    Q_OBJECT
+public:
+    ConsoleInputEdit(QWidget* q_widget, ConsoleWidget& console_widget)
+        : QLineEdit(q_widget)
+        , m_console_widget(console_widget)
+    {
+    }
+
+private:
+    virtual void keyPressEvent(QKeyEvent* event) override;
+
+    ConsoleWidget& m_console_widget;
+    Vector<DeprecatedString> m_history;
+    size_t m_history_index { 0 };
 };
 
 }

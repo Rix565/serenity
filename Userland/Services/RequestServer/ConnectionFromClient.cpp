@@ -17,7 +17,7 @@ namespace RequestServer {
 
 static HashMap<int, RefPtr<ConnectionFromClient>> s_connections;
 
-ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket> socket)
     : IPC::ConnectionFromClient<RequestClientEndpoint, RequestServerEndpoint>(*this, move(socket), 1)
 {
     s_connections.set(1, *this);
@@ -36,7 +36,7 @@ Messages::RequestServer::IsSupportedProtocolResponse ConnectionFromClient::is_su
     return supported;
 }
 
-Messages::RequestServer::StartRequestResponse ConnectionFromClient::start_request(DeprecatedString const& method, URL const& url, IPC::Dictionary const& request_headers, ByteBuffer const& request_body, Core::ProxyData const& proxy_data)
+Messages::RequestServer::StartRequestResponse ConnectionFromClient::start_request(DeprecatedString const& method, URL const& url, HashMap<DeprecatedString, DeprecatedString> const& request_headers, ByteBuffer const& request_body, Core::ProxyData const& proxy_data)
 {
     if (!url.is_valid()) {
         dbgln("StartRequest: Invalid URL requested: '{}'", url);
@@ -47,7 +47,7 @@ Messages::RequestServer::StartRequestResponse ConnectionFromClient::start_reques
         dbgln("StartRequest: No protocol handler for URL: '{}'", url);
         return { -1, Optional<IPC::File> {} };
     }
-    auto request = protocol->start_request(*this, method, url, request_headers.entries(), request_body, proxy_data);
+    auto request = protocol->start_request(*this, method, url, request_headers, request_body, proxy_data);
     if (!request) {
         dbgln("StartRequest: Protocol handler failed to start request: '{}'", url);
         return { -1, Optional<IPC::File> {} };
@@ -72,10 +72,7 @@ Messages::RequestServer::StopRequestResponse ConnectionFromClient::stop_request(
 
 void ConnectionFromClient::did_receive_headers(Badge<Request>, Request& request)
 {
-    IPC::Dictionary response_headers;
-    for (auto& it : request.response_headers())
-        response_headers.add(it.key, it.value);
-
+    auto response_headers = request.response_headers().clone().release_value_but_fixme_should_propagate_errors();
     async_headers_became_available(request.id(), move(response_headers), request.status_code());
 }
 
@@ -123,7 +120,7 @@ struct Job {
         return *s_jobs.find(url)->value;
     }
 
-    void start(Core::Stream::Socket& socket)
+    void start(Core::Socket& socket)
     {
         auto is_connected = socket.is_open();
         VERIFY(is_connected);
@@ -150,7 +147,7 @@ void ConnectionFromClient::ensure_connection(URL const& url, ::RequestServer::Ca
     }
 
     if (cache_level == CacheLevel::ResolveOnly) {
-        return Core::deferred_invoke([host = url.host()] {
+        return Core::deferred_invoke([host = url.serialized_host().release_value_but_fixme_should_propagate_errors().to_deprecated_string()] {
             dbgln("EnsureConnection: DNS-preload for {}", host);
             (void)gethostbyname(host.characters());
         });
@@ -159,7 +156,8 @@ void ConnectionFromClient::ensure_connection(URL const& url, ::RequestServer::Ca
     auto& job = Job::ensure(url);
     dbgln("EnsureConnection: Pre-connect to {}", url);
     auto do_preconnect = [&](auto& cache) {
-        auto it = cache.find({ url.host(), url.port_or_default() });
+        auto serialized_host = url.serialized_host().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+        auto it = cache.find({ serialized_host, url.port_or_default() });
         if (it == cache.end() || it->value->is_empty())
             ConnectionCache::get_or_create_connection(cache, url, job);
     };

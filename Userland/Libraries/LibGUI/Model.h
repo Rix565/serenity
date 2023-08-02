@@ -9,11 +9,11 @@
 #pragma once
 
 #include <AK/Badge.h>
-#include <AK/DeprecatedString.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
 #include <AK/HashTable.h>
 #include <AK/RefCounted.h>
+#include <AK/String.h>
 #include <AK/WeakPtr.h>
 #include <LibCore/MimeData.h>
 #include <LibGUI/Forward.h>
@@ -51,6 +51,7 @@ public:
     enum UpdateFlag {
         DontInvalidateIndices = 0,
         InvalidateAllIndices = 1 << 0,
+        DontResizeColumns = 1 << 1,
     };
 
     enum MatchesFlag {
@@ -61,13 +62,18 @@ public:
         MatchFull = 1 << 3,
     };
 
+    struct MatchResult {
+        TriState matched { TriState::Unknown };
+        int score { 0 };
+    };
+
     virtual ~Model();
 
     virtual int row_count(ModelIndex const& = ModelIndex()) const = 0;
     virtual int column_count(ModelIndex const& = ModelIndex()) const = 0;
-    virtual DeprecatedString column_name(int) const { return {}; }
+    virtual ErrorOr<String> column_name(int) const { return String {}; }
     virtual Variant data(ModelIndex const&, ModelRole = ModelRole::Display) const = 0;
-    virtual TriState data_matches(ModelIndex const&, Variant const&) const { return TriState::Unknown; }
+    virtual MatchResult data_matches(ModelIndex const&, Variant const&) const { return {}; }
     virtual void invalidate();
     virtual ModelIndex parent_index(ModelIndex const&) const { return {}; }
     virtual ModelIndex index(int row, int column = 0, ModelIndex const& parent = ModelIndex()) const;

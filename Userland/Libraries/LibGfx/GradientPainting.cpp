@@ -52,11 +52,11 @@ enum class UsePremultipliedAlpha {
 
 class GradientLine {
 public:
-    GradientLine(int gradient_length, Span<ColorStop const> color_stops, Optional<float> repeat_length, UsePremultipliedAlpha use_premultiplied_alpha = UsePremultipliedAlpha::Yes)
-        : m_repeating { repeat_length.has_value() }
-        , m_start_offset { round_to<int>((m_repeating ? color_stops.first().position : 0.0f) * gradient_length) }
-        , m_color_stops { color_stops }
-        , m_use_premultiplied_alpha { use_premultiplied_alpha }
+    GradientLine(int gradient_length, ReadonlySpan<ColorStop> color_stops, Optional<float> repeat_length, UsePremultipliedAlpha use_premultiplied_alpha = UsePremultipliedAlpha::Yes)
+        : m_repeating(repeat_length.has_value())
+        , m_start_offset(round_to<int>((m_repeating ? color_stops.first().position : 0.0f) * gradient_length))
+        , m_color_stops(color_stops)
+        , m_use_premultiplied_alpha(use_premultiplied_alpha)
     {
         // Avoid generating excessive amounts of colors when the not enough shades to fill that length.
         auto necessary_length = min<int>((color_stops.size() - 1) * 255, gradient_length);
@@ -86,7 +86,7 @@ public:
         if (m_use_premultiplied_alpha == UsePremultipliedAlpha::Yes)
             return a.mixed_with(b, amount);
         return a.interpolate(b, amount);
-    };
+    }
 
     Color get_color(i64 index) const
     {
@@ -111,7 +111,7 @@ public:
         auto int_loc = static_cast<i64>(floor(loc));
         auto blend = loc - int_loc;
         auto color = get_color(repeat_wrap_if_required(int_loc));
-        // Blend between the two neighbouring colors (this fixes some nasty aliasing issues at small angles)
+        // Blend between the two neighboring colors (this fixes some nasty aliasing issues at small angles)
         if (blend >= 0.004f)
             color = color_blend(color, get_color(repeat_wrap_if_required(int_loc + 1)), blend);
         return color;
@@ -133,7 +133,7 @@ private:
     bool m_repeating { false };
     int m_start_offset { 0 };
     float m_sample_scale { 1 };
-    Span<ColorStop const> m_color_stops {};
+    ReadonlySpan<ColorStop> m_color_stops {};
     UsePremultipliedAlpha m_use_premultiplied_alpha { UsePremultipliedAlpha::Yes };
 
     Vector<Color, 1024> m_gradient_line_colors;
@@ -153,9 +153,10 @@ struct Gradient {
         m_gradient_line.paint_into_physical_rect(painter, rect, m_transform_function);
     }
 
-    PaintStyle::SamplerFunction sample_function()
+    template<typename CoordinateType = int>
+    auto sample_function()
     {
-        return [this](IntPoint point) {
+        return [this](Point<CoordinateType> point) {
             return m_gradient_line.sample_color(m_transform_function(point.x(), point.y()));
         };
     }
@@ -165,7 +166,7 @@ private:
     TransformFunction m_transform_function;
 };
 
-static auto create_linear_gradient(IntRect const& physical_rect, Span<ColorStop const> const& color_stops, float angle, Optional<float> repeat_length)
+static auto create_linear_gradient(IntRect const& physical_rect, ReadonlySpan<ColorStop> color_stops, float angle, Optional<float> repeat_length)
 {
     float normalized_angle = normalized_gradient_angle_radians(angle);
     float sin_angle, cos_angle;
@@ -188,7 +189,7 @@ static auto create_linear_gradient(IntRect const& physical_rect, Span<ColorStop 
     };
 }
 
-static auto create_conic_gradient(Span<ColorStop const> const& color_stops, FloatPoint center_point, float start_angle, Optional<float> repeat_length, UsePremultipliedAlpha use_premultiplied_alpha = UsePremultipliedAlpha::Yes)
+static auto create_conic_gradient(ReadonlySpan<ColorStop> color_stops, FloatPoint center_point, float start_angle, Optional<float> repeat_length, UsePremultipliedAlpha use_premultiplied_alpha = UsePremultipliedAlpha::Yes)
 {
     // FIXME: Do we need/want sub-degree accuracy for the gradient line?
     GradientLine gradient_line(360, color_stops, repeat_length, use_premultiplied_alpha);
@@ -213,18 +214,28 @@ static auto create_conic_gradient(Span<ColorStop const> const& color_stops, Floa
     };
 }
 
-static auto create_radial_gradient(IntRect const& physical_rect, Span<ColorStop const> const& color_stops, IntPoint center, IntSize size, Optional<float> repeat_length)
+static auto create_radial_gradient(IntRect const& physical_rect, ReadonlySpan<ColorStop> color_stops, IntPoint center, IntSize size, Optional<float> repeat_length, Optional<float> rotation_angle = {})
 {
     // A conservative guesstimate on how many colors we need to generate:
     auto max_dimension = max(physical_rect.width(), physical_rect.height());
     auto max_visible_gradient = max(max_dimension / 2, min(size.width(), max_dimension));
     GradientLine gradient_line(max_visible_gradient, color_stops, repeat_length);
     auto center_point = FloatPoint { center }.translated(0.5, 0.5);
+    AffineTransform rotation_transform;
+    if (rotation_angle.has_value()) {
+        auto angle_as_radians = rotation_angle.value() * (AK::Pi<float> / 180);
+        rotation_transform.rotate_radians(angle_as_radians);
+    }
+
     return Gradient {
         move(gradient_line),
         [=](int x, int y) {
             // FIXME: See if there's a more efficient calculation we do there :^)
             auto point = FloatPoint(x, y) - center_point;
+
+            if (rotation_angle.has_value())
+                point.transform_by(rotation_transform);
+
             auto gradient_x = point.x() / size.width();
             auto gradient_y = point.y() / size.height();
             return AK::sqrt(gradient_x * gradient_x + gradient_y * gradient_y) * max_visible_gradient;
@@ -232,7 +243,7 @@ static auto create_radial_gradient(IntRect const& physical_rect, Span<ColorStop 
     };
 }
 
-void Painter::fill_rect_with_linear_gradient(IntRect const& rect, Span<ColorStop const> const& color_stops, float angle, Optional<float> repeat_length)
+void Painter::fill_rect_with_linear_gradient(IntRect const& rect, ReadonlySpan<ColorStop> color_stops, float angle, Optional<float> repeat_length)
 {
     auto a_rect = to_physical(rect);
     if (a_rect.intersected(clip_rect() * scale()).is_empty())
@@ -246,7 +257,7 @@ static FloatPoint pixel_center(IntPoint point)
     return point.to_type<float>().translated(0.5f, 0.5f);
 }
 
-void Painter::fill_rect_with_conic_gradient(IntRect const& rect, Span<ColorStop const> const& color_stops, IntPoint center, float start_angle, Optional<float> repeat_length)
+void Painter::fill_rect_with_conic_gradient(IntRect const& rect, ReadonlySpan<ColorStop> color_stops, IntPoint center, float start_angle, Optional<float> repeat_length)
 {
     auto a_rect = to_physical(rect);
     if (a_rect.intersected(clip_rect() * scale()).is_empty())
@@ -257,12 +268,13 @@ void Painter::fill_rect_with_conic_gradient(IntRect const& rect, Span<ColorStop 
     conic_gradient.paint(*this, a_rect);
 }
 
-void Painter::fill_rect_with_radial_gradient(IntRect const& rect, Span<ColorStop const> const& color_stops, IntPoint center, IntSize size, Optional<float> repeat_length)
+void Painter::fill_rect_with_radial_gradient(IntRect const& rect, ReadonlySpan<ColorStop> color_stops, IntPoint center, IntSize size, Optional<float> repeat_length, Optional<float> rotation_angle)
 {
     auto a_rect = to_physical(rect);
     if (a_rect.intersected(clip_rect() * scale()).is_empty())
         return;
-    auto radial_gradient = create_radial_gradient(a_rect, color_stops, center * scale(), size * scale(), repeat_length);
+
+    auto radial_gradient = create_radial_gradient(a_rect, color_stops, center * scale(), size * scale(), repeat_length, rotation_angle);
     radial_gradient.paint(*this, a_rect);
 }
 
@@ -297,6 +309,23 @@ static auto make_sample_non_relative(IntPoint draw_location, auto sample)
     return [=, sample = move(sample)](IntPoint point) { return sample(point.translated(draw_location)); };
 }
 
+static auto make_linear_gradient_between_two_points(FloatPoint p0, FloatPoint p1, ReadonlySpan<ColorStop> color_stops, Optional<float> repeat_length)
+{
+    auto delta = p1 - p0;
+    auto angle = AK::atan2(delta.y(), delta.x());
+    float sin_angle, cos_angle;
+    AK::sincos(angle, sin_angle, cos_angle);
+    int gradient_length = ceilf(p1.distance_from(p0));
+    auto rotated_start_point_x = p0.x() * cos_angle - p0.y() * -sin_angle;
+
+    return Gradient {
+        GradientLine(gradient_length, color_stops, repeat_length, UsePremultipliedAlpha::No),
+        [=](int x, int y) {
+            return (x * cos_angle - y * -sin_angle) - rotated_start_point_x;
+        }
+    };
+}
+
 void CanvasLinearGradientPaintStyle::paint(IntRect physical_bounding_box, PaintFunction paint) const
 {
     // If x0 = x1 and y0 = y1, then the linear gradient must paint nothing.
@@ -307,21 +336,47 @@ void CanvasLinearGradientPaintStyle::paint(IntRect physical_bounding_box, PaintF
     if (color_stops().size() < 2)
         return paint([this](IntPoint) { return color_stops().first().color; });
 
-    auto delta = m_p1 - m_p0;
-    auto angle = AK::atan2(delta.y(), delta.x());
-    float sin_angle, cos_angle;
-    AK::sincos(angle, sin_angle, cos_angle);
-    int gradient_length = ceilf(m_p1.distance_from(m_p0));
-    auto rotated_start_point_x = m_p0.x() * cos_angle - m_p0.y() * -sin_angle;
-
-    Gradient linear_gradient {
-        GradientLine(gradient_length, color_stops(), repeat_length(), UsePremultipliedAlpha::No),
-        [=](int x, int y) {
-            return (x * cos_angle - y * -sin_angle) - rotated_start_point_x;
-        }
-    };
-
+    auto linear_gradient = make_linear_gradient_between_two_points(m_p0, m_p1, color_stops(), repeat_length());
     paint(make_sample_non_relative(physical_bounding_box.location(), linear_gradient.sample_function()));
+}
+
+void SVGGradientPaintStyle::set_gradient_transform(AffineTransform transform)
+{
+    // Note: The scaling is removed so enough points on the gradient line are generated.
+    // Otherwise, if you scale a tiny path the gradient looks pixelated.
+    m_scale = 1.0f;
+    if (auto inverse = transform.inverse(); inverse.has_value()) {
+        auto transform_scale = transform.scale();
+        m_scale = max(transform_scale.x(), transform_scale.y());
+        m_inverse_transform = AffineTransform {}.scale(m_scale, m_scale).multiply(*inverse);
+    } else {
+        m_inverse_transform = OptionalNone {};
+    }
+}
+
+void SVGLinearGradientPaintStyle::paint(IntRect physical_bounding_box, PaintFunction paint) const
+{
+    if (color_stops().is_empty())
+        return;
+    // If ‘x1’ = ‘x2’ and ‘y1’ = ‘y2’, then the area to be painted will be painted as
+    // a single color using the color and opacity of the last gradient stop.
+    if (m_p0 == m_p1)
+        return paint([this](IntPoint) { return color_stops().last().color; });
+    if (color_stops().size() < 2)
+        return paint([this](IntPoint) { return color_stops().first().color; });
+
+    float scale = gradient_transform_scale();
+    auto linear_gradient = make_linear_gradient_between_two_points(
+        m_p0.scaled(scale, scale), m_p1.scaled(scale, scale),
+        color_stops(), repeat_length());
+
+    paint([&, sampler = linear_gradient.sample_function<float>()](IntPoint target_point) {
+        auto point = target_point.translated(physical_bounding_box.location()).to_type<float>();
+        if (auto inverse_transform = scale_adjusted_inverse_gradient_transform(); inverse_transform.has_value())
+            point = inverse_transform->map(point);
+
+        return sampler(point);
+    });
 }
 
 void CanvasConicGradientPaintStyle::paint(IntRect physical_bounding_box, PaintFunction paint) const
@@ -339,24 +394,8 @@ void CanvasConicGradientPaintStyle::paint(IntRect physical_bounding_box, PaintFu
     paint(make_sample_non_relative(physical_bounding_box.location(), conic_gradient.sample_function()));
 }
 
-void CanvasRadialGradientPaintStyle::paint(IntRect physical_bounding_box, PaintFunction paint) const
+static auto create_radial_gradient_between_two_circles(Gfx::FloatPoint start_center, float start_radius, Gfx::FloatPoint end_center, float end_radius, ReadonlySpan<ColorStop> color_stops, Optional<float> repeat_length)
 {
-    // 1. If x0 = x1 and y0 = y1 and r0 = r1, then the radial gradient must paint nothing. Return.
-    if (m_start_center == m_end_center && m_start_radius == m_end_radius)
-        return;
-    if (color_stops().is_empty())
-        return;
-    if (color_stops().size() < 2)
-        return paint([this](IntPoint) { return color_stops().first().color; });
-
-    auto start_radius = m_start_radius;
-    auto start_center = m_start_center;
-    auto end_radius = m_end_radius;
-    auto end_center = m_end_center;
-
-    if (end_radius == 0 && start_radius == 0)
-        return;
-
     if (fabs(start_radius - end_radius) < 1)
         start_radius += 1;
 
@@ -395,7 +434,7 @@ void CanvasRadialGradientPaintStyle::paint(IntRect physical_bounding_box, PaintF
 
     // This is just an approximate upperbound (the gradient line class will shorten this if necessary).
     int gradient_length = AK::ceil(center_dist + end_radius + start_radius);
-    GradientLine gradient_line(gradient_length, color_stops(), repeat_length(), UsePremultipliedAlpha::No);
+    GradientLine gradient_line(gradient_length, color_stops, repeat_length, UsePremultipliedAlpha::No);
 
     auto radius2 = end_radius * end_radius;
     center_delta = end_center - start_point;
@@ -409,11 +448,11 @@ void CanvasRadialGradientPaintStyle::paint(IntRect physical_bounding_box, PaintF
     //      - Start circle radius == end circle radius
     //      - Start circle larger than end circle (inside end circle)
     //      - Start circle larger than end circle (outside end circle)
-    //      - Start cirlce or end circle radius == 0
+    //      - Start circle or end circle radius == 0
 
-    Gradient radial_gradient {
+    return Gradient {
         move(gradient_line),
-        [=](int x, int y) {
+        [=](float x, float y) {
             auto get_gradient_location = [&] {
                 FloatPoint point { x, y };
                 auto dist = point.distance_from(start_point);
@@ -443,8 +482,42 @@ void CanvasRadialGradientPaintStyle::paint(IntRect physical_bounding_box, PaintF
             return loc * gradient_length;
         }
     };
+}
 
+void CanvasRadialGradientPaintStyle::paint(IntRect physical_bounding_box, PaintFunction paint) const
+{
+    // 1. If x0 = x1 and y0 = y1 and r0 = r1, then the radial gradient must paint nothing. Return.
+    if (m_start_center == m_end_center && m_start_radius == m_end_radius)
+        return;
+    if (color_stops().is_empty())
+        return;
+    if (color_stops().size() < 2)
+        return paint([this](IntPoint) { return color_stops().first().color; });
+    if (m_end_radius == 0 && m_start_radius == 0)
+        return;
+    auto radial_gradient = create_radial_gradient_between_two_circles(m_start_center, m_start_radius, m_end_center, m_end_radius, color_stops(), repeat_length());
     paint(make_sample_non_relative(physical_bounding_box.location(), radial_gradient.sample_function()));
+}
+
+void SVGRadialGradientPaintStyle::paint(IntRect physical_bounding_box, PaintFunction paint) const
+{
+    // FIXME: Ensure this handles all the edge cases of SVG gradients.
+    if (color_stops().is_empty())
+        return;
+    if (color_stops().size() < 2 || (m_end_radius == 0 && m_start_radius == 0))
+        return paint([this](IntPoint) { return color_stops().last().color; });
+
+    float scale = gradient_transform_scale();
+    auto radial_gradient = create_radial_gradient_between_two_circles(
+        m_start_center.scaled(scale, scale), m_start_radius * scale, m_end_center.scaled(scale, scale), m_end_radius * scale,
+        color_stops(), repeat_length());
+
+    paint([&, sampler = radial_gradient.sample_function<float>()](IntPoint target_point) {
+        auto point = target_point.translated(physical_bounding_box.location()).to_type<float>();
+        if (auto inverse_transform = scale_adjusted_inverse_gradient_transform(); inverse_transform.has_value())
+            point = inverse_transform->map(point);
+        return sampler(point);
+    });
 }
 
 }

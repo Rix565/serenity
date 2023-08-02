@@ -1,10 +1,9 @@
 /*
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/DeprecatedString.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/BigInt.h>
 #include <LibJS/Runtime/BigIntConstructor.h>
@@ -18,7 +17,7 @@ namespace JS {
 static const Crypto::SignedBigInteger BIGINT_ONE { 1 };
 
 BigIntConstructor::BigIntConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.BigInt.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.BigInt.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
@@ -70,7 +69,7 @@ JS_DEFINE_NATIVE_FUNCTION(BigIntConstructor::as_int_n)
     auto bits = TRY(vm.argument(0).to_index(vm));
 
     // 2. Set bigint to ? ToBigInt(bigint).
-    auto* bigint = TRY(vm.argument(1).to_bigint(vm));
+    auto bigint = TRY(vm.argument(1).to_bigint(vm));
 
     // 3. Let mod be ℝ(bigint) modulo 2^bits.
     // FIXME: For large values of `bits`, this can likely be improved with a SignedBigInteger API to
@@ -96,7 +95,7 @@ JS_DEFINE_NATIVE_FUNCTION(BigIntConstructor::as_uint_n)
     auto bits = TRY(vm.argument(0).to_index(vm));
 
     // 2. Set bigint to ? ToBigInt(bigint).
-    auto* bigint = TRY(vm.argument(1).to_bigint(vm));
+    auto bigint = TRY(vm.argument(1).to_bigint(vm));
 
     // 3. Return the BigInt value that represents ℝ(bigint) modulo 2bits.
     // FIXME: For large values of `bits`, this can likely be improved with a SignedBigInteger API to

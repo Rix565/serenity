@@ -9,9 +9,10 @@
 #include "SpreadsheetWidget.h"
 #include <AK/ScopeGuard.h>
 #include <AK/Try.h>
+#include <LibConfig/Client.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/File.h>
 #include <LibCore/System.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibFileSystemAccessClient/Client.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Icon.h>
@@ -24,21 +25,24 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd rpath fattr unix cpath wpath thread"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
-    char const* filename = nullptr;
+    StringView filename;
 
     Core::ArgsParser args_parser;
     args_parser.add_positional_argument(filename, "File to read from", "file", Core::ArgsParser::Required::No);
 
     args_parser.parse(arguments);
 
-    if (filename) {
-        if (!Core::File::exists({ filename, strlen(filename) }) || Core::File::is_directory(filename)) {
+    if (!filename.is_empty()) {
+        if (!FileSystem::exists(filename) || FileSystem::is_directory(filename)) {
             warnln("File does not exist or is a directory: {}", filename);
             return 1;
         }
     }
+
+    Config::pledge_domain("Spreadsheet");
+    app->set_config_domain(TRY("Spreadsheet"_string));
 
     TRY(Core::System::unveil("/tmp/session/%sid/portal/filesystemaccess", "rw"));
     TRY(Core::System::unveil("/tmp/session/%sid/portal/webcontent", "rw"));
@@ -51,9 +55,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     window->resize(640, 480);
     window->set_icon(app_icon.bitmap_for_size(16));
 
-    auto spreadsheet_widget = TRY(window->set_main_widget<Spreadsheet::SpreadsheetWidget>(*window, NonnullRefPtrVector<Spreadsheet::Sheet> {}, filename == nullptr));
+    auto spreadsheet_widget = TRY(window->set_main_widget<Spreadsheet::SpreadsheetWidget>(*window, Vector<NonnullRefPtr<Spreadsheet::Sheet>> {}, filename.is_empty()));
 
-    spreadsheet_widget->initialize_menubar(*window);
+    TRY(spreadsheet_widget->initialize_menubar(*window));
     spreadsheet_widget->update_window_title();
 
     window->on_close_request = [&]() -> GUI::Window::CloseRequestDecision {
@@ -64,7 +68,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     window->show();
 
-    if (filename) {
+    if (!filename.is_empty()) {
         auto file = TRY(FileSystemAccessClient::Client::the().request_file_read_only_approved(window, filename));
         spreadsheet_widget->load_file(file.filename(), file.stream());
     }

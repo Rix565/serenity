@@ -28,25 +28,25 @@ int SamplesModel::column_count(GUI::ModelIndex const&) const
     return Column::__Count;
 }
 
-DeprecatedString SamplesModel::column_name(int column) const
+ErrorOr<String> SamplesModel::column_name(int column) const
 {
     switch (column) {
     case Column::SampleIndex:
-        return "#";
+        return "#"_short_string;
     case Column::Timestamp:
-        return "Timestamp";
+        return TRY("Timestamp"_string);
     case Column::ProcessID:
-        return "PID";
+        return "PID"_short_string;
     case Column::ThreadID:
-        return "TID";
+        return "TID"_short_string;
     case Column::ExecutableName:
-        return "Executable";
+        return TRY("Executable"_string);
     case Column::LostSamples:
-        return "Lost Samples";
+        return TRY("Lost Samples"_string);
     case Column::InnermostStackFrame:
-        return "Innermost Frame";
+        return TRY("Innermost Frame"_string);
     case Column::Path:
-        return "Path";
+        return "Path"_short_string;
     default:
         VERIFY_NOT_REACHED();
     }

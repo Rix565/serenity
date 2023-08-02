@@ -5,13 +5,14 @@
  */
 
 #include <LibJS/Heap/Heap.h>
+#include <LibJS/Runtime/Error.h>
 #include <LibWeb/DOM/StaticNodeList.h>
 
 namespace Web::DOM {
 
-JS::NonnullGCPtr<NodeList> StaticNodeList::create(JS::Realm& realm, Vector<JS::Handle<Node>> static_nodes)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<NodeList>> StaticNodeList::create(JS::Realm& realm, Vector<JS::Handle<Node>> static_nodes)
 {
-    return realm.heap().allocate<StaticNodeList>(realm, realm, move(static_nodes)).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<StaticNodeList>(realm, realm, move(static_nodes)));
 }
 
 StaticNodeList::StaticNodeList(JS::Realm& realm, Vector<JS::Handle<Node>> static_nodes)
@@ -42,7 +43,7 @@ Node const* StaticNodeList::item(u32 index) const
     // The item(index) method must return the indexth node in the collection. If there is no indexth node in the collection, then the method must return null.
     if (index >= m_static_nodes.size())
         return nullptr;
-    return &m_static_nodes[index];
+    return m_static_nodes[index];
 }
 
 // https://dom.spec.whatwg.org/#ref-for-dfn-supported-property-indices

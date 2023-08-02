@@ -1,15 +1,12 @@
 /*
- * Copyright (c) 2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#define AK_DONT_REPLACE_STD
-
 #include "WebContentView.h"
-#include "ConsoleWidget.h"
-#include "InspectorWidget.h"
+#include "HelperProcess.h"
 #include "Utilities.h"
 #include <AK/Assertions.h>
 #include <AK/ByteBuffer.h>
@@ -19,28 +16,25 @@
 #include <AK/NonnullOwnPtr.h>
 #include <AK/StringBuilder.h>
 #include <AK/Types.h>
-#include <Browser/CookieJar.h>
 #include <Kernel/API/KeyCode.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/EventLoop.h>
-#include <LibCore/File.h>
-#include <LibCore/IODevice.h>
-#include <LibCore/MemoryStream.h>
-#include <LibCore/Stream.h>
 #include <LibCore/System.h>
 #include <LibCore/Timer.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Font/FontDatabase.h>
-#include <LibGfx/PNGWriter.h>
+#include <LibGfx/ImageFormats/PNGWriter.h>
 #include <LibGfx/Painter.h>
+#include <LibGfx/Palette.h>
 #include <LibGfx/Rect.h>
 #include <LibGfx/SystemTheme.h>
-#include <LibJS/Runtime/ConsoleObject.h>
 #include <LibMain/Main.h>
+#include <LibWeb/Crypto/Crypto.h>
 #include <LibWeb/Loader/ContentFilter.h>
 #include <LibWebView/WebContentClient.h>
 #include <QApplication>
 #include <QCursor>
+#include <QGuiApplication>
 #include <QIcon>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -49,14 +43,18 @@
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
+#include <QPalette>
 #include <QScrollBar>
-#include <QSocketNotifier>
 #include <QTextEdit>
 #include <QTimer>
 #include <QToolTip>
 
-WebContentView::WebContentView(StringView webdriver_content_ipc_path)
-    : m_webdriver_content_ipc_path(webdriver_content_ipc_path)
+bool is_using_dark_system_theme(QWidget&);
+
+WebContentView::WebContentView(StringView webdriver_content_ipc_path, WebView::EnableCallgrindProfiling enable_callgrind_profiling, WebView::UseJavaScriptBytecode use_javascript_bytecode, UseLagomNetworking use_lagom_networking)
+    : WebView::ViewImplementation(use_javascript_bytecode)
+    , m_use_lagom_networking(use_lagom_networking)
+    , m_webdriver_content_ipc_path(webdriver_content_ipc_path)
 {
     setMouseTracking(true);
     setAcceptDrops(true);
@@ -76,13 +74,10 @@ WebContentView::WebContentView(StringView webdriver_content_ipc_path)
         update_viewport_rect();
     });
 
-    create_client();
+    create_client(enable_callgrind_profiling);
 }
 
-WebContentView::~WebContentView()
-{
-    close_sub_widgets();
-}
+WebContentView::~WebContentView() = default;
 
 unsigned get_button_from_qt_event(QMouseEvent const& event)
 {
@@ -140,6 +135,8 @@ unsigned get_modifiers_from_qt_keyboard_event(QKeyEvent const& event)
         modifiers |= KeyModifier::Mod_Shift;
     if (event.modifiers().testFlag(Qt::AltModifier))
         modifiers |= KeyModifier::Mod_AltGr;
+    if (event.modifiers().testFlag(Qt::KeypadModifier))
+        modifiers |= KeyModifier::Mod_Keypad;
     return modifiers;
 }
 
@@ -156,6 +153,7 @@ KeyCode get_keycode_from_qt_keyboard_event(QKeyEvent const& event)
         KeyCode serenity_key;
     };
 
+    // https://doc.qt.io/qt-6/qt.html#Key-enum
     constexpr Mapping mappings[] = {
         { Qt::Key_0, Key_0 },
         { Qt::Key_1, Key_1 },
@@ -195,7 +193,9 @@ KeyCode get_keycode_from_qt_keyboard_event(QKeyEvent const& event)
         { Qt::Key_E, Key_E },
         { Qt::Key_End, Key_End },
         { Qt::Key_Equal, Key_Equal },
+        { Qt::Key_Enter, Key_Return },
         { Qt::Key_Escape, Key_Escape },
+        { Qt::Key_Exclam, Key_ExclamationPoint },
         { Qt::Key_exclamdown, Key_ExclamationPoint },
         { Qt::Key_F, Key_F },
         { Qt::Key_F1, Key_F1 },
@@ -223,8 +223,10 @@ KeyCode get_keycode_from_qt_keyboard_event(QKeyEvent const& event)
         { Qt::Key_Less, Key_LessThan },
         { Qt::Key_M, Key_M },
         { Qt::Key_Menu, Key_Menu },
+        { Qt::Key_Meta, Key_Super },
         { Qt::Key_Minus, Key_Minus },
         { Qt::Key_N, Key_N },
+        { Qt::Key_NumberSign, Key_Hashtag },
         { Qt::Key_NumLock, Key_NumLock },
         { Qt::Key_O, Key_O },
         { Qt::Key_P, Key_P },
@@ -239,6 +241,7 @@ KeyCode get_keycode_from_qt_keyboard_event(QKeyEvent const& event)
         { Qt::Key_Q, Key_Q },
         { Qt::Key_Question, Key_QuestionMark },
         { Qt::Key_QuoteDbl, Key_DoubleQuote },
+        { Qt::Key_QuoteLeft, Key_Backtick },
         { Qt::Key_R, Key_R },
         { Qt::Key_Return, Key_Return },
         { Qt::Key_Right, Key_Right },
@@ -249,6 +252,7 @@ KeyCode get_keycode_from_qt_keyboard_event(QKeyEvent const& event)
         { Qt::Key_Slash, Key_Slash },
         { Qt::Key_Space, Key_Space },
         { Qt::Key_Super_L, Key_Super },
+        { Qt::Key_Super_R, Key_Super },
         { Qt::Key_SysReq, Key_SysRq },
         { Qt::Key_T, Key_T },
         { Qt::Key_Tab, Key_Tab },
@@ -269,12 +273,22 @@ KeyCode get_keycode_from_qt_keyboard_event(QKeyEvent const& event)
     return Key_Invalid;
 }
 
+void WebContentView::wheelEvent(QWheelEvent* event)
+{
+    if (!event->modifiers().testFlag(Qt::ControlModifier)) {
+        QAbstractScrollArea::wheelEvent(event);
+        event->accept();
+        return;
+    }
+    event->ignore();
+}
+
 void WebContentView::mouseMoveEvent(QMouseEvent* event)
 {
     Gfx::IntPoint position(event->position().x() / m_inverse_pixel_scaling_ratio, event->position().y() / m_inverse_pixel_scaling_ratio);
     auto buttons = get_buttons_from_qt_event(*event);
     auto modifiers = get_modifiers_from_qt_mouse_event(*event);
-    client().async_mouse_move(to_content(position), 0, buttons, modifiers);
+    client().async_mouse_move(to_content_position(position), 0, buttons, modifiers);
 }
 
 void WebContentView::mousePressEvent(QMouseEvent* event)
@@ -289,7 +303,7 @@ void WebContentView::mousePressEvent(QMouseEvent* event)
     }
     auto modifiers = get_modifiers_from_qt_mouse_event(*event);
     auto buttons = get_buttons_from_qt_event(*event);
-    client().async_mouse_down(to_content(position), button, buttons, modifiers);
+    client().async_mouse_down(to_content_position(position), button, buttons, modifiers);
 }
 
 void WebContentView::mouseReleaseEvent(QMouseEvent* event)
@@ -298,9 +312,11 @@ void WebContentView::mouseReleaseEvent(QMouseEvent* event)
     auto button = get_button_from_qt_event(*event);
 
     if (event->button() & Qt::MouseButton::BackButton) {
-        emit back_mouse_button();
+        if (on_back_button)
+            on_back_button();
     } else if (event->button() & Qt::MouseButton::ForwardButton) {
-        emit forward_mouse_button();
+        if (on_forward_button)
+            on_forward_button();
     }
 
     if (button == 0) {
@@ -311,7 +327,22 @@ void WebContentView::mouseReleaseEvent(QMouseEvent* event)
     }
     auto modifiers = get_modifiers_from_qt_mouse_event(*event);
     auto buttons = get_buttons_from_qt_event(*event);
-    client().async_mouse_up(to_content(position), button, buttons, modifiers);
+    client().async_mouse_up(to_content_position(position), button, buttons, modifiers);
+}
+
+void WebContentView::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    Gfx::IntPoint position(event->position().x() / m_inverse_pixel_scaling_ratio, event->position().y() / m_inverse_pixel_scaling_ratio);
+    auto button = get_button_from_qt_event(*event);
+    if (button == 0) {
+        // We could not convert Qt buttons to something that Lagom can
+        // recognize - don't even bother propagating this to the web engine
+        // as it will not handle it anyway, and it will (currently) assert
+        return;
+    }
+    auto modifiers = get_modifiers_from_qt_mouse_event(*event);
+    auto buttons = get_buttons_from_qt_event(*event);
+    client().async_doubleclick(to_content_position(position), button, buttons, modifiers);
 }
 
 void WebContentView::dragEnterEvent(QDragEnterEvent* event)
@@ -349,10 +380,7 @@ void WebContentView::keyPressEvent(QKeyEvent* event)
     }
 
     auto text = event->text();
-    if (text.isEmpty()) {
-        return;
-    }
-    auto point = event->text()[0].unicode();
+    auto point = text.isEmpty() ? 0u : event->text()[0].unicode();
     auto keycode = get_keycode_from_qt_keyboard_event(*event);
     auto modifiers = get_modifiers_from_qt_keyboard_event(*event);
     client().async_key_down(keycode, modifiers, point);
@@ -361,10 +389,7 @@ void WebContentView::keyPressEvent(QKeyEvent* event)
 void WebContentView::keyReleaseEvent(QKeyEvent* event)
 {
     auto text = event->text();
-    if (text.isEmpty()) {
-        return;
-    }
-    auto point = event->text()[0].unicode();
+    auto point = text.isEmpty() ? 0u : event->text()[0].unicode();
     auto keycode = get_keycode_from_qt_keyboard_event(*event);
     auto modifiers = get_modifiers_from_qt_keyboard_event(*event);
     client().async_key_up(keycode, modifiers, point);
@@ -380,24 +405,34 @@ void WebContentView::focusOutEvent(QFocusEvent*)
     client().async_set_has_focus(false);
 }
 
-Gfx::IntPoint WebContentView::to_content(Gfx::IntPoint viewport_position) const
-{
-    return viewport_position.translated(horizontalScrollBar()->value(), verticalScrollBar()->value());
-}
-
-Gfx::IntPoint WebContentView::to_widget(Gfx::IntPoint content_position) const
-{
-    return content_position.translated(-horizontalScrollBar()->value(), -verticalScrollBar()->value());
-}
-
 void WebContentView::paintEvent(QPaintEvent*)
 {
     QPainter painter(viewport());
     painter.scale(m_inverse_pixel_scaling_ratio, m_inverse_pixel_scaling_ratio);
 
-    if (auto* bitmap = m_client_state.has_usable_bitmap ? m_client_state.front_bitmap.bitmap.ptr() : m_backup_bitmap.ptr()) {
+    Gfx::Bitmap const* bitmap = nullptr;
+    Gfx::IntSize bitmap_size;
+
+    if (m_client_state.has_usable_bitmap) {
+        bitmap = m_client_state.front_bitmap.bitmap.ptr();
+        bitmap_size = m_client_state.front_bitmap.last_painted_size;
+
+    } else {
+        bitmap = m_backup_bitmap.ptr();
+        bitmap_size = m_backup_bitmap_size;
+    }
+
+    if (bitmap) {
         QImage q_image(bitmap->scanline_u8(0), bitmap->width(), bitmap->height(), QImage::Format_RGB32);
-        painter.drawImage(QPoint(0, 0), q_image);
+        painter.drawImage(QPoint(0, 0), q_image, QRect(0, 0, bitmap_size.width(), bitmap_size.height()));
+
+        if (bitmap_size.width() < width()) {
+            painter.fillRect(bitmap_size.width(), 0, width() - bitmap_size.width(), bitmap->height(), palette().base());
+        }
+        if (bitmap_size.height() < height()) {
+            painter.fillRect(0, bitmap_size.height(), width(), height() - bitmap_size.height(), palette().base());
+        }
+
         return;
     }
 
@@ -407,129 +442,35 @@ void WebContentView::paintEvent(QPaintEvent*)
 void WebContentView::resizeEvent(QResizeEvent* event)
 {
     QAbstractScrollArea::resizeEvent(event);
+    update_viewport_rect();
     handle_resize();
 }
 
-void WebContentView::handle_resize()
+void WebContentView::set_viewport_rect(Gfx::IntRect rect)
 {
-    update_viewport_rect();
+    m_viewport_rect = rect;
+    client().async_set_viewport_rect(rect);
+}
 
-    if (m_client_state.has_usable_bitmap) {
-        // NOTE: We keep the outgoing front bitmap as a backup so we have something to paint until we get a new one.
-        m_backup_bitmap = m_client_state.front_bitmap.bitmap;
-    }
+void WebContentView::set_window_size(Gfx::IntSize size)
+{
+    client().async_set_window_size(size);
+}
 
-    if (m_client_state.front_bitmap.bitmap)
-        client().async_remove_backing_store(m_client_state.front_bitmap.id);
-
-    if (m_client_state.back_bitmap.bitmap)
-        client().async_remove_backing_store(m_client_state.back_bitmap.id);
-
-    m_client_state.front_bitmap = {};
-    m_client_state.back_bitmap = {};
-    m_client_state.has_usable_bitmap = false;
-
-    auto available_size = m_viewport_rect.size();
-
-    if (available_size.is_empty())
-        return;
-
-    if (auto new_bitmap_or_error = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::BGRx8888, available_size); !new_bitmap_or_error.is_error()) {
-        m_client_state.front_bitmap.bitmap = new_bitmap_or_error.release_value();
-        m_client_state.front_bitmap.id = m_client_state.next_bitmap_id++;
-        client().async_add_backing_store(m_client_state.front_bitmap.id, m_client_state.front_bitmap.bitmap->to_shareable_bitmap());
-    }
-
-    if (auto new_bitmap_or_error = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::BGRx8888, available_size); !new_bitmap_or_error.is_error()) {
-        m_client_state.back_bitmap.bitmap = new_bitmap_or_error.release_value();
-        m_client_state.back_bitmap.id = m_client_state.next_bitmap_id++;
-        client().async_add_backing_store(m_client_state.back_bitmap.id, m_client_state.back_bitmap.bitmap->to_shareable_bitmap());
-    }
-
-    request_repaint();
+void WebContentView::set_window_position(Gfx::IntPoint position)
+{
+    client().async_set_window_position(position);
 }
 
 void WebContentView::update_viewport_rect()
 {
     auto scaled_width = int(viewport()->width() / m_inverse_pixel_scaling_ratio);
     auto scaled_height = int(viewport()->height() / m_inverse_pixel_scaling_ratio);
-    Gfx::IntRect rect(horizontalScrollBar()->value(), verticalScrollBar()->value(), scaled_width, scaled_height);
+    Gfx::IntRect rect(max(0, horizontalScrollBar()->value()), max(0, verticalScrollBar()->value()), scaled_width, scaled_height);
 
-    m_viewport_rect = rect;
-    client().async_set_viewport_rect(rect);
+    set_viewport_rect(rect);
 
     request_repaint();
-}
-
-void WebContentView::did_output_js_console_message(i32 message_index)
-{
-    if (m_console_widget)
-        m_console_widget->notify_about_new_console_message(message_index);
-}
-
-void WebContentView::did_get_js_console_messages(i32 start_index, Vector<DeprecatedString> message_types, Vector<DeprecatedString> messages)
-{
-    if (m_console_widget)
-        m_console_widget->handle_console_messages(start_index, message_types, messages);
-}
-
-void WebContentView::ensure_js_console_widget()
-{
-    if (!m_console_widget) {
-        m_console_widget = new Ladybird::ConsoleWidget;
-        m_console_widget->setWindowTitle("JS Console");
-        m_console_widget->resize(640, 480);
-        m_console_widget->on_js_input = [this](auto js_source) {
-            client().async_js_console_input(js_source);
-        };
-        m_console_widget->on_request_messages = [this](i32 start_index) {
-            client().async_js_console_request_messages(start_index);
-        };
-    }
-}
-
-void WebContentView::show_js_console()
-{
-    ensure_js_console_widget();
-    m_console_widget->show();
-}
-
-void WebContentView::ensure_inspector_widget()
-{
-    if (m_inspector_widget)
-        return;
-    m_inspector_widget = new Ladybird::InspectorWidget;
-    m_inspector_widget->setWindowTitle("Inspector");
-    m_inspector_widget->resize(640, 480);
-    m_inspector_widget->on_close = [this] {
-        clear_inspected_dom_node();
-    };
-
-    m_inspector_widget->on_dom_node_inspected = [&](auto id, auto pseudo_element) {
-        return inspect_dom_node(id, pseudo_element);
-    };
-}
-
-void WebContentView::close_sub_widgets()
-{
-    auto close_widget_window = [](auto* widget) {
-        if (widget)
-            widget->close();
-    };
-    close_widget_window(m_console_widget);
-    close_widget_window(m_inspector_widget);
-}
-
-bool WebContentView::is_inspector_open() const
-{
-    return m_inspector_widget && m_inspector_widget->isVisible();
-}
-
-void WebContentView::show_inspector()
-{
-    ensure_inspector_widget();
-    m_inspector_widget->show();
-    inspect_dom_tree();
 }
 
 void WebContentView::update_zoom()
@@ -551,124 +492,91 @@ void WebContentView::hideEvent(QHideEvent* event)
     client().async_set_system_visibility_state(false);
 }
 
-void WebContentView::create_client()
+static Core::AnonymousBuffer make_system_theme_from_qt_palette(QWidget& widget, WebContentView::PaletteMode mode)
+{
+    auto qt_palette = widget.palette();
+
+    auto theme_file = mode == WebContentView::PaletteMode::Default ? "Default"sv : "Dark"sv;
+    auto theme = Gfx::load_system_theme(DeprecatedString::formatted("{}/res/themes/{}.ini", s_serenity_resource_root, theme_file)).release_value_but_fixme_should_propagate_errors();
+    auto palette_impl = Gfx::PaletteImpl::create_with_anonymous_buffer(theme);
+    auto palette = Gfx::Palette(move(palette_impl));
+
+    auto translate = [&](Gfx::ColorRole gfx_color_role, QPalette::ColorRole qt_color_role) {
+        auto new_color = Gfx::Color::from_argb(qt_palette.color(qt_color_role).rgba());
+        palette.set_color(gfx_color_role, new_color);
+    };
+
+    translate(Gfx::ColorRole::ThreedHighlight, QPalette::ColorRole::Light);
+    translate(Gfx::ColorRole::ThreedShadow1, QPalette::ColorRole::Mid);
+    translate(Gfx::ColorRole::ThreedShadow2, QPalette::ColorRole::Dark);
+    translate(Gfx::ColorRole::HoverHighlight, QPalette::ColorRole::Light);
+    translate(Gfx::ColorRole::Link, QPalette::ColorRole::Link);
+    translate(Gfx::ColorRole::VisitedLink, QPalette::ColorRole::LinkVisited);
+    translate(Gfx::ColorRole::Button, QPalette::ColorRole::Button);
+    translate(Gfx::ColorRole::ButtonText, QPalette::ColorRole::ButtonText);
+    translate(Gfx::ColorRole::Selection, QPalette::ColorRole::Highlight);
+    translate(Gfx::ColorRole::SelectionText, QPalette::ColorRole::HighlightedText);
+
+    palette.set_flag(Gfx::FlagRole::IsDark, is_using_dark_system_theme(widget));
+
+    return theme;
+}
+
+void WebContentView::update_palette(PaletteMode mode)
+{
+    client().async_update_system_theme(make_system_theme_from_qt_palette(*this, mode));
+}
+
+void WebContentView::create_client(WebView::EnableCallgrindProfiling enable_callgrind_profiling)
 {
     m_client_state = {};
 
-    int socket_fds[2] {};
-    MUST(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, socket_fds));
-
-    int ui_fd = socket_fds[0];
-    int wc_fd = socket_fds[1];
-
-    int fd_passing_socket_fds[2] {};
-    MUST(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, fd_passing_socket_fds));
-
-    int ui_fd_passing_fd = fd_passing_socket_fds[0];
-    int wc_fd_passing_fd = fd_passing_socket_fds[1];
-
-    auto child_pid = fork();
-    if (!child_pid) {
-        MUST(Core::System::close(ui_fd_passing_fd));
-        MUST(Core::System::close(ui_fd));
-
-        auto takeover_string = DeprecatedString::formatted("WebContent:{}", wc_fd);
-        MUST(Core::System::setenv("SOCKET_TAKEOVER"sv, takeover_string, true));
-
-        auto webcontent_fd_passing_socket_string = DeprecatedString::number(wc_fd_passing_fd);
-
-        Vector<StringView> arguments {
-            "WebContent"sv,
-            "--webcontent-fd-passing-socket"sv,
-            webcontent_fd_passing_socket_string
-        };
-
-        if (!m_webdriver_content_ipc_path.is_empty()) {
-            arguments.append("--webdriver-content-path"sv);
-            arguments.append(m_webdriver_content_ipc_path);
-        }
-
-        auto result = Core::System::exec("./WebContent/WebContent"sv, arguments, Core::System::SearchInPath::Yes);
-        if (result.is_error()) {
-            auto web_content_path = ak_deprecated_string_from_qstring(QCoreApplication::applicationDirPath() + "/WebContent");
-            result = Core::System::exec(web_content_path, arguments, Core::System::SearchInPath::Yes);
-        }
-
-        if (result.is_error())
-            warnln("Could not launch WebContent: {}", result.error());
-        VERIFY_NOT_REACHED();
-    }
-
-    MUST(Core::System::close(wc_fd_passing_fd));
-    MUST(Core::System::close(wc_fd));
-
-    auto socket = MUST(Core::Stream::LocalSocket::adopt_fd(ui_fd));
-    MUST(socket->set_blocking(true));
-
-    auto new_client = MUST(adopt_nonnull_ref_or_enomem(new (nothrow) WebView::WebContentClient(std::move(socket), *this)));
-    new_client->set_fd_passing_socket(MUST(Core::Stream::LocalSocket::adopt_fd(ui_fd_passing_fd)));
-
-    auto* notifier = new QSocketNotifier(new_client->socket().fd().value(), QSocketNotifier::Type::Read);
-    QObject::connect(notifier, &QSocketNotifier::activated, [new_client = new_client.ptr()] {
-        if (auto notifier = new_client->socket().notifier())
-            notifier->on_ready_to_read();
-    });
-
-    struct DeferredInvokerQt final : IPC::DeferredInvoker {
-        virtual ~DeferredInvokerQt() = default;
-        virtual void schedule(Function<void()> callback) override
-        {
-            QTimer::singleShot(0, std::move(callback));
-        }
-    };
-
-    new_client->set_deferred_invoker(make<DeferredInvokerQt>());
+    auto candidate_web_content_paths = get_paths_for_helper_process("WebContent"sv).release_value_but_fixme_should_propagate_errors();
+    auto new_client = launch_web_content_process(*this, candidate_web_content_paths, enable_callgrind_profiling, WebView::IsLayoutTestMode::No, use_javascript_bytecode(), m_use_lagom_networking).release_value_but_fixme_should_propagate_errors();
 
     m_client_state.client = new_client;
     m_client_state.client->on_web_content_process_crash = [this] {
-        QTimer::singleShot(0, [this] {
+        Core::deferred_invoke([this] {
             handle_web_content_process_crash();
         });
     };
 
+    m_client_state.client_handle = Web::Crypto::generate_random_uuid().release_value_but_fixme_should_propagate_errors();
+    client().async_set_window_handle(m_client_state.client_handle);
+
     client().async_set_device_pixels_per_css_pixel(m_device_pixel_ratio);
-    client().async_update_system_theme(MUST(Gfx::load_system_theme(DeprecatedString::formatted("{}/res/themes/Default.ini", s_serenity_resource_root))));
+    update_palette();
     client().async_update_system_fonts(Gfx::FontDatabase::default_font_query(), Gfx::FontDatabase::fixed_width_font_query(), Gfx::FontDatabase::window_title_font_query());
 
-    // FIXME: Get the screen rect.
-    // client().async_update_screen_rects(GUI::Desktop::the().rects(), GUI::Desktop::the().main_screen_index());
-}
+    auto screens = QGuiApplication::screens();
 
-void WebContentView::handle_web_content_process_crash()
-{
-    dbgln("WebContent process crashed!");
-    create_client();
-    VERIFY(m_client_state.client);
+    if (!screens.empty()) {
+        Vector<Gfx::IntRect> screen_rects;
 
-    // Don't keep a stale backup bitmap around.
-    m_backup_bitmap = nullptr;
+        for (auto const& screen : screens) {
+            auto geometry = screen->geometry();
 
-    handle_resize();
-    StringBuilder builder;
-    builder.append("<html><head><title>Crashed: "sv);
-    builder.append(escape_html_entities(m_url.to_deprecated_string()));
-    builder.append("</title></head><body>"sv);
-    builder.append("<h1>Web page crashed"sv);
-    if (!m_url.host().is_empty()) {
-        builder.appendff(" on {}", escape_html_entities(m_url.host()));
+            screen_rects.append(Gfx::IntRect(geometry.x(), geometry.y(), geometry.width(), geometry.height()));
+        }
+
+        // FIXME: Update the screens again when QGuiApplication::screenAdded/Removed signals are emitted
+
+        // NOTE: The first item in QGuiApplication::screens is always the primary screen.
+        //       This is not specified in the documentation but QGuiApplication::primaryScreen
+        //       always returns the first item in the list if it isn't empty.
+        client().async_update_screen_rects(screen_rects, 0);
     }
-    builder.append("</h1>"sv);
-    auto escaped_url = escape_html_entities(m_url.to_deprecated_string());
-    builder.appendff("The web page <a href=\"{}\">{}</a> has crashed.<br><br>You can reload the page to try again.", escaped_url, escaped_url);
-    builder.append("</body></html>"sv);
-    load_html(builder.to_deprecated_string(), m_url);
+
+    if (!m_webdriver_content_ipc_path.is_empty())
+        client().async_connect_to_webdriver(m_webdriver_content_ipc_path);
 }
 
-void WebContentView::notify_server_did_paint(Badge<WebContentClient>, i32 bitmap_id)
+void WebContentView::notify_server_did_paint(Badge<WebContentClient>, i32 bitmap_id, Gfx::IntSize size)
 {
     if (m_client_state.back_bitmap.id == bitmap_id) {
         m_client_state.has_usable_bitmap = true;
         m_client_state.back_bitmap.pending_paints--;
+        m_client_state.back_bitmap.last_painted_size = size;
         swap(m_client_state.back_bitmap, m_client_state.front_bitmap);
         // We don't need the backup bitmap anymore, so drop it.
         m_backup_bitmap = nullptr;
@@ -694,13 +602,60 @@ void WebContentView::notify_server_did_change_selection(Badge<WebContentClient>)
 void WebContentView::notify_server_did_request_cursor_change(Badge<WebContentClient>, Gfx::StandardCursor cursor)
 {
     switch (cursor) {
-    case Gfx::StandardCursor::Hand:
-        setCursor(Qt::PointingHandCursor);
+    case Gfx::StandardCursor::Hidden:
+        setCursor(Qt::BlankCursor);
+        break;
+    case Gfx::StandardCursor::Arrow:
+        setCursor(Qt::ArrowCursor);
+        break;
+    case Gfx::StandardCursor::Crosshair:
+        setCursor(Qt::CrossCursor);
         break;
     case Gfx::StandardCursor::IBeam:
         setCursor(Qt::IBeamCursor);
         break;
-    case Gfx::StandardCursor::Arrow:
+    case Gfx::StandardCursor::ResizeHorizontal:
+        setCursor(Qt::SizeHorCursor);
+        break;
+    case Gfx::StandardCursor::ResizeVertical:
+        setCursor(Qt::SizeVerCursor);
+        break;
+    case Gfx::StandardCursor::ResizeDiagonalTLBR:
+        setCursor(Qt::SizeFDiagCursor);
+        break;
+    case Gfx::StandardCursor::ResizeDiagonalBLTR:
+        setCursor(Qt::SizeBDiagCursor);
+        break;
+    case Gfx::StandardCursor::ResizeColumn:
+        setCursor(Qt::SplitHCursor);
+        break;
+    case Gfx::StandardCursor::ResizeRow:
+        setCursor(Qt::SplitVCursor);
+        break;
+    case Gfx::StandardCursor::Hand:
+        setCursor(Qt::PointingHandCursor);
+        break;
+    case Gfx::StandardCursor::Help:
+        setCursor(Qt::WhatsThisCursor);
+        break;
+    case Gfx::StandardCursor::Drag:
+        setCursor(Qt::ClosedHandCursor);
+        break;
+    case Gfx::StandardCursor::DragCopy:
+        setCursor(Qt::DragCopyCursor);
+        break;
+    case Gfx::StandardCursor::Move:
+        setCursor(Qt::DragMoveCursor);
+        break;
+    case Gfx::StandardCursor::Wait:
+        setCursor(Qt::BusyCursor);
+        break;
+    case Gfx::StandardCursor::Disallowed:
+        setCursor(Qt::ForbiddenCursor);
+        break;
+    case Gfx::StandardCursor::Eyedropper:
+    case Gfx::StandardCursor::Zoom:
+        // FIXME: No corresponding Qt cursors, default to Arrow
     default:
         setCursor(Qt::ArrowCursor);
         break;
@@ -717,15 +672,10 @@ void WebContentView::notify_server_did_layout(Badge<WebContentClient>, Gfx::IntS
     horizontalScrollBar()->setPageStep(m_viewport_rect.width());
 }
 
-void WebContentView::notify_server_did_change_title(Badge<WebContentClient>, DeprecatedString const& title)
-{
-    emit title_changed(qstring_from_ak_deprecated_string(title));
-}
-
 void WebContentView::notify_server_did_request_scroll(Badge<WebContentClient>, i32 x_delta, i32 y_delta)
 {
-    horizontalScrollBar()->setValue(horizontalScrollBar()->value() + x_delta);
-    verticalScrollBar()->setValue(verticalScrollBar()->value() + y_delta);
+    horizontalScrollBar()->setValue(max(0, horizontalScrollBar()->value() + x_delta));
+    verticalScrollBar()->setValue(max(0, verticalScrollBar()->value() + y_delta));
 }
 
 void WebContentView::notify_server_did_request_scroll_to(Badge<WebContentClient>, Gfx::IntPoint scroll_position)
@@ -739,16 +689,15 @@ void WebContentView::notify_server_did_request_scroll_into_view(Badge<WebContent
     if (m_viewport_rect.contains(rect))
         return;
 
-    if (rect.top() < m_viewport_rect.top()) {
+    if (rect.top() < m_viewport_rect.top())
         verticalScrollBar()->setValue(rect.top());
-    } else if (rect.top() > m_viewport_rect.top() && rect.bottom() > m_viewport_rect.bottom()) {
-        verticalScrollBar()->setValue(rect.bottom() - m_viewport_rect.height() + 1);
-    }
+    else if (rect.top() > m_viewport_rect.top() && rect.bottom() > m_viewport_rect.bottom())
+        verticalScrollBar()->setValue(rect.bottom() - m_viewport_rect.height());
 }
 
 void WebContentView::notify_server_did_enter_tooltip_area(Badge<WebContentClient>, Gfx::IntPoint content_position, DeprecatedString const& tooltip)
 {
-    auto widget_position = to_widget(content_position);
+    auto widget_position = to_widget_position(content_position);
     QToolTip::showText(
         mapToGlobal(QPoint(widget_position.x(), widget_position.y())),
         qstring_from_ak_deprecated_string(tooltip),
@@ -760,125 +709,45 @@ void WebContentView::notify_server_did_leave_tooltip_area(Badge<WebContentClient
     QToolTip::hideText();
 }
 
-void WebContentView::notify_server_did_hover_link(Badge<WebContentClient>, AK::URL const& url)
+void WebContentView::notify_server_did_request_alert(Badge<WebContentClient>, String const& message)
 {
-    emit link_hovered(qstring_from_ak_deprecated_string(url.to_deprecated_string()));
-}
-
-void WebContentView::notify_server_did_unhover_link(Badge<WebContentClient>)
-{
-    emit link_unhovered();
-}
-
-void WebContentView::notify_server_did_click_link(Badge<WebContentClient>, AK::URL const& url, DeprecatedString const& target, unsigned int modifiers)
-{
-    // FIXME
-    (void)url;
-    (void)target;
-    (void)modifiers;
-    // if (on_link_click)
-    // on_link_click(url, target, modifiers);
-}
-
-void WebContentView::notify_server_did_middle_click_link(Badge<WebContentClient>, AK::URL const& url, DeprecatedString const& target, unsigned int modifiers)
-{
-    (void)url;
-    (void)target;
-    (void)modifiers;
-}
-
-void WebContentView::notify_server_did_start_loading(Badge<WebContentClient>, AK::URL const& url, bool is_redirect)
-{
-    m_url = url;
-    emit load_started(url, is_redirect);
-    if (m_inspector_widget)
-        m_inspector_widget->clear_dom_json();
-}
-
-void WebContentView::notify_server_did_finish_loading(Badge<WebContentClient>, AK::URL const& url)
-{
-    m_url = url;
-    if (is_inspector_open())
-        inspect_dom_tree();
-    if (on_load_finish)
-        on_load_finish(url);
-}
-
-void WebContentView::notify_server_did_request_navigate_back(Badge<WebContentClient>)
-{
-    emit navigate_back();
-}
-
-void WebContentView::notify_server_did_request_navigate_forward(Badge<WebContentClient>)
-{
-    emit navigate_forward();
-}
-
-void WebContentView::notify_server_did_request_refresh(Badge<WebContentClient>)
-{
-    emit refresh();
-}
-
-void WebContentView::notify_server_did_request_context_menu(Badge<WebContentClient>, Gfx::IntPoint content_position)
-{
-    // FIXME
-    (void)content_position;
-}
-
-void WebContentView::notify_server_did_request_link_context_menu(Badge<WebContentClient>, Gfx::IntPoint content_position, AK::URL const& url, DeprecatedString const&, unsigned)
-{
-    // FIXME
-    (void)content_position;
-    (void)url;
-}
-
-void WebContentView::notify_server_did_request_image_context_menu(Badge<WebContentClient>, Gfx::IntPoint content_position, AK::URL const& url, DeprecatedString const&, unsigned, Gfx::ShareableBitmap const& bitmap)
-{
-    // FIXME
-    (void)content_position;
-    (void)url;
-    (void)bitmap;
-}
-
-void WebContentView::notify_server_did_request_alert(Badge<WebContentClient>, DeprecatedString const& message)
-{
-    m_dialog = new QMessageBox(QMessageBox::Icon::Warning, "Ladybird", qstring_from_ak_deprecated_string(message), QMessageBox::StandardButton::Ok, this);
+    m_dialog = new QMessageBox(QMessageBox::Icon::Warning, "Ladybird", qstring_from_ak_string(message), QMessageBox::StandardButton::Ok, this);
     m_dialog->exec();
 
     client().async_alert_closed();
     m_dialog = nullptr;
 }
 
-void WebContentView::notify_server_did_request_confirm(Badge<WebContentClient>, DeprecatedString const& message)
+void WebContentView::notify_server_did_request_confirm(Badge<WebContentClient>, String const& message)
 {
-    m_dialog = new QMessageBox(QMessageBox::Icon::Question, "Ladybird", qstring_from_ak_deprecated_string(message), QMessageBox::StandardButton::Ok | QMessageBox::StandardButton::Cancel, this);
+    m_dialog = new QMessageBox(QMessageBox::Icon::Question, "Ladybird", qstring_from_ak_string(message), QMessageBox::StandardButton::Ok | QMessageBox::StandardButton::Cancel, this);
     auto result = m_dialog->exec();
 
     client().async_confirm_closed(result == QMessageBox::StandardButton::Ok || result == QDialog::Accepted);
     m_dialog = nullptr;
 }
 
-void WebContentView::notify_server_did_request_prompt(Badge<WebContentClient>, DeprecatedString const& message, DeprecatedString const& default_)
+void WebContentView::notify_server_did_request_prompt(Badge<WebContentClient>, String const& message, String const& default_)
 {
     m_dialog = new QInputDialog(this);
     auto& dialog = static_cast<QInputDialog&>(*m_dialog);
 
     dialog.setWindowTitle("Ladybird");
-    dialog.setLabelText(qstring_from_ak_deprecated_string(message));
-    dialog.setTextValue(qstring_from_ak_deprecated_string(default_));
+    dialog.setLabelText(qstring_from_ak_string(message));
+    dialog.setTextValue(qstring_from_ak_string(default_));
 
     if (dialog.exec() == QDialog::Accepted)
-        client().async_prompt_closed(ak_deprecated_string_from_qstring(dialog.textValue()));
+        client().async_prompt_closed(ak_string_from_qstring(dialog.textValue()).release_value_but_fixme_should_propagate_errors());
     else
         client().async_prompt_closed({});
 
     m_dialog = nullptr;
 }
 
-void WebContentView::notify_server_did_request_set_prompt_text(Badge<WebContentClient>, DeprecatedString const& message)
+void WebContentView::notify_server_did_request_set_prompt_text(Badge<WebContentClient>, String const& message)
 {
     if (m_dialog && is<QInputDialog>(*m_dialog))
-        static_cast<QInputDialog&>(*m_dialog).setTextValue(qstring_from_ak_deprecated_string(message));
+        static_cast<QInputDialog&>(*m_dialog).setTextValue(qstring_from_ak_string(message));
 }
 
 void WebContentView::notify_server_did_request_accept_dialog(Badge<WebContentClient>)
@@ -893,139 +762,28 @@ void WebContentView::notify_server_did_request_dismiss_dialog(Badge<WebContentCl
         m_dialog->reject();
 }
 
-void WebContentView::notify_server_did_get_source(AK::URL const& url, DeprecatedString const& source)
-{
-    emit got_source(url, qstring_from_ak_deprecated_string(source));
-}
-
-void WebContentView::notify_server_did_get_dom_tree(DeprecatedString const& dom_tree)
-{
-    if (on_get_dom_tree)
-        on_get_dom_tree(dom_tree);
-    if (m_inspector_widget)
-        m_inspector_widget->set_dom_json(dom_tree);
-}
-
-void WebContentView::notify_server_did_get_dom_node_properties(i32 node_id, DeprecatedString const& specified_style, DeprecatedString const& computed_style, DeprecatedString const& custom_properties, DeprecatedString const& node_box_sizing)
-{
-    if (on_get_dom_node_properties)
-        on_get_dom_node_properties(node_id, specified_style, computed_style, custom_properties, node_box_sizing);
-}
-
-void WebContentView::notify_server_did_output_js_console_message(i32 message_index)
-{
-    if (m_console_widget)
-        m_console_widget->notify_about_new_console_message(message_index);
-}
-
-void WebContentView::notify_server_did_get_js_console_messages(i32 start_index, Vector<DeprecatedString> const& message_types, Vector<DeprecatedString> const& messages)
-{
-    if (m_console_widget)
-        m_console_widget->handle_console_messages(start_index, message_types, messages);
-}
-
-void WebContentView::notify_server_did_change_favicon(Gfx::Bitmap const& bitmap)
-{
-    auto qimage = QImage(bitmap.scanline_u8(0), bitmap.width(), bitmap.height(), QImage::Format_ARGB32);
-    if (qimage.isNull())
-        return;
-    auto qpixmap = QPixmap::fromImage(qimage);
-    if (qpixmap.isNull())
-        return;
-    emit favicon_changed(QIcon(qpixmap));
-}
-
-Vector<Web::Cookie::Cookie> WebContentView::notify_server_did_request_all_cookies(Badge<WebContentClient>, AK::URL const& url)
-{
-    if (on_get_all_cookies)
-        return on_get_all_cookies(url);
-    return {};
-}
-
-Optional<Web::Cookie::Cookie> WebContentView::notify_server_did_request_named_cookie(Badge<WebContentClient>, AK::URL const& url, DeprecatedString const& name)
-{
-    if (on_get_named_cookie)
-        return on_get_named_cookie(url, name);
-    return {};
-}
-
-DeprecatedString WebContentView::notify_server_did_request_cookie(Badge<WebContentClient>, AK::URL const& url, Web::Cookie::Source source)
-{
-    if (on_get_cookie)
-        return on_get_cookie(url, source);
-    return {};
-}
-
-void WebContentView::notify_server_did_set_cookie(Badge<WebContentClient>, AK::URL const& url, Web::Cookie::ParsedCookie const& cookie, Web::Cookie::Source source)
-{
-    if (on_set_cookie)
-        on_set_cookie(url, cookie, source);
-}
-
-void WebContentView::notify_server_did_update_cookie(Badge<WebContentClient>, Web::Cookie::Cookie const& cookie)
-{
-    if (on_update_cookie)
-        on_update_cookie(cookie);
-}
-
-void WebContentView::notify_server_did_update_resource_count(i32 count_waiting)
-{
-    // FIXME
-    (void)count_waiting;
-}
-
-void WebContentView::notify_server_did_request_restore_window()
-{
-    emit restore_window();
-}
-
-Gfx::IntPoint WebContentView::notify_server_did_request_reposition_window(Gfx::IntPoint position)
-{
-    return emit reposition_window(position);
-}
-
-Gfx::IntSize WebContentView::notify_server_did_request_resize_window(Gfx::IntSize size)
-{
-    return emit resize_window(size);
-}
-
-Gfx::IntRect WebContentView::notify_server_did_request_maximize_window()
-{
-    return emit maximize_window();
-}
-
-Gfx::IntRect WebContentView::notify_server_did_request_minimize_window()
-{
-    return emit minimize_window();
-}
-
-Gfx::IntRect WebContentView::notify_server_did_request_fullscreen_window()
-{
-    return emit fullscreen_window();
-}
-
 void WebContentView::notify_server_did_request_file(Badge<WebContentClient>, DeprecatedString const& path, i32 request_id)
 {
-    auto file = Core::Stream::File::open(path, Core::Stream::OpenMode::Read);
+    auto file = Core::File::open(path, Core::File::OpenMode::Read);
     if (file.is_error())
         client().async_handle_file_return(file.error().code(), {}, request_id);
     else
         client().async_handle_file_return(0, IPC::File(*file.value()), request_id);
 }
 
-void WebContentView::request_repaint()
+Gfx::IntRect WebContentView::viewport_rect() const
 {
-    // If this widget was instantiated but not yet added to a window,
-    // it won't have a back bitmap yet, so we can just skip repaint requests.
-    if (!m_client_state.back_bitmap.bitmap)
-        return;
-    // Don't request a repaint until pending paint requests have finished.
-    if (m_client_state.back_bitmap.pending_paints) {
-        m_client_state.got_repaint_requests_while_painting = true;
-        return;
-    }
-    m_client_state.back_bitmap.pending_paints++;
-    client().async_paint(m_client_state.back_bitmap.bitmap->rect().translated(horizontalScrollBar()->value(), verticalScrollBar()->value()), m_client_state.back_bitmap.id);
+    return m_viewport_rect;
+}
+
+Gfx::IntPoint WebContentView::to_content_position(Gfx::IntPoint widget_position) const
+{
+    return widget_position.translated(max(0, horizontalScrollBar()->value()), max(0, verticalScrollBar()->value()));
+}
+
+Gfx::IntPoint WebContentView::to_widget_position(Gfx::IntPoint content_position) const
+{
+    return content_position.translated(-(max(0, horizontalScrollBar()->value())), -(max(0, verticalScrollBar()->value())));
 }
 
 bool WebContentView::event(QEvent* event)
@@ -1041,6 +799,13 @@ bool WebContentView::event(QEvent* event)
         keyReleaseEvent(static_cast<QKeyEvent*>(event));
         return true;
     }
+
+    if (event->type() == QEvent::PaletteChange) {
+        update_palette();
+        request_repaint();
+        return QAbstractScrollArea::event(event);
+    }
+
     return QAbstractScrollArea::event(event);
 }
 
@@ -1049,11 +814,6 @@ void WebContentView::notify_server_did_finish_handling_input_event(bool event_wa
     // FIXME: Currently Ladybird handles the keyboard shortcuts before passing the event to web content, so
     //        we don't need to do anything here. But we'll need to once we start asking web content first.
     (void)event_was_accepted;
-}
-
-void WebContentView::notify_server_did_get_accessibility_tree(DeprecatedString const&)
-{
-    dbgln("TODO: support accessibility tree in Ladybird");
 }
 
 ErrorOr<String> WebContentView::dump_layout_tree()

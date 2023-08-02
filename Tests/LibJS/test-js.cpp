@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Matthew Olsson <mattco@serenityos.org>
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,6 +11,11 @@
 TEST_ROOT("Userland/Libraries/LibJS/Tests");
 
 TESTJS_PROGRAM_FLAG(test262_parser_tests, "Run test262 parser tests", "test262-parser-tests", 0);
+
+TESTJS_GLOBAL_FUNCTION(is_bytecode_interpreter_enabled, isBytecodeInterpreterEnabled, 0)
+{
+    return JS::Value(JS::Bytecode::Interpreter::enabled());
+}
 
 TESTJS_GLOBAL_FUNCTION(is_strict_mode, isStrictMode, 0)
 {
@@ -33,27 +38,27 @@ TESTJS_GLOBAL_FUNCTION(run_queued_promise_jobs, runQueuedPromiseJobs)
 
 TESTJS_GLOBAL_FUNCTION(get_weak_set_size, getWeakSetSize)
 {
-    auto* object = TRY(vm.argument(0).to_object(vm));
-    if (!is<JS::WeakSet>(object))
+    auto object = TRY(vm.argument(0).to_object(vm));
+    if (!is<JS::WeakSet>(*object))
         return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "WeakSet");
-    auto* weak_set = static_cast<JS::WeakSet*>(object);
-    return JS::Value(weak_set->values().size());
+    auto& weak_set = static_cast<JS::WeakSet&>(*object);
+    return JS::Value(weak_set.values().size());
 }
 
 TESTJS_GLOBAL_FUNCTION(get_weak_map_size, getWeakMapSize)
 {
-    auto* object = TRY(vm.argument(0).to_object(vm));
-    if (!is<JS::WeakMap>(object))
+    auto object = TRY(vm.argument(0).to_object(vm));
+    if (!is<JS::WeakMap>(*object))
         return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "WeakMap");
-    auto* weak_map = static_cast<JS::WeakMap*>(object);
-    return JS::Value(weak_map->values().size());
+    auto& weak_map = static_cast<JS::WeakMap&>(*object);
+    return JS::Value(weak_map.values().size());
 }
 
 TESTJS_GLOBAL_FUNCTION(mark_as_garbage, markAsGarbage)
 {
     auto argument = vm.argument(0);
     if (!argument.is_string())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAString, argument.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAString, TRY_OR_THROW_OOM(vm, argument.to_string_without_side_effects()));
 
     auto& variable_name = argument.as_string();
 

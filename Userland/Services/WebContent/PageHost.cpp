@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -12,7 +12,7 @@
 #include <LibGfx/SystemTheme.h>
 #include <LibWeb/Cookie/ParsedCookie.h>
 #include <LibWeb/HTML/BrowsingContext.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
+#include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Painting/PaintableBox.h>
 #include <LibWeb/Platform/Timer.h>
 #include <WebContent/WebContentClientEndpoint.h>
@@ -60,7 +60,7 @@ Gfx::Palette PageHost::palette() const
     return Gfx::Palette(*m_palette_impl);
 }
 
-void PageHost::set_palette_impl(Gfx::PaletteImpl const& impl)
+void PageHost::set_palette_impl(Gfx::PaletteImpl& impl)
 {
     m_palette_impl = impl;
     if (auto* document = page().top_level_browsing_context().active_document())
@@ -93,15 +93,27 @@ ErrorOr<void> PageHost::connect_to_webdriver(DeprecatedString const& webdriver_i
 {
     VERIFY(!m_webdriver);
     m_webdriver = TRY(WebDriverConnection::connect(*this, webdriver_ipc_path));
+
+    if (on_webdriver_connection)
+        on_webdriver_connection(*m_webdriver);
+
     return {};
 }
 
-Web::Layout::InitialContainingBlock* PageHost::layout_root()
+Web::Layout::Viewport* PageHost::layout_root()
 {
     auto* document = page().top_level_browsing_context().active_document();
     if (!document)
         return nullptr;
     return document->layout_node();
+}
+
+Gfx::Color PageHost::background_color() const
+{
+    auto document = page().top_level_browsing_context().active_document();
+    if (!document)
+        return Gfx::Color::Transparent;
+    return document->background_color();
 }
 
 void PageHost::paint(Web::DevicePixelRect const& content_rect, Gfx::Bitmap& target)
@@ -112,9 +124,14 @@ void PageHost::paint(Web::DevicePixelRect const& content_rect, Gfx::Bitmap& targ
     if (auto* document = page().top_level_browsing_context().active_document())
         document->update_layout();
 
+    auto background_color = this->background_color();
+
+    if (background_color.alpha() < 255)
+        painter.clear_rect(bitmap_rect, palette().base());
+    painter.fill_rect(bitmap_rect, background_color);
+
     auto* layout_root = this->layout_root();
     if (!layout_root) {
-        painter.fill_rect(bitmap_rect, palette().base());
         return;
     }
 
@@ -151,10 +168,10 @@ void PageHost::page_did_layout()
 {
     auto* layout_root = this->layout_root();
     VERIFY(layout_root);
-    if (layout_root->paint_box()->has_overflow())
-        m_content_size = page().enclosing_device_rect(layout_root->paint_box()->scrollable_overflow_rect().value()).size();
+    if (layout_root->paintable_box()->has_scrollable_overflow())
+        m_content_size = page().enclosing_device_rect(layout_root->paintable_box()->scrollable_overflow_rect().value()).size();
     else
-        m_content_size = page().enclosing_device_rect(layout_root->paint_box()->absolute_rect()).size();
+        m_content_size = page().enclosing_device_rect(layout_root->paintable_box()->absolute_rect()).size();
     m_client.async_did_layout(m_content_size.to_type<int>());
 }
 
@@ -215,7 +232,7 @@ void PageHost::page_did_request_scroll(i32 x_delta, i32 y_delta)
 
 void PageHost::page_did_request_scroll_to(Web::CSSPixelPoint scroll_position)
 {
-    m_client.async_did_request_scroll_to({ scroll_position.x().value(), scroll_position.y().value() });
+    m_client.async_did_request_scroll_to({ scroll_position.x().to_int(), scroll_position.y().to_int() });
 }
 
 void PageHost::page_did_request_scroll_into_view(Web::CSSPixelRect const& rect)
@@ -229,7 +246,7 @@ void PageHost::page_did_request_scroll_into_view(Web::CSSPixelRect const& rect)
 
 void PageHost::page_did_enter_tooltip_area(Web::CSSPixelPoint content_position, DeprecatedString const& title)
 {
-    m_client.async_did_enter_tooltip_area({ content_position.x().value(), content_position.y().value() }, title);
+    m_client.async_did_enter_tooltip_area({ content_position.x().to_int(), content_position.y().to_int() }, title);
 }
 
 void PageHost::page_did_leave_tooltip_area()
@@ -282,7 +299,7 @@ void PageHost::page_did_request_link_context_menu(Web::CSSPixelPoint content_pos
     m_client.async_did_request_link_context_menu(page().css_to_device_point(content_position).to_type<int>(), url, target, modifiers);
 }
 
-void PageHost::page_did_request_alert(DeprecatedString const& message)
+void PageHost::page_did_request_alert(String const& message)
 {
     m_client.async_did_request_alert(message);
 }
@@ -292,7 +309,7 @@ void PageHost::alert_closed()
     page().alert_closed();
 }
 
-void PageHost::page_did_request_confirm(DeprecatedString const& message)
+void PageHost::page_did_request_confirm(String const& message)
 {
     m_client.async_did_request_confirm(message);
 }
@@ -302,19 +319,39 @@ void PageHost::confirm_closed(bool accepted)
     page().confirm_closed(accepted);
 }
 
-void PageHost::page_did_request_prompt(DeprecatedString const& message, DeprecatedString const& default_)
+void PageHost::page_did_request_prompt(String const& message, String const& default_)
 {
     m_client.async_did_request_prompt(message, default_);
 }
 
-void PageHost::page_did_request_set_prompt_text(DeprecatedString const& text)
+void PageHost::page_did_request_set_prompt_text(String const& text)
 {
     m_client.async_did_request_set_prompt_text(text);
 }
 
-void PageHost::prompt_closed(DeprecatedString response)
+void PageHost::prompt_closed(Optional<String> response)
 {
     page().prompt_closed(move(response));
+}
+
+Web::WebIDL::ExceptionOr<void> PageHost::toggle_media_play_state()
+{
+    return page().toggle_media_play_state();
+}
+
+void PageHost::toggle_media_mute_state()
+{
+    page().toggle_media_mute_state();
+}
+
+Web::WebIDL::ExceptionOr<void> PageHost::toggle_media_loop_state()
+{
+    return page().toggle_media_loop_state();
+}
+
+Web::WebIDL::ExceptionOr<void> PageHost::toggle_media_controls_state()
+{
+    return page().toggle_media_controls_state();
 }
 
 void PageHost::page_did_request_accept_dialog()
@@ -335,7 +372,12 @@ void PageHost::page_did_change_favicon(Gfx::Bitmap const& favicon)
 void PageHost::page_did_request_image_context_menu(Web::CSSPixelPoint content_position, URL const& url, DeprecatedString const& target, unsigned modifiers, Gfx::Bitmap const* bitmap_pointer)
 {
     auto bitmap = bitmap_pointer ? bitmap_pointer->to_shareable_bitmap() : Gfx::ShareableBitmap();
-    m_client.async_did_request_image_context_menu({ content_position.x().value(), content_position.y().value() }, url, target, modifiers, bitmap);
+    m_client.async_did_request_image_context_menu({ content_position.x().to_int(), content_position.y().to_int() }, url, target, modifiers, bitmap);
+}
+
+void PageHost::page_did_request_media_context_menu(Web::CSSPixelPoint content_position, DeprecatedString const& target, unsigned modifiers, Web::Page::MediaContextMenu menu)
+{
+    m_client.async_did_request_media_context_menu({ content_position.x().to_int(), content_position.y().to_int() }, target, modifiers, move(menu));
 }
 
 Vector<Web::Cookie::Cookie> PageHost::page_did_request_all_cookies(URL const& url)
@@ -373,9 +415,24 @@ void PageHost::page_did_update_resource_count(i32 count_waiting)
     m_client.async_did_update_resource_count(count_waiting);
 }
 
-void PageHost::request_file(NonnullRefPtr<Web::FileRequest>& file_request)
+String PageHost::page_did_request_new_tab(Web::HTML::ActivateTab activate_tab)
 {
-    m_client.request_file(file_request);
+    return m_client.did_request_new_tab(activate_tab);
+}
+
+void PageHost::page_did_request_activate_tab()
+{
+    m_client.async_did_request_activate_tab();
+}
+
+void PageHost::page_did_close_browsing_context(Web::HTML::BrowsingContext const&)
+{
+    m_client.async_did_close_browsing_context();
+}
+
+void PageHost::request_file(Web::FileRequest file_request)
+{
+    m_client.request_file(move(file_request));
 }
 
 }

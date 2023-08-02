@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/DeprecatedFlyString.h>
+#include <AK/Error.h>
 
 namespace Web::SVG::AttributeNames {
 
@@ -21,13 +22,19 @@ namespace Web::SVG::AttributeNames {
     E(contentStyleType)             \
     E(cx)                           \
     E(cy)                           \
+    E(dx)                           \
+    E(dy)                           \
     E(diffuseConstant)              \
     E(edgeMode)                     \
     E(filterUnits)                  \
+    E(fr)                           \
+    E(fx)                           \
+    E(fy)                           \
     E(glyphRef)                     \
     E(gradientTransform)            \
     E(gradientUnits)                \
     E(height)                       \
+    E(href)                         \
     E(kernelMatrix)                 \
     E(kernelUnitLength)             \
     E(keyPoints)                    \
@@ -41,6 +48,8 @@ namespace Web::SVG::AttributeNames {
     E(maskContentUnits)             \
     E(maskUnits)                    \
     E(numOctaves)                   \
+    E(offset)                       \
+    E(opacity)                      \
     E(pathLength)                   \
     E(patternContentUnits)          \
     E(patternTransform)             \
@@ -58,9 +67,9 @@ namespace Web::SVG::AttributeNames {
     E(repeatCount)                  \
     E(repeatDur)                    \
     E(requiredExtensions)           \
+    E(requiredFeatures)             \
     E(rx)                           \
     E(ry)                           \
-    E(requiredFeatures)             \
     E(specularConstant)             \
     E(specularExponent)             \
     E(spreadMethod)                 \
@@ -90,5 +99,7 @@ namespace Web::SVG::AttributeNames {
 #define __ENUMERATE_SVG_ATTRIBUTE(name) extern DeprecatedFlyString name;
 ENUMERATE_SVG_ATTRIBUTES(__ENUMERATE_SVG_ATTRIBUTE)
 #undef __ENUMERATE_SVG_ATTRIBUTE
+
+ErrorOr<void> initialize_strings();
 
 }

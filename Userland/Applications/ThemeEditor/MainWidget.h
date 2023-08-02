@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2022-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -72,7 +72,7 @@ struct PropertyGroup {
 };
 
 struct PropertyTab {
-    DeprecatedString title;
+    StringView title;
     Vector<PropertyGroup> property_groups;
 };
 
@@ -86,7 +86,7 @@ public:
     ErrorOr<void> initialize_menubar(GUI::Window&);
     GUI::Window::CloseRequestDecision request_close();
     void update_title();
-    ErrorOr<void> load_from_file(String const& filename, NonnullOwnPtr<Core::Stream::File> file);
+    ErrorOr<void> load_from_file(String const& filename, NonnullOwnPtr<Core::File> file);
 
 private:
     explicit MainWidget(NonnullRefPtr<AlignmentModel>);
@@ -94,7 +94,7 @@ private:
     virtual void drag_enter_event(GUI::DragEvent&) override;
     virtual void drop_event(GUI::DropEvent&) override;
 
-    void save_to_file(String const& filename, NonnullOwnPtr<Core::Stream::File> file);
+    void save_to_file(String const& filename, NonnullOwnPtr<Core::File> file);
     ErrorOr<Core::AnonymousBuffer> encode();
     void set_path(DeprecatedString);
 
@@ -117,6 +117,7 @@ private:
 
     RefPtr<PreviewWidget> m_preview_widget;
     RefPtr<GUI::TabWidget> m_property_tabs;
+    RefPtr<GUI::Statusbar> m_statusbar;
     RefPtr<GUI::Action> m_save_action;
 
     RefPtr<GUI::Button> m_theme_override_apply;
@@ -124,7 +125,7 @@ private:
 
     Optional<DeprecatedString> m_path;
     Gfx::Palette m_current_palette;
-    Time m_last_modified_time { Time::now_monotonic() };
+    MonotonicTime m_last_modified_time { MonotonicTime::now() };
 
     RefPtr<AlignmentModel> m_alignment_model;
 

@@ -8,13 +8,13 @@
 #include <AK/Singleton.h>
 #include <Kernel/Arch/CPU.h>
 #include <Kernel/Arch/PageDirectory.h>
-#include <Kernel/InterruptDisabler.h>
+#include <Kernel/Interrupts/InterruptDisabler.h>
 #include <Kernel/Memory/MemoryManager.h>
 #include <Kernel/Prekernel/Prekernel.h>
-#include <Kernel/Process.h>
-#include <Kernel/Random.h>
 #include <Kernel/Sections.h>
-#include <Kernel/Thread.h>
+#include <Kernel/Security/Random.h>
+#include <Kernel/Tasks/Process.h>
+#include <Kernel/Tasks/Thread.h>
 
 namespace Kernel::Memory {
 
@@ -61,9 +61,11 @@ UNMAP_AFTER_INIT NonnullLockRefPtr<PageDirectory> PageDirectory::must_create_ker
     return adopt_lock_ref_if_nonnull(new (nothrow) PageDirectory).release_nonnull();
 }
 
-ErrorOr<NonnullLockRefPtr<PageDirectory>> PageDirectory::try_create_for_userspace()
+ErrorOr<NonnullLockRefPtr<PageDirectory>> PageDirectory::try_create_for_userspace(Process& process)
 {
     auto directory = TRY(adopt_nonnull_lock_ref_or_enomem(new (nothrow) PageDirectory));
+
+    directory->m_process = &process;
 
     directory->m_pml4t = TRY(MM.allocate_physical_page());
 

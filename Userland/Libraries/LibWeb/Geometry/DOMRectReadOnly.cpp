@@ -6,12 +6,20 @@
 
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Geometry/DOMRectReadOnly.h>
+#include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::Geometry {
 
-JS::NonnullGCPtr<DOMRectReadOnly> DOMRectReadOnly::construct_impl(JS::Realm& realm, double x, double y, double width, double height)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMRectReadOnly>> DOMRectReadOnly::construct_impl(JS::Realm& realm, double x, double y, double width, double height)
 {
-    return realm.heap().allocate<DOMRectReadOnly>(realm, realm, x, y, width, height).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<DOMRectReadOnly>(realm, realm, x, y, width, height));
+}
+
+// https://drafts.fxtf.org/geometry/#create-a-domrect-from-the-dictionary
+WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMRectReadOnly>> DOMRectReadOnly::from_rect(JS::VM& vm, Geometry::DOMRectInit const& other)
+{
+    auto& realm = *vm.current_realm();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<DOMRectReadOnly>(realm, realm, other.x, other.y, other.width, other.height));
 }
 
 DOMRectReadOnly::DOMRectReadOnly(JS::Realm& realm, double x, double y, double width, double height)

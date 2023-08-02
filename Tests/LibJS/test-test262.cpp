@@ -13,15 +13,11 @@
 #include <AK/QuickSort.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/Command.h>
 #include <LibCore/File.h>
-#include <LibCore/Process.h>
-#include <LibCore/Stream.h>
-#include <LibCore/System.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibMain/Main.h>
 #include <LibTest/TestRunnerUtil.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 enum class TestResult {
     Passed,
@@ -111,117 +107,6 @@ static StringView emoji_for_result(TestResult result)
 
 static constexpr StringView total_test_emoji = "🧪"sv;
 
-class Test262RunnerHandler {
-public:
-    static ErrorOr<OwnPtr<Test262RunnerHandler>> create(StringView command, char const* const arguments[])
-    {
-        auto write_pipe_fds = TRY(Core::System::pipe2(O_CLOEXEC));
-        auto read_pipe_fds = TRY(Core::System::pipe2(O_CLOEXEC));
-
-        posix_spawn_file_actions_t file_actions;
-        posix_spawn_file_actions_init(&file_actions);
-        posix_spawn_file_actions_adddup2(&file_actions, write_pipe_fds[0], STDIN_FILENO);
-        posix_spawn_file_actions_adddup2(&file_actions, read_pipe_fds[1], STDOUT_FILENO);
-
-        auto pid = TRY(Core::System::posix_spawnp(command, &file_actions, nullptr, const_cast<char**>(arguments), environ));
-
-        posix_spawn_file_actions_destroy(&file_actions);
-        ArmedScopeGuard runner_kill { [&pid] { kill(pid, SIGKILL); } };
-
-        TRY(Core::System::close(write_pipe_fds[0]));
-        TRY(Core::System::close(read_pipe_fds[1]));
-
-        auto infile = TRY(Core::Stream::File::adopt_fd(read_pipe_fds[0], Core::Stream::OpenMode::Read));
-
-        auto outfile = TRY(Core::Stream::File::adopt_fd(write_pipe_fds[1], Core::Stream::OpenMode::Write));
-
-        runner_kill.disarm();
-
-        return make<Test262RunnerHandler>(pid, move(infile), move(outfile));
-    }
-
-    Test262RunnerHandler(pid_t pid, NonnullOwnPtr<Core::Stream::File> in_file, NonnullOwnPtr<Core::Stream::File> out_file)
-        : m_pid(pid)
-        , m_input(move(in_file))
-        , m_output(move(out_file))
-    {
-    }
-
-    bool write_lines(Span<DeprecatedString> lines)
-    {
-        // It's possible the process dies before we can write all the tests
-        // to the stdin. So make sure that we don't crash but just stop writing.
-        struct sigaction action_handler {
-            .sa_handler = SIG_IGN, .sa_mask = {}, .sa_flags = 0,
-        };
-        struct sigaction old_action_handler;
-        if (sigaction(SIGPIPE, &action_handler, &old_action_handler) < 0) {
-            perror("sigaction");
-            return false;
-        }
-
-        for (DeprecatedString const& line : lines) {
-            if (m_output->write_entire_buffer(DeprecatedString::formatted("{}\n", line).bytes()).is_error())
-                break;
-        }
-
-        // Ensure that the input stream ends here, whether we were able to write all lines or not
-        m_output->close();
-
-        // It's not really a problem if this signal failed
-        if (sigaction(SIGPIPE, &old_action_handler, nullptr) < 0)
-            perror("sigaction");
-
-        return true;
-    }
-
-    DeprecatedString read_all()
-    {
-        auto all_output_or_error = m_input->read_until_eof();
-        if (all_output_or_error.is_error()) {
-            warnln("Got error: {} while reading runner output", all_output_or_error.error());
-            return ""sv;
-        }
-        return DeprecatedString(all_output_or_error.value().bytes(), Chomp);
-    }
-
-    enum class ProcessResult {
-        Running,
-        DoneWithZeroExitCode,
-        Failed,
-        FailedFromTimeout,
-        Unknown,
-    };
-
-    ErrorOr<ProcessResult> status()
-    {
-        if (m_pid == -1)
-            return ProcessResult::Unknown;
-
-        m_output->close();
-
-        auto wait_result = TRY(Core::System::waitpid(m_pid, WNOHANG));
-        if (wait_result.pid == 0) {
-            // Attempt to kill it, since it has not finished yet somehow
-            return ProcessResult::Running;
-        }
-        m_pid = -1;
-
-        if (WIFSIGNALED(wait_result.status) && WTERMSIG(wait_result.status) == SIGALRM)
-            return ProcessResult::FailedFromTimeout;
-
-        if (WIFEXITED(wait_result.status) && WEXITSTATUS(wait_result.status) == 0)
-            return ProcessResult::DoneWithZeroExitCode;
-
-        return ProcessResult::Failed;
-    }
-
-public:
-    pid_t m_pid;
-    NonnullOwnPtr<Core::Stream::File> m_input;
-    NonnullOwnPtr<Core::Stream::File> m_output;
-};
-
 static ErrorOr<HashMap<size_t, TestResult>> run_test_files(Span<DeprecatedString> files, size_t offset, StringView command, char const* const arguments[])
 {
     HashMap<size_t, TestResult> results {};
@@ -234,24 +119,32 @@ static ErrorOr<HashMap<size_t, TestResult>> run_test_files(Span<DeprecatedString
     };
 
     while (test_index < files.size()) {
-        auto runner_process_or_error = Test262RunnerHandler::create(command, arguments);
+        auto runner_process_or_error = Core::Command::create(command, arguments);
         if (runner_process_or_error.is_error()) {
             fail_all_after();
             return results;
         }
         auto& runner_process = runner_process_or_error.value();
 
-        if (!runner_process->write_lines(files.slice(test_index))) {
+        if (auto maybe_error = runner_process->write_lines(files.slice(test_index)); maybe_error.is_error()) {
+            warnln("Runner process failed writing writing file input: {}", maybe_error.error());
             fail_all_after();
             return results;
         }
 
-        DeprecatedString output = runner_process->read_all();
+        auto output_or_error = runner_process->read_all();
+        DeprecatedString output;
+
+        if (output_or_error.is_error())
+            warnln("Got error: {} while reading runner output", output_or_error.error());
+        else
+            output = DeprecatedString(output_or_error.release_value().standard_error.bytes(), Chomp);
+
         auto status_or_error = runner_process->status();
         bool failed = false;
         if (!status_or_error.is_error()) {
-            VERIFY(status_or_error.value() != Test262RunnerHandler::ProcessResult::Running);
-            failed = status_or_error.value() != Test262RunnerHandler::ProcessResult::DoneWithZeroExitCode;
+            VERIFY(status_or_error.value() != Core::Command::ProcessResult::Running);
+            failed = status_or_error.value() != Core::Command::ProcessResult::DoneWithZeroExitCode;
         }
 
         for (StringView line : output.split_view('\n')) {
@@ -285,7 +178,7 @@ static ErrorOr<HashMap<size_t, TestResult>> run_test_files(Span<DeprecatedString
 
         if (failed) {
             TestResult result = TestResult::ProcessError;
-            if (!status_or_error.is_error() && status_or_error.value() == Test262RunnerHandler::ProcessResult::FailedFromTimeout) {
+            if (!status_or_error.is_error() && status_or_error.value() == Core::Command::ProcessResult::FailedFromTimeout) {
                 result = TestResult::TimeoutError;
             }
             // assume the last test failed, if by SIGALRM signal it's a timeout
@@ -305,7 +198,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     StringView per_file_location;
     StringView pass_through_parameters;
     StringView runner_command = "test262-runner"sv;
-    char const* test_directory = nullptr;
+    StringView test_directory;
     bool dont_print_progress = false;
     bool dont_disable_core_dump = false;
 
@@ -322,7 +215,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     // Normalize the path to ensure filenames are consistent
     Vector<DeprecatedString> paths;
 
-    if (!Core::File::is_directory(test_directory)) {
+    if (!FileSystem::is_directory(test_directory)) {
         paths.append(test_directory);
     } else {
         Test::iterate_directory_recursively(LexicalPath::canonicalized_path(test_directory), [&](DeprecatedString const& file_path) {
@@ -411,7 +304,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 void write_per_file(HashMap<size_t, TestResult> const& result_map, Vector<DeprecatedString> const& paths, StringView per_file_name, double time_taken_in_ms)
 {
 
-    auto file_or_error = Core::Stream::File::open(per_file_name, Core::Stream::OpenMode::Write);
+    auto file_or_error = Core::File::open(per_file_name, Core::File::OpenMode::Write);
     if (file_or_error.is_error()) {
         warnln("Failed to open per file for writing at {}: {}", per_file_name, file_or_error.error().string_literal());
         return;
@@ -427,7 +320,7 @@ void write_per_file(HashMap<size_t, TestResult> const& result_map, Vector<Deprec
     complete_results.set("duration", time_taken_in_ms / 1000.);
     complete_results.set("results", result_object);
 
-    if (file->write_entire_buffer(complete_results.to_deprecated_string().bytes()).is_error())
+    if (file->write_until_depleted(complete_results.to_deprecated_string().bytes()).is_error())
         warnln("Failed to write per-file");
     file->close();
 }

@@ -16,10 +16,13 @@
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibWeb/DOM/Position.h>
-#include <LibWeb/HTML/BrowsingContextContainer.h>
+#include <LibWeb/HTML/AbstractBrowsingContext.h>
+#include <LibWeb/HTML/ActivateTab.h>
 #include <LibWeb/HTML/HistoryHandlingBehavior.h>
+#include <LibWeb/HTML/NavigableContainer.h>
 #include <LibWeb/HTML/Origin.h>
 #include <LibWeb/HTML/SessionHistoryEntry.h>
+#include <LibWeb/HTML/TokenizedFeatures.h>
 #include <LibWeb/HTML/VisibilityState.h>
 #include <LibWeb/Loader/FrameLoader.h>
 #include <LibWeb/Page/EventHandler.h>
@@ -29,15 +32,25 @@
 namespace Web::HTML {
 
 class BrowsingContext final
-    : public JS::Cell
+    : public AbstractBrowsingContext
     , public Weakable<BrowsingContext> {
-    JS_CELL(BrowsingContext, JS::Cell);
+    JS_CELL(BrowsingContext, AbstractBrowsingContext);
 
 public:
     static JS::NonnullGCPtr<BrowsingContext> create_a_new_browsing_context(Page&, JS::GCPtr<DOM::Document> creator, JS::GCPtr<DOM::Element> embedder, BrowsingContextGroup&);
     static JS::NonnullGCPtr<BrowsingContext> create_a_new_top_level_browsing_context(Page&);
 
-    ~BrowsingContext();
+    struct BrowsingContextAndDocument {
+        JS::NonnullGCPtr<BrowsingContext> browsing_context;
+        JS::NonnullGCPtr<DOM::Document> document;
+    };
+
+    static WebIDL::ExceptionOr<BrowsingContextAndDocument> create_a_new_browsing_context_and_document(Page& page, JS::GCPtr<DOM::Document> creator, JS::GCPtr<DOM::Element> embedder, JS::NonnullGCPtr<BrowsingContextGroup> group);
+    static WebIDL::ExceptionOr<BrowsingContextAndDocument> create_a_new_auxiliary_browsing_context_and_document(Page& page, JS::NonnullGCPtr<HTML::BrowsingContext> opener);
+
+    virtual ~BrowsingContext() override;
+
+    JS::NonnullGCPtr<HTML::TraversableNavigable> top_level_traversable() const;
 
     JS::GCPtr<BrowsingContext> parent() const { return m_parent; }
     void append_child(JS::NonnullGCPtr<BrowsingContext>);
@@ -121,12 +134,10 @@ public:
 
     void set_active_document(JS::NonnullGCPtr<DOM::Document>);
 
-    HTML::WindowProxy* window_proxy();
-    HTML::WindowProxy const* window_proxy() const;
+    virtual HTML::WindowProxy* window_proxy() override;
+    virtual HTML::WindowProxy const* window_proxy() const override;
 
-    JS::GCPtr<BrowsingContext> opener_browsing_context() const { return m_opener_browsing_context; }
-
-    void set_opener_browsing_context(JS::GCPtr<BrowsingContext> browsing_context) { m_opener_browsing_context = browsing_context; }
+    void set_window_proxy(JS::GCPtr<WindowProxy>);
 
     HTML::Window* active_window();
     HTML::Window const* active_window() const;
@@ -170,18 +181,18 @@ public:
     };
 
     struct ChosenBrowsingContext {
-        JS::GCPtr<BrowsingContext> browsing_context;
+        JS::GCPtr<AbstractBrowsingContext> browsing_context;
         WindowType window_type;
     };
 
-    ChosenBrowsingContext choose_a_browsing_context(StringView name, bool no_opener);
+    ChosenBrowsingContext choose_a_browsing_context(StringView name, TokenizedFeature::NoOpener no_opener, ActivateTab = ActivateTab::Yes);
 
     size_t document_tree_child_browsing_context_count() const;
 
     bool is_child_of(BrowsingContext const&) const;
 
-    HTML::BrowsingContextContainer* container() { return m_container; }
-    HTML::BrowsingContextContainer const* container() const { return m_container; }
+    HTML::NavigableContainer* container() { return m_container; }
+    HTML::NavigableContainer const* container() const { return m_container; }
 
     CSSPixelPoint to_top_level_position(CSSPixelPoint);
     CSSPixelRect to_top_level_rect(CSSPixelRect const&);
@@ -201,7 +212,7 @@ public:
     void register_frame_nesting(AK::URL const&);
     bool is_frame_nesting_allowed(AK::URL const&) const;
 
-    void set_frame_nesting_levels(HashMap<AK::URL, size_t> frame_nesting_levels) { m_frame_nesting_levels = move(frame_nesting_levels); };
+    void set_frame_nesting_levels(HashMap<AK::URL, size_t> frame_nesting_levels) { m_frame_nesting_levels = move(frame_nesting_levels); }
     HashMap<AK::URL, size_t> const& frame_nesting_levels() const { return m_frame_nesting_levels; }
 
     DOM::Document* container_document();
@@ -211,11 +222,9 @@ public:
 
     JS::GCPtr<DOM::Node> currently_focused_area();
 
-    DeprecatedString const& name() const { return m_name; }
-    void set_name(DeprecatedString const& name) { m_name = name; }
+    Vector<JS::NonnullGCPtr<SessionHistoryEntry>>& session_history() { return m_session_history; }
+    Vector<JS::NonnullGCPtr<SessionHistoryEntry>> const& session_history() const { return m_session_history; }
 
-    Vector<SessionHistoryEntry>& session_history() { return m_session_history; }
-    Vector<SessionHistoryEntry> const& session_history() const { return m_session_history; }
     size_t session_history_index() const { return *m_session_history_index; }
 
     // https://html.spec.whatwg.org/multipage/dom.html#still-on-its-initial-about:blank-document
@@ -231,18 +240,18 @@ public:
     bool is_allowed_to_navigate(BrowsingContext const&) const;
 
     // https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigate
-    WebIDL::ExceptionOr<void> navigate(
+    virtual WebIDL::ExceptionOr<void> navigate(
         JS::NonnullGCPtr<Fetch::Infrastructure::Request> resource,
         BrowsingContext& source_browsing_context,
         bool exceptions_enabled = false,
         HistoryHandlingBehavior history_handling = HistoryHandlingBehavior::Default,
         Optional<PolicyContainer> history_policy_container = {},
         DeprecatedString navigation_type = "other",
-        Optional<DeprecatedString> navigation_id = {},
-        Function<void(JS::NonnullGCPtr<Fetch::Infrastructure::Response>)> process_response_end_of_body = {});
+        Optional<String> navigation_id = {},
+        Function<void(JS::NonnullGCPtr<Fetch::Infrastructure::Response>)> process_response_end_of_body = {}) override;
 
     // https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigate-fragid
-    WebIDL::ExceptionOr<void> navigate_to_a_fragment(AK::URL const&, HistoryHandlingBehavior, DeprecatedString navigation_id);
+    WebIDL::ExceptionOr<void> navigate_to_a_fragment(AK::URL const&, HistoryHandlingBehavior, String navigation_id);
 
     // https://html.spec.whatwg.org/multipage/origin.html#one-permitted-sandboxed-navigator
     BrowsingContext const* the_one_permitted_sandboxed_navigator() const;
@@ -256,8 +265,6 @@ public:
     VisibilityState system_visibility_state() const;
     void set_system_visibility_state(VisibilityState);
 
-    void set_is_popup(bool is_popup) { m_is_popup = is_popup; }
-
     // https://html.spec.whatwg.org/multipage/window-object.html#a-browsing-context-is-discarded
     void discard();
     bool has_been_discarded() const { return m_has_been_discarded; }
@@ -265,8 +272,15 @@ public:
     // https://html.spec.whatwg.org/multipage/window-object.html#close-a-browsing-context
     void close();
 
+    Optional<AK::URL> const& creator_url() const { return m_creator_url; }
+
+    virtual String const& window_handle() const override { return m_window_handle; }
+    virtual void set_window_handle(String handle) override { m_window_handle = move(handle); }
+
+    void inform_all_viewport_clients_about_the_current_viewport_rect();
+
 private:
-    explicit BrowsingContext(Page&, HTML::BrowsingContextContainer*);
+    explicit BrowsingContext(Page&, HTML::NavigableContainer*);
 
     virtual void visit_edges(Cell::Visitor&) override;
 
@@ -285,7 +299,7 @@ private:
     Optional<size_t> m_session_history_index { 0 };
 
     // https://html.spec.whatwg.org/multipage/history.html#session-history
-    Vector<SessionHistoryEntry> m_session_history;
+    Vector<JS::NonnullGCPtr<SessionHistoryEntry>> m_session_history;
 
     // https://html.spec.whatwg.org/multipage/browsers.html#creator-url
     Optional<AK::URL> m_creator_url;
@@ -296,15 +310,15 @@ private:
     // https://html.spec.whatwg.org/multipage/browsers.html#creator-origin
     Optional<HTML::Origin> m_creator_origin;
 
-    JS::GCPtr<HTML::BrowsingContextContainer> m_container;
+    JS::GCPtr<HTML::NavigableContainer> m_container;
     CSSPixelSize m_size;
     CSSPixelPoint m_viewport_scroll_offset;
 
+    // https://w3c.github.io/webdriver/#dfn-window-handles
+    String m_window_handle;
+
     // https://html.spec.whatwg.org/multipage/browsers.html#browsing-context
     JS::GCPtr<HTML::WindowProxy> m_window_proxy;
-
-    // https://html.spec.whatwg.org/multipage/browsers.html#opener-browsing-context
-    JS::GCPtr<BrowsingContext> m_opener_browsing_context;
 
     DOM::Position m_cursor_position;
     RefPtr<Platform::Timer> m_cursor_blink_timer;
@@ -318,9 +332,6 @@ private:
     // https://html.spec.whatwg.org/multipage/browsers.html#tlbc-group
     JS::GCPtr<BrowsingContextGroup> m_group;
 
-    // https://html.spec.whatwg.org/multipage/browsers.html#is-popup
-    bool m_is_popup { false };
-
     // https://html.spec.whatwg.org/multipage/interaction.html#system-visibility-state
     VisibilityState m_system_visibility_state { VisibilityState::Hidden };
 
@@ -333,6 +344,9 @@ private:
     bool m_has_been_discarded { false };
 };
 
+// FIXME: Remove this once everything is switched to the new overload.
 HTML::Origin determine_the_origin(BrowsingContext const& browsing_context, Optional<AK::URL> url, SandboxingFlagSet sandbox_flags, Optional<HTML::Origin> invocation_origin);
+
+HTML::Origin determine_the_origin(AK::URL const& url, SandboxingFlagSet sandbox_flags, Optional<HTML::Origin> source_origin, Optional<HTML::Origin> container_origin);
 
 }

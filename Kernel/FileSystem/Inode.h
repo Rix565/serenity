@@ -53,17 +53,16 @@ public:
     InodeIdentifier identifier() const { return { fsid(), index() }; }
     virtual InodeMetadata metadata() const = 0;
 
-    ErrorOr<NonnullOwnPtr<KBuffer>> read_entire(OpenFileDescription* = nullptr) const;
-
     ErrorOr<size_t> write_bytes(off_t, size_t, UserOrKernelBuffer const& data, OpenFileDescription*);
     ErrorOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer& buffer, OpenFileDescription*) const;
+    ErrorOr<size_t> read_until_filled_or_end(off_t, size_t, UserOrKernelBuffer buffer, OpenFileDescription*) const;
 
     virtual ErrorOr<void> attach(OpenFileDescription&) { return {}; }
     virtual void detach(OpenFileDescription&) { }
     virtual void did_seek(OpenFileDescription&, off_t) { }
     virtual ErrorOr<void> traverse_as_directory(Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)>) const = 0;
-    virtual ErrorOr<NonnullLockRefPtr<Inode>> lookup(StringView name) = 0;
-    virtual ErrorOr<NonnullLockRefPtr<Inode>> create_child(StringView name, mode_t, dev_t, UserID, GroupID) = 0;
+    virtual ErrorOr<NonnullRefPtr<Inode>> lookup(StringView name) = 0;
+    virtual ErrorOr<NonnullRefPtr<Inode>> create_child(StringView name, mode_t, dev_t, UserID, GroupID) = 0;
     virtual ErrorOr<void> add_child(Inode&, StringView name, mode_t) = 0;
     virtual ErrorOr<void> remove_child(StringView name) = 0;
     /// Replace child atomically, incrementing the link count of the replacement
@@ -83,7 +82,7 @@ public:
 
     bool is_metadata_dirty() const { return m_metadata_dirty; }
 
-    virtual ErrorOr<void> update_timestamps(Optional<Time> atime, Optional<Time> ctime, Optional<Time> mtime);
+    virtual ErrorOr<void> update_timestamps(Optional<UnixDateTime> atime, Optional<UnixDateTime> ctime, Optional<UnixDateTime> mtime);
     virtual ErrorOr<void> increment_link_count();
     virtual ErrorOr<void> decrement_link_count();
 
@@ -102,13 +101,13 @@ public:
     ErrorOr<void> register_watcher(Badge<InodeWatcher>, InodeWatcher&);
     void unregister_watcher(Badge<InodeWatcher>, InodeWatcher&);
 
-    ErrorOr<NonnullLockRefPtr<FIFO>> fifo();
+    ErrorOr<NonnullRefPtr<FIFO>> fifo();
 
     bool can_apply_flock(flock const&, Optional<OpenFileDescription const&> = {}) const;
     ErrorOr<void> apply_flock(Process const&, OpenFileDescription const&, Userspace<flock const*>, ShouldBlock);
     ErrorOr<void> get_flock(OpenFileDescription const&, Userspace<flock*>) const;
     void remove_flocks_for_description(OpenFileDescription const&);
-    Thread::FlockBlockerSet& flock_blocker_set() { return m_flock_blocker_set; };
+    Thread::FlockBlockerSet& flock_blocker_set() { return m_flock_blocker_set; }
 
 protected:
     Inode(FileSystem&, InodeIndex);
@@ -131,10 +130,10 @@ private:
     FileSystem& m_file_system;
     InodeIndex m_index { 0 };
     LockWeakPtr<Memory::SharedInodeVMObject> m_shared_vmobject;
-    LockRefPtr<LocalSocket> m_bound_socket;
+    LockWeakPtr<LocalSocket> m_bound_socket;
     SpinlockProtected<HashTable<InodeWatcher*>, LockRank::None> m_watchers {};
     bool m_metadata_dirty { false };
-    LockRefPtr<FIFO> m_fifo;
+    RefPtr<FIFO> m_fifo;
     IntrusiveListNode<Inode> m_inode_list_node;
 
     struct Flock {

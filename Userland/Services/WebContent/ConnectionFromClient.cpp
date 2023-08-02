@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2022, Tobias Christiansen <tobyase@serenityos.org>
@@ -14,22 +14,26 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/SystemTheme.h>
+#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Console.h>
 #include <LibJS/Heap/Heap.h>
 #include <LibJS/Runtime/ConsoleObject.h>
+#include <LibWeb/ARIA/RoleType.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
+#include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/Dump.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
 #include <LibWeb/HTML/Storage.h>
 #include <LibWeb/HTML/Window.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
+#include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Loader/ContentFilter.h>
 #include <LibWeb/Loader/ProxyMappings.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/Painting/PaintableBox.h>
 #include <LibWeb/Painting/StackingContext.h>
+#include <LibWeb/PermissionsPolicy/AutoplayAllowlist.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/PageHost.h>
@@ -38,11 +42,12 @@
 
 namespace WebContent {
 
-ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket> socket)
     : IPC::ConnectionFromClient<WebContentClientEndpoint, WebContentServerEndpoint>(*this, move(socket), 1)
     , m_page_host(PageHost::create(*this))
 {
     m_paint_flush_timer = Web::Platform::Timer::create_single_shot(0, [this] { flush_pending_paint_requests(); });
+    m_input_event_queue_timer = Web::Platform::Timer::create_single_shot(0, [this] { process_next_input_event(); });
 }
 
 void ConnectionFromClient::die()
@@ -58,6 +63,21 @@ Web::Page& ConnectionFromClient::page()
 Web::Page const& ConnectionFromClient::page() const
 {
     return m_page_host->page();
+}
+
+void ConnectionFromClient::set_use_javascript_bytecode(bool use_bytecode)
+{
+    JS::Bytecode::Interpreter::set_enabled(use_bytecode);
+}
+
+Messages::WebContentServer::GetWindowHandleResponse ConnectionFromClient::get_window_handle()
+{
+    return m_page_host->page().top_level_browsing_context().window_handle();
+}
+
+void ConnectionFromClient::set_window_handle(String const& handle)
+{
+    m_page_host->page().top_level_browsing_context().set_window_handle(handle);
 }
 
 void ConnectionFromClient::connect_to_webdriver(DeprecatedString const& webdriver_ipc_path)
@@ -92,10 +112,10 @@ void ConnectionFromClient::load_url(const URL& url)
 
 #if defined(AK_OS_SERENITY)
     DeprecatedString process_name;
-    if (url.host().is_empty())
+    if (url.host().has<Empty>() || url.host() == String {})
         process_name = "WebContent";
     else
-        process_name = DeprecatedString::formatted("WebContent: {}", url.host());
+        process_name = DeprecatedString::formatted("WebContent: {}", url.serialized_host().release_value_but_fixme_should_propagate_errors());
 
     pthread_setname_np(pthread_self(), process_name.characters());
 #endif
@@ -117,7 +137,7 @@ void ConnectionFromClient::set_viewport_rect(Gfx::IntRect const& rect)
 
 void ConnectionFromClient::add_backing_store(i32 backing_store_id, Gfx::ShareableBitmap const& bitmap)
 {
-    m_backing_stores.set(backing_store_id, *bitmap.bitmap());
+    m_backing_stores.set(backing_store_id, *const_cast<Gfx::ShareableBitmap&>(bitmap).bitmap());
 }
 
 void ConnectionFromClient::remove_backing_store(i32 backing_store_id)
@@ -155,39 +175,160 @@ void ConnectionFromClient::flush_pending_paint_requests()
     m_pending_paint_requests.clear();
 }
 
+void ConnectionFromClient::process_next_input_event()
+{
+    if (m_input_event_queue.is_empty())
+        return;
+
+    auto event = m_input_event_queue.dequeue();
+    event.visit(
+        [&](QueuedMouseEvent const& event) {
+            switch (event.type) {
+            case QueuedMouseEvent::Type::MouseDown:
+                report_finished_handling_input_event(page().handle_mousedown(
+                    event.position.to_type<Web::DevicePixels>(),
+                    event.button, event.buttons, event.modifiers));
+                break;
+            case QueuedMouseEvent::Type::MouseUp:
+                report_finished_handling_input_event(page().handle_mouseup(
+                    event.position.to_type<Web::DevicePixels>(),
+                    event.button, event.buttons, event.modifiers));
+                break;
+            case QueuedMouseEvent::Type::MouseMove:
+                // NOTE: We have to notify the client about coalesced MouseMoves,
+                //       so we do that by saying none of them were handled by the web page.
+                for (size_t i = 0; i < event.coalesced_event_count; ++i) {
+                    report_finished_handling_input_event(false);
+                }
+                report_finished_handling_input_event(page().handle_mousemove(
+                    event.position.to_type<Web::DevicePixels>(),
+                    event.buttons, event.modifiers));
+                break;
+            case QueuedMouseEvent::Type::DoubleClick:
+                report_finished_handling_input_event(page().handle_doubleclick(
+                    event.position.to_type<Web::DevicePixels>(),
+                    event.button, event.buttons, event.modifiers));
+                break;
+            case QueuedMouseEvent::Type::MouseWheel:
+                report_finished_handling_input_event(page().handle_mousewheel(
+                    event.position.to_type<Web::DevicePixels>(),
+                    event.button, event.buttons, event.modifiers, event.wheel_delta_x, event.wheel_delta_y));
+                break;
+            }
+        },
+        [&](QueuedKeyboardEvent const& event) {
+            switch (event.type) {
+            case QueuedKeyboardEvent::Type::KeyDown:
+                report_finished_handling_input_event(page().handle_keydown((KeyCode)event.key, event.modifiers, event.code_point));
+                break;
+            case QueuedKeyboardEvent::Type::KeyUp:
+                report_finished_handling_input_event(page().handle_keyup((KeyCode)event.key, event.modifiers, event.code_point));
+                break;
+            }
+        });
+
+    if (!m_input_event_queue.is_empty())
+        m_input_event_queue_timer->start();
+}
+
 void ConnectionFromClient::mouse_down(Gfx::IntPoint position, unsigned int button, unsigned int buttons, unsigned int modifiers)
 {
-    report_finished_handling_input_event(page().handle_mousedown(position.to_type<Web::DevicePixels>(), button, buttons, modifiers));
+    enqueue_input_event(
+        QueuedMouseEvent {
+            .type = QueuedMouseEvent::Type::MouseDown,
+            .position = position,
+            .button = button,
+            .buttons = buttons,
+            .modifiers = modifiers,
+        });
 }
 
 void ConnectionFromClient::mouse_move(Gfx::IntPoint position, [[maybe_unused]] unsigned int button, unsigned int buttons, unsigned int modifiers)
 {
-    report_finished_handling_input_event(page().handle_mousemove(position.to_type<Web::DevicePixels>(), buttons, modifiers));
+    auto event = QueuedMouseEvent {
+        .type = QueuedMouseEvent::Type::MouseMove,
+        .position = position,
+        .button = button,
+        .buttons = buttons,
+        .modifiers = modifiers,
+    };
+
+    // OPTIMIZATION: Coalesce with previous unprocessed event iff the previous event is also a MouseMove event.
+    if (!m_input_event_queue.is_empty()
+        && m_input_event_queue.tail().has<QueuedMouseEvent>()
+        && m_input_event_queue.tail().get<QueuedMouseEvent>().type == QueuedMouseEvent::Type::MouseMove) {
+        event.coalesced_event_count = m_input_event_queue.tail().get<QueuedMouseEvent>().coalesced_event_count + 1;
+        m_input_event_queue.tail() = event;
+        return;
+    }
+
+    enqueue_input_event(move(event));
 }
 
 void ConnectionFromClient::mouse_up(Gfx::IntPoint position, unsigned int button, unsigned int buttons, unsigned int modifiers)
 {
-    report_finished_handling_input_event(page().handle_mouseup(position.to_type<Web::DevicePixels>(), button, buttons, modifiers));
+    enqueue_input_event(
+        QueuedMouseEvent {
+            .type = QueuedMouseEvent::Type::MouseUp,
+            .position = position,
+            .button = button,
+            .buttons = buttons,
+            .modifiers = modifiers,
+        });
 }
 
 void ConnectionFromClient::mouse_wheel(Gfx::IntPoint position, unsigned int button, unsigned int buttons, unsigned int modifiers, i32 wheel_delta_x, i32 wheel_delta_y)
 {
-    report_finished_handling_input_event(page().handle_mousewheel(position.to_type<Web::DevicePixels>(), button, buttons, modifiers, wheel_delta_x, wheel_delta_y));
+    enqueue_input_event(
+        QueuedMouseEvent {
+            .type = QueuedMouseEvent::Type::MouseWheel,
+            .position = position,
+            .button = button,
+            .buttons = buttons,
+            .modifiers = modifiers,
+            .wheel_delta_x = wheel_delta_x,
+            .wheel_delta_y = wheel_delta_y,
+        });
 }
 
 void ConnectionFromClient::doubleclick(Gfx::IntPoint position, unsigned int button, unsigned int buttons, unsigned int modifiers)
 {
-    report_finished_handling_input_event(page().handle_doubleclick(position.to_type<Web::DevicePixels>(), button, buttons, modifiers));
+    enqueue_input_event(
+        QueuedMouseEvent {
+            .type = QueuedMouseEvent::Type::DoubleClick,
+            .position = position,
+            .button = button,
+            .buttons = buttons,
+            .modifiers = modifiers,
+        });
 }
 
 void ConnectionFromClient::key_down(i32 key, unsigned int modifiers, u32 code_point)
 {
-    report_finished_handling_input_event(page().handle_keydown((KeyCode)key, modifiers, code_point));
+    enqueue_input_event(
+        QueuedKeyboardEvent {
+            .type = QueuedKeyboardEvent::Type::KeyDown,
+            .key = key,
+            .modifiers = modifiers,
+            .code_point = code_point,
+        });
 }
 
 void ConnectionFromClient::key_up(i32 key, unsigned int modifiers, u32 code_point)
 {
-    report_finished_handling_input_event(page().handle_keyup((KeyCode)key, modifiers, code_point));
+    enqueue_input_event(
+        QueuedKeyboardEvent {
+            .type = QueuedKeyboardEvent::Type::KeyUp,
+            .key = key,
+            .modifiers = modifiers,
+            .code_point = code_point,
+        });
+}
+
+void ConnectionFromClient::enqueue_input_event(Variant<QueuedMouseEvent, QueuedKeyboardEvent> event)
+{
+    m_input_event_queue.enqueue(move(event));
+    m_input_event_queue_timer->start();
 }
 
 void ConnectionFromClient::report_finished_handling_input_event(bool event_was_handled)
@@ -204,15 +345,22 @@ void ConnectionFromClient::debug_request(DeprecatedString const& request, Deprec
 
     if (request == "dump-layout-tree") {
         if (auto* doc = page().top_level_browsing_context().active_document()) {
-            if (auto* icb = doc->layout_node())
-                Web::dump_tree(*icb);
+            if (auto* viewport = doc->layout_node())
+                Web::dump_tree(*viewport);
+        }
+    }
+
+    if (request == "dump-paint-tree") {
+        if (auto* doc = page().top_level_browsing_context().active_document()) {
+            if (auto* paintable = doc->paintable())
+                Web::dump_tree(*paintable);
         }
     }
 
     if (request == "dump-stacking-context-tree") {
         if (auto* doc = page().top_level_browsing_context().active_document()) {
-            if (auto* icb = doc->layout_node()) {
-                if (auto* stacking_context = icb->paint_box()->stacking_context())
+            if (auto* viewport = doc->layout_node()) {
+                if (auto* stacking_context = viewport->paintable_box()->stacking_context())
                     stacking_context->dump();
             }
         }
@@ -223,6 +371,26 @@ void ConnectionFromClient::debug_request(DeprecatedString const& request, Deprec
             for (auto& sheet : doc->style_sheets().sheets()) {
                 if (auto result = Web::dump_sheet(sheet); result.is_error())
                     dbgln("Failed to dump style sheets: {}", result.error());
+            }
+        }
+    }
+
+    if (request == "dump-all-resolved-styles") {
+        if (auto* doc = page().top_level_browsing_context().active_document()) {
+            Queue<Web::DOM::Node*> elements_to_visit;
+            elements_to_visit.enqueue(doc->document_element());
+            while (!elements_to_visit.is_empty()) {
+                auto element = elements_to_visit.dequeue();
+                for (auto& child : element->children_as_vector())
+                    elements_to_visit.enqueue(child.ptr());
+                if (element->is_element()) {
+                    auto styles = doc->style_computer().compute_style(*static_cast<Web::DOM::Element*>(element)).release_value_but_fixme_should_propagate_errors();
+                    dbgln("+ Element {}", element->debug_description());
+                    auto& properties = styles->properties();
+                    for (size_t i = 0; i < properties.size(); ++i)
+                        dbgln("|  {} = {}", Web::CSS::string_from_property_id(static_cast<Web::CSS::PropertyID>(i)), properties[i].has_value() ? properties[i]->style->to_string() : ""_short_string);
+                    dbgln("---");
+                }
             }
         }
     }
@@ -258,8 +426,8 @@ void ConnectionFromClient::debug_request(DeprecatedString const& request, Deprec
     }
 
     if (request == "dump-local-storage") {
-        if (auto* doc = page().top_level_browsing_context().active_document())
-            doc->window().local_storage()->dump();
+        if (auto* document = page().top_level_browsing_context().active_document())
+            document->window().local_storage().release_value_but_fixme_should_propagate_errors()->dump();
     }
 }
 
@@ -283,7 +451,7 @@ Messages::WebContentServer::InspectDomNodeResponse ConnectionFromClient::inspect
 
     top_context.for_each_in_inclusive_subtree([&](auto& ctx) {
         if (ctx.active_document() != nullptr) {
-            ctx.active_document()->set_inspected_node(nullptr);
+            ctx.active_document()->set_inspected_node(nullptr, {});
         }
         return IterationDecision::Continue;
     });
@@ -291,16 +459,15 @@ Messages::WebContentServer::InspectDomNodeResponse ConnectionFromClient::inspect
     Web::DOM::Node* node = Web::DOM::Node::from_id(node_id);
     // Note: Nodes without layout (aka non-visible nodes, don't have style computed)
     if (!node || !node->layout_node()) {
-        return { false, "", "", "", "" };
+        return { false, "", "", "", "", "" };
     }
 
-    // FIXME: Pass the pseudo-element here.
-    node->document().set_inspected_node(node);
+    node->document().set_inspected_node(node, pseudo_element);
 
     if (node->is_element()) {
         auto& element = verify_cast<Web::DOM::Element>(*node);
         if (!element.computed_css_values())
-            return { false, "", "", "", "" };
+            return { false, "", "", "", "", "" };
 
         auto serialize_json = [](Web::CSS::StyleProperties const& properties) -> DeprecatedString {
             StringBuilder builder;
@@ -314,14 +481,14 @@ Messages::WebContentServer::InspectDomNodeResponse ConnectionFromClient::inspect
             return builder.to_deprecated_string();
         };
 
-        auto serialize_custom_properties_json = [](Web::DOM::Element const& element) -> DeprecatedString {
+        auto serialize_custom_properties_json = [](Web::DOM::Element const& element, Optional<Web::CSS::Selector::PseudoElement> pseudo_element) -> DeprecatedString {
             StringBuilder builder;
             auto serializer = MUST(JsonObjectSerializer<>::try_create(builder));
             HashTable<DeprecatedString> seen_properties;
 
             auto const* element_to_check = &element;
             while (element_to_check) {
-                for (auto const& property : element_to_check->custom_properties()) {
+                for (auto const& property : element_to_check->custom_properties(pseudo_element)) {
                     if (!seen_properties.contains(property.key)) {
                         seen_properties.set(property.key);
                         MUST(serializer.add(property.key, property.value.value->to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string()));
@@ -343,21 +510,21 @@ Messages::WebContentServer::InspectDomNodeResponse ConnectionFromClient::inspect
             auto box_model = box->box_model();
             StringBuilder builder;
             auto serializer = MUST(JsonObjectSerializer<>::try_create(builder));
-            MUST(serializer.add("padding_top"sv, box_model.padding.top.value()));
-            MUST(serializer.add("padding_right"sv, box_model.padding.right.value()));
-            MUST(serializer.add("padding_bottom"sv, box_model.padding.bottom.value()));
-            MUST(serializer.add("padding_left"sv, box_model.padding.left.value()));
-            MUST(serializer.add("margin_top"sv, box_model.margin.top.value()));
-            MUST(serializer.add("margin_right"sv, box_model.margin.right.value()));
-            MUST(serializer.add("margin_bottom"sv, box_model.margin.bottom.value()));
-            MUST(serializer.add("margin_left"sv, box_model.margin.left.value()));
-            MUST(serializer.add("border_top"sv, box_model.border.top.value()));
-            MUST(serializer.add("border_right"sv, box_model.border.right.value()));
-            MUST(serializer.add("border_bottom"sv, box_model.border.bottom.value()));
-            MUST(serializer.add("border_left"sv, box_model.border.left.value()));
-            if (auto* paint_box = box->paint_box()) {
-                MUST(serializer.add("content_width"sv, paint_box->content_width().value()));
-                MUST(serializer.add("content_height"sv, paint_box->content_height().value()));
+            MUST(serializer.add("padding_top"sv, box_model.padding.top.to_double()));
+            MUST(serializer.add("padding_right"sv, box_model.padding.right.to_double()));
+            MUST(serializer.add("padding_bottom"sv, box_model.padding.bottom.to_double()));
+            MUST(serializer.add("padding_left"sv, box_model.padding.left.to_double()));
+            MUST(serializer.add("margin_top"sv, box_model.margin.top.to_double()));
+            MUST(serializer.add("margin_right"sv, box_model.margin.right.to_double()));
+            MUST(serializer.add("margin_bottom"sv, box_model.margin.bottom.to_double()));
+            MUST(serializer.add("margin_left"sv, box_model.margin.left.to_double()));
+            MUST(serializer.add("border_top"sv, box_model.border.top.to_double()));
+            MUST(serializer.add("border_right"sv, box_model.border.right.to_double()));
+            MUST(serializer.add("border_bottom"sv, box_model.border.bottom.to_double()));
+            MUST(serializer.add("border_left"sv, box_model.border.left.to_double()));
+            if (auto* paintable_box = box->paintable_box()) {
+                MUST(serializer.add("content_width"sv, paintable_box->content_width().to_double()));
+                MUST(serializer.add("content_height"sv, paintable_box->content_height().to_double()));
             } else {
                 MUST(serializer.add("content_width"sv, 0));
                 MUST(serializer.add("content_height"sv, 0));
@@ -367,10 +534,25 @@ Messages::WebContentServer::InspectDomNodeResponse ConnectionFromClient::inspect
             return builder.to_deprecated_string();
         };
 
+        auto serialize_aria_properties_state_json = [](Web::DOM::Element const& element) -> DeprecatedString {
+            auto role_name = element.role_or_default();
+            if (!role_name.has_value()) {
+                return "";
+            }
+            auto aria_data = MUST(Web::ARIA::AriaData::build_data(element));
+            auto role = MUST(Web::ARIA::RoleType::build_role_object(role_name.value(), element.is_focusable(), *aria_data));
+
+            StringBuilder builder;
+            auto serializer = MUST(JsonObjectSerializer<>::try_create(builder));
+            MUST(role->serialize_as_json(serializer));
+            MUST(serializer.finish());
+            return builder.to_deprecated_string();
+        };
+
         if (pseudo_element.has_value()) {
             auto pseudo_element_node = element.get_pseudo_element_node(pseudo_element.value());
             if (!pseudo_element_node)
-                return { false, "", "", "", "" };
+                return { false, "", "", "", "", "" };
 
             // FIXME: Pseudo-elements only exist as Layout::Nodes, which don't have style information
             //        in a format we can use. So, we run the StyleComputer again to get the specified
@@ -378,19 +560,20 @@ Messages::WebContentServer::InspectDomNodeResponse ConnectionFromClient::inspect
             auto pseudo_element_style = MUST(page().focused_context().active_document()->style_computer().compute_style(element, pseudo_element));
             DeprecatedString computed_values = serialize_json(pseudo_element_style);
             DeprecatedString resolved_values = "{}";
-            DeprecatedString custom_properties_json = "{}";
+            DeprecatedString custom_properties_json = serialize_custom_properties_json(element, pseudo_element);
             DeprecatedString node_box_sizing_json = serialize_node_box_sizing_json(pseudo_element_node.ptr());
-            return { true, computed_values, resolved_values, custom_properties_json, node_box_sizing_json };
+            return { true, computed_values, resolved_values, custom_properties_json, node_box_sizing_json, "" };
         }
 
         DeprecatedString computed_values = serialize_json(*element.computed_css_values());
         DeprecatedString resolved_values_json = serialize_json(element.resolved_css_values());
-        DeprecatedString custom_properties_json = serialize_custom_properties_json(element);
+        DeprecatedString custom_properties_json = serialize_custom_properties_json(element, {});
         DeprecatedString node_box_sizing_json = serialize_node_box_sizing_json(element.layout_node());
-        return { true, computed_values, resolved_values_json, custom_properties_json, node_box_sizing_json };
+        DeprecatedString aria_properties_state_json = serialize_aria_properties_state_json(element);
+        return { true, computed_values, resolved_values_json, custom_properties_json, node_box_sizing_json, aria_properties_state_json };
     }
 
-    return { false, "", "", "", "" };
+    return { false, "", "", "", "", "" };
 }
 
 Messages::WebContentServer::GetHoveredNodeIdResponse ConnectionFromClient::get_hovered_node_id()
@@ -410,10 +593,10 @@ void ConnectionFromClient::initialize_js_console(Badge<PageHost>)
     if (m_realm.ptr() == realm.ptr())
         return;
 
-    auto& console_object = *realm->intrinsics().console_object();
+    auto console_object = realm->intrinsics().console_object();
     m_realm = realm;
-    m_console_client = make<WebContentConsoleClient>(console_object.console(), *m_realm, *this);
-    console_object.console().set_client(*m_console_client.ptr());
+    m_console_client = make<WebContentConsoleClient>(console_object->console(), *m_realm, *this);
+    console_object->console().set_client(*m_console_client.ptr());
 }
 
 void ConnectionFromClient::js_console_input(DeprecatedString const& js_source)
@@ -486,6 +669,7 @@ Messages::WebContentServer::DumpLayoutTreeResponse ConnectionFromClient::dump_la
     auto* document = page().top_level_browsing_context().active_document();
     if (!document)
         return DeprecatedString { "(no DOM tree)" };
+    document->update_layout();
     auto* layout_root = document->layout_node();
     if (!layout_root)
         return DeprecatedString { "(no layout tree)" };
@@ -494,10 +678,31 @@ Messages::WebContentServer::DumpLayoutTreeResponse ConnectionFromClient::dump_la
     return builder.to_deprecated_string();
 }
 
-void ConnectionFromClient::set_content_filters(Vector<DeprecatedString> const& filters)
+Messages::WebContentServer::DumpTextResponse ConnectionFromClient::dump_text()
 {
-    for (auto& filter : filters)
-        Web::ContentFilter::the().add_pattern(filter);
+    auto* document = page().top_level_browsing_context().active_document();
+    if (!document)
+        return DeprecatedString { "(no DOM tree)" };
+    if (!document->body())
+        return DeprecatedString { "(no body)" };
+    return document->body()->inner_text();
+}
+
+void ConnectionFromClient::set_content_filters(Vector<String> const& filters)
+{
+    Web::ContentFilter::the().set_patterns(filters).release_value_but_fixme_should_propagate_errors();
+}
+
+void ConnectionFromClient::set_autoplay_allowed_on_all_websites()
+{
+    auto& autoplay_allowlist = Web::PermissionsPolicy::AutoplayAllowlist::the();
+    autoplay_allowlist.enable_globally();
+}
+
+void ConnectionFromClient::set_autoplay_allowlist(Vector<String> const& allowlist)
+{
+    auto& autoplay_allowlist = Web::PermissionsPolicy::AutoplayAllowlist::the();
+    autoplay_allowlist.enable_for_origins(allowlist).release_value_but_fixme_should_propagate_errors();
 }
 
 void ConnectionFromClient::set_proxy_mappings(Vector<DeprecatedString> const& proxies, HashMap<DeprecatedString, size_t> const& mappings)
@@ -549,33 +754,35 @@ void ConnectionFromClient::set_window_size(Gfx::IntSize size)
 Messages::WebContentServer::GetLocalStorageEntriesResponse ConnectionFromClient::get_local_storage_entries()
 {
     auto* document = page().top_level_browsing_context().active_document();
-    auto local_storage = document->window().local_storage();
+    auto local_storage = document->window().local_storage().release_value_but_fixme_should_propagate_errors();
     return local_storage->map();
 }
 
 Messages::WebContentServer::GetSessionStorageEntriesResponse ConnectionFromClient::get_session_storage_entries()
 {
     auto* document = page().top_level_browsing_context().active_document();
-    auto session_storage = document->window().session_storage();
+    auto session_storage = document->window().session_storage().release_value_but_fixme_should_propagate_errors();
     return session_storage->map();
 }
 
 void ConnectionFromClient::handle_file_return(i32 error, Optional<IPC::File> const& file, i32 request_id)
 {
-    auto result = m_requested_files.get(request_id);
-    VERIFY(result.has_value());
+    auto file_request = m_requested_files.take(request_id);
 
-    VERIFY(result.value()->on_file_request_finish);
-    result.value()->on_file_request_finish(error != 0 ? Error::from_errno(error) : ErrorOr<i32> { file->take_fd() });
-    m_requested_files.remove(request_id);
+    VERIFY(file_request.has_value());
+    VERIFY(file_request.value().on_file_request_finish);
+
+    file_request.value().on_file_request_finish(error != 0 ? Error::from_errno(error) : ErrorOr<i32> { file->take_fd() });
 }
 
-void ConnectionFromClient::request_file(NonnullRefPtr<Web::FileRequest>& file_request)
+void ConnectionFromClient::request_file(Web::FileRequest file_request)
 {
     i32 const id = last_id++;
-    m_requested_files.set(id, file_request);
 
-    async_did_request_file(file_request->path(), id);
+    auto path = file_request.path();
+    m_requested_files.set(id, move(file_request));
+
+    async_did_request_file(path, id);
 }
 
 void ConnectionFromClient::set_system_visibility_state(bool visible)
@@ -596,9 +803,29 @@ void ConnectionFromClient::confirm_closed(bool accepted)
     m_page_host->confirm_closed(accepted);
 }
 
-void ConnectionFromClient::prompt_closed(DeprecatedString const& response)
+void ConnectionFromClient::prompt_closed(Optional<String> const& response)
 {
     m_page_host->prompt_closed(response);
+}
+
+void ConnectionFromClient::toggle_media_play_state()
+{
+    m_page_host->toggle_media_play_state().release_value_but_fixme_should_propagate_errors();
+}
+
+void ConnectionFromClient::toggle_media_mute_state()
+{
+    m_page_host->toggle_media_mute_state();
+}
+
+void ConnectionFromClient::toggle_media_loop_state()
+{
+    m_page_host->toggle_media_loop_state().release_value_but_fixme_should_propagate_errors();
+}
+
+void ConnectionFromClient::toggle_media_controls_state()
+{
+    m_page_host->toggle_media_controls_state().release_value_but_fixme_should_propagate_errors();
 }
 
 void ConnectionFromClient::inspect_accessibility_tree()

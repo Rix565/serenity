@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -23,9 +23,8 @@
 #include <AK/Traits.h>
 #include <AK/Utf8View.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/DirIterator.h>
-#include <LibCore/File.h>
-#include <LibCore/Stream.h>
+#include <LibCore/Directory.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibJS/Runtime/Intl/SingleUnitIdentifiers.h>
 #include <LibLocale/Locale.h>
 #include <LibLocale/NumberFormat.h>
@@ -699,12 +698,9 @@ static ErrorOr<void> parse_units(DeprecatedString locale_units_path, CLDR& cldr,
 
 static ErrorOr<void> parse_all_locales(DeprecatedString core_path, DeprecatedString numbers_path, DeprecatedString units_path, CLDR& cldr)
 {
-    auto numbers_iterator = TRY(path_to_dir_iterator(move(numbers_path)));
-    auto units_iterator = TRY(path_to_dir_iterator(move(units_path)));
-
     LexicalPath core_supplemental_path(move(core_path));
     core_supplemental_path = core_supplemental_path.append("supplemental"sv);
-    VERIFY(Core::File::is_directory(core_supplemental_path.string()));
+    VERIFY(FileSystem::is_directory(core_supplemental_path.string()));
 
     TRY(parse_number_system_digits(core_supplemental_path.string(), cldr));
 
@@ -721,21 +717,23 @@ static ErrorOr<void> parse_all_locales(DeprecatedString core_path, DeprecatedStr
         return builder.to_deprecated_string();
     };
 
-    while (numbers_iterator.has_next()) {
-        auto numbers_path = TRY(next_path_from_dir_iterator(numbers_iterator));
+    TRY(Core::Directory::for_each_entry(TRY(String::formatted("{}/main", numbers_path)), Core::DirIterator::SkipParentAndBaseDir, [&](auto& entry, auto& directory) -> ErrorOr<IterationDecision> {
+        auto numbers_path = LexicalPath::join(directory.path().string(), entry.name).string();
         auto language = TRY(remove_variants_from_path(numbers_path));
 
         auto& locale = cldr.locales.ensure(language);
         TRY(parse_number_systems(numbers_path, cldr, locale));
-    }
+        return IterationDecision::Continue;
+    }));
 
-    while (units_iterator.has_next()) {
-        auto units_path = TRY(next_path_from_dir_iterator(units_iterator));
+    TRY(Core::Directory::for_each_entry(TRY(String::formatted("{}/main", units_path)), Core::DirIterator::SkipParentAndBaseDir, [&](auto& entry, auto& directory) -> ErrorOr<IterationDecision> {
+        auto units_path = LexicalPath::join(directory.path().string(), entry.name).string();
         auto language = TRY(remove_variants_from_path(units_path));
 
         auto& locale = cldr.locales.ensure(language);
         TRY(parse_units(units_path, cldr, locale));
-    }
+        return IterationDecision::Continue;
+    }));
 
     return {};
 }
@@ -745,7 +743,7 @@ static DeprecatedString format_identifier(StringView, DeprecatedString identifie
     return identifier.to_titlecase();
 }
 
-static ErrorOr<void> generate_unicode_locale_header(Core::Stream::BufferedFile& file, CLDR& cldr)
+static ErrorOr<void> generate_unicode_locale_header(Core::InputBufferedFile& file, CLDR& cldr)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
@@ -764,11 +762,11 @@ namespace Locale {
 }
 )~~~");
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
-static ErrorOr<void> generate_unicode_locale_implementation(Core::Stream::BufferedFile& file, CLDR& cldr)
+static ErrorOr<void> generate_unicode_locale_implementation(Core::InputBufferedFile& file, CLDR& cldr)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
@@ -798,7 +796,7 @@ namespace Locale {
 
     generator.append(R"~~~(
 struct NumberFormatImpl {
-    NumberFormat to_unicode_number_format() const {
+    ErrorOr<NumberFormat> to_unicode_number_format() const {
         NumberFormat number_format {};
 
         number_format.magnitude = magnitude;
@@ -808,9 +806,9 @@ struct NumberFormatImpl {
         number_format.positive_format = decode_string(positive_format);
         number_format.negative_format = decode_string(negative_format);
 
-        number_format.identifiers.ensure_capacity(identifiers.size());
+        TRY(number_format.identifiers.try_ensure_capacity(identifiers.size()));
         for (@string_index_type@ identifier : identifiers)
-            number_format.identifiers.append(decode_string(identifier));
+            number_format.identifiers.unchecked_append(decode_string(identifier));
 
         return number_format;
     }
@@ -915,7 +913,7 @@ static Optional<NumberSystem> keyword_to_number_system(KeywordNumbers keyword)
     }
 }
 
-Optional<Span<u32 const>> get_digits_for_number_system(StringView system)
+Optional<ReadonlySpan<u32>> get_digits_for_number_system(StringView system)
 {
     auto number_system_keyword = keyword_nu_from_string(system);
     if (!number_system_keyword.has_value())
@@ -1017,7 +1015,7 @@ ErrorOr<Optional<NumberFormat>> get_standard_number_system_format(StringView loc
             break;
         }
 
-        return s_number_formats[format_index].to_unicode_number_format();
+        return TRY(s_number_formats[format_index].to_unicode_number_format());
     }
 
     return OptionalNone {};
@@ -1046,10 +1044,10 @@ ErrorOr<Vector<NumberFormat>> get_compact_number_system_formats(StringView local
         }
 
         auto number_formats = s_number_format_lists.at(number_format_list_index);
-        formats.ensure_capacity(number_formats.size());
+        TRY(formats.try_ensure_capacity(number_formats.size()));
 
         for (auto number_format : number_formats)
-            formats.append(s_number_formats[number_format].to_unicode_number_format());
+            formats.unchecked_append(TRY(s_number_formats[number_format].to_unicode_number_format()));
     }
 
     return formats;
@@ -1074,7 +1072,7 @@ static Unit const* find_units(StringView locale, StringView unit)
     return nullptr;
 }
 
-Vector<NumberFormat> get_unit_formats(StringView locale, StringView unit, Style style)
+ErrorOr<Vector<NumberFormat>> get_unit_formats(StringView locale, StringView unit, Style style)
 {
     Vector<NumberFormat> formats;
 
@@ -1096,10 +1094,10 @@ Vector<NumberFormat> get_unit_formats(StringView locale, StringView unit, Style 
         }
 
         auto number_formats = s_number_format_lists.at(number_format_list_index);
-        formats.ensure_capacity(number_formats.size());
+        TRY(formats.try_ensure_capacity(number_formats.size()));
 
         for (auto number_format : number_formats)
-            formats.append(s_number_formats[number_format].to_unicode_number_format());
+            formats.unchecked_append(TRY(s_number_formats[number_format].to_unicode_number_format()));
     }
 
     return formats;
@@ -1108,7 +1106,7 @@ Vector<NumberFormat> get_unit_formats(StringView locale, StringView unit, Style 
 }
 )~~~");
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
@@ -1128,8 +1126,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_option(units_path, "Path to cldr-units directory", "units-path", 'u', "units-path");
     args_parser.parse(arguments);
 
-    auto generated_header_file = TRY(open_file(generated_header_path, Core::Stream::OpenMode::Write));
-    auto generated_implementation_file = TRY(open_file(generated_implementation_path, Core::Stream::OpenMode::Write));
+    auto generated_header_file = TRY(open_file(generated_header_path, Core::File::OpenMode::Write));
+    auto generated_implementation_file = TRY(open_file(generated_implementation_path, Core::File::OpenMode::Write));
 
     CLDR cldr;
     TRY(parse_all_locales(core_path, numbers_path, units_path, cldr));

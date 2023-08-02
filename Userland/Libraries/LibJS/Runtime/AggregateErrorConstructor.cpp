@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,7 +10,7 @@
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/ErrorConstructor.h>
 #include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/Iterator.h>
 
 namespace JS {
 
@@ -64,8 +64,8 @@ ThrowCompletionOr<NonnullGCPtr<Object>> AggregateErrorConstructor::construct(Fun
     // 4. Perform ? InstallErrorCause(O, options).
     TRY(aggregate_error->install_error_cause(options));
 
-    // 5. Let errorsList be ? IterableToList(errors).
-    auto errors_list = TRY(iterable_to_list(vm, errors));
+    // 5. Let errorsList be ? IteratorToList(? GetIterator(errors, sync)).
+    auto errors_list = TRY(iterator_to_list(vm, TRY(get_iterator(vm, errors, IteratorHint::Sync))));
 
     // 6. Perform ! DefinePropertyOrThrow(O, "errors", PropertyDescriptor { [[Configurable]]: true, [[Enumerable]]: false, [[Writable]]: true, [[Value]]: CreateArrayFromList(errorsList) }).
     MUST(aggregate_error->define_property_or_throw(vm.names.errors, { .value = Array::create_from(realm, errors_list), .writable = true, .enumerable = false, .configurable = true }));

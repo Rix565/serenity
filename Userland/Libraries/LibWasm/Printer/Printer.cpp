@@ -34,7 +34,7 @@ Optional<OpCode> instruction_from_name(StringView name)
 void Printer::print_indent()
 {
     for (size_t i = 0; i < m_indent; ++i)
-        m_stream.write_entire_buffer("  "sv.bytes()).release_value_but_fixme_should_propagate_errors();
+        m_stream.write_until_depleted("  "sv.bytes()).release_value_but_fixme_should_propagate_errors();
 }
 
 void Printer::print(Wasm::BlockType const& type)
@@ -402,15 +402,16 @@ void Printer::print(Wasm::ImportSection::Import const& import)
     {
         TemporaryChange change { m_indent, m_indent + 1 };
         import.description().visit(
-            [this](auto const& type) { print(type);
-    },
+            [this](auto const& type) {
+                print(type);
+            },
             [this](TypeIndex const& index) {
-        print_indent();
-        print("(type index {})\n", index.value());
+                print_indent();
+                print("(type index {})\n", index.value());
             });
-}
-print_indent();
-print(")\n");
+    }
+    print_indent();
+    print(")\n");
 }
 
 void Printer::print(Wasm::Instruction const& instruction)

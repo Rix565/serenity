@@ -13,8 +13,7 @@ GalleryWidget::GalleryWidget()
     set_layout<GUI::VerticalBoxLayout>();
 
     auto& inner_widget = add<GUI::Widget>();
-    auto inner_layout = inner_widget.try_set_layout<GUI::VerticalBoxLayout>().release_value_but_fixme_should_propagate_errors();
-    inner_layout->set_margins({ 4 });
+    inner_widget.try_set_layout<GUI::VerticalBoxLayout>(4).release_value_but_fixme_should_propagate_errors();
 
     m_tab_widget = inner_widget.try_add<GUI::TabWidget>().release_value_but_fixme_should_propagate_errors();
     m_statusbar = add<GUI::Statusbar>();
@@ -25,7 +24,7 @@ GalleryWidget::GalleryWidget()
 
 ErrorOr<void> GalleryWidget::load_basic_model_tab()
 {
-    auto tab = TRY(m_tab_widget->try_add_tab<GUI::Widget>("Basic Model"));
+    auto tab = TRY(m_tab_widget->try_add_tab<GUI::Widget>(TRY("Basic Model"_string)));
     TRY(tab->load_from_gml(basic_model_tab_gml));
 
     m_basic_model = BasicModel::create();
@@ -34,10 +33,10 @@ ErrorOr<void> GalleryWidget::load_basic_model_tab()
 
     m_basic_model->on_invalidate = [&] {
         m_invalidation_count++;
-        m_statusbar->set_text(DeprecatedString::formatted("Times invalidated: {}", m_invalidation_count));
+        m_statusbar->set_text(String::formatted("Times invalidated: {}", m_invalidation_count).release_value_but_fixme_should_propagate_errors());
     };
 
-    m_statusbar->set_text(DeprecatedString::formatted("Times invalidated: {}", m_invalidation_count));
+    m_statusbar->set_text(TRY(String::formatted("Times invalidated: {}", m_invalidation_count)));
 
     m_basic_model->add_item("Well...");
     m_basic_model->add_item("...hello...");

@@ -13,7 +13,7 @@
 #include <AK/Vector.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Locking/Spinlock.h>
-#include <Kernel/PhysicalAddress.h>
+#include <Kernel/Memory/PhysicalAddress.h>
 
 namespace Kernel::PCI {
 
@@ -78,12 +78,25 @@ static constexpr u16 value_port = 0xcfc;
 static constexpr size_t mmio_device_space_size = 4096;
 static constexpr u16 none_value = 0xffff;
 static constexpr size_t memory_range_per_bus = mmio_device_space_size * to_underlying(Limits::MaxFunctionsPerDevice) * to_underlying(Limits::MaxDevicesPerBus);
+static constexpr u32 bar_address_mask = 0xfffffff0;
+static constexpr u8 msi_control_offset = 2;
+static constexpr u16 msi_control_enable = 0x0001;
+static constexpr u8 msi_address_low_offset = 4;
+static constexpr u8 msi_address_high_or_data_offset = 8;
+static constexpr u8 msi_data_offset = 0xc;
+static constexpr u16 msi_address_format_mask = 0x80;
+static constexpr u8 msi_mmc_format_mask = 0xe;
+static constexpr u16 msix_control_table_mask = 0x07ff;
+static constexpr u8 msix_table_bir_mask = 0x7;
+static constexpr u16 msix_table_offset_mask = 0xfff8;
+static constexpr u16 msix_control_enable = 0x8000;
 
 // Taken from https://pcisig.com/sites/default/files/files/PCI_Code-ID_r_1_11__v24_Jan_2019.pdf
 enum class ClassID {
     MassStorage = 0x1,
     Multimedia = 0x4,
     Bridge = 0x6,
+    Base = 0x8,
 };
 
 namespace MassStorage {
@@ -103,6 +116,7 @@ namespace Multimedia {
 
 enum class SubclassID {
     AudioController = 0x1,
+    HDACompatibleController = 0x3,
 };
 
 }
@@ -111,6 +125,14 @@ namespace Bridge {
 
 enum class SubclassID {
     PCI_TO_PCI = 0x4,
+};
+
+}
+
+namespace Base {
+
+enum class SubclassID {
+    SDHostController = 0x5,
 };
 
 }
@@ -227,6 +249,9 @@ public:
     u8 read8(size_t offset) const;
     u16 read16(size_t offset) const;
     u32 read32(size_t offset) const;
+    void write8(size_t offset, u8 value) const;
+    void write16(size_t offset, u16 value) const;
+    void write32(size_t offset, u32 value) const;
 
 private:
     const Address m_address;
@@ -305,6 +330,36 @@ protected:
     Vector<Capability> m_capabilities;
 };
 
+class MSIxInfo {
+public:
+    MSIxInfo(u16 table_size, u8 table_bar, u32 table_offset)
+        : table_size(table_size)
+        , table_bar(table_bar)
+        , table_offset(table_offset)
+    {
+    }
+
+    MSIxInfo() = default;
+
+    u16 table_size {};
+    u8 table_bar {};
+    u32 table_offset {};
+};
+
+class MSIInfo {
+public:
+    MSIInfo(bool message_address_64_bit_support, u8 count)
+        : message_address_64_bit_format(message_address_64_bit_support)
+        , count(count)
+    {
+    }
+
+    MSIInfo() = default;
+
+    bool message_address_64_bit_format { false };
+    u8 count {};
+};
+
 class DeviceIdentifier
     : public RefCounted<DeviceIdentifier>
     , public EnumerableDeviceIdentifier {
@@ -312,6 +367,14 @@ class DeviceIdentifier
 
 public:
     static ErrorOr<NonnullRefPtr<DeviceIdentifier>> from_enumerable_identifier(EnumerableDeviceIdentifier const& other_identifier);
+
+    void initialize();
+    bool is_msix_capable() const { return m_msix_info.table_size > 0; }
+    u8 get_msix_table_bar() const { return m_msix_info.table_bar; }
+    u32 get_msix_table_offset() const { return m_msix_info.table_offset; }
+
+    bool is_msi_capable() const { return m_msi_info.count > 0; }
+    bool is_msi_64bit_address_format() { return m_msi_info.message_address_64_bit_format; }
 
     Spinlock<LockRank::None>& operation_lock() { return m_operation_lock; }
     Spinlock<LockRank::None>& operation_lock() const { return m_operation_lock; }
@@ -335,6 +398,8 @@ private:
     }
 
     mutable Spinlock<LockRank::None> m_operation_lock;
+    MSIxInfo m_msix_info {};
+    MSIInfo m_msi_info {};
 };
 
 class Domain;

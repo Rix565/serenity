@@ -12,18 +12,27 @@
 
 namespace Web::WebIDL {
 
+enum class OperationReturnsPromise {
+    Yes,
+    No,
+};
+
 // https://webidl.spec.whatwg.org/#idl-callback-interface
 class CallbackType final : public JS::Cell {
-public:
-    CallbackType(JS::Object& callback, HTML::EnvironmentSettingsObject& callback_context);
+    JS_CELL(CallbackType, JS::Cell);
 
-    JS::Object& callback;
+public:
+    CallbackType(JS::Object& callback, HTML::EnvironmentSettingsObject& callback_context, OperationReturnsPromise = OperationReturnsPromise::No);
+
+    JS::NonnullGCPtr<JS::Object> callback;
 
     // https://webidl.spec.whatwg.org/#dfn-callback-context
-    HTML::EnvironmentSettingsObject& callback_context;
+    JS::NonnullGCPtr<HTML::EnvironmentSettingsObject> callback_context;
+
+    // Non-standard property used to distinguish Promise-returning callbacks in callback-related AOs
+    OperationReturnsPromise operation_returns_promise;
 
 private:
-    virtual StringView class_name() const override;
     virtual void visit_edges(Cell::Visitor&) override;
 };
 

@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <AK/SinglyLinkedList.h>
 #include <LibJS/Bytecode/BasicBlock.h>
@@ -19,6 +18,7 @@
 #include <LibJS/Bytecode/StringTable.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Runtime/FunctionKind.h>
+#include <LibRegex/Regex.h>
 
 namespace JS::Bytecode {
 
@@ -84,6 +84,21 @@ public:
     CodeGenerationErrorOr<void> emit_store_to_reference(JS::ASTNode const&);
     CodeGenerationErrorOr<void> emit_delete_reference(JS::ASTNode const&);
 
+    struct ReferenceRegisters {
+        Register base;                                // [[Base]]
+        Optional<Bytecode::Register> referenced_name; // [[ReferencedName]]
+        Register this_value;                          // [[ThisValue]]
+    };
+    CodeGenerationErrorOr<ReferenceRegisters> emit_super_reference(MemberExpression const&);
+
+    void emit_set_variable(JS::Identifier const& identifier, Bytecode::Op::SetVariable::InitializationMode initialization_mode = Bytecode::Op::SetVariable::InitializationMode::Set, Bytecode::Op::EnvironmentMode mode = Bytecode::Op::EnvironmentMode::Lexical);
+
+    void push_home_object(Register);
+    void pop_home_object();
+    void emit_new_function(JS::FunctionExpression const&, Optional<IdentifierTableIndex> lhs_name);
+
+    CodeGenerationErrorOr<void> emit_named_evaluation_if_anonymous_function(Expression const&, Optional<IdentifierTableIndex> lhs_name);
+
     void begin_continuable_scope(Label continue_target, Vector<DeprecatedFlyString> const& language_label_set);
     void end_continuable_scope();
     void begin_breakable_scope(Label breakable_target, Vector<DeprecatedFlyString> const& language_label_set);
@@ -104,7 +119,7 @@ public:
         if (name.is_empty())
             name = DeprecatedString::number(m_next_block++);
         m_root_basic_blocks.append(BasicBlock::create(name));
-        return m_root_basic_blocks.last();
+        return *m_root_basic_blocks.last();
     }
 
     bool is_current_block_terminated() const
@@ -117,14 +132,20 @@ public:
         return m_string_table->insert(move(string));
     }
 
+    RegexTableIndex intern_regex(ParsedRegex regex)
+    {
+        return m_regex_table->insert(move(regex));
+    }
+
     IdentifierTableIndex intern_identifier(DeprecatedFlyString string)
     {
         return m_identifier_table->insert(move(string));
     }
 
-    bool is_in_generator_or_async_function() const { return m_enclosing_function_kind == FunctionKind::Async || m_enclosing_function_kind == FunctionKind::Generator; }
-    bool is_in_generator_function() const { return m_enclosing_function_kind == FunctionKind::Generator; }
-    bool is_in_async_function() const { return m_enclosing_function_kind == FunctionKind::Async; }
+    bool is_in_generator_or_async_function() const { return m_enclosing_function_kind == FunctionKind::Async || m_enclosing_function_kind == FunctionKind::Generator || m_enclosing_function_kind == FunctionKind::AsyncGenerator; }
+    bool is_in_generator_function() const { return m_enclosing_function_kind == FunctionKind::Generator || m_enclosing_function_kind == FunctionKind::AsyncGenerator; }
+    bool is_in_async_function() const { return m_enclosing_function_kind == FunctionKind::Async || m_enclosing_function_kind == FunctionKind::AsyncGenerator; }
+    bool is_in_async_generator_function() const { return m_enclosing_function_kind == FunctionKind::AsyncGenerator; }
 
     enum class BindingMode {
         Lexical,
@@ -133,36 +154,11 @@ public:
     };
     struct LexicalScope {
         SurroundingScopeKind kind;
-        BindingMode mode;
-        HashTable<IdentifierTableIndex> known_bindings;
     };
 
-    void register_binding(IdentifierTableIndex identifier, BindingMode mode = BindingMode::Lexical)
-    {
-        m_variable_scopes.last_matching([&](auto& x) { return x.mode == BindingMode::Global || x.mode == mode; })->known_bindings.set(identifier);
-    }
-    bool has_binding(IdentifierTableIndex identifier, Optional<BindingMode> const& specific_binding_mode = {}) const
-    {
-        for (auto index = m_variable_scopes.size(); index > 0; --index) {
-            auto& scope = m_variable_scopes[index - 1];
+    void block_declaration_instantiation(ScopeNode const&);
 
-            if (scope.mode != BindingMode::Global && specific_binding_mode.value_or(scope.mode) != scope.mode)
-                continue;
-
-            if (scope.known_bindings.contains(identifier))
-                return true;
-        }
-        return false;
-    }
-    bool has_binding_in_current_scope(IdentifierTableIndex identifier) const
-    {
-        if (m_variable_scopes.is_empty())
-            return false;
-
-        return m_variable_scopes.last().known_bindings.contains(identifier);
-    }
-
-    void begin_variable_scope(BindingMode mode = BindingMode::Lexical, SurroundingScopeKind kind = SurroundingScopeKind::Block);
+    void begin_variable_scope();
     void end_variable_scope();
 
     enum class BlockBoundaryType {
@@ -171,50 +167,37 @@ public:
         Unwind,
         ReturnToFinally,
         LeaveLexicalEnvironment,
-        LeaveVariableEnvironment,
     };
     template<typename OpType>
-    void perform_needed_unwinds(bool is_break_node = false)
-    requires(OpType::IsTerminator)
+    void perform_needed_unwinds()
+    requires(OpType::IsTerminator && !IsSame<OpType, Op::Jump>)
     {
-        Optional<BlockBoundaryType> boundary_to_stop_at;
-        if constexpr (IsSame<OpType, Bytecode::Op::Return> || IsSame<OpType, Bytecode::Op::Yield>)
-            VERIFY(!is_break_node);
-        else if constexpr (IsSame<OpType, Bytecode::Op::Throw>)
-            boundary_to_stop_at = BlockBoundaryType::Unwind;
-        else
-            boundary_to_stop_at = is_break_node ? BlockBoundaryType::Break : BlockBoundaryType::Continue;
-
         for (size_t i = m_boundaries.size(); i > 0; --i) {
             auto boundary = m_boundaries[i - 1];
-            if (boundary_to_stop_at.has_value() && boundary == *boundary_to_stop_at)
-                break;
             using enum BlockBoundaryType;
             switch (boundary) {
             case Unwind:
+                if constexpr (IsSame<OpType, Bytecode::Op::Throw>)
+                    return;
                 emit<Bytecode::Op::LeaveUnwindContext>();
                 break;
             case LeaveLexicalEnvironment:
-                emit<Bytecode::Op::LeaveEnvironment>(Bytecode::Op::EnvironmentMode::Lexical);
-                break;
-            case LeaveVariableEnvironment:
-                emit<Bytecode::Op::LeaveEnvironment>(Bytecode::Op::EnvironmentMode::Var);
+                emit<Bytecode::Op::LeaveLexicalEnvironment>();
                 break;
             case Break:
             case Continue:
                 break;
             case ReturnToFinally:
-                // FIXME: In the case of breaks/continues we need to tell the `finally` to break/continue
-                //        For now let's ignore the finally to avoid a crash
-                if (IsSame<OpType, Bytecode::Op::Jump>)
-                    break;
                 return;
             };
         }
     }
 
-    Label perform_needed_unwinds_for_labelled_break_and_return_target_block(DeprecatedFlyString const& break_label);
-    Label perform_needed_unwinds_for_labelled_continue_and_return_target_block(DeprecatedFlyString const& continue_label);
+    void generate_break();
+    void generate_break(DeprecatedFlyString const& break_label);
+
+    void generate_continue();
+    void generate_continue(DeprecatedFlyString const& continue_label);
 
     void start_boundary(BlockBoundaryType type) { m_boundaries.append(type); }
     void end_boundary(BlockBoundaryType type)
@@ -223,7 +206,19 @@ public:
         m_boundaries.take_last();
     }
 
+    void emit_get_by_id(IdentifierTableIndex);
+    void emit_get_by_id_with_this(IdentifierTableIndex, Register);
+
+    [[nodiscard]] size_t next_global_variable_cache() { return m_next_global_variable_cache++; }
+
 private:
+    enum class JumpType {
+        Continue,
+        Break,
+    };
+    void generate_scoped_jump(JumpType);
+    void generate_labelled_jump(JumpType, DeprecatedFlyString const& label);
+
     Generator();
     ~Generator() = default;
 
@@ -236,17 +231,20 @@ private:
     };
 
     BasicBlock* m_current_basic_block { nullptr };
-    NonnullOwnPtrVector<BasicBlock> m_root_basic_blocks;
+    Vector<NonnullOwnPtr<BasicBlock>> m_root_basic_blocks;
     NonnullOwnPtr<StringTable> m_string_table;
     NonnullOwnPtr<IdentifierTable> m_identifier_table;
+    NonnullOwnPtr<RegexTable> m_regex_table;
 
     u32 m_next_register { 2 };
     u32 m_next_block { 1 };
+    u32 m_next_property_lookup_cache { 0 };
+    u32 m_next_global_variable_cache { 0 };
     FunctionKind m_enclosing_function_kind { FunctionKind::Normal };
     Vector<LabelableScope> m_continuable_scopes;
     Vector<LabelableScope> m_breakable_scopes;
-    Vector<LexicalScope> m_variable_scopes;
     Vector<BlockBoundaryType> m_boundaries;
+    Vector<Register> m_home_objects;
 };
 
 }

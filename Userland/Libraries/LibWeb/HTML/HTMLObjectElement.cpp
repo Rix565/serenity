@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,8 +8,11 @@
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
+#include <LibWeb/HTML/DecodedImageData.h>
 #include <LibWeb/HTML/HTMLMediaElement.h>
 #include <LibWeb/HTML/HTMLObjectElement.h>
+#include <LibWeb/HTML/ImageRequest.h>
+#include <LibWeb/HTML/PotentialCORSRequest.h>
 #include <LibWeb/Layout/ImageBox.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/MimeSniff/MimeType.h>
@@ -17,7 +20,7 @@
 namespace Web::HTML {
 
 HTMLObjectElement::HTMLObjectElement(DOM::Document& document, DOM::QualifiedName qualified_name)
-    : BrowsingContextContainer(document, move(qualified_name))
+    : NavigableContainer(document, move(qualified_name))
 {
     // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-object-element
     // Whenever one of the following conditions occur:
@@ -38,9 +41,9 @@ JS::ThrowCompletionOr<void> HTMLObjectElement::initialize(JS::Realm& realm)
     return {};
 }
 
-void HTMLObjectElement::parse_attribute(DeprecatedFlyString const& name, DeprecatedString const& value)
+void HTMLObjectElement::attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value)
 {
-    BrowsingContextContainer::parse_attribute(name, value);
+    NavigableContainer::attribute_changed(name, value);
 
     // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-object-element
     // Whenever one of the following conditions occur:
@@ -70,13 +73,13 @@ JS::GCPtr<Layout::Node> HTMLObjectElement::create_layout_node(NonnullRefPtr<CSS:
 {
     switch (m_representation) {
     case Representation::Children:
-        return BrowsingContextContainer::create_layout_node(move(style));
+        return NavigableContainer::create_layout_node(move(style));
     case Representation::NestedBrowsingContext:
         // FIXME: Actually paint the nested browsing context's document, similar to how iframes are painted with FrameBox and NestedBrowsingContextPaintable.
         return nullptr;
     case Representation::Image:
-        if (m_image_loader.has_value() && m_image_loader->has_image())
-            return heap().allocate_without_realm<Layout::ImageBox>(document(), *this, move(style), *m_image_loader);
+        if (image_data())
+            return heap().allocate_without_realm<Layout::ImageBox>(document(), *this, move(style), *this);
         break;
     default:
         break;
@@ -124,7 +127,7 @@ void HTMLObjectElement::queue_element_task_to_run_object_representation_steps()
 
             // 3. If that failed, fire an event named error at the element, then jump to the step below labeled fallback.
             if (!url.is_valid()) {
-                dispatch_event(*DOM::Event::create(realm(), HTML::EventNames::error));
+                dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error).release_value_but_fixme_should_propagate_errors());
                 return run_object_representation_fallback_steps();
             }
 
@@ -151,7 +154,7 @@ void HTMLObjectElement::queue_element_task_to_run_object_representation_steps()
 void HTMLObjectElement::resource_did_fail()
 {
     // 4.7. If the load failed (e.g. there was an HTTP 404 error, there was a DNS error), fire an event named error at the element, then jump to the step below labeled fallback.
-    dispatch_event(*DOM::Event::create(realm(), HTML::EventNames::error));
+    dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error).release_value_but_fixme_should_propagate_errors());
     run_object_representation_fallback_steps();
 }
 
@@ -218,12 +221,12 @@ void HTMLObjectElement::resource_did_load()
 
 static bool is_xml_mime_type(StringView resource_type)
 {
-    auto mime_type = MimeSniff::MimeType::from_string(resource_type);
+    auto mime_type = MimeSniff::MimeType::parse(resource_type).release_value_but_fixme_should_propagate_errors();
     if (!mime_type.has_value())
         return false;
 
     // An XML MIME type is any MIME type whose subtype ends in "+xml" or whose essence is "text/xml" or "application/xml". [RFC7303]
-    if (mime_type->subtype().ends_with("+xml"sv))
+    if (mime_type->subtype().ends_with_bytes("+xml"sv))
         return true;
 
     return mime_type->essence().is_one_of("text/xml"sv, "application/xml"sv);
@@ -272,7 +275,7 @@ void HTMLObjectElement::run_object_representation_handler_steps(Optional<Depreca
         if (!resource()->has_encoded_data())
             return run_object_representation_fallback_steps();
 
-        convert_resource_to_image();
+        load_image();
     }
 
     // * Otherwise
@@ -289,7 +292,7 @@ void HTMLObjectElement::run_object_representation_completed_steps(Representation
     // 4.11. If the object element does not represent its nested browsing context, then once the resource is completely loaded, queue an element task on the DOM manipulation task source given the object element to fire an event named load at the element.
     if (representation != Representation::NestedBrowsingContext) {
         queue_an_element_task(HTML::Task::Source::DOMManipulation, [&]() {
-            dispatch_event(*DOM::Event::create(realm(), HTML::EventNames::load));
+            dispatch_event(DOM::Event::create(realm(), HTML::EventNames::load).release_value_but_fixme_should_propagate_errors());
         });
     }
 
@@ -310,22 +313,25 @@ void HTMLObjectElement::run_object_representation_fallback_steps()
     update_layout_and_child_objects(Representation::Children);
 }
 
-void HTMLObjectElement::convert_resource_to_image()
+void HTMLObjectElement::load_image()
 {
-    // FIXME: This is a bit awkward. We convert the Resource to an ImageResource here because we do not know
-    //        until now that the resource is an image. ImageLoader then becomes responsible for handling
-    //        encoding failures, animations, etc. It would be clearer if those features were split from
-    //        ImageLoader into a purpose build class to be shared between here and ImageBox.
-    m_image_loader.emplace(*this);
+    // NOTE: This currently reloads the image instead of reusing the resource we've already downloaded.
+    auto data = attribute(HTML::AttributeNames::data);
+    auto url = document().parse_url(data);
+    m_image_request = HTML::SharedImageRequest::get_or_create(*document().page(), url).release_value_but_fixme_should_propagate_errors();
+    m_image_request->add_callbacks(
+        [this] {
+            run_object_representation_completed_steps(Representation::Image);
+        },
+        [this] {
+            run_object_representation_fallback_steps();
+        });
 
-    m_image_loader->on_load = [this] {
-        run_object_representation_completed_steps(Representation::Image);
-    };
-    m_image_loader->on_fail = [this] {
-        run_object_representation_fallback_steps();
-    };
-
-    m_image_loader->adopt_object_resource({}, *resource());
+    if (m_image_request->needs_fetching()) {
+        auto request = HTML::create_potential_CORS_request(vm(), url, Fetch::Infrastructure::Request::Destination::Image, HTML::CORSSettingAttribute::NoCORS);
+        request->set_client(&document().relevant_settings_object());
+        m_image_request->fetch_image(realm(), request);
+    }
 }
 
 void HTMLObjectElement::update_layout_and_child_objects(Representation representation)
@@ -339,8 +345,8 @@ void HTMLObjectElement::update_layout_and_child_objects(Representation represent
     }
 
     m_representation = representation;
-    set_needs_style_update(true);
-    document().set_needs_layout();
+    invalidate_style();
+    document().invalidate_layout();
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-tabindex
@@ -348,6 +354,46 @@ i32 HTMLObjectElement::default_tab_index_value() const
 {
     // See the base function for the spec comments.
     return 0;
+}
+
+RefPtr<DecodedImageData const> HTMLObjectElement::image_data() const
+{
+    if (!m_image_request)
+        return nullptr;
+    return m_image_request->image_data();
+}
+
+Optional<CSSPixels> HTMLObjectElement::intrinsic_width() const
+{
+    if (auto image_data = this->image_data())
+        return image_data->intrinsic_width();
+    return {};
+}
+
+Optional<CSSPixels> HTMLObjectElement::intrinsic_height() const
+{
+    if (auto image_data = this->image_data())
+        return image_data->intrinsic_height();
+    return {};
+}
+
+Optional<float> HTMLObjectElement::intrinsic_aspect_ratio() const
+{
+    if (auto image_data = this->image_data())
+        return image_data->intrinsic_aspect_ratio();
+    return {};
+}
+
+RefPtr<Gfx::Bitmap const> HTMLObjectElement::current_image_bitmap(Gfx::IntSize size) const
+{
+    if (auto image_data = this->image_data())
+        return image_data->bitmap(0, size);
+    return nullptr;
+}
+
+void HTMLObjectElement::set_visible_in_viewport(bool)
+{
+    // FIXME: Loosen grip on image data when it's not visible, e.g via volatile memory.
 }
 
 }

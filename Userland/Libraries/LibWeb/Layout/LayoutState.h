@@ -29,12 +29,8 @@ struct LayoutState {
     {
     }
 
-    explicit LayoutState(LayoutState const* parent)
-        : m_parent(parent)
-        , m_root(find_root())
-    {
-        used_values_per_layout_node.resize(m_root.used_values_per_layout_node.size());
-    }
+    explicit LayoutState(LayoutState const* parent);
+    ~LayoutState();
 
     LayoutState const& find_root() const
     {
@@ -52,6 +48,11 @@ struct LayoutState {
         CSSPixels content_height() const { return m_content_height; }
         void set_content_width(CSSPixels);
         void set_content_height(CSSPixels);
+
+        void set_indefinite_content_width();
+        void set_indefinite_content_height();
+        void set_min_content_width();
+        void set_max_content_width();
 
         // NOTE: These are used by FlexFormattingContext to assign a temporary main size to items
         //       early on, so that descendants have something to resolve percentages against.
@@ -97,41 +98,45 @@ struct LayoutState {
 
         Vector<LineBox> line_boxes;
 
-        CSSPixels margin_box_left() const { return margin_left + border_left + padding_left; }
-        CSSPixels margin_box_right() const { return margin_right + border_right + padding_right; }
-        CSSPixels margin_box_top() const { return margin_top + border_top + padding_top; }
-        CSSPixels margin_box_bottom() const { return margin_bottom + border_bottom + padding_bottom; }
+        CSSPixels margin_box_left() const { return margin_left + border_left_collapsed() + padding_left; }
+        CSSPixels margin_box_right() const { return margin_right + border_right_collapsed() + padding_right; }
+        CSSPixels margin_box_top() const { return margin_top + border_top_collapsed() + padding_top; }
+        CSSPixels margin_box_bottom() const { return margin_bottom + border_bottom_collapsed() + padding_bottom; }
 
         CSSPixels margin_box_width() const { return margin_box_left() + content_width() + margin_box_right(); }
         CSSPixels margin_box_height() const { return margin_box_top() + content_height() + margin_box_bottom(); }
 
-        CSSPixels border_box_left() const { return border_left + padding_left; }
-        CSSPixels border_box_right() const { return border_right + padding_right; }
-        CSSPixels border_box_top() const { return border_top + padding_top; }
-        CSSPixels border_box_bottom() const { return border_bottom + padding_bottom; }
+        CSSPixels border_box_left() const { return border_left_collapsed() + padding_left; }
+        CSSPixels border_box_right() const { return border_right_collapsed() + padding_right; }
+        CSSPixels border_box_top() const { return border_top_collapsed() + padding_top; }
+        CSSPixels border_box_bottom() const { return border_bottom_collapsed() + padding_bottom; }
 
         CSSPixels border_box_width() const { return border_box_left() + content_width() + border_box_right(); }
         CSSPixels border_box_height() const { return border_box_top() + content_height() + border_box_bottom(); }
-
-        Optional<Painting::PaintableBox::OverflowData> overflow_data;
-
-        Painting::PaintableBox::OverflowData& ensure_overflow_data()
-        {
-            if (!overflow_data.has_value())
-                overflow_data = Painting::PaintableBox::OverflowData {};
-            return *overflow_data;
-        }
 
         Optional<LineBoxFragmentCoordinate> containing_line_box_fragment;
 
         void add_floating_descendant(Box const& box) { m_floating_descendants.set(&box); }
         auto const& floating_descendants() const { return m_floating_descendants; }
 
+        void set_override_borders_data(Painting::PaintableBox::BordersDataWithElementKind const& override_borders_data) { m_override_borders_data = override_borders_data; }
+        auto const& override_borders_data() const { return m_override_borders_data; }
+
+        void set_table_cell_coordinates(Painting::PaintableBox::TableCellCoordinates const& table_cell_coordinates) { m_table_cell_coordinates = table_cell_coordinates; }
+        auto const& table_cell_coordinates() const { return m_table_cell_coordinates; }
+
     private:
         AvailableSize available_width_inside() const;
         AvailableSize available_height_inside() const;
 
-        Layout::NodeWithStyleAndBoxModelMetrics* m_node { nullptr };
+        bool use_collapsing_borders_model() const { return m_override_borders_data.has_value(); }
+        // Implement the collapsing border model https://www.w3.org/TR/CSS22/tables.html#collapsing-borders.
+        CSSPixels border_left_collapsed() const { return use_collapsing_borders_model() ? round(border_left / 2) : border_left; }
+        CSSPixels border_right_collapsed() const { return use_collapsing_borders_model() ? round(border_right / 2) : border_right; }
+        CSSPixels border_top_collapsed() const { return use_collapsing_borders_model() ? round(border_top / 2) : border_top; }
+        CSSPixels border_bottom_collapsed() const { return use_collapsing_borders_model() ? round(border_bottom / 2) : border_bottom; }
+
+        JS::GCPtr<Layout::NodeWithStyleAndBoxModelMetrics> m_node { nullptr };
 
         CSSPixels m_content_width { 0 };
         CSSPixels m_content_height { 0 };
@@ -139,11 +144,11 @@ struct LayoutState {
         bool m_has_definite_width { false };
         bool m_has_definite_height { false };
 
-        HashTable<Box const*> m_floating_descendants;
-    };
+        HashTable<JS::GCPtr<Box const>> m_floating_descendants;
 
-    CSSPixels resolved_definite_width(Box const&) const;
-    CSSPixels resolved_definite_height(Box const&) const;
+        Optional<Painting::PaintableBox::BordersDataWithElementKind> m_override_borders_data;
+        Optional<Painting::PaintableBox::TableCellCoordinates> m_table_cell_coordinates;
+    };
 
     void commit();
 
@@ -153,7 +158,7 @@ struct LayoutState {
     // NOTE: get() will not CoW the UsedValues.
     UsedValues const& get(NodeWithStyleAndBoxModelMetrics const&) const;
 
-    Vector<OwnPtr<UsedValues>> used_values_per_layout_node;
+    HashMap<Layout::Node const*, NonnullOwnPtr<UsedValues>> used_values_per_layout_node;
 
     // We cache intrinsic sizes once determined, as they will not change over the course of a full layout.
     // This avoids computing them several times while performing flex layout.
@@ -171,19 +176,10 @@ struct LayoutState {
         Optional<CSSPixels> max_content_height_with_max_content_available_width;
     };
 
-    HashMap<NodeWithStyleAndBoxModelMetrics const*, NonnullOwnPtr<IntrinsicSizes>> mutable intrinsic_sizes;
+    HashMap<JS::GCPtr<NodeWithStyleAndBoxModelMetrics const>, NonnullOwnPtr<IntrinsicSizes>> mutable intrinsic_sizes;
 
     LayoutState const* m_parent { nullptr };
     LayoutState const& m_root;
 };
-
-CSSPixelRect absolute_content_rect(Box const&, LayoutState const&);
-CSSPixelRect margin_box_rect(Box const&, LayoutState const&);
-CSSPixelRect margin_box_rect_in_ancestor_coordinate_space(Box const& box, Box const& ancestor_box, LayoutState const&);
-CSSPixelRect border_box_rect(Box const&, LayoutState const&);
-CSSPixelRect border_box_rect_in_ancestor_coordinate_space(Box const& box, Box const& ancestor_box, LayoutState const&);
-CSSPixelRect content_box_rect(Box const&, LayoutState const&);
-CSSPixelRect content_box_rect_in_ancestor_coordinate_space(Box const& box, Box const& ancestor_box, LayoutState const&);
-CSSPixels box_baseline(LayoutState const& state, Box const& box);
 
 }

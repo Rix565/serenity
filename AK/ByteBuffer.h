@@ -117,14 +117,28 @@ public:
     [[nodiscard]] bool is_empty() const { return m_size == 0; }
     [[nodiscard]] size_t size() const { return m_size; }
 
-    [[nodiscard]] u8* data() { return m_inline ? m_inline_buffer : m_outline_buffer; }
+#ifdef AK_COMPILER_GCC
+#    pragma GCC diagnostic push
+//   Workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=109727
+#    pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
+    [[nodiscard]] u8* data()
+    {
+        return m_inline ? m_inline_buffer : m_outline_buffer;
+    }
     [[nodiscard]] u8 const* data() const { return m_inline ? m_inline_buffer : m_outline_buffer; }
+#ifdef AK_COMPILER_GCC
+#    pragma GCC diagnostic pop
+#endif
 
-    [[nodiscard]] Bytes bytes() { return { data(), size() }; }
+    [[nodiscard]] Bytes bytes()
+    {
+        return { data(), size() };
+    }
     [[nodiscard]] ReadonlyBytes bytes() const { return { data(), size() }; }
 
-    [[nodiscard]] AK::Span<u8> span() { return { data(), size() }; }
-    [[nodiscard]] AK::Span<u8 const> span() const { return { data(), size() }; }
+    [[nodiscard]] AK::Bytes span() { return { data(), size() }; }
+    [[nodiscard]] AK::ReadonlyBytes span() const { return { data(), size() }; }
 
     [[nodiscard]] u8* offset_pointer(size_t offset) { return data() + offset; }
     [[nodiscard]] u8 const* offset_pointer(size_t offset) const { return data() + offset; }
@@ -289,8 +303,14 @@ private:
 
     NEVER_INLINE ErrorOr<void> try_ensure_capacity_slowpath(size_t new_capacity)
     {
+        // When we are asked to raise the capacity by very small amounts,
+        // the caller is perhaps appending very little data in many calls.
+        // To avoid copying the entire ByteBuffer every single time,
+        // we raise the capacity exponentially, by a factor of roughly 1.5.
+        // This is most noticeable in Lagom, where kmalloc_good_size is just a no-op.
+        new_capacity = max(new_capacity, (capacity() * 3) / 2);
         new_capacity = kmalloc_good_size(new_capacity);
-        auto* new_buffer = (u8*)kmalloc(new_capacity);
+        auto* new_buffer = static_cast<u8*>(kmalloc(new_capacity));
         if (!new_buffer)
             return Error::from_errno(ENOMEM);
 
@@ -325,6 +345,14 @@ struct Traits<ByteBuffer> : public GenericTraits<ByteBuffer> {
     static unsigned hash(ByteBuffer const& byte_buffer)
     {
         return Traits<ReadonlyBytes>::hash(byte_buffer.span());
+    }
+    static bool equals(ByteBuffer const& byte_buffer, Bytes const& other)
+    {
+        return byte_buffer.bytes() == other;
+    }
+    static bool equals(ByteBuffer const& byte_buffer, ReadonlyBytes const& other)
+    {
+        return byte_buffer.bytes() == other;
     }
 };
 

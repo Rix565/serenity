@@ -31,7 +31,8 @@ public:
 
     struct OverflowData {
         CSSPixelRect scrollable_overflow_rect;
-        CSSPixelPoint scroll_offset;
+        bool has_scrollable_overflow { false };
+        CSSPixelPoint scroll_offset {};
     };
 
     CSSPixelRect absolute_rect() const;
@@ -64,10 +65,16 @@ public:
     {
         auto padded_rect = this->absolute_padding_box_rect();
         CSSPixelRect rect;
-        rect.set_x(padded_rect.x() - box_model().border.left);
-        rect.set_width(padded_rect.width() + box_model().border.left + box_model().border.right);
-        rect.set_y(padded_rect.y() - box_model().border.top);
-        rect.set_height(padded_rect.height() + box_model().border.top + box_model().border.bottom);
+        auto use_collapsing_borders_model = override_borders_data().has_value();
+        // Implement the collapsing border model https://www.w3.org/TR/CSS22/tables.html#collapsing-borders.
+        auto border_top = use_collapsing_borders_model ? round(box_model().border.top / 2) : box_model().border.top;
+        auto border_bottom = use_collapsing_borders_model ? round(box_model().border.bottom / 2) : box_model().border.bottom;
+        auto border_left = use_collapsing_borders_model ? round(box_model().border.left / 2) : box_model().border.left;
+        auto border_right = use_collapsing_borders_model ? round(box_model().border.right / 2) : box_model().border.right;
+        rect.set_x(padded_rect.x() - border_left);
+        rect.set_width(padded_rect.width() + border_left + border_right);
+        rect.set_y(padded_rect.y() - border_top);
+        rect.set_height(padded_rect.height() + border_top + border_bottom);
         return rect;
     }
 
@@ -89,23 +96,23 @@ public:
     CSSPixels absolute_y() const { return absolute_rect().y(); }
     CSSPixelPoint absolute_position() const { return absolute_rect().location(); }
 
-    bool has_overflow() const { return m_overflow_data.has_value(); }
+    [[nodiscard]] bool has_scrollable_overflow() const { return m_overflow_data->has_scrollable_overflow; }
 
-    Optional<CSSPixelRect> scrollable_overflow_rect() const
+    [[nodiscard]] Optional<CSSPixelRect> scrollable_overflow_rect() const
     {
         if (!m_overflow_data.has_value())
             return {};
         return m_overflow_data->scrollable_overflow_rect;
     }
 
-    Optional<Gfx::IntRect> clip_rect() const;
+    Optional<CSSPixelRect> calculate_overflow_clipped_rect() const;
 
-    void set_overflow_data(Optional<OverflowData> data) { m_overflow_data = move(data); }
+    void set_overflow_data(OverflowData data) { m_overflow_data = move(data); }
     void set_containing_line_box_fragment(Optional<Layout::LineBoxFragmentCoordinate>);
 
     StackingContext* stacking_context() { return m_stacking_context; }
     StackingContext const* stacking_context() const { return m_stacking_context; }
-    void set_stacking_context(NonnullOwnPtr<Painting::StackingContext>);
+    void set_stacking_context(NonnullOwnPtr<StackingContext>);
     StackingContext* enclosing_stacking_context();
 
     DOM::Node const* dom_node() const { return layout_box().dom_node(); }
@@ -123,6 +130,49 @@ public:
 
     bool is_out_of_view(PaintContext&) const;
 
+    enum class ConflictingElementKind {
+        Cell,
+        Row,
+        RowGroup,
+        Column,
+        ColumnGroup,
+        Table,
+    };
+
+    struct BorderDataWithElementKind {
+        CSS::BorderData border_data;
+        ConflictingElementKind element_kind;
+    };
+
+    struct BordersDataWithElementKind {
+        BorderDataWithElementKind top;
+        BorderDataWithElementKind right;
+        BorderDataWithElementKind bottom;
+        BorderDataWithElementKind left;
+    };
+
+    void set_override_borders_data(BordersDataWithElementKind const& override_borders_data) { m_override_borders_data = override_borders_data; }
+    Optional<BordersDataWithElementKind> const& override_borders_data() const { return m_override_borders_data; }
+
+    static BordersData remove_element_kind_from_borders_data(PaintableBox::BordersDataWithElementKind borders_data);
+
+    struct TableCellCoordinates {
+        size_t row_index;
+        size_t column_index;
+        size_t row_span;
+        size_t column_span;
+    };
+
+    void set_table_cell_coordinates(TableCellCoordinates const& table_cell_coordinates) { m_table_cell_coordinates = table_cell_coordinates; }
+    auto const& table_cell_coordinates() const { return m_table_cell_coordinates; }
+
+    enum class ShrinkRadiiForBorders {
+        Yes,
+        No
+    };
+
+    BorderRadiiData normalized_border_radii_data(ShrinkRadiiForBorders shrink = ShrinkRadiiForBorders::No) const;
+
 protected:
     explicit PaintableBox(Layout::Box const&);
 
@@ -133,13 +183,6 @@ protected:
 
     virtual CSSPixelRect compute_absolute_rect() const;
     virtual CSSPixelRect compute_absolute_paint_rect() const;
-
-    enum class ShrinkRadiiForBorders {
-        Yes,
-        No
-    };
-
-    Painting::BorderRadiiData normalized_border_radii_data(ShrinkRadiiForBorders shrink = ShrinkRadiiForBorders::No) const;
 
     Vector<ShadowData> resolve_box_shadow_data() const;
 
@@ -152,15 +195,18 @@ private:
     // Some boxes hang off of line box fragments. (inline-block, inline-table, replaced, etc)
     Optional<Layout::LineBoxFragmentCoordinate> m_containing_line_box_fragment;
 
-    OwnPtr<Painting::StackingContext> m_stacking_context;
+    OwnPtr<StackingContext> m_stacking_context;
 
     Optional<CSSPixelRect> mutable m_absolute_rect;
     Optional<CSSPixelRect> mutable m_absolute_paint_rect;
 
-    Gfx::IntRect mutable m_clip_rect;
+    Optional<CSSPixelRect> mutable m_clip_rect;
 
     mutable bool m_clipping_overflow { false };
     Optional<BorderRadiusCornerClipper> mutable m_overflow_corner_radius_clipper;
+
+    Optional<BordersDataWithElementKind> m_override_borders_data;
+    Optional<TableCellCoordinates> m_table_cell_coordinates;
 };
 
 class PaintableWithLines final : public PaintableBox {

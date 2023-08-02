@@ -12,7 +12,7 @@ namespace RequestServer {
 // FIXME: What about rollover?
 static i32 s_next_id = 1;
 
-Request::Request(ConnectionFromClient& client, NonnullOwnPtr<Core::Stream::File>&& output_stream)
+Request::Request(ConnectionFromClient& client, NonnullOwnPtr<Core::File>&& output_stream)
     : m_client(client)
     , m_id(s_next_id++)
     , m_output_stream(move(output_stream))
@@ -39,7 +39,7 @@ void Request::did_finish(bool success)
     m_client.did_finish_request({}, *this, success);
 }
 
-void Request::did_progress(Optional<u32> total_size, u32 downloaded_size)
+void Request::did_progress(Optional<u64> total_size, u64 downloaded_size)
 {
     m_total_size = total_size;
     m_downloaded_size = downloaded_size;

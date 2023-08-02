@@ -9,7 +9,7 @@
 #include <AK/ScopedValueRollback.h>
 #include <AK/Vector.h>
 #include <Kernel/API/Unveil.h>
-#include <LibCore/File.h>
+#include <LibFileSystem/FileSystem.h>
 #include <alloca.h>
 #include <assert.h>
 #include <bits/pthread_cancel.h>
@@ -26,6 +26,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -188,7 +189,7 @@ int execvpe(char const* filename, char* const argv[], char* const envp[])
 
     ScopedValueRollback errno_rollback(errno);
 
-    // TODO: Make this use the PATH search implementation from Core::File.
+    // TODO: Make this use the PATH search implementation from LibFileSystem.
     DeprecatedString path = getenv("PATH");
     if (path.is_empty())
         path = DEFAULT_PATH;
@@ -924,9 +925,9 @@ int gettid()
     return cached_tid;
 }
 
-int sysbeep()
+int sysbeep(int tone)
 {
-    int rc = syscall(SC_beep);
+    int rc = syscall(SC_beep, tone);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
@@ -939,21 +940,63 @@ int fsync(int fd)
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
-int mount(int source_fd, char const* target, char const* fs_type, int flags)
+int fsopen(char const* fs_type, int flags)
 {
-    if (!target || !fs_type) {
+    if (!fs_type) {
         errno = EFAULT;
         return -1;
     }
 
-    Syscall::SC_mount_params params {
-        { target, strlen(target) },
+    Syscall::SC_fsopen_params params {
         { fs_type, strlen(fs_type) },
-        source_fd,
-        flags
+        flags,
     };
-    int rc = syscall(SC_mount, &params);
+    int rc = syscall(SC_fsopen, &params);
     __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int fsmount(int mount_fd, int source_fd, char const* target)
+{
+    if (!target) {
+        errno = EFAULT;
+        return -1;
+    }
+
+    Syscall::SC_fsmount_params params {
+        mount_fd,
+        { target, strlen(target) },
+        source_fd,
+    };
+    int rc = syscall(SC_fsmount, &params);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int bindmount(int source_fd, char const* target, int flags)
+{
+    if (!target) {
+        errno = EFAULT;
+        return -1;
+    }
+
+    Syscall::SC_bindmount_params params {
+        { target, strlen(target) },
+        source_fd,
+        flags,
+    };
+    int rc = syscall(SC_bindmount, &params);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int mount(int source_fd, char const* target, char const* fs_type, int flags)
+{
+    if (flags & MS_BIND)
+        return bindmount(source_fd, target, flags);
+
+    int mount_fd = fsopen(fs_type, flags);
+    if (mount_fd < 0)
+        return -1;
+
+    return fsmount(mount_fd, source_fd, target);
 }
 
 int umount(char const* mountpoint)
@@ -969,13 +1012,13 @@ void dump_backtrace()
 
 int get_process_name(char* buffer, int buffer_size)
 {
-    int rc = syscall(SC_get_process_name, buffer, buffer_size);
+    int rc = syscall(SC_prctl, PR_GET_PROCESS_NAME, buffer, buffer_size);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
 int set_process_name(char const* name, size_t name_length)
 {
-    int rc = syscall(SC_set_process_name, name, name_length);
+    int rc = syscall(SC_prctl, PR_SET_PROCESS_NAME, name, name_length);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 

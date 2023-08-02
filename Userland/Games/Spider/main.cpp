@@ -7,6 +7,7 @@
  */
 
 #include "Game.h"
+#include <AK/NumberFormat.h>
 #include <Games/Spider/SpiderGML.h>
 #include <LibConfig/Client.h>
 #include <LibCore/System.h>
@@ -29,20 +30,11 @@ enum class StatisticDisplay : u8 {
     __Count
 };
 
-static DeprecatedString format_seconds(uint64_t seconds_elapsed)
-{
-    uint64_t hours = seconds_elapsed / 3600;
-    uint64_t minutes = (seconds_elapsed / 60) % 60;
-    uint64_t seconds = seconds_elapsed % 60;
-
-    return DeprecatedString::formatted("{:02}:{:02}:{:02}", hours, minutes, seconds);
-}
-
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd rpath unix proc exec"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
     auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-spider"sv));
 
     Config::pledge_domains({ "Games", "Spider" });
@@ -127,25 +119,22 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto reset_statistic_status = [&]() {
         switch (statistic_display) {
         case StatisticDisplay::HighScore:
-            statusbar.set_text(1, DeprecatedString::formatted("High Score: {}", high_score()));
+            statusbar.set_text(1, String::formatted("High Score: {}", high_score()).release_value_but_fixme_should_propagate_errors());
             break;
         case StatisticDisplay::BestTime:
-            statusbar.set_text(1, DeprecatedString::formatted("Best Time: {}", format_seconds(best_time())));
+            statusbar.set_text(1, String::formatted("Best Time: {}", human_readable_digital_time(best_time())).release_value_but_fixme_should_propagate_errors());
             break;
         default:
             VERIFY_NOT_REACHED();
         }
     };
 
-    statusbar.set_text(0, "Score: 0");
+    statusbar.set_text(0, TRY("Score: 0"_string));
     reset_statistic_status();
-    statusbar.set_text(2, "Time: 00:00:00");
+    statusbar.set_text(2, TRY("Time: 00:00:00"_string));
 
     app->on_action_enter = [&](GUI::Action& action) {
-        auto text = action.status_tip();
-        if (text.is_empty())
-            text = Gfx::parse_ampersand_string(action.text());
-        statusbar.set_override_text(move(text));
+        statusbar.set_override_text(action.status_tip());
     };
 
     app->on_action_leave = [&](GUI::Action&) {
@@ -153,7 +142,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     };
 
     game.on_score_update = [&](uint32_t score) {
-        statusbar.set_text(0, DeprecatedString::formatted("Score: {}", score));
+        statusbar.set_text(0, String::formatted("Score: {}", score).release_value_but_fixme_should_propagate_errors());
     };
 
     uint64_t seconds_elapsed = 0;
@@ -161,13 +150,13 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto timer = TRY(Core::Timer::create_repeating(1000, [&]() {
         ++seconds_elapsed;
 
-        statusbar.set_text(2, DeprecatedString::formatted("Time: {}", format_seconds(seconds_elapsed)));
+        statusbar.set_text(2, String::formatted("Time: {}", human_readable_digital_time(seconds_elapsed)).release_value_but_fixme_should_propagate_errors());
     }));
 
     game.on_game_start = [&]() {
         seconds_elapsed = 0;
         timer->start();
-        statusbar.set_text(2, "Time: 00:00:00");
+        statusbar.set_text(2, "Time: 00:00:00"_string.release_value_but_fixme_should_propagate_errors());
     };
     game.on_game_end = [&](Spider::GameOverReason reason, uint32_t score) {
         auto game_was_in_progress = timer->is_active();
@@ -192,7 +181,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
             reset_statistic_status();
         }
-        statusbar.set_text(2, "Timer starts after your first move");
+        statusbar.set_text(2, "Timer starts after your first move"_string.release_value_but_fixme_should_propagate_errors());
     };
 
     auto confirm_end_current_game = [&]() {
@@ -246,7 +235,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     two_suit_action->set_checked(mode == Spider::Mode::TwoSuit);
     suit_actions.add_action(two_suit_action);
 
-    auto game_menu = TRY(window->try_add_menu("&Game"));
+    auto game_menu = TRY(window->try_add_menu("&Game"_short_string));
     TRY(game_menu->try_add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
         if (!confirm_end_current_game())
             return;
@@ -266,7 +255,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(game_menu->try_add_separator());
     TRY(game_menu->try_add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); })));
 
-    auto view_menu = TRY(window->try_add_menu("&View"));
+    auto view_menu = TRY(window->try_add_menu("&View"_short_string));
 
     GUI::ActionGroup statistic_display_actions;
     statistic_display_actions.set_exclusive(true);
@@ -288,7 +277,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(view_menu->try_add_action(high_score_action));
     TRY(view_menu->try_add_action(best_time_actions));
 
-    auto help_menu = TRY(window->try_add_menu("&Help"));
+    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
     help_menu->add_action(GUI::CommonActions::make_command_palette_action(window));
     help_menu->add_action(GUI::CommonActions::make_about_action("Spider", app_icon, window));
 

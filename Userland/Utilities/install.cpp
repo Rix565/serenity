@@ -8,9 +8,9 @@
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/Directory.h>
-#include <LibCore/File.h>
 #include <LibCore/FilePermissionsMask.h>
 #include <LibCore/System.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibMain/Main.h>
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
@@ -35,8 +35,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     DeprecatedString destination_dir = (sources.size() > 1 ? DeprecatedString { destination } : LexicalPath::dirname(destination));
 
     if (create_leading_dest_components) {
-        DeprecatedString destination_dir_absolute = Core::File::absolute_path(destination_dir);
-        MUST(Core::Directory::create(destination_dir_absolute, Core::Directory::CreateDirectories::Yes));
+        String destination_dir_absolute = TRY(FileSystem::absolute_path(destination_dir));
+        MUST(Core::Directory::create(destination_dir_absolute.to_deprecated_string(), Core::Directory::CreateDirectories::Yes));
     }
 
     for (auto const& source : sources) {
@@ -47,9 +47,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             final_destination = destination;
         }
 
-        TRY(Core::File::copy_file_or_directory(final_destination, source, Core::File::RecursionMode::Allowed,
-            Core::File::LinkMode::Disallowed, Core::File::AddDuplicateFileMarker::No,
-            Core::File::PreserveMode::Nothing));
+        TRY(FileSystem::copy_file_or_directory(final_destination, source, FileSystem::RecursionMode::Allowed,
+            FileSystem::LinkMode::Disallowed, FileSystem::AddDuplicateFileMarker::No,
+            FileSystem::PreserveMode::Nothing));
 
         auto current_access = TRY(Core::System::stat(final_destination));
         TRY(Core::System::chmod(final_destination, permission_mask.apply(current_access.st_mode)));

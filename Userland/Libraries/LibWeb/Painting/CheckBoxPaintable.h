@@ -17,10 +17,10 @@ class CheckBoxPaintable final : public LabelablePaintable {
 public:
     static JS::NonnullGCPtr<CheckBoxPaintable> create(Layout::CheckBox const&);
 
-    virtual void paint(PaintContext&, PaintPhase) const override;
-
     Layout::CheckBox const& layout_box() const;
     Layout::CheckBox& layout_box();
+
+    virtual void paint(PaintContext&, PaintPhase) const override;
 
 private:
     CheckBoxPaintable(Layout::CheckBox const&);

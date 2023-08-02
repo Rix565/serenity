@@ -8,8 +8,8 @@
 
 #include <AK/HashMap.h>
 #include <AK/SinglyLinkedList.h>
-#include <Kernel/DoubleBuffer.h>
-#include <Kernel/KBuffer.h>
+#include <Kernel/Library/DoubleBuffer.h>
+#include <Kernel/Library/KBuffer.h>
 #include <Kernel/Locking/MutexProtected.h>
 #include <Kernel/Net/IPv4.h>
 #include <Kernel/Net/IPv4SocketTuple.h>
@@ -21,14 +21,9 @@ class NetworkAdapter;
 class TCPPacket;
 class TCPSocket;
 
-struct PortAllocationResult {
-    ErrorOr<u16> error_or_port;
-    bool did_allocate;
-};
-
 class IPv4Socket : public Socket {
 public:
-    static ErrorOr<NonnullLockRefPtr<Socket>> create(int type, int protocol);
+    static ErrorOr<NonnullRefPtr<Socket>> create(int type, int protocol);
     virtual ~IPv4Socket() override;
 
     virtual ErrorOr<void> close() override;
@@ -40,13 +35,13 @@ public:
     virtual bool can_read(OpenFileDescription const&, u64) const override;
     virtual bool can_write(OpenFileDescription const&, u64) const override;
     virtual ErrorOr<size_t> sendto(OpenFileDescription&, UserOrKernelBuffer const&, size_t, int, Userspace<sockaddr const*>, socklen_t) override;
-    virtual ErrorOr<size_t> recvfrom(OpenFileDescription&, UserOrKernelBuffer&, size_t, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>, Time&, bool blocking) override;
+    virtual ErrorOr<size_t> recvfrom(OpenFileDescription&, UserOrKernelBuffer&, size_t, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>, UnixDateTime&, bool blocking) override;
     virtual ErrorOr<void> setsockopt(int level, int option, Userspace<void const*>, socklen_t) override;
     virtual ErrorOr<void> getsockopt(OpenFileDescription&, int level, int option, Userspace<void*>, Userspace<socklen_t*>) override;
 
     virtual ErrorOr<void> ioctl(OpenFileDescription&, unsigned request, Userspace<void*> arg) override;
 
-    bool did_receive(IPv4Address const& peer_address, u16 peer_port, ReadonlyBytes, Time const&);
+    bool did_receive(IPv4Address const& peer_address, u16 peer_port, ReadonlyBytes, UnixDateTime const&);
 
     IPv4Address const& local_address() const { return m_local_address; }
     u16 local_port() const { return m_local_port; }
@@ -76,14 +71,14 @@ protected:
     IPv4Socket(int type, int protocol, NonnullOwnPtr<DoubleBuffer> receive_buffer, OwnPtr<KBuffer> optional_scratch_buffer);
     virtual StringView class_name() const override { return "IPv4Socket"sv; }
 
-    PortAllocationResult allocate_local_port_if_needed();
+    void set_bound(bool bound) { m_bound = bound; }
+    ErrorOr<void> ensure_bound();
 
     virtual ErrorOr<void> protocol_bind() { return {}; }
-    virtual ErrorOr<void> protocol_listen([[maybe_unused]] bool did_allocate_port) { return {}; }
+    virtual ErrorOr<void> protocol_listen() { return {}; }
     virtual ErrorOr<size_t> protocol_receive(ReadonlyBytes /* raw_ipv4_packet */, UserOrKernelBuffer&, size_t, int) { return ENOTIMPL; }
     virtual ErrorOr<size_t> protocol_send(UserOrKernelBuffer const&, size_t) { return ENOTIMPL; }
     virtual ErrorOr<void> protocol_connect(OpenFileDescription&) { return {}; }
-    virtual ErrorOr<u16> protocol_allocate_local_port() { return ENOPROTOOPT; }
     virtual ErrorOr<size_t> protocol_size(ReadonlyBytes /* raw_ipv4_packet */) { return ENOTIMPL; }
     virtual bool protocol_is_disconnected() const { return false; }
 
@@ -99,7 +94,7 @@ private:
     virtual bool is_ipv4() const override { return true; }
 
     ErrorOr<size_t> receive_byte_buffered(OpenFileDescription&, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>, bool blocking);
-    ErrorOr<size_t> receive_packet_buffered(OpenFileDescription&, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>, Time&, bool blocking);
+    ErrorOr<size_t> receive_packet_buffered(OpenFileDescription&, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>, UnixDateTime&, bool blocking);
 
     void set_can_read(bool);
 
@@ -108,11 +103,12 @@ private:
 
     Vector<IPv4Address> m_multicast_memberships;
     bool m_multicast_loop { true };
+    bool m_bound { false };
 
     struct ReceivedPacket {
         IPv4Address peer_address;
         u16 peer_port;
-        Time timestamp;
+        UnixDateTime timestamp;
         OwnPtr<KBuffer> data;
     };
 

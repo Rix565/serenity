@@ -8,10 +8,7 @@
 #pragma once
 
 #include <AK/URL.h>
-#include <LibJS/Runtime/ExecutionContext.h>
-#include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/Object.h>
-#include <LibJS/Runtime/Realm.h>
+#include <LibJS/Forward.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/HTML/Origin.h>
 #include <LibWeb/HTML/Scripting/ModuleMap.h>
@@ -60,6 +57,7 @@ struct EnvironmentSettingsObject
     JS_CELL(EnvironmentSettingsObject, JS::Cell);
 
     virtual ~EnvironmentSettingsObject() override;
+    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#concept-environment-target-browsing-context
     JS::ExecutionContext& realm_execution_context();
@@ -124,13 +122,13 @@ protected:
 
 private:
     NonnullOwnPtr<JS::ExecutionContext> m_realm_execution_context;
-    ModuleMap m_module_map;
+    JS::GCPtr<ModuleMap> m_module_map;
 
     EventLoop* m_responsible_event_loop { nullptr };
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#outstanding-rejected-promises-weak-set
     // The outstanding rejected promises weak set must not create strong references to any of its members, and implementations are free to limit its size, e.g. by removing old entries from it when new ones are added.
-    Vector<JS::Promise*> m_outstanding_rejected_promises_weak_set;
+    Vector<JS::GCPtr<JS::Promise>> m_outstanding_rejected_promises_weak_set;
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#about-to-be-notified-rejected-promises-list
     Vector<JS::Handle<JS::Promise>> m_about_to_be_notified_rejected_promises_list;
@@ -148,6 +146,7 @@ JS::Object& relevant_global_object(JS::Object const&);
 JS::Realm& entry_realm();
 EnvironmentSettingsObject& entry_settings_object();
 JS::Object& entry_global_object();
+JS::VM& relevant_agent(JS::Object const&);
 [[nodiscard]] bool is_secure_context(Environment const&);
 [[nodiscard]] bool is_non_secure_context(Environment const&);
 

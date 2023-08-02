@@ -18,15 +18,16 @@
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    char const* file_path = nullptr;
+    StringView file_path;
     Core::ArgsParser args_parser;
     args_parser.add_positional_argument(file_path, "PDF file to open", "path", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
     auto app_icon = GUI::Icon::default_icon("app-pdf-viewer"sv);
 
     Config::pledge_domain("PDFViewer");
+    app->set_config_domain(TRY("PDFViewer"_string));
 
     auto window = TRY(GUI::Window::try_create());
     window->set_title("PDF Viewer");
@@ -40,12 +41,12 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto pdf_viewer_widget = TRY(window->set_main_widget<PDFViewerWidget>());
 
-    pdf_viewer_widget->initialize_menubar(*window);
+    TRY(pdf_viewer_widget->initialize_menubar(*window));
 
     window->show();
     window->set_icon(app_icon.bitmap_for_size(16));
 
-    if (file_path) {
+    if (!file_path.is_empty()) {
         auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(window, file_path);
         if (response.is_error())
             return 1;

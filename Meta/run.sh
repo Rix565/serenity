@@ -164,17 +164,28 @@ fi
 if [ "$(uname)" = "Darwin" ]; then
     SERENITY_AUDIO_BACKEND="-audiodev coreaudio,id=snd0"
 elif [ "$NATIVE_WINDOWS_QEMU" -eq "1" ]; then
-    SERENITY_AUDIO_BACKEND="-audiodev dsound,id=snd0"
+    SERENITY_AUDIO_BACKEND="-audiodev dsound,id=snd0,timer-period=2000"
 elif "$SERENITY_QEMU_BIN" -audio-help 2>&1 | grep -- "-audiodev id=sdl" >/dev/null; then
     SERENITY_AUDIO_BACKEND="-audiodev sdl,id=snd0"
 else
     SERENITY_AUDIO_BACKEND="-audiodev pa,timer-period=2000,id=snd0"
 fi
 
-if [ "$installed_major_version" -eq 5 ] && [ "$installed_minor_version" -eq 0 ]; then
-    SERENITY_AUDIO_HW="-soundhw pcspk"
+SERENITY_AUDIO_HARDWARE="${SERENITY_AUDIO_HARDWARE:-intelhda}"
+if [ "${SERENITY_AUDIO_HARDWARE}" = 'ac97' ]; then
+    SERENITY_AUDIO_DEVICE='-device ac97,audiodev=snd0'
+elif [ "${SERENITY_AUDIO_HARDWARE}" = 'intelhda' ]; then
+    SERENITY_AUDIO_DEVICE='-device ich9-intel-hda -device hda-output,audiodev=snd0'
 else
-    SERENITY_AUDIO_HW="-machine pcspk-audiodev=snd0"
+    echo "Unknown audio hardware: ${SERENITY_AUDIO_HARDWARE}"
+    echo 'Supported values: ac97, intelhda'
+    exit 1
+fi
+
+if [ "$installed_major_version" -eq 5 ] && [ "$installed_minor_version" -eq 0 ]; then
+    SERENITY_AUDIO_PC_SPEAKER="-soundhw pcspk"
+else
+    SERENITY_AUDIO_PC_SPEAKER="-machine pcspk-audiodev=snd0"
 fi
 
 SERENITY_SCREENS="${SERENITY_SCREENS:-1}"
@@ -200,12 +211,26 @@ fi
 SERENITY_GL="${SERENITY_GL:-0}"
 if [ -z "$SERENITY_QEMU_DISPLAY_DEVICE" ]; then
     if [ "$SERENITY_GL" = "1" ]; then
-        SERENITY_QEMU_DISPLAY_DEVICE="virtio-vga-gl "
+        # QEMU appears to not support the GL backend for VirtIO GPU variant on macOS.
+        if [ "$(uname)" = "Darwin" ]; then
+            die "SERENITY_GL is not supported since there's no GL backend on macOS"
+        else
+            SERENITY_QEMU_DISPLAY_DEVICE="virtio-vga-gl "
+        fi
+        
         if [ "$SERENITY_SCREENS" -gt 1 ]; then
             die "SERENITY_GL and multi-monitor support cannot be setup simultaneously"
         fi
     elif [ "$SERENITY_SCREENS" -gt 1 ]; then
-        SERENITY_QEMU_DISPLAY_DEVICE="virtio-vga,max_outputs=$SERENITY_SCREENS "
+        # QEMU appears to not support the virtio-vga VirtIO GPU variant on macOS.
+        # To ensure we can still boot on macOS with VirtIO GPU, use the virtio-gpu-pci
+        # variant, which lacks any VGA compatibility (which is not relevant for us anyway).
+        if [ "$(uname)" = "Darwin" ]; then
+            SERENITY_QEMU_DISPLAY_DEVICE="virtio-gpu-pci,max_outputs=$SERENITY_SCREENS "
+        else
+            SERENITY_QEMU_DISPLAY_DEVICE="virtio-vga,max_outputs=$SERENITY_SCREENS "
+        fi
+
         # QEMU appears to always relay absolute mouse coordinates relative to the screen that the mouse is
         # pointed to, without any way for us to know what screen it was. So, when dealing with multiple
         # displays force using relative coordinates only
@@ -215,18 +240,21 @@ if [ -z "$SERENITY_QEMU_DISPLAY_DEVICE" ]; then
     fi
 fi
 
-# Check if SERENITY_NVME_ENABLE is unset
-if [ -z ${SERENITY_NVME_ENABLE+x} ]; then
-    SERENITY_BOOT_DRIVE="-drive file=${SERENITY_DISK_IMAGE},format=raw,index=0,media=disk,id=disk"
+if [ "$SERENITY_ARCH" = 'aarch64' ]; then
+    SERENITY_BOOT_DRIVE="-drive file=${SERENITY_DISK_IMAGE},if=sd,format=raw"
+elif [ -z "${SERENITY_NVME_ENABLE}" ] || [ "${SERENITY_NVME_ENABLE}" -eq 1 ]; then
+    # NVME is enabled by default; disable by setting SERENITY_NVME_ENABLE=0
+    SERENITY_BOOT_DRIVE="-drive file=${SERENITY_DISK_IMAGE},format=raw,index=0,media=disk,if=none,id=disk"
+    SERENITY_BOOT_DRIVE="${SERENITY_BOOT_DRIVE} -device i82801b11-bridge,id=bridge4 -device sdhci-pci,bus=bridge4"
+    SERENITY_BOOT_DRIVE="${SERENITY_BOOT_DRIVE} -device nvme,serial=deadbeef,drive=disk,bus=bridge4,logical_block_size=4096,physical_block_size=4096"
+    SERENITY_KERNEL_CMDLINE="${SERENITY_KERNEL_CMDLINE} root=nvme0:1:0"
 else
-    if [ "$SERENITY_NVME_ENABLE" -eq 1 ]; then
-        SERENITY_BOOT_DRIVE="-drive file=${SERENITY_DISK_IMAGE},format=raw,index=0,media=disk,if=none,id=disk"
-        SERENITY_BOOT_DRIVE="$SERENITY_BOOT_DRIVE -device i82801b11-bridge,id=bridge4 -device sdhci-pci,bus=bridge4"
-        SERENITY_BOOT_DRIVE="$SERENITY_BOOT_DRIVE -device nvme,serial=deadbeef,drive=disk,bus=bridge4,logical_block_size=4096,physical_block_size=4096"
-        SERENITY_KERNEL_CMDLINE="$SERENITY_KERNEL_CMDLINE root=/dev/nvme0n1"
-    else
-        SERENITY_BOOT_DRIVE="-drive file=${SERENITY_DISK_IMAGE},format=raw,index=0,media=disk,id=disk"
-    fi
+    SERENITY_BOOT_DRIVE="-drive file=${SERENITY_DISK_IMAGE},format=raw,index=0,media=disk,id=disk"
+fi
+
+if [ -n "${SERENITY_USE_SDCARD}" ] && [ "${SERENITY_USE_SDCARD}" -eq 1 ]; then
+    SERENITY_BOOT_DRIVE="-device sdhci-pci -device sd-card,drive=sd-boot-drive -drive id=sd-boot-drive,if=none,format=raw,file=${SERENITY_DISK_IMAGE}"
+    SERENITY_KERNEL_CMDLINE="$SERENITY_KERNEL_CMDLINE root=sd2:0:0"
 fi
 
 if [ -z "$SERENITY_HOST_IP" ]; then
@@ -265,7 +293,10 @@ fi
 # add -machine vmport=off below to run the machine with ps/2 mouse
 if [ -z "$SERENITY_MACHINE" ]; then
     if [ "$SERENITY_ARCH" = "aarch64" ]; then
-        SERENITY_MACHINE="-M raspi3b -serial stdio"
+        SERENITY_MACHINE="
+        -M raspi3b
+        -serial stdio
+        "
     else
         SERENITY_MACHINE="
         -m $SERENITY_RAM_SIZE
@@ -277,14 +308,13 @@ if [ -z "$SERENITY_MACHINE" ]; then
         -device isa-debugcon,chardev=stdout
         -device virtio-rng-pci
         $SERENITY_AUDIO_BACKEND
-        $SERENITY_AUDIO_HW
-        -device ac97,audiodev=snd0
+        $SERENITY_AUDIO_PC_SPEAKER
+        $SERENITY_AUDIO_DEVICE
         -device pci-bridge,chassis_nr=1,id=bridge1 -device $SERENITY_ETHERNET_DEVICE_TYPE,bus=bridge1
         -device i82801b11-bridge,bus=bridge1,id=bridge2 -device sdhci-pci,bus=bridge2
         -device i82801b11-bridge,id=bridge3 -device sdhci-pci,bus=bridge3
         -device ich9-ahci,bus=bridge3
         -chardev stdio,id=stdout,mux=on
-        $SERENITY_BOOT_DRIVE
         "
     fi
 fi
@@ -309,6 +339,7 @@ fi
 [ -z "$SERENITY_COMMON_QEMU_ARGS" ] && SERENITY_COMMON_QEMU_ARGS="
 $SERENITY_EXTRA_QEMU_ARGS
 $SERENITY_MACHINE
+$SERENITY_BOOT_DRIVE
 -cpu $SERENITY_QEMU_CPU
 -name SerenityOS
 -d guest_errors
@@ -317,7 +348,7 @@ $SERENITY_SPICE_SERVER_CHARDEV
 "
 
 if [ "$SERENITY_ARCH" != "aarch64" ]; then
-    if "${SERENITY_QEMU_BIN}" -chardev help | grep -iq spice; then
+    if [ "${SERENITY_SPICE}" ] && "${SERENITY_QEMU_BIN}" -chardev help | grep -iq spice; then
         SERENITY_COMMON_QEMU_ARGS="$SERENITY_COMMON_QEMU_ARGS
         -spice port=5930,agent-mouse=off,disable-ticketing=on
         "
@@ -332,7 +363,7 @@ fi
 [ -z "$SERENITY_COMMON_QEMU_ISA_PC_ARGS" ] && SERENITY_COMMON_QEMU_ISA_PC_ARGS="
 $SERENITY_EXTRA_QEMU_ARGS
 -m $SERENITY_RAM_SIZE
--cpu pentium3
+-cpu qemu64
 -machine isapc
 -d guest_errors
 -device isa-vga
@@ -393,7 +424,7 @@ $SERENITY_EXTRA_QEMU_ARGS
 -device isa-debugcon,chardev=stdout
 -device virtio-rng-pci
 $SERENITY_AUDIO_BACKEND
-$SERENITY_AUDIO_HW
+$SERENITY_AUDIO_PC_SPEAKER
 $SERENITY_BOOT_DRIVE
 "
 
@@ -479,21 +510,38 @@ elif [ "$SERENITY_RUN" = "limine" ]; then
 elif [ "$SERENITY_RUN" = "ci" ]; then
     # Meta/run.sh ci: qemu in text mode
     echo "Running QEMU in CI"
-    "$SERENITY_QEMU_BIN" \
-        $SERENITY_EXTRA_QEMU_ARGS \
-        $SERENITY_VIRT_TECH_ARG \
-        -m $SERENITY_RAM_SIZE \
-        -cpu $SERENITY_QEMU_CPU \
-        -d guest_errors \
-        -no-reboot \
-        -smp ${SERENITY_CPUS} \
-        -drive file=${SERENITY_DISK_IMAGE},format=raw,index=0,media=disk \
-        -device ich9-ahci \
-        -nographic \
-        -display none \
-        -debugcon file:debug.log \
-        $SERENITY_KERNEL_AND_INITRD \
-        -append "${SERENITY_KERNEL_CMDLINE}"
+    if [ "$SERENITY_ARCH" = "aarch64" ]; then
+      "$SERENITY_QEMU_BIN" \
+            $SERENITY_EXTRA_QEMU_ARGS \
+            $SERENITY_VIRT_TECH_ARG \
+            $SERENITY_BOOT_DRIVE \
+            -M raspi3b \
+            -d guest_errors \
+            -no-reboot \
+            -nographic \
+            -monitor none \
+            -display none \
+            -serial file:debug.log \
+            -serial stdio \
+            $SERENITY_KERNEL_AND_INITRD \
+            -append "${SERENITY_KERNEL_CMDLINE}"
+    else
+        "$SERENITY_QEMU_BIN" \
+            $SERENITY_EXTRA_QEMU_ARGS \
+            $SERENITY_VIRT_TECH_ARG \
+            $SERENITY_BOOT_DRIVE \
+            -m $SERENITY_RAM_SIZE \
+            -cpu $SERENITY_QEMU_CPU \
+            -d guest_errors \
+            -no-reboot \
+            -smp ${SERENITY_CPUS} \
+            -device ich9-ahci \
+            -nographic \
+            -display none \
+            -debugcon file:debug.log \
+            $SERENITY_KERNEL_AND_INITRD \
+            -append "${SERENITY_KERNEL_CMDLINE}"
+    fi
 else
     # Meta/run.sh: qemu with user networking
     "$SERENITY_QEMU_BIN" \

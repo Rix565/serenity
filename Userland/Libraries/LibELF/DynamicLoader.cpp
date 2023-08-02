@@ -7,6 +7,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Debug.h>
 #include <AK/Optional.h>
 #include <AK/QuickSort.h>
 #include <AK/StringBuilder.h>
@@ -199,22 +200,63 @@ bool DynamicLoader::load_stage_2(unsigned flags)
 
 void DynamicLoader::do_main_relocations()
 {
-    auto do_single_relocation = [&](const ELF::DynamicObject::Relocation& relocation) {
-        switch (do_relocation(relocation, ShouldInitializeWeak::No)) {
+    do_relr_relocations();
+
+    m_dynamic_object->relocation_section().for_each_relocation([&](DynamicObject::Relocation const& relocation) {
+        switch (do_direct_relocation(relocation, ShouldInitializeWeak::No, ShouldCallIfuncResolver::No)) {
         case RelocationResult::Failed:
             dbgln("Loader.so: {} unresolved symbol '{}'", m_filepath, relocation.symbol().name());
             VERIFY_NOT_REACHED();
         case RelocationResult::ResolveLater:
             m_unresolved_relocations.append(relocation);
             break;
+        case RelocationResult::CallIfuncResolver:
+            m_direct_ifunc_relocations.append(relocation);
+            break;
         case RelocationResult::Success:
             break;
         }
+    });
+
+    // If the object is position-independent, the pointer to the PLT trampoline needs to be relocated.
+    auto fixup_trampoline_pointer = [&](DynamicObject::Relocation const& relocation) {
+        VERIFY(relocation.type() == R_X86_64_JUMP_SLOT || relocation.type() == R_AARCH64_JUMP_SLOT);
+        if (image().is_dynamic())
+            *((FlatPtr*)relocation.address().as_ptr()) += m_dynamic_object->base_address().get();
     };
 
-    do_relr_relocations();
-    m_dynamic_object->relocation_section().for_each_relocation(do_single_relocation);
-    m_dynamic_object->plt_relocation_section().for_each_relocation(do_single_relocation);
+    // FIXME: Or LD_BIND_NOW is set?
+    if (m_dynamic_object->must_bind_now()) {
+        m_dynamic_object->plt_relocation_section().for_each_relocation([&](DynamicObject::Relocation const& relocation) {
+            if (relocation.type() == R_X86_64_IRELATIVE || relocation.type() == R_AARCH64_IRELATIVE) {
+                m_direct_ifunc_relocations.append(relocation);
+                return;
+            }
+
+            switch (do_plt_relocation(relocation, ShouldCallIfuncResolver::No)) {
+            case RelocationResult::Failed:
+                dbgln("Loader.so: {} unresolved symbol '{}'", m_filepath, relocation.symbol().name());
+                VERIFY_NOT_REACHED();
+            case RelocationResult::ResolveLater:
+                VERIFY_NOT_REACHED();
+            case RelocationResult::CallIfuncResolver:
+                m_plt_ifunc_relocations.append(relocation);
+                // Set up lazy binding, in case an IFUNC resolver calls another IFUNC that hasn't been resolved yet.
+                fixup_trampoline_pointer(relocation);
+                break;
+            case RelocationResult::Success:
+                break;
+            }
+        });
+    } else {
+        m_dynamic_object->plt_relocation_section().for_each_relocation([&](DynamicObject::Relocation const& relocation) {
+            if (relocation.type() == R_X86_64_IRELATIVE || relocation.type() == R_AARCH64_IRELATIVE) {
+                m_direct_ifunc_relocations.append(relocation);
+                return;
+            }
+            fixup_trampoline_pointer(relocation);
+        });
+    }
 }
 
 Result<NonnullRefPtr<DynamicObject>, DlErrorMessage> DynamicLoader::load_stage_3(unsigned flags)
@@ -223,6 +265,18 @@ Result<NonnullRefPtr<DynamicObject>, DlErrorMessage> DynamicLoader::load_stage_3
     if (flags & RTLD_LAZY) {
         if (m_dynamic_object->has_plt())
             setup_plt_trampoline();
+    }
+
+    // IFUNC resolvers can only be called after the PLT has been populated,
+    // as they may call arbitrary functions via the PLT.
+    for (auto const& relocation : m_plt_ifunc_relocations) {
+        auto result = do_plt_relocation(relocation, ShouldCallIfuncResolver::Yes);
+        VERIFY(result == RelocationResult::Success);
+    }
+
+    for (auto const& relocation : m_direct_ifunc_relocations) {
+        auto result = do_direct_relocation(relocation, ShouldInitializeWeak::No, ShouldCallIfuncResolver::Yes);
+        VERIFY(result == RelocationResult::Success);
     }
 
     if (m_dynamic_object->has_text_relocations()) {
@@ -261,7 +315,7 @@ void DynamicLoader::load_stage_4()
 void DynamicLoader::do_lazy_relocations()
 {
     for (auto const& relocation : m_unresolved_relocations) {
-        if (auto res = do_relocation(relocation, ShouldInitializeWeak::Yes); res != RelocationResult::Success) {
+        if (auto res = do_direct_relocation(relocation, ShouldInitializeWeak::Yes, ShouldCallIfuncResolver::Yes); res != RelocationResult::Success) {
             dbgln("Loader.so: {} unresolved symbol '{}'", m_filepath, relocation.symbol().name());
             VERIFY_NOT_REACHED();
         }
@@ -347,7 +401,6 @@ void DynamicLoader::load_program_headers()
     // (symbol tables/relocation information, executable instructions, read-only data)
     // and one of which is copied (modifiable data).
     // These are allocated in-line to cut down on the malloc calls.
-    Vector<ProgramHeaderRegion, 4> load_regions;
     Vector<ProgramHeaderRegion, 3> map_regions;
     Vector<ProgramHeaderRegion, 1> copy_regions;
     Optional<ProgramHeaderRegion> relro_region;
@@ -362,7 +415,6 @@ void DynamicLoader::load_program_headers()
         } else if (region.is_load()) {
             if (region.size_in_memory() == 0)
                 return;
-            load_regions.append(region);
             if (region.is_writable()) {
                 copy_regions.append(region);
             } else {
@@ -382,7 +434,6 @@ void DynamicLoader::load_program_headers()
         return a.desired_load_address().as_ptr() < b.desired_load_address().as_ptr();
     };
 
-    quick_sort(load_regions, compare_load_address);
     quick_sort(map_regions, compare_load_address);
     quick_sort(copy_regions, compare_load_address);
 
@@ -464,7 +515,7 @@ void DynamicLoader::load_program_headers()
     }
 }
 
-DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicObject::Relocation& relocation, ShouldInitializeWeak should_initialize_weak)
+DynamicLoader::RelocationResult DynamicLoader::do_direct_relocation(DynamicObject::Relocation const& relocation, ShouldInitializeWeak should_initialize_weak, ShouldCallIfuncResolver should_call_ifunc_resolver)
 {
     FlatPtr* patch_ptr = nullptr;
     if (is_dynamic())
@@ -482,6 +533,7 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
         // Apparently most loaders will just skip these?
         // Seems if the 'link editor' generates one something is funky with your code
         break;
+    case R_AARCH64_ABS64:
     case R_X86_64_64: {
         auto symbol = relocation.symbol();
         auto res = lookup_symbol(symbol);
@@ -491,6 +543,9 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
             dbgln("ERROR: symbol not found: {}.", symbol.name());
             return RelocationResult::Failed;
         }
+        if (res.value().type == STT_GNU_IFUNC && should_call_ifunc_resolver == ShouldCallIfuncResolver::No)
+            return RelocationResult::CallIfuncResolver;
+
         auto symbol_address = res.value().address;
         if (relocation.addend_used())
             *patch_ptr = symbol_address.get() + relocation.addend();
@@ -500,6 +555,7 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
             *patch_ptr = call_ifunc_resolver(VirtualAddress { *patch_ptr }).get();
         break;
     }
+    case R_AARCH64_GLOB_DAT:
     case R_X86_64_GLOB_DAT: {
         auto symbol = relocation.symbol();
         auto res = lookup_symbol(symbol);
@@ -517,6 +573,8 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
         } else {
             symbol_location = res.value().address;
             if (res.value().type == STT_GNU_IFUNC) {
+                if (should_call_ifunc_resolver == ShouldCallIfuncResolver::No)
+                    return RelocationResult::CallIfuncResolver;
                 if (res.value().dynamic_object != nullptr && res.value().dynamic_object->has_text_relocations()) {
                     dbgln("\033[31mError:\033[0m Refusing to call IFUNC resolver defined in an object with text relocations.");
                     return RelocationResult::Failed;
@@ -528,6 +586,7 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
         *patch_ptr = symbol_location.get();
         break;
     }
+    case R_AARCH64_RELATIVE:
     case R_X86_64_RELATIVE: {
         if (!image().is_dynamic())
             break;
@@ -540,6 +599,7 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
             *patch_ptr += m_dynamic_object->base_address().get();
         break;
     }
+    case R_AARCH64_TLS_TPREL64:
     case R_X86_64_TPOFF64: {
         auto symbol = relocation.symbol();
         FlatPtr symbol_value;
@@ -565,21 +625,10 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
 
         break;
     }
-    case R_X86_64_JUMP_SLOT: {
-        // FIXME: Or BIND_NOW flag passed in?
-        if (m_dynamic_object->must_bind_now()) {
-            // Eagerly BIND_NOW the PLT entries, doing all the symbol looking goodness
-            // The patch method returns the address for the LAZY fixup path, but we don't need it here
-            m_dynamic_object->patch_plt_entry(relocation.offset_in_section());
-        } else {
-            auto relocation_address = (FlatPtr*)relocation.address().as_ptr();
-
-            if (image().is_dynamic())
-                *relocation_address += m_dynamic_object->base_address().get();
-        }
-        break;
-    }
+    case R_AARCH64_IRELATIVE:
     case R_X86_64_IRELATIVE: {
+        if (should_call_ifunc_resolver == ShouldCallIfuncResolver::No)
+            return RelocationResult::CallIfuncResolver;
         VirtualAddress resolver;
         if (relocation.addend_used())
             resolver = m_dynamic_object->base_address().offset(relocation.addend());
@@ -594,11 +643,41 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
         *patch_ptr = call_ifunc_resolver(resolver).get();
         break;
     }
+    case R_AARCH64_JUMP_SLOT:
+    case R_X86_64_JUMP_SLOT:
+        VERIFY_NOT_REACHED(); // PLT relocations are handled by do_plt_relocation.
     default:
         // Raise the alarm! Someone needs to implement this relocation type
         dbgln("Found a new exciting relocation type {}", relocation.type());
         VERIFY_NOT_REACHED();
     }
+    return RelocationResult::Success;
+}
+
+DynamicLoader::RelocationResult DynamicLoader::do_plt_relocation(DynamicObject::Relocation const& relocation, ShouldCallIfuncResolver should_call_ifunc_resolver)
+{
+    VERIFY(relocation.type() == R_X86_64_JUMP_SLOT || relocation.type() == R_AARCH64_JUMP_SLOT);
+    auto symbol = relocation.symbol();
+    auto* relocation_address = (FlatPtr*)relocation.address().as_ptr();
+
+    VirtualAddress symbol_location {};
+    if (auto result = lookup_symbol(symbol); result.has_value()) {
+        auto address = result.value().address;
+
+        if (result.value().type == STT_GNU_IFUNC) {
+            if (should_call_ifunc_resolver == ShouldCallIfuncResolver::No)
+                return RelocationResult::CallIfuncResolver;
+            symbol_location = VirtualAddress { reinterpret_cast<DynamicObject::IfuncResolver>(address.get())() };
+        } else {
+            symbol_location = address;
+        }
+    } else if (symbol.bind() != STB_WEAK) {
+        return RelocationResult::Failed;
+    }
+
+    dbgln_if(DYNAMIC_LOAD_DEBUG, "DynamicLoader: Jump slot relocation: putting {} ({}) into PLT at {}", symbol.name(), symbol_location, (void*)relocation_address);
+    *relocation_address = symbol_location.get();
+
     return RelocationResult::Success;
 }
 
@@ -648,11 +727,15 @@ void DynamicLoader::setup_plt_trampoline()
 }
 
 // Called from our ASM routine _plt_trampoline.
-// Tell the compiler that it might be called from other places:
-extern "C" FlatPtr _fixup_plt_entry(DynamicObject* object, u32 relocation_offset);
 extern "C" FlatPtr _fixup_plt_entry(DynamicObject* object, u32 relocation_offset)
 {
-    return object->patch_plt_entry(relocation_offset).get();
+    auto const& relocation = object->plt_relocation_section().relocation_at_offset(relocation_offset);
+    auto result = DynamicLoader::do_plt_relocation(relocation, ShouldCallIfuncResolver::Yes);
+    if (result != DynamicLoader::RelocationResult::Success) {
+        dbgln("Loader.so: {} unresolved symbol '{}'", object->filepath(), relocation.symbol().name());
+        VERIFY_NOT_REACHED();
+    }
+    return *reinterpret_cast<FlatPtr*>(relocation.address().as_ptr());
 }
 
 void DynamicLoader::call_object_init_functions()

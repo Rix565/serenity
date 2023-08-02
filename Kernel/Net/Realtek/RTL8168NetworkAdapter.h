@@ -6,14 +6,13 @@
 
 #pragma once
 
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <Kernel/Bus/PCI/Access.h>
 #include <Kernel/Bus/PCI/Device.h>
-#include <Kernel/IOWindow.h>
 #include <Kernel/Interrupts/IRQHandler.h>
+#include <Kernel/Library/IOWindow.h>
 #include <Kernel/Net/NetworkAdapter.h>
-#include <Kernel/Random.h>
+#include <Kernel/Security/Random.h>
 
 namespace Kernel {
 
@@ -23,7 +22,7 @@ class RTL8168NetworkAdapter final : public NetworkAdapter
     , public IRQHandler {
 public:
     static ErrorOr<bool> probe(PCI::DeviceIdentifier const&);
-    static ErrorOr<NonnullLockRefPtr<NetworkAdapter>> create(PCI::DeviceIdentifier const&);
+    static ErrorOr<NonnullRefPtr<NetworkAdapter>> create(PCI::DeviceIdentifier const&);
     virtual ErrorOr<void> initialize(Badge<NetworkingManagement>) override;
 
     virtual ~RTL8168NetworkAdapter() override;
@@ -205,10 +204,10 @@ private:
     NonnullOwnPtr<IOWindow> m_registers_io_window;
     u32 m_ocp_base_address { 0 };
     OwnPtr<Memory::Region> m_rx_descriptors_region;
-    NonnullOwnPtrVector<Memory::Region> m_rx_buffers_regions;
+    Vector<NonnullOwnPtr<Memory::Region>> m_rx_buffers_regions;
     u16 m_rx_free_index { 0 };
     OwnPtr<Memory::Region> m_tx_descriptors_region;
-    NonnullOwnPtrVector<Memory::Region> m_tx_buffers_regions;
+    Vector<NonnullOwnPtr<Memory::Region>> m_tx_buffers_regions;
     u16 m_tx_free_index { 0 };
     bool m_link_up { false };
     EntropySource m_entropy_source;

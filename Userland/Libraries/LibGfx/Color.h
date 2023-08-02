@@ -204,48 +204,46 @@ public:
 
     constexpr Color blend(Color source) const
     {
-        if (!alpha() || source.alpha() == 255)
+        if (alpha() == 0 || source.alpha() == 255)
             return source;
 
-        if (!source.alpha())
+        if (source.alpha() == 0)
             return *this;
 
-#ifdef __SSE__
-        using AK::SIMD::i32x4;
-
-        const i32x4 color = {
-            red(),
-            green(),
-            blue()
-        };
-        const i32x4 source_color = {
-            source.red(),
-            source.green(),
-            source.blue()
-        };
-
         int const d = 255 * (alpha() + source.alpha()) - alpha() * source.alpha();
-        const i32x4 out = (color * alpha() * (255 - source.alpha()) + 255 * source.alpha() * source_color) / d;
-        return Color(out[0], out[1], out[2], d / 255);
-#else
-        int d = 255 * (alpha() + source.alpha()) - alpha() * source.alpha();
-        u8 r = (red() * alpha() * (255 - source.alpha()) + 255 * source.alpha() * source.red()) / d;
-        u8 g = (green() * alpha() * (255 - source.alpha()) + 255 * source.alpha() * source.green()) / d;
-        u8 b = (blue() * alpha() * (255 - source.alpha()) + 255 * source.alpha() * source.blue()) / d;
+        u8 r = (red() * alpha() * (255 - source.alpha()) + source.red() * 255 * source.alpha()) / d;
+        u8 g = (green() * alpha() * (255 - source.alpha()) + source.green() * 255 * source.alpha()) / d;
+        u8 b = (blue() * alpha() * (255 - source.alpha()) + source.blue() * 255 * source.alpha()) / d;
         u8 a = d / 255;
         return Color(r, g, b, a);
-#endif
     }
 
-    Color mixed_with(Color other, float weight) const;
-
-    Color interpolate(Color other, float weight) const noexcept
+    ALWAYS_INLINE Color mixed_with(Color other, float weight) const
     {
-        u8 r = red() + round_to<u8>(static_cast<float>(other.red() - red()) * weight);
-        u8 g = green() + round_to<u8>(static_cast<float>(other.green() - green()) * weight);
-        u8 b = blue() + round_to<u8>(static_cast<float>(other.blue() - blue()) * weight);
-        u8 a = alpha() + round_to<u8>(static_cast<float>(other.alpha() - alpha()) * weight);
-        return Color(r, g, b, a);
+        if (alpha() == other.alpha() || with_alpha(0) == other.with_alpha(0))
+            return interpolate(other, weight);
+        // Fallback to slower, but more visually pleasing premultiplied alpha mix.
+        // This is needed for linear-gradient()s in LibWeb.
+        auto mixed_alpha = mix<float>(alpha(), other.alpha(), weight);
+        auto premultiplied_mix_channel = [&](float channel, float other_channel, float weight) {
+            return round_to<u8>(mix<float>(channel * alpha(), other_channel * other.alpha(), weight) / mixed_alpha);
+        };
+        return Gfx::Color {
+            premultiplied_mix_channel(red(), other.red(), weight),
+            premultiplied_mix_channel(green(), other.green(), weight),
+            premultiplied_mix_channel(blue(), other.blue(), weight),
+            round_to<u8>(mixed_alpha),
+        };
+    }
+
+    ALWAYS_INLINE Color interpolate(Color other, float weight) const noexcept
+    {
+        return Gfx::Color {
+            round_to<u8>(mix<float>(red(), other.red(), weight)),
+            round_to<u8>(mix<float>(green(), other.green(), weight)),
+            round_to<u8>(mix<float>(blue(), other.blue(), weight)),
+            round_to<u8>(mix<float>(alpha(), other.alpha(), weight)),
+        };
     }
 
     constexpr Color multiply(Color other) const
@@ -314,6 +312,11 @@ public:
             alpha());
     }
 
+    constexpr Color with_opacity(float opacity) const
+    {
+        return with_alpha(alpha() * opacity);
+    }
+
     constexpr Color darkened(float amount = 0.5f) const
     {
         return Color(red() * amount, green() * amount, blue() * amount, alpha());
@@ -356,6 +359,7 @@ public:
     DeprecatedString to_deprecated_string() const;
     DeprecatedString to_deprecated_string_without_alpha() const;
     static Optional<Color> from_string(StringView);
+    static Optional<Color> from_named_css_color_string(StringView);
 
     constexpr HSV to_hsv() const
     {

@@ -13,13 +13,13 @@
 
 namespace Web::HTML {
 
-JS::NonnullGCPtr<HTMLOptionsCollection> HTMLOptionsCollection::create(DOM::ParentNode& root, Function<bool(DOM::Element const&)> filter)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<HTMLOptionsCollection>> HTMLOptionsCollection::create(DOM::ParentNode& root, Function<bool(DOM::Element const&)> filter)
 {
-    return root.heap().allocate<HTMLOptionsCollection>(root.realm(), root, move(filter)).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(root.heap().allocate<HTMLOptionsCollection>(root.realm(), root, move(filter)));
 }
 
 HTMLOptionsCollection::HTMLOptionsCollection(DOM::ParentNode& root, Function<bool(DOM::Element const&)> filter)
-    : DOM::HTMLCollection(root, move(filter))
+    : DOM::HTMLCollection(root, Scope::Descendants, move(filter))
 {
 }
 

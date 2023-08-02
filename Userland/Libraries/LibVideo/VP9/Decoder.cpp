@@ -6,6 +6,7 @@
  */
 
 #include <AK/IntegralMath.h>
+#include <AK/TypedTransfer.h>
 #include <LibGfx/Size.h>
 #include <LibVideo/Color/CodingIndependentCodePoints.h>
 
@@ -45,11 +46,6 @@ DecoderErrorOr<void> Decoder::receive_sample(ReadonlyBytes chunk_data)
     }
 
     return {};
-}
-
-inline size_t index_from_row_and_column(u32 row, u32 column, u32 stride)
-{
-    return row * stride + column;
 }
 
 DecoderErrorOr<void> Decoder::decode_frame(ReadonlyBytes frame_data)
@@ -142,15 +138,20 @@ DecoderErrorOr<void> Decoder::create_video_frame(FrameContext const& frame_conte
     // (8.9) Output process
 
     // FIXME: If show_existing_frame is set, output from FrameStore[frame_to_show_map_index] here instead.
+    if (frame_context.shows_existing_frame()) {
+        dbgln("FIXME: Show an existing reference frame.");
+    }
 
     // FIXME: The math isn't entirely accurate to spec. output_uv_size is probably incorrect for certain
     //        sizes, as the spec seems to prefer that the halved sizes be ceiled.
-    u32 decoded_y_width = frame_context.columns() * 8;
+    u32 decoded_y_width = frame_context.decoded_size(false).width();
+    auto decoded_uv_width = frame_context.decoded_size(true).width();
     Gfx::Size<u32> output_y_size = frame_context.size();
-    auto decoded_uv_width = decoded_y_width >> frame_context.color_config.subsampling_x;
+    auto subsampling_x = frame_context.color_config.subsampling_x;
+    auto subsampling_y = frame_context.color_config.subsampling_y;
     Gfx::Size<u32> output_uv_size = {
-        output_y_size.width() >> frame_context.color_config.subsampling_x,
-        output_y_size.height() >> frame_context.color_config.subsampling_y,
+        y_size_to_uv_size(subsampling_x, output_y_size.width()),
+        y_size_to_uv_size(subsampling_y, output_y_size.height()),
     };
     Array<FixedArray<u16>, 3> output_buffers = {
         DECODER_TRY_ALLOC(FixedArray<u16>::create(output_y_size.width() * output_y_size.height())),
@@ -174,31 +175,21 @@ DecoderErrorOr<void> Decoder::create_video_frame(FrameContext const& frame_conte
     auto frame = DECODER_TRY_ALLOC(adopt_nonnull_own_or_enomem(new (nothrow) SubsampledYUVFrame(
         { output_y_size.width(), output_y_size.height() },
         frame_context.color_config.bit_depth, get_cicp_color_space(frame_context),
-        frame_context.color_config.subsampling_x, frame_context.color_config.subsampling_y,
+        subsampling_x, subsampling_y,
         output_buffers[0], output_buffers[1], output_buffers[2])));
     m_video_frame_queue.enqueue(move(frame));
 
     return {};
 }
 
-inline size_t buffer_size(size_t width, size_t height)
-{
-    return width * height;
-}
-
-inline size_t buffer_size(Gfx::Size<size_t> size)
-{
-    return buffer_size(size.width(), size.height());
-}
-
 DecoderErrorOr<void> Decoder::allocate_buffers(FrameContext const& frame_context)
 {
     for (size_t plane = 0; plane < 3; plane++) {
-        auto size = m_parser->get_decoded_size_for_plane(frame_context, plane);
+        auto size = frame_context.decoded_size(plane > 0);
 
         auto& output_buffer = get_output_buffer(plane);
         output_buffer.clear_with_capacity();
-        DECODER_TRY_ALLOC(output_buffer.try_resize_and_keep_capacity(buffer_size(size)));
+        DECODER_TRY_ALLOC(output_buffer.try_resize_and_keep_capacity(size.width() * size.height()));
     }
     return {};
 }
@@ -216,16 +207,26 @@ DecoderErrorOr<NonnullOwnPtr<VideoFrame>> Decoder::get_decoded_frame()
     return m_video_frame_queue.dequeue();
 }
 
-u8 Decoder::merge_prob(u8 pre_prob, u8 count_0, u8 count_1, u8 count_sat, u8 max_update_factor)
+template<typename T>
+static inline i32 rounded_right_shift(T value, u8 bits)
 {
-    auto total_decode_count = count_0 + count_1;
-    auto prob = (total_decode_count == 0) ? 128 : clip_3(1, 255, (count_0 * 256 + (total_decode_count >> 1)) / total_decode_count);
-    auto count = min(total_decode_count, count_sat);
-    auto factor = (max_update_factor * count) / count_sat;
-    return round_2(pre_prob * (256 - factor) + (prob * factor), 8);
+    value = (value + static_cast<T>(1u << (bits - 1u))) >> bits;
+    return static_cast<i32>(value);
 }
 
-u8 Decoder::merge_probs(int const* tree, int index, u8* probs, u8* counts, u8 count_sat, u8 max_update_factor)
+u8 Decoder::merge_prob(u8 pre_prob, u32 count_0, u32 count_1, u8 count_sat, u8 max_update_factor)
+{
+    auto total_decode_count = count_0 + count_1;
+    u8 prob = 128;
+    if (total_decode_count != 0) {
+        prob = static_cast<u8>(clip_3(1u, 255u, (count_0 * 256 + (total_decode_count >> 1)) / total_decode_count));
+    }
+    auto count = min(total_decode_count, count_sat);
+    auto factor = (max_update_factor * count) / count_sat;
+    return rounded_right_shift(pre_prob * (256 - factor) + (prob * factor), 8);
+}
+
+u32 Decoder::merge_probs(int const* tree, int index, u8* probs, u32* counts, u8 count_sat, u8 max_update_factor)
 {
     auto s = tree[index];
     auto left_count = (s <= 0) ? counts[-s] : merge_probs(tree, s, probs, counts, count_sat, max_update_factor);
@@ -235,10 +236,10 @@ u8 Decoder::merge_probs(int const* tree, int index, u8* probs, u8* counts, u8 co
     return left_count + right_count;
 }
 
-DecoderErrorOr<void> Decoder::adapt_coef_probs(bool is_inter_predicted_frame)
+DecoderErrorOr<void> Decoder::adapt_coef_probs(FrameContext const& frame_context)
 {
     u8 update_factor;
-    if (!is_inter_predicted_frame || m_parser->m_previous_frame_type != FrameType::KeyFrame)
+    if (!frame_context.is_inter_predicted() || m_parser->m_previous_frame_type != FrameType::KeyFrame)
         update_factor = 112;
     else
         update_factor = 128;
@@ -251,10 +252,10 @@ DecoderErrorOr<void> Decoder::adapt_coef_probs(bool is_inter_predicted_frame)
                     for (size_t l = 0; l < max_l; l++) {
                         auto& coef_probs = m_parser->m_probability_tables->coef_probs()[t][i][j][k][l];
                         merge_probs(small_token_tree, 2, coef_probs,
-                            m_parser->m_syntax_element_counter->m_counts_token[t][i][j][k][l],
+                            frame_context.counter->m_counts_token[t][i][j][k][l],
                             24, update_factor);
                         merge_probs(binary_tree, 0, coef_probs,
-                            m_parser->m_syntax_element_counter->m_counts_more_coefs[t][i][j][k][l],
+                            frame_context.counter->m_counts_more_coefs[t][i][j][k][l],
                             24, update_factor);
                     }
                 }
@@ -283,7 +284,7 @@ DecoderErrorOr<void> Decoder::adapt_coef_probs(bool is_inter_predicted_frame)
 DecoderErrorOr<void> Decoder::adapt_non_coef_probs(FrameContext const& frame_context)
 {
     auto& probs = *m_parser->m_probability_tables;
-    auto& counter = *m_parser->m_syntax_element_counter;
+    auto& counter = *frame_context.counter;
     ADAPT_PROB_TABLE(is_inter, IS_INTER_CONTEXTS);
     ADAPT_PROB_TABLE(comp_mode, COMP_MODE_CONTEXTS);
     ADAPT_PROB_TABLE(comp_ref, REF_CONTEXTS);
@@ -292,9 +293,9 @@ DecoderErrorOr<void> Decoder::adapt_non_coef_probs(FrameContext const& frame_con
             probs.single_ref_prob()[i][j] = adapt_prob(probs.single_ref_prob()[i][j], counter.m_counts_single_ref[i][j]);
     }
     ADAPT_TREE(inter_mode, inter_mode, inter_mode, INTER_MODE_CONTEXTS);
-    ADAPT_TREE(intra_mode, y_mode, intra_mode, INTER_MODE_CONTEXTS);
-    ADAPT_TREE(intra_mode, uv_mode, uv_mode, INTER_MODE_CONTEXTS);
-    ADAPT_TREE(partition, partition, partition, INTER_MODE_CONTEXTS);
+    ADAPT_TREE(intra_mode, y_mode, intra_mode, BLOCK_SIZE_GROUPS);
+    ADAPT_TREE(intra_mode, uv_mode, uv_mode, INTRA_MODES);
+    ADAPT_TREE(partition, partition, partition, PARTITION_CONTEXTS);
     ADAPT_PROB_TABLE(skip, SKIP_CONTEXTS);
     if (frame_context.interpolation_filter == Switchable) {
         ADAPT_TREE(interp_filter, interp_filter, interp_filter, INTERP_FILTER_CONTEXTS);
@@ -326,12 +327,12 @@ DecoderErrorOr<void> Decoder::adapt_non_coef_probs(FrameContext const& frame_con
     return {};
 }
 
-void Decoder::adapt_probs(int const* tree, u8* probs, u8* counts)
+void Decoder::adapt_probs(int const* tree, u8* probs, u32* counts)
 {
     merge_probs(tree, 0, probs, counts, COUNT_SAT, MAX_UPDATE_FACTOR);
 }
 
-u8 Decoder::adapt_prob(u8 prob, u8 counts[2])
+u8 Decoder::adapt_prob(u8 prob, u32 counts[2])
 {
     return merge_prob(prob, counts[0], counts[1], COUNT_SAT, MAX_UPDATE_FACTOR);
 }
@@ -368,14 +369,12 @@ DecoderErrorOr<void> Decoder::predict_intra(u8 plane, BlockContext const& block_
     // If plane is greater than 0, then:
     //  − maxX is set equal to ((MiCols * 8) >> subsampling_x) - 1.
     //  − maxY is set equal to ((MiRows * 8) >> subsampling_y) - 1.
-    auto subsampling_x = plane > 0 ? block_context.frame_context.color_config.subsampling_x : false;
-    auto subsampling_y = plane > 0 ? block_context.frame_context.color_config.subsampling_y : false;
-    auto max_x = ((block_context.frame_context.columns() * 8u) >> subsampling_x) - 1u;
-    auto max_y = ((block_context.frame_context.rows() * 8u) >> subsampling_y) - 1u;
+    auto output_size = block_context.frame_context.decoded_size(plane > 0);
+    auto max_x = output_size.width() - 1;
+    auto max_y = output_size.height() - 1;
 
     auto const frame_buffer_at = [&](u32 row, u32 column) -> u16& {
-        const auto frame_stride = max_x + 1u;
-        return frame_buffer[index_from_row_and_column(row, column, frame_stride)];
+        return frame_buffer[row * output_size.width() + column];
     };
 
     // The array aboveRow[ i ] for i = 0..size-1 is specified by:
@@ -452,7 +451,7 @@ DecoderErrorOr<void> Decoder::predict_intra(u8 plane, BlockContext const& block_
     // A 2D array named pred containing the intra predicted samples is constructed as follows:
     Array<Intermediate, maximum_block_size> predicted_samples;
     auto const predicted_sample_at = [&](u32 row, u32 column) -> Intermediate& {
-        return predicted_samples[index_from_row_and_column(row, column, block_size)];
+        return predicted_samples[row * block_size + column];
     };
 
     // FIXME: One of the two below should be a simple memcpy of 1D arrays.
@@ -480,12 +479,12 @@ DecoderErrorOr<void> Decoder::predict_intra(u8 plane, BlockContext const& block_
             predicted_sample_at(block_size - 1, j) = left_column[block_size - 1];
         // 2. pred[ i ][ 0 ] = Round2( leftCol[ i ] + leftCol[ i + 1 ], 1 ) for i = 0..size-2
         for (auto i = 0u; i < block_size - 1u; i++)
-            predicted_sample_at(i, 0) = round_2(left_column[i] + left_column[i + 1], 1);
+            predicted_sample_at(i, 0) = rounded_right_shift(left_column[i] + left_column[i + 1], 1);
         // 3. pred[ i ][ 1 ] = Round2( leftCol[ i ] + 2 * leftCol[ i + 1 ] + leftCol[ i + 2 ], 2 ) for i = 0..size-3
         for (auto i = 0u; i < block_size - 2u; i++)
-            predicted_sample_at(i, 1) = round_2(left_column[i] + (2 * left_column[i + 1]) + left_column[i + 2], 2);
+            predicted_sample_at(i, 1) = rounded_right_shift(left_column[i] + (2 * left_column[i + 1]) + left_column[i + 2], 2);
         // 4. pred[ size - 2 ][ 1 ] = Round2( leftCol[ size - 2 ] + 3 * leftCol[ size - 1 ], 2 )
-        predicted_sample_at(block_size - 2, 1) = round_2(left_column[block_size - 2] + (3 * left_column[block_size - 1]), 2);
+        predicted_sample_at(block_size - 2, 1) = rounded_right_shift(left_column[block_size - 2] + (3 * left_column[block_size - 1]), 2);
         // 5. pred[ i ][ j ] = pred[ i + 1 ][ j - 2 ] for i = (size-2)..0, for j = 2..size-1
         // NOTE – In the last step i iterates in reverse order.
         for (auto i = block_size - 2u;;) {
@@ -504,7 +503,7 @@ DecoderErrorOr<void> Decoder::predict_intra(u8 plane, BlockContext const& block_
                 // pred[ i ][ j ] is set equal to (i + j + 2 < size * 2) ?
                 if (i + j + 2 < block_size * 2)
                     // Round2( aboveRow[ i + j ] + aboveRow[ i + j + 1 ] * 2 + aboveRow[ i + j + 2 ], 2 ) :
-                    predicted_sample_at(i, j) = round_2(above_row_at(i + j) + above_row_at(i + j + 1) * 2 + above_row_at(i + j + 2), 2);
+                    predicted_sample_at(i, j) = rounded_right_shift(above_row_at(i + j) + above_row_at(i + j + 1) * 2 + above_row_at(i + j + 2), 2);
                 else
                     // aboveRow[ 2 * size - 1 ]
                     predicted_sample_at(i, j) = above_row_at(2 * block_size - 1);
@@ -520,10 +519,10 @@ DecoderErrorOr<void> Decoder::predict_intra(u8 plane, BlockContext const& block_
                 // pred[ i ][ j ] is set equal to (i & 1) ?
                 if (i & 1)
                     // Round2( aboveRow[ i/2 + j ] + aboveRow[ i/2 + j + 1 ] * 2 + aboveRow[ i/2 + j + 2 ], 2 ) :
-                    predicted_sample_at(i, j) = round_2(above_row_at(row_index) + above_row_at(row_index + 1) * 2 + above_row_at(row_index + 2), 2);
+                    predicted_sample_at(i, j) = rounded_right_shift(above_row_at(row_index) + above_row_at(row_index + 1) * 2 + above_row_at(row_index + 2), 2);
                 else
                     // Round2( aboveRow[ i/2 + j ] + aboveRow[ i/2 + j + 1 ], 1 ) for i = 0..size-1, for j = 0..size-1.
-                    predicted_sample_at(i, j) = round_2(above_row_at(row_index) + above_row_at(row_index + 1), 1);
+                    predicted_sample_at(i, j) = rounded_right_shift(above_row_at(row_index) + above_row_at(row_index + 1), 1);
             }
         }
         break;
@@ -531,17 +530,17 @@ DecoderErrorOr<void> Decoder::predict_intra(u8 plane, BlockContext const& block_
         // Otherwise if mode is equal to D117_PRED, the following applies:
         // 1. pred[ 0 ][ j ] = Round2( aboveRow[ j - 1 ] + aboveRow[ j ], 1 ) for j = 0..size-1
         for (auto j = 0; j < block_size; j++)
-            predicted_sample_at(0, j) = round_2(above_row_at(j - 1) + above_row_at(j), 1);
+            predicted_sample_at(0, j) = rounded_right_shift(above_row_at(j - 1) + above_row_at(j), 1);
         // 2. pred[ 1 ][ 0 ] = Round2( leftCol[ 0 ] + 2 * aboveRow[ -1 ] + aboveRow[ 0 ], 2 )
-        predicted_sample_at(1, 0) = round_2(left_column[0] + 2 * above_row_at(-1) + above_row_at(0), 2);
+        predicted_sample_at(1, 0) = rounded_right_shift(left_column[0] + 2 * above_row_at(-1) + above_row_at(0), 2);
         // 3. pred[ 1 ][ j ] = Round2( aboveRow[ j - 2 ] + 2 * aboveRow[ j - 1 ] + aboveRow[ j ], 2 ) for j = 1..size-1
         for (auto j = 1; j < block_size; j++)
-            predicted_sample_at(1, j) = round_2(above_row_at(j - 2) + 2 * above_row_at(j - 1) + above_row_at(j), 2);
+            predicted_sample_at(1, j) = rounded_right_shift(above_row_at(j - 2) + 2 * above_row_at(j - 1) + above_row_at(j), 2);
         // 4. pred[ 2 ][ 0 ] = Round2( aboveRow[ -1 ] + 2 * leftCol[ 0 ] + leftCol[ 1 ], 2 )
-        predicted_sample_at(2, 0) = round_2(above_row_at(-1) + 2 * left_column[0] + left_column[1], 2);
+        predicted_sample_at(2, 0) = rounded_right_shift(above_row_at(-1) + 2 * left_column[0] + left_column[1], 2);
         // 5. pred[ i ][ 0 ] = Round2( leftCol[ i - 3 ] + 2 * leftCol[ i - 2 ] + leftCol[ i - 1 ], 2 ) for i = 3..size-1
         for (auto i = 3u; i < block_size; i++)
-            predicted_sample_at(i, 0) = round_2(left_column[i - 3] + 2 * left_column[i - 2] + left_column[i - 1], 2);
+            predicted_sample_at(i, 0) = rounded_right_shift(left_column[i - 3] + 2 * left_column[i - 2] + left_column[i - 1], 2);
         // 6. pred[ i ][ j ] = pred[ i - 2 ][ j - 1 ] for i = 2..size-1, for j = 1..size-1
         for (auto i = 2u; i < block_size; i++) {
             for (auto j = 1u; j < block_size; j++)
@@ -551,15 +550,15 @@ DecoderErrorOr<void> Decoder::predict_intra(u8 plane, BlockContext const& block_
     case PredictionMode::D135Pred:
         // Otherwise if mode is equal to D135_PRED, the following applies:
         // 1. pred[ 0 ][ 0 ] = Round2( leftCol[ 0 ] + 2 * aboveRow[ -1 ] + aboveRow[ 0 ], 2 )
-        predicted_sample_at(0, 0) = round_2(left_column[0] + 2 * above_row_at(-1) + above_row_at(0), 2);
+        predicted_sample_at(0, 0) = rounded_right_shift(left_column[0] + 2 * above_row_at(-1) + above_row_at(0), 2);
         // 2. pred[ 0 ][ j ] = Round2( aboveRow[ j - 2 ] + 2 * aboveRow[ j - 1 ] + aboveRow[ j ], 2 ) for j = 1..size-1
         for (auto j = 1; j < block_size; j++)
-            predicted_sample_at(0, j) = round_2(above_row_at(j - 2) + 2 * above_row_at(j - 1) + above_row_at(j), 2);
+            predicted_sample_at(0, j) = rounded_right_shift(above_row_at(j - 2) + 2 * above_row_at(j - 1) + above_row_at(j), 2);
         // 3. pred[ 1 ][ 0 ] = Round2( aboveRow [ -1 ] + 2 * leftCol[ 0 ] + leftCol[ 1 ], 2 ) for i = 1..size-1
-        predicted_sample_at(1, 0) = round_2(above_row_at(-1) + 2 * left_column[0] + left_column[1], 2);
+        predicted_sample_at(1, 0) = rounded_right_shift(above_row_at(-1) + 2 * left_column[0] + left_column[1], 2);
         // 4. pred[ i ][ 0 ] = Round2( leftCol[ i - 2 ] + 2 * leftCol[ i - 1 ] + leftCol[ i ], 2 ) for i = 2..size-1
         for (auto i = 2u; i < block_size; i++)
-            predicted_sample_at(i, 0) = round_2(left_column[i - 2] + 2 * left_column[i - 1] + left_column[i], 2);
+            predicted_sample_at(i, 0) = rounded_right_shift(left_column[i - 2] + 2 * left_column[i - 1] + left_column[i], 2);
         // 5. pred[ i ][ j ] = pred[ i - 1 ][ j - 1 ] for i = 1..size-1, for j = 1..size-1
         for (auto i = 1u; i < block_size; i++) {
             for (auto j = 1; j < block_size; j++)
@@ -569,20 +568,20 @@ DecoderErrorOr<void> Decoder::predict_intra(u8 plane, BlockContext const& block_
     case PredictionMode::D153Pred:
         // Otherwise if mode is equal to D153_PRED, the following applies:
         // 1. pred[ 0 ][ 0 ] = Round2( leftCol[ 0 ] + aboveRow[ -1 ], 1 )
-        predicted_sample_at(0, 0) = round_2(left_column[0] + above_row_at(-1), 1);
+        predicted_sample_at(0, 0) = rounded_right_shift(left_column[0] + above_row_at(-1), 1);
         // 2. pred[ i ][ 0 ] = Round2( leftCol[ i - 1] + leftCol[ i ], 1 ) for i = 1..size-1
         for (auto i = 1u; i < block_size; i++)
-            predicted_sample_at(i, 0) = round_2(left_column[i - 1] + left_column[i], 1);
+            predicted_sample_at(i, 0) = rounded_right_shift(left_column[i - 1] + left_column[i], 1);
         // 3. pred[ 0 ][ 1 ] = Round2( leftCol[ 0 ] + 2 * aboveRow[ -1 ] + aboveRow[ 0 ], 2 )
-        predicted_sample_at(0, 1) = round_2(left_column[0] + 2 * above_row_at(-1) + above_row_at(0), 2);
+        predicted_sample_at(0, 1) = rounded_right_shift(left_column[0] + 2 * above_row_at(-1) + above_row_at(0), 2);
         // 4. pred[ 1 ][ 1 ] = Round2( aboveRow[ -1 ] + 2 * leftCol [ 0 ] + leftCol [ 1 ], 2 )
-        predicted_sample_at(1, 1) = round_2(above_row_at(-1) + 2 * left_column[0] + left_column[1], 2);
+        predicted_sample_at(1, 1) = rounded_right_shift(above_row_at(-1) + 2 * left_column[0] + left_column[1], 2);
         // 5. pred[ i ][ 1 ] = Round2( leftCol[ i - 2 ] + 2 * leftCol[ i - 1 ] + leftCol[ i ], 2 ) for i = 2..size-1
         for (auto i = 2u; i < block_size; i++)
-            predicted_sample_at(i, 1) = round_2(left_column[i - 2] + 2 * left_column[i - 1] + left_column[i], 2);
+            predicted_sample_at(i, 1) = rounded_right_shift(left_column[i - 2] + 2 * left_column[i - 1] + left_column[i], 2);
         // 6. pred[ 0 ][ j ] = Round2( aboveRow[ j - 3 ] + 2 * aboveRow[ j - 2 ] + aboveRow[ j - 1 ], 2 ) for j = 2..size-1
         for (auto j = 2; j < block_size; j++)
-            predicted_sample_at(0, j) = round_2(above_row_at(j - 3) + 2 * above_row_at(j - 2) + above_row_at(j - 1), 2);
+            predicted_sample_at(0, j) = rounded_right_shift(above_row_at(j - 3) + 2 * above_row_at(j - 2) + above_row_at(j - 1), 2);
         // 7. pred[ i ][ j ] = pred[ i - 1 ][ j - 2 ] for i = 1..size-1, for j = 2..size-1
         for (auto i = 1u; i < block_size; i++) {
             for (auto j = 2u; j < block_size; j++)
@@ -689,15 +688,15 @@ MotionVector Decoder::select_motion_vector(u8 plane, BlockContext const& block_c
     auto round_mv_comp_q2 = [&](MotionVector in) {
         // return (value < 0 ? value - 1 : value + 1) / 2
         return MotionVector {
-            (in.row() < 0 ? in.row() - 1 : in.row() + 1) >> 1,
-            (in.column() < 0 ? in.column() - 1 : in.column() + 1) >> 1
+            (in.row() < 0 ? in.row() - 1 : in.row() + 1) / 2,
+            (in.column() < 0 ? in.column() - 1 : in.column() + 1) / 2
         };
     };
     auto round_mv_comp_q4 = [&](MotionVector in) {
         // return (value < 0 ? value - 2 : value + 2) / 4
         return MotionVector {
-            (in.row() < 0 ? in.row() - 2 : in.row() + 2) >> 2,
-            (in.column() < 0 ? in.column() - 2 : in.column() + 2) >> 2
+            (in.row() < 0 ? in.row() - 2 : in.row() + 2) / 4,
+            (in.column() < 0 ? in.column() - 2 : in.column() + 2) / 4
         };
     };
 
@@ -762,19 +761,12 @@ MotionVector Decoder::clamp_motion_vector(u8 plane, BlockContext const& block_co
     };
 }
 
-DecoderErrorOr<void> Decoder::predict_inter_block(u8 plane, BlockContext const& block_context, ReferenceIndex reference_index, u32 block_row, u32 block_column, u32 x, u32 y, u32 width, u32 height, u32 block_index, Span<u16> block_buffer)
+static constexpr i32 maximum_scaled_step = 80;
+
+DecoderErrorOr<void> Decoder::prepare_referenced_frame(Gfx::Size<u32> frame_size, u8 reference_frame_index)
 {
-    VERIFY(width <= maximum_block_dimensions && height <= maximum_block_dimensions);
-    // 2. The motion vector selection process in section 8.5.2.1 is invoked with plane, refList, blockIdx as inputs
-    // and the output being the motion vector mv.
-    auto motion_vector = select_motion_vector(plane, block_context, reference_index, block_index);
+    ReferenceFrame& reference_frame = m_parser->m_reference_frames[reference_frame_index];
 
-    // 3. The motion vector clamping process in section 8.5.2.2 is invoked with plane, mv as inputs and the output
-    // being the clamped motion vector clampedMv
-    auto clamped_vector = clamp_motion_vector(plane, block_context, block_row, block_column, motion_vector);
-
-    // 4. The motion vector scaling process in section 8.5.2.3 is invoked with plane, refList, x, y, clampedMv as
-    // inputs and the output being the initial location startX, startY, and the step sizes stepX, stepY.
     // 8.5.2.3 Motion vector scaling process
     // The inputs to this process are:
     // − a variable plane specifying which plane is being predicted,
@@ -788,22 +780,17 @@ DecoderErrorOr<void> Decoder::predict_inter_block(u8 plane, BlockContext const& 
     // vector. The sampling locations are also adjusted to compensate for any difference in the size of the reference
     // frame compared to the current frame.
 
-    // A variable refIdx specifying which reference frame is being used is set equal to
-    // ref_frame_idx[ ref_frame[ refList ] - LAST_FRAME ].
-    auto reference_frame_index = block_context.frame_context.reference_frame_indices[block_context.reference_frame_types[reference_index] - ReferenceFrameType::LastFrame];
-
     // It is a requirement of bitstream conformance that all the following conditions are satisfied:
     // − 2 * FrameWidth >= RefFrameWidth[ refIdx ]
     // − 2 * FrameHeight >= RefFrameHeight[ refIdx ]
     // − FrameWidth <= 16 * RefFrameWidth[ refIdx ]
     // − FrameHeight <= 16 * RefFrameHeight[ refIdx ]
-    auto& reference_frame = m_parser->m_reference_frames[reference_frame_index];
     if (!reference_frame.is_valid())
         return DecoderError::format(DecoderErrorCategory::Corrupted, "Attempted to use reference frame {} that has not been saved", reference_frame_index);
-    auto double_frame_size = block_context.frame_context.size().scaled_by(2);
+    auto double_frame_size = frame_size.scaled_by(2);
     if (double_frame_size.width() < reference_frame.size.width() || double_frame_size.height() < reference_frame.size.height())
         return DecoderError::format(DecoderErrorCategory::Corrupted, "Inter frame size is too small relative to reference frame {}", reference_frame_index);
-    if (!reference_frame.size.scaled_by(16).contains(block_context.frame_context.size()))
+    if (!reference_frame.size.scaled_by(16).contains(frame_size))
         return DecoderError::format(DecoderErrorCategory::Corrupted, "Inter frame size is too large relative to reference frame {}", reference_frame_index);
 
     // FIXME: Convert all the operations in this function to vector operations supported by
@@ -813,8 +800,79 @@ DecoderErrorOr<void> Decoder::predict_inter_block(u8 plane, BlockContext const& 
     // A variable yScale is set equal to (RefFrameHeight[ refIdx ] << REF_SCALE_SHIFT) / FrameHeight.
     // (xScale and yScale specify the size of the reference frame relative to the current frame in units where 16 is
     // equivalent to the reference frame having the same size.)
-    i32 x_scale = (reference_frame.size.width() << REF_SCALE_SHIFT) / block_context.frame_context.size().width();
-    i32 y_scale = (reference_frame.size.height() << REF_SCALE_SHIFT) / block_context.frame_context.size().height();
+    // NOTE: This spec note above seems to be incorrect. The 1:1 scale value would be 16,384.
+    i32 x_scale = (reference_frame.size.width() << REF_SCALE_SHIFT) / frame_size.width();
+    i32 y_scale = (reference_frame.size.height() << REF_SCALE_SHIFT) / frame_size.height();
+
+    // The output variable stepX is set equal to (16 * xScale) >> REF_SCALE_SHIFT.
+    // The output variable stepY is set equal to (16 * yScale) >> REF_SCALE_SHIFT.
+    i32 scaled_step_x = (16 * x_scale) >> REF_SCALE_SHIFT;
+    i32 scaled_step_y = (16 * y_scale) >> REF_SCALE_SHIFT;
+
+    // 5. The block inter prediction process in section 8.5.2.4 is invoked with plane, refList, startX, startY, stepX,
+    // stepY, w, h as inputs and the output is assigned to the 2D array preds[ refList ].
+
+    // 8.5.2.4 Block inter prediction process
+    // The inputs to this process are:
+    // − a variable plane,
+    // − a variable refList specifying that we should predict from ref_frame[ refList ],
+    // − variables x and y giving the block location in units of 1/16 th of a sample,
+    // − variables xStep and yStep giving the step size in units of 1/16 th of a sample. (These will be at most equal
+    // to 80 due to the restrictions on scaling between reference frames.)
+    VERIFY(scaled_step_x <= maximum_scaled_step && scaled_step_y <= maximum_scaled_step);
+    // − variables w and h giving the width and height of the block in units of samples
+    // The output from this process is the 2D array named pred containing inter predicted samples.
+
+    reference_frame.x_scale = x_scale;
+    reference_frame.y_scale = x_scale;
+    reference_frame.scaled_step_x = scaled_step_x;
+    reference_frame.scaled_step_y = scaled_step_y;
+
+    return {};
+}
+
+DecoderErrorOr<void> Decoder::predict_inter_block(u8 plane, BlockContext const& block_context, ReferenceIndex reference_index, u32 block_row, u32 block_column, u32 x, u32 y, u32 width, u32 height, u32 block_index, Span<u16> block_buffer)
+{
+    VERIFY(width <= maximum_block_dimensions && height <= maximum_block_dimensions);
+    // 2. The motion vector selection process in section 8.5.2.1 is invoked with plane, refList, blockIdx as inputs
+    // and the output being the motion vector mv.
+    auto motion_vector = select_motion_vector(plane, block_context, reference_index, block_index);
+
+    // 3. The motion vector clamping process in section 8.5.2.2 is invoked with plane, mv as inputs and the output
+    // being the clamped motion vector clampedMv
+    auto clamped_vector = clamp_motion_vector(plane, block_context, block_row, block_column, motion_vector);
+
+    // 4. The motion vector scaling process in section 8.5.2.3 is invoked with plane, refList, x, y, clampedMv as
+    // inputs and the output being the initial location startX, startY, and the step sizes stepX, stepY.
+
+    // 8.5.2.3 Motion vector scaling process
+    // The inputs to this process are:
+    // − a variable plane specifying which plane is being predicted,
+    // − a variable refList specifying that we should scale to match reference frame ref_frame[ refList ],
+    // − variables x and y specifying the location of the top left sample in the CurrFrame[ plane ] array of the region
+    // to be predicted,
+    // − a variable clampedMv specifying the clamped motion vector.
+    // The outputs of this process are the variables startX and startY giving the reference block location in units of
+    // 1/16 th of a sample, and variables xStep and yStep giving the step size in units of 1/16 th of a sample.
+    // This process is responsible for computing the sampling locations in the reference frame based on the motion
+    // vector. The sampling locations are also adjusted to compensate for any difference in the size of the reference
+    // frame compared to the current frame.
+
+    // NOTE: Some of this is done in advance by Decoder::prepare_referenced_frame().
+
+    // A variable refIdx specifying which reference frame is being used is set equal to
+    // ref_frame_idx[ ref_frame[ refList ] - LAST_FRAME ].
+    auto reference_frame_index = block_context.frame_context.reference_frame_indices[block_context.reference_frame_types[reference_index] - ReferenceFrameType::LastFrame];
+    auto const& reference_frame = m_parser->m_reference_frames[reference_frame_index];
+
+    // Scale values range from 8192 to 262144.
+    // 16384 = 1:1, higher values indicate the reference frame is larger than the current frame.
+    auto x_scale = reference_frame.x_scale;
+    auto y_scale = reference_frame.y_scale;
+
+    // The amount of subpixels between each sample of this block. Non-16 values will cause the output to be scaled.
+    auto scaled_step_x = reference_frame.scaled_step_x;
+    auto scaled_step_y = reference_frame.scaled_step_y;
 
     // The variable baseX is set equal to (x * xScale) >> REF_SCALE_SHIFT.
     // The variable baseY is set equal to (y * yScale) >> REF_SCALE_SHIFT.
@@ -842,92 +900,188 @@ DecoderErrorOr<void> Decoder::predict_inter_block(u8 plane, BlockContext const& 
     i32 scaled_vector_x = ((clamped_vector.column() * x_scale) >> REF_SCALE_SHIFT) + frac_x;
     i32 scaled_vector_y = ((clamped_vector.row() * y_scale) >> REF_SCALE_SHIFT) + frac_y;
 
-    // The output variable stepX is set equal to (16 * xScale) >> REF_SCALE_SHIFT.
-    // The output variable stepY is set equal to (16 * yScale) >> REF_SCALE_SHIFT.
-    i32 scaled_step_x = (16 * x_scale) >> REF_SCALE_SHIFT;
-    i32 scaled_step_y = (16 * y_scale) >> REF_SCALE_SHIFT;
-
     // The output variable startX is set equal to (baseX << SUBPEL_BITS) + dX.
     // The output variable startY is set equal to (baseY << SUBPEL_BITS) + dY.
     i32 offset_scaled_block_x = (base_x << SUBPEL_BITS) + scaled_vector_x;
     i32 offset_scaled_block_y = (base_y << SUBPEL_BITS) + scaled_vector_y;
 
-    // 5. The block inter prediction process in section 8.5.2.4 is invoked with plane, refList, startX, startY, stepX,
-    // stepY, w, h as inputs and the output is assigned to the 2D array preds[ refList ].
-
-    // 8.5.2.4 Block inter prediction process
-    // The inputs to this process are:
-    // − a variable plane,
-    // − a variable refList specifying that we should predict from ref_frame[ refList ],
-    // − variables x and y giving the block location in units of 1/16 th of a sample,
-    // − variables xStep and yStep giving the step size in units of 1/16 th of a sample. (These will be at most equal
-    // to 80 due to the restrictions on scaling between reference frames.)
-    static constexpr i32 MAX_SCALED_STEP = 80;
-    VERIFY(scaled_step_x <= MAX_SCALED_STEP && scaled_step_y <= MAX_SCALED_STEP);
-    // − variables w and h giving the width and height of the block in units of samples
-    // The output from this process is the 2D array named pred containing inter predicted samples.
-
     // A variable ref specifying the reference frame contents is set equal to FrameStore[ refIdx ].
     auto& reference_frame_buffer = reference_frame.frame_planes[plane];
-    auto reference_frame_width = reference_frame.size.width() >> subsampling_x;
-    auto reference_frame_buffer_at = [&](u32 row, u32 column) -> u16& {
-        return reference_frame_buffer[row * reference_frame_width + column];
-    };
-
-    auto block_buffer_at = [&](u32 row, u32 column) -> u16& {
-        return block_buffer[row * width + column];
-    };
+    auto reference_frame_width = y_size_to_uv_size(subsampling_x, reference_frame.size.width()) + MV_BORDER * 2;
 
     // The variable lastX is set equal to ( (RefFrameWidth[ refIdx ] + subX) >> subX) - 1.
     // The variable lastY is set equal to ( (RefFrameHeight[ refIdx ] + subY) >> subY) - 1.
     // (lastX and lastY specify the coordinates of the bottom right sample of the reference plane.)
-    i32 scaled_right = ((reference_frame.size.width() + subsampling_x) >> subsampling_x) - 1;
-    i32 scaled_bottom = ((reference_frame.size.height() + subsampling_y) >> subsampling_y) - 1;
+    // Ad-hoc: These variables are not needed, since the reference frame is expanded to contain the samples that
+    // may be referenced by motion vectors on the edge of the frame.
 
-    // The variable intermediateHeight specifying the height required for the intermediate array is set equal to (((h -
-    // 1) * yStep + 15) >> 4) + 8.
-    static constexpr auto maximum_intermediate_height = (((maximum_block_dimensions - 1) * MAX_SCALED_STEP + 15) >> 4) + 8;
-    auto intermediate_height = (((height - 1) * scaled_step_y + 15) >> 4) + 8;
-    VERIFY(intermediate_height <= maximum_intermediate_height);
     // The sub-sample interpolation is effected via two one-dimensional convolutions. First a horizontal filter is used
     // to build up a temporary array, and then this array is vertically filtered to obtain the final prediction. The
     // fractional parts of the motion vectors determine the filtering process. If the fractional part is zero, then the
     // filtering is equivalent to a straight sample copy.
     // The filtering is applied as follows:
+
+    constexpr auto sample_offset = 3;
+
+    auto subpixel_row_from_reference_row = [offset_scaled_block_y](u32 row) {
+        return (offset_scaled_block_y >> SUBPEL_BITS) + static_cast<i32>(row);
+    };
+    auto reference_index_for_row = [reference_frame_width](i32 row) {
+        return static_cast<size_t>(MV_BORDER + row) * reference_frame_width;
+    };
+
+    // The variable intermediateHeight specifying the height required for the intermediate array is set equal to (((h -
+    // 1) * yStep + 15) >> 4) + 8.
+    static constexpr auto maximum_intermediate_height = (((maximum_block_dimensions - 1) * maximum_scaled_step + 15) >> 4) + 8;
+    auto const intermediate_height = (((height - 1) * scaled_step_y + 15) >> 4) + 8;
+    VERIFY(intermediate_height <= maximum_intermediate_height);
+    // Check our reference frame bounds before starting the loop.
+    auto const last_possible_reference_index = reference_index_for_row(subpixel_row_from_reference_row(intermediate_height - sample_offset));
+    VERIFY(reference_frame_buffer.size() >= last_possible_reference_index);
+
+    VERIFY(block_buffer.size() >= static_cast<size_t>(width) * height);
+
+    auto const reference_block_x = MV_BORDER + (offset_scaled_block_x >> SUBPEL_BITS);
+    auto const reference_block_y = MV_BORDER + (offset_scaled_block_y >> SUBPEL_BITS);
+    auto const reference_subpixel_x = offset_scaled_block_x & SUBPEL_MASK;
+    auto const reference_subpixel_y = offset_scaled_block_y & SUBPEL_MASK;
+
+    // OPTIMIZATION: If the fractional part of a component of the motion vector is 0, we want to do a fast path
+    //               skipping one or both of the convolutions.
+    bool const copy_x = reference_subpixel_x == 0;
+    bool const copy_y = reference_subpixel_y == 0;
+    bool const unscaled_x = scaled_step_x == 16;
+    bool const unscaled_y = scaled_step_y == 16;
+
     // The array intermediate is specified as follows:
     // Note: Height is specified by `intermediate_height`, width is specified by `width`
     Array<u16, maximum_intermediate_height * maximum_block_dimensions> intermediate_buffer;
-    auto intermediate_buffer_at = [&](u32 row, u32 column) -> u16& {
-        return intermediate_buffer[row * width + column];
+    auto const bit_depth = block_context.frame_context.color_config.bit_depth;
+    auto const* reference_start = reference_frame_buffer.data() + reference_block_y * reference_frame_width + reference_block_x;
+
+    // FIXME: We are using 16-bit products to vectorize the filter loops, but when filtering in a high bit-depth video, they will truncate.
+    //        Instead of hardcoding them, we should have the bit depth as a template parameter, and the accumulators can select a size based
+    //        on whether the bit depth > 8.
+    //        Note that we only get a benefit from this on the default CPU target. If we enable AVX2 here, we may want to specialize the
+    //        function for the CPU target and remove the cast to i16 so that it doesn't have to truncate on AVX2, where it can do the full
+    //        unrolled 32-bit product loops in one vector.
+
+    if (unscaled_x && unscaled_y && bit_depth == 8) {
+        if (copy_x && copy_y) {
+            // We can memcpy here to avoid doing any real work.
+            auto const* reference_scan_line = &reference_frame_buffer[reference_block_y * reference_frame_width + reference_block_x];
+            auto* destination_scan_line = block_buffer.data();
+
+            for (auto row = 0u; row < height; row++) {
+                memcpy(destination_scan_line, reference_scan_line, width * sizeof(*destination_scan_line));
+                reference_scan_line += reference_frame_width;
+                destination_scan_line += width;
+            }
+
+            return {};
+        }
+
+        auto horizontal_convolution_unscaled = [](auto bit_depth, auto* destination, auto width, auto height, auto const* source, auto source_stride, auto filter, auto subpixel_x) {
+            source -= sample_offset;
+            auto const source_end_skip = source_stride - width;
+
+            for (auto row = 0u; row < height; row++) {
+                for (auto column = 0u; column < width; column++) {
+                    i32 accumulated_samples = 0;
+                    for (auto t = 0; t < 8; t++) {
+                        auto sample = source[t];
+                        accumulated_samples += static_cast<i16>(subpel_filters[filter][subpixel_x][t] * sample);
+                    }
+
+                    *destination = clip_1(bit_depth, rounded_right_shift(accumulated_samples, 7));
+                    source++;
+                    destination++;
+                }
+                source += source_end_skip;
+            }
+        };
+
+        if (copy_y) {
+            horizontal_convolution_unscaled(bit_depth, block_buffer.data(), width, height, reference_start, reference_frame_width, block_context.interpolation_filter, reference_subpixel_x);
+            return {};
+        }
+
+        auto vertical_convolution_unscaled = [](auto bit_depth, auto* destination, auto width, auto height, auto const* source, auto source_stride, auto filter, auto subpixel_y) {
+            auto const source_end_skip = source_stride - width;
+
+            for (auto row = 0u; row < height; row++) {
+                for (auto column = 0u; column < width; column++) {
+                    auto const* scan_column = source;
+                    i32 accumulated_samples = 0;
+                    for (auto t = 0; t < 8; t++) {
+                        auto sample = *scan_column;
+                        accumulated_samples += static_cast<i16>(subpel_filters[filter][subpixel_y][t] * sample);
+                        scan_column += source_stride;
+                    }
+                    *destination = clip_1(bit_depth, rounded_right_shift(accumulated_samples, 7));
+                    source++;
+                    destination++;
+                }
+                source += source_end_skip;
+            }
+        };
+
+        if (copy_x) {
+            vertical_convolution_unscaled(bit_depth, block_buffer.data(), width, height, reference_start - (sample_offset * reference_frame_width), reference_frame_width, block_context.interpolation_filter, reference_subpixel_y);
+            return {};
+        }
+
+        horizontal_convolution_unscaled(bit_depth, intermediate_buffer.data(), width, intermediate_height, reference_start - (sample_offset * reference_frame_width), reference_frame_width, block_context.interpolation_filter, reference_subpixel_x);
+        vertical_convolution_unscaled(bit_depth, block_buffer.data(), width, height, intermediate_buffer.data(), width, block_context.interpolation_filter, reference_subpixel_y);
+        return {};
+    }
+
+    // NOTE: Accumulators below are 32-bit to allow high bit-depth videos to decode without overflows.
+    //       These should be changed when the accumulators above are.
+
+    auto horizontal_convolution_scaled = [](auto bit_depth, auto* destination, auto width, auto height, auto const* source, auto source_stride, auto filter, auto subpixel_x, auto scale_x) {
+        source -= sample_offset;
+
+        for (auto row = 0u; row < height; row++) {
+            auto scan_subpixel = subpixel_x;
+            for (auto column = 0u; column < width; column++) {
+                auto const* scan_line = source + (scan_subpixel >> 4);
+                i32 accumulated_samples = 0;
+                for (auto t = 0; t < 8; t++) {
+                    auto sample = scan_line[t];
+                    accumulated_samples += subpel_filters[filter][scan_subpixel & SUBPEL_MASK][t] * sample;
+                }
+
+                *destination = clip_1(bit_depth, rounded_right_shift(accumulated_samples, 7));
+                destination++;
+                scan_subpixel += scale_x;
+            }
+            source += source_stride;
+        }
     };
 
-    for (auto row = 0u; row < intermediate_height; row++) {
-        for (auto column = 0u; column < width; column++) {
-            auto samples_start = offset_scaled_block_x + static_cast<i32>(scaled_step_x * column);
+    auto vertical_convolution_scaled = [](auto bit_depth, auto* destination, auto width, auto height, auto const* source, auto source_stride, auto filter, auto subpixel_y, auto scale_y) {
+        for (auto row = 0u; row < height; row++) {
+            auto const* source_column_base = source + (subpixel_y >> SUBPEL_BITS) * source_stride;
 
-            i32 accumulated_samples = 0;
-            for (auto t = 0u; t < 8u; t++) {
-                auto sample = reference_frame_buffer_at(
-                    clip_3(0, scaled_bottom, (offset_scaled_block_y >> 4) + static_cast<i32>(row) - 3),
-                    clip_3(0, scaled_right, (samples_start >> 4) + static_cast<i32>(t) - 3));
-                accumulated_samples += subpel_filters[block_context.interpolation_filter][samples_start & 15][t] * sample;
+            for (auto column = 0u; column < width; column++) {
+                auto const* scan_column = source_column_base + column;
+                i32 accumulated_samples = 0;
+                for (auto t = 0; t < 8; t++) {
+                    auto sample = *scan_column;
+                    accumulated_samples += subpel_filters[filter][subpixel_y & SUBPEL_MASK][t] * sample;
+                    scan_column += source_stride;
+                }
+
+                *destination = clip_1(bit_depth, rounded_right_shift(accumulated_samples, 7));
+                destination++;
             }
-            intermediate_buffer_at(row, column) = clip_1(block_context.frame_context.color_config.bit_depth, round_2(accumulated_samples, 7));
+            subpixel_y += scale_y;
         }
-    }
+    };
 
-    for (auto row = 0u; row < height; row++) {
-        for (auto column = 0u; column < width; column++) {
-            auto samples_start = (offset_scaled_block_y & 15) + static_cast<i32>(scaled_step_y * row);
-
-            i32 accumulated_samples = 0;
-            for (auto t = 0u; t < 8u; t++) {
-                auto sample = intermediate_buffer_at((samples_start >> 4) + t, column);
-                accumulated_samples += subpel_filters[block_context.interpolation_filter][samples_start & 15][t] * sample;
-            }
-            block_buffer_at(row, column) = clip_1(block_context.frame_context.color_config.bit_depth, round_2(accumulated_samples, 7));
-        }
-    }
+    horizontal_convolution_scaled(bit_depth, intermediate_buffer.data(), width, intermediate_height, reference_start - (sample_offset * reference_frame_width), reference_frame_width, block_context.interpolation_filter, offset_scaled_block_x & SUBPEL_MASK, scaled_step_x);
+    vertical_convolution_scaled(bit_depth, block_buffer.data(), width, height, intermediate_buffer.data(), width, block_context.interpolation_filter, reference_subpixel_y, scaled_step_y);
 
     return {};
 }
@@ -959,14 +1113,13 @@ DecoderErrorOr<void> Decoder::predict_inter(u8 plane, BlockContext const& block_
     // The inter predicted samples are then derived as follows:
     auto& frame_buffer = get_output_buffer(plane);
     VERIFY(!frame_buffer.is_empty());
-    auto frame_width = (block_context.frame_context.columns() * 8u) >> (plane > 0 ? block_context.frame_context.color_config.subsampling_x : false);
-    auto frame_height = (block_context.frame_context.rows() * 8u) >> (plane > 0 ? block_context.frame_context.color_config.subsampling_y : false);
+    auto frame_size = block_context.frame_context.decoded_size(plane > 0);
     auto frame_buffer_at = [&](u32 row, u32 column) -> u16& {
-        return frame_buffer[row * frame_width + column];
+        return frame_buffer[row * frame_size.width() + column];
     };
 
-    auto width_in_frame_buffer = min(width, frame_width - x);
-    auto height_in_frame_buffer = min(height, frame_height - y);
+    auto width_in_frame_buffer = min(width, frame_size.width() - x);
+    auto height_in_frame_buffer = min(height, frame_size.height() - y);
 
     // The variable isCompound is set equal to ref_frame[ 1 ] > NONE.
     // − If isCompound is equal to 0, CurrFrame[ plane ][ y + i ][ x + j ] is set equal to preds[ 0 ][ i ][ j ] for i = 0..h-1
@@ -988,7 +1141,7 @@ DecoderErrorOr<void> Decoder::predict_inter(u8 plane, BlockContext const& block_
 
     for (auto i = 0u; i < height_in_frame_buffer; i++) {
         for (auto j = 0u; j < width_in_frame_buffer; j++)
-            frame_buffer_at(y + i, x + j) = round_2(predicted_buffer_at(predicted_span, i, j) + predicted_buffer_at(second_predicted_span, i, j), 1);
+            frame_buffer_at(y + i, x + j) = rounded_right_shift(predicted_buffer_at(predicted_span, i, j) + predicted_buffer_at(second_predicted_span, i, j), 1);
     }
 
     return {};
@@ -1020,17 +1173,17 @@ inline u16 ac_q(u8 bit_depth, u8 b)
     return ac_qlookup[(bit_depth - 8) >> 1][clip_3<u8>(0, 255, b)];
 }
 
-u8 Decoder::get_base_quantizer_index(BlockContext const& block_context)
+u8 Decoder::get_base_quantizer_index(SegmentFeatureStatus alternative_quantizer_feature, bool should_use_absolute_segment_base_quantizer, u8 base_quantizer_index)
 {
     // The function get_qindex( ) returns the quantizer index for the current block and is specified by the following:
     // − If seg_feature_active( SEG_LVL_ALT_Q ) is equal to 1 the following ordered steps apply:
-    if (Parser::seg_feature_active(block_context, SEG_LVL_ALT_Q)) {
+    if (alternative_quantizer_feature.enabled) {
         // 1. Set the variable data equal to FeatureData[ segment_id ][ SEG_LVL_ALT_Q ].
-        auto data = block_context.frame_context.segmentation_features[block_context.segment_id][SEG_LVL_ALT_Q].value;
+        auto data = alternative_quantizer_feature.value;
 
         // 2. If segmentation_abs_or_delta_update is equal to 0, set data equal to base_q_idx + data
-        if (!block_context.frame_context.should_use_absolute_segment_base_quantizer) {
-            data += block_context.frame_context.base_quantizer_index;
+        if (!should_use_absolute_segment_base_quantizer) {
+            data += base_quantizer_index;
         }
 
         // 3. Return Clip3( 0, 255, data ).
@@ -1038,85 +1191,98 @@ u8 Decoder::get_base_quantizer_index(BlockContext const& block_context)
     }
 
     // − Otherwise, return base_q_idx.
-    return block_context.frame_context.base_quantizer_index;
+    return base_quantizer_index;
 }
 
-u16 Decoder::get_dc_quantizer(BlockContext const& block_context, u8 plane)
+u16 Decoder::get_dc_quantizer(u8 bit_depth, u8 base, i8 delta)
 {
-    // FIXME: The result of this function can be cached. This does not change per frame.
+    // NOTE: Delta is selected by the caller based on whether it is for the Y or UV planes.
 
     // The function get_dc_quant( plane ) returns the quantizer value for the dc coefficient for a particular plane and
     // is derived as follows:
     // − If plane is equal to 0, return dc_q( get_qindex( ) + delta_q_y_dc ).
     // − Otherwise, return dc_q( get_qindex( ) + delta_q_uv_dc ).
-    // Instead of if { return }, select the value to add and return.
-    i8 offset = plane == 0 ? block_context.frame_context.y_dc_quantizer_index_delta : block_context.frame_context.uv_dc_quantizer_index_delta;
-    return dc_q(block_context.frame_context.color_config.bit_depth, static_cast<u8>(get_base_quantizer_index(block_context) + offset));
+    return dc_q(bit_depth, static_cast<u8>(base + delta));
 }
 
-u16 Decoder::get_ac_quantizer(BlockContext const& block_context, u8 plane)
+u16 Decoder::get_ac_quantizer(u8 bit_depth, u8 base, i8 delta)
 {
-    // FIXME: The result of this function can be cached. This does not change per frame.
+    // NOTE: Delta is selected by the caller based on whether it is for the Y or UV planes.
 
     // The function get_ac_quant( plane ) returns the quantizer value for the ac coefficient for a particular plane and
     // is derived as follows:
     // − If plane is equal to 0, return ac_q( get_qindex( ) ).
     // − Otherwise, return ac_q( get_qindex( ) + delta_q_uv_ac ).
-    // Instead of if { return }, select the value to add and return.
-    i8 offset = plane == 0 ? 0 : block_context.frame_context.uv_ac_quantizer_index_delta;
-    return ac_q(block_context.frame_context.color_config.bit_depth, static_cast<u8>(get_base_quantizer_index(block_context) + offset));
+    return ac_q(bit_depth, static_cast<u8>(base + delta));
 }
 
 DecoderErrorOr<void> Decoder::reconstruct(u8 plane, BlockContext const& block_context, u32 transform_block_x, u32 transform_block_y, TransformSize transform_block_size, TransformSet transform_set)
 {
     // 8.6.2 Reconstruct process
 
-    // The variable dqDenom is set equal to 2 if txSz is equal to Transform_32X32, otherwise dqDenom is set equal to 1.
-    Intermediate dq_denominator = transform_block_size == Transform_32x32 ? 2 : 1;
     // The variable n (specifying the base 2 logarithm of the width of the transform block) is set equal to 2 + txSz.
     u8 log2_of_block_size = 2u + transform_block_size;
+    switch (log2_of_block_size) {
+    case 2:
+        return reconstruct_templated<2>(plane, block_context, transform_block_x, transform_block_y, transform_set);
+        break;
+    case 3:
+        return reconstruct_templated<3>(plane, block_context, transform_block_x, transform_block_y, transform_set);
+        break;
+    case 4:
+        return reconstruct_templated<4>(plane, block_context, transform_block_x, transform_block_y, transform_set);
+        break;
+    case 5:
+        return reconstruct_templated<5>(plane, block_context, transform_block_x, transform_block_y, transform_set);
+        break;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+}
+
+template<u8 log2_of_block_size>
+DecoderErrorOr<void> Decoder::reconstruct_templated(u8 plane, BlockContext const& block_context, u32 transform_block_x, u32 transform_block_y, TransformSet transform_set)
+{
+    // 8.6.2 Reconstruct process, continued:
+
+    // The variable dqDenom is set equal to 2 if txSz is equal to Transform_32X32, otherwise dqDenom is set equal to 1.
+    constexpr Intermediate dq_denominator = log2_of_block_size == 5 ? 2 : 1;
     // The variable n0 (specifying the width of the transform block) is set equal to 1 << n.
-    auto block_size = 1u << log2_of_block_size;
+    constexpr auto block_size = 1u << log2_of_block_size;
 
     // 1. Dequant[ i ][ j ] is set equal to ( Tokens[ i * n0 + j ] * get_ac_quant( plane ) ) / dqDenom
     //    for i = 0..(n0-1), for j = 0..(n0-1)
-    Array<Intermediate, maximum_transform_size> dequantized;
-    Intermediate ac_quant = get_ac_quantizer(block_context, plane);
-    for (auto i = 0u; i < block_size; i++) {
-        for (auto j = 0u; j < block_size; j++) {
-            auto index = index_from_row_and_column(i, j, block_size);
-            if (index == 0)
-                continue;
-            dequantized[index] = (block_context.residual_tokens[index] * ac_quant) / dq_denominator;
-        }
+    Array<Intermediate, block_size * block_size> dequantized;
+    auto quantizers = block_context.frame_context.segment_quantizers[block_context.segment_id];
+    Intermediate ac_quant = plane == 0 ? quantizers.y_ac_quantizer : quantizers.uv_ac_quantizer;
+    auto const* tokens_raw = block_context.residual_tokens.data();
+    for (u32 i = 0; i < dequantized.size(); i++) {
+        dequantized[i] = (tokens_raw[i] * ac_quant) / dq_denominator;
     }
 
     // 2. Dequant[ 0 ][ 0 ] is set equal to ( Tokens[ 0 ] * get_dc_quant( plane ) ) / dqDenom
-    dequantized[0] = (block_context.residual_tokens[0] * get_dc_quantizer(block_context, plane)) / dq_denominator;
+    dequantized[0] = (block_context.residual_tokens[0] * (plane == 0 ? quantizers.y_dc_quantizer : quantizers.uv_dc_quantizer)) / dq_denominator;
 
     // It is a requirement of bitstream conformance that the values written into the Dequant array in steps 1 and 2
     // are representable by a signed integer with 8 + BitDepth bits.
-    for (auto i = 0u; i < block_size * block_size; i++)
-        VERIFY(check_intermediate_bounds(block_context.frame_context.color_config.bit_depth, dequantized[i]));
+    // Note: Since bounds checks just ensure that we will not have resulting values that will overflow, it's non-fatal
+    // to allow these bounds to be violated. Therefore, we can avoid the performance cost here.
 
     // 3. Invoke the 2D inverse transform block process defined in section 8.7.2 with the variable n as input.
     //    The inverse transform outputs are stored back to the Dequant buffer.
-    TRY(inverse_transform_2d(block_context, dequantized, log2_of_block_size, transform_set));
+    TRY(inverse_transform_2d<log2_of_block_size>(block_context, dequantized, transform_set));
 
     // 4. CurrFrame[ plane ][ y + i ][ x + j ] is set equal to Clip1( CurrFrame[ plane ][ y + i ][ x + j ] + Dequant[ i ][ j ] )
     //    for i = 0..(n0-1) and j = 0..(n0-1).
     auto& current_buffer = get_output_buffer(plane);
-    auto subsampling_x = (plane > 0 ? block_context.frame_context.color_config.subsampling_x : 0);
-    auto subsampling_y = (plane > 0 ? block_context.frame_context.color_config.subsampling_y : 0);
-    auto frame_width = (block_context.frame_context.columns() * 8) >> subsampling_x;
-    auto frame_height = (block_context.frame_context.rows() * 8) >> subsampling_y;
-    auto width_in_frame_buffer = min(block_size, frame_width - transform_block_x);
-    auto height_in_frame_buffer = min(block_size, frame_height - transform_block_y);
+    auto frame_size = block_context.frame_context.decoded_size(plane > 0);
+    auto width_in_frame_buffer = min(block_size, frame_size.width() - transform_block_x);
+    auto height_in_frame_buffer = min(block_size, frame_size.height() - transform_block_y);
 
     for (auto i = 0u; i < height_in_frame_buffer; i++) {
         for (auto j = 0u; j < width_in_frame_buffer; j++) {
-            auto index = index_from_row_and_column(transform_block_y + i, transform_block_x + j, frame_width);
-            auto dequantized_value = dequantized[index_from_row_and_column(i, j, block_size)];
+            auto index = (transform_block_y + i) * frame_size.width() + transform_block_x + j;
+            auto dequantized_value = dequantized[i * block_size + j];
             current_buffer[index] = clip_1(block_context.frame_context.color_config.bit_depth, current_buffer[index] + dequantized_value);
         }
     }
@@ -1126,14 +1292,27 @@ DecoderErrorOr<void> Decoder::reconstruct(u8 plane, BlockContext const& block_co
 
 inline DecoderErrorOr<void> Decoder::inverse_walsh_hadamard_transform(Span<Intermediate> data, u8 log2_of_block_size, u8 shift)
 {
-    (void)data;
-    (void)shift;
     // The input to this process is a variable shift that specifies the amount of pre-scaling.
     // This process does an in-place transform of the array T (of length 4) by the following ordered steps:
     if (1 << log2_of_block_size != 4)
         return DecoderError::corrupted("Block size was not 4"sv);
 
-    return DecoderError::not_implemented();
+    auto a = data[0] >> shift;
+    auto c = data[1] >> shift;
+    auto d = data[2] >> shift;
+    auto b = data[3] >> shift;
+    a += c;
+    d -= b;
+    auto average_of_a_and_d = (a - d) >> 1;
+    b = average_of_a_and_d - b;
+    c = average_of_a_and_d - c;
+    a -= b;
+    d += c;
+    data[0] = a;
+    data[1] = b;
+    data[2] = c;
+    data[3] = d;
+    return {};
 }
 
 inline i32 Decoder::cos64(u8 angle)
@@ -1162,27 +1341,8 @@ inline i32 Decoder::sin64(u8 angle)
     return cos64(angle - 32u);
 }
 
-template<typename T>
-inline i32 Decoder::round_2(T value, u8 bits)
-{
-    value = (value + static_cast<T>(1u << (bits - 1u))) >> bits;
-    return static_cast<i32>(value);
-}
-
-inline bool check_bounds(i64 value, u8 bits)
-{
-    i64 const maximum = (1ll << (bits - 1ll)) - 1ll;
-    return value >= ~maximum && value <= maximum;
-}
-
-inline bool Decoder::check_intermediate_bounds(u8 bit_depth, Intermediate value)
-{
-    i32 maximum = (1 << (8 + bit_depth - 1)) - 1;
-    return value >= ~maximum && value <= maximum;
-}
-
 // (8.7.1.1) The function B( a, b, angle, 0 ) performs a butterfly rotation.
-inline void Decoder::butterfly_rotation_in_place(u8 bit_depth, Span<Intermediate> data, size_t index_a, size_t index_b, u8 angle, bool flip)
+inline void Decoder::butterfly_rotation_in_place(Span<Intermediate> data, size_t index_a, size_t index_b, u8 angle, bool flip)
 {
     auto cos = cos64(angle);
     auto sin = sin64(angle);
@@ -1191,9 +1351,9 @@ inline void Decoder::butterfly_rotation_in_place(u8 bit_depth, Span<Intermediate
     // 2. The variable y is set equal to T[ a ] * sin64( angle ) + T[ b ] * cos64( angle ).
     i64 rotated_b = data[index_a] * sin + data[index_b] * cos;
     // 3. T[ a ] is set equal to Round2( x, 14 ).
-    data[index_a] = round_2(rotated_a, 14);
+    data[index_a] = rounded_right_shift(rotated_a, 14);
     // 4. T[ b ] is set equal to Round2( y, 14 ).
-    data[index_b] = round_2(rotated_b, 14);
+    data[index_b] = rounded_right_shift(rotated_b, 14);
 
     // The function B( a ,b, angle, 1 ) performs a butterfly rotation and flip specified by the following ordered steps:
     // 1. The function B( a, b, angle, 0 ) is invoked.
@@ -1203,12 +1363,12 @@ inline void Decoder::butterfly_rotation_in_place(u8 bit_depth, Span<Intermediate
 
     // It is a requirement of bitstream conformance that the values saved into the array T by this function are
     // representable by a signed integer using 8 + BitDepth bits of precision.
-    VERIFY(check_intermediate_bounds(bit_depth, data[index_a]));
-    VERIFY(check_intermediate_bounds(bit_depth, data[index_b]));
+    // Note: Since bounds checks just ensure that we will not have resulting values that will overflow, it's non-fatal
+    // to allow these bounds to be violated. Therefore, we can avoid the performance cost here.
 }
 
 // (8.7.1.1) The function H( a, b, 0 ) performs a Hadamard rotation.
-inline void Decoder::hadamard_rotation_in_place(u8 bit_depth, Span<Intermediate> data, size_t index_a, size_t index_b, bool flip)
+inline void Decoder::hadamard_rotation_in_place(Span<Intermediate> data, size_t index_a, size_t index_b, bool flip)
 {
     // The function H( a, b, 1 ) performs a Hadamard rotation with flipped indices and is specified as follows:
     // 1. The function H( b, a, 0 ) is invoked.
@@ -1228,13 +1388,16 @@ inline void Decoder::hadamard_rotation_in_place(u8 bit_depth, Span<Intermediate>
 
     // It is a requirement of bitstream conformance that the values saved into the array T by this function are
     // representable by a signed integer using 8 + BitDepth bits of precision.
-    VERIFY(check_intermediate_bounds(bit_depth, data[index_a]));
-    VERIFY(check_intermediate_bounds(bit_depth, data[index_b]));
+    // Note: Since bounds checks just ensure that we will not have resulting values that will overflow, it's non-fatal
+    // to allow these bounds to be violated. Therefore, we can avoid the performance cost here.
 }
 
-inline DecoderErrorOr<void> Decoder::inverse_discrete_cosine_transform_array_permutation(Span<Intermediate> data, u8 log2_of_block_size)
+template<u8 log2_of_block_size>
+inline DecoderErrorOr<void> Decoder::inverse_discrete_cosine_transform_array_permutation(Span<Intermediate> data)
 {
-    u8 block_size = 1 << log2_of_block_size;
+    static_assert(log2_of_block_size >= 2 && log2_of_block_size <= 5, "Block size out of range.");
+
+    constexpr u8 block_size = 1 << log2_of_block_size;
 
     // This process performs an in-place permutation of the array T of length 2^n for 2 ≤ n ≤ 5 which is required before
     // execution of the inverse DCT process.
@@ -1242,63 +1405,66 @@ inline DecoderErrorOr<void> Decoder::inverse_discrete_cosine_transform_array_per
         return DecoderError::corrupted("Block size was out of range"sv);
 
     // 1.1. A temporary array named copyT is set equal to T.
-    Array<Intermediate, maximum_transform_size> data_copy;
+    Array<Intermediate, block_size> data_copy;
     AK::TypedTransfer<Intermediate>::copy(data_copy.data(), data.data(), block_size);
 
     // 1.2. T[ i ] is set equal to copyT[ brev( n, i ) ] for i = 0..((1<<n) - 1).
     for (auto i = 0u; i < block_size; i++)
-        data[i] = data_copy[brev(log2_of_block_size, i)];
+        data[i] = data_copy[brev<log2_of_block_size>(i)];
 
     return {};
 }
 
-inline DecoderErrorOr<void> Decoder::inverse_discrete_cosine_transform(u8 bit_depth, Span<Intermediate> data, u8 log2_of_block_size)
+template<u8 log2_of_block_size>
+ALWAYS_INLINE DecoderErrorOr<void> Decoder::inverse_discrete_cosine_transform(Span<Intermediate> data)
 {
+    static_assert(log2_of_block_size >= 2 && log2_of_block_size <= 5, "Block size out of range.");
+
     // 2.1. The variable n0 is set equal to 1<<n.
-    u8 block_size = 1 << log2_of_block_size;
+    constexpr u8 block_size = 1 << log2_of_block_size;
 
     // 8.7.1.3 Inverse DCT process
 
     // 2.2. The variable n1 is set equal to 1<<(n-1).
-    u8 half_block_size = block_size >> 1;
+    constexpr u8 half_block_size = block_size >> 1;
     // 2.3 The variable n2 is set equal to 1<<(n-2).
-    u8 quarter_block_size = half_block_size >> 1;
+    constexpr u8 quarter_block_size = half_block_size >> 1;
     // 2.4 The variable n3 is set equal to 1<<(n-3).
-    u8 eighth_block_size = quarter_block_size >> 1;
+    constexpr u8 eighth_block_size = quarter_block_size >> 1;
 
     // 2.5 If n is equal to 2, invoke B( 0, 1, 16, 1 ), otherwise recursively invoke the inverse DCT defined in this
     // section with the variable n set equal to n - 1.
-    if (log2_of_block_size == 2)
-        butterfly_rotation_in_place(bit_depth, data, 0, 1, 16, true);
+    if constexpr (log2_of_block_size == 2)
+        butterfly_rotation_in_place(data, 0, 1, 16, true);
     else
-        TRY(inverse_discrete_cosine_transform(bit_depth, data, log2_of_block_size - 1));
+        TRY(inverse_discrete_cosine_transform<log2_of_block_size - 1>(data));
 
     // 2.6 Invoke B( n1+i, n0-1-i, 32-brev( 5, n1+i), 0 ) for i = 0..(n2-1).
     for (auto i = 0u; i < quarter_block_size; i++) {
         auto index = half_block_size + i;
-        butterfly_rotation_in_place(bit_depth, data, index, block_size - 1 - i, 32 - brev(5, index), false);
+        butterfly_rotation_in_place(data, index, block_size - 1 - i, 32 - brev<5>(index), false);
     }
 
     // 2.7 If n is greater than or equal to 3:
-    if (log2_of_block_size >= 3) {
+    if constexpr (log2_of_block_size >= 3) {
         // a. Invoke H( n1+4*i+2*j, n1+1+4*i+2*j, j ) for i = 0..(n3-1), j = 0..1.
         for (auto i = 0u; i < eighth_block_size; i++) {
             for (auto j = 0u; j < 2; j++) {
                 auto index = half_block_size + (4 * i) + (2 * j);
-                hadamard_rotation_in_place(bit_depth, data, index, index + 1, j);
+                hadamard_rotation_in_place(data, index, index + 1, j);
             }
         }
     }
 
     // 4. If n is equal to 5:
-    if (log2_of_block_size == 5) {
+    if constexpr (log2_of_block_size == 5) {
         // a. Invoke B( n0-n+3-n2*j-4*i, n1+n-4+n2*j+4*i, 28-16*i+56*j, 1 ) for i = 0..1, j = 0..1.
         for (auto i = 0u; i < 2; i++) {
             for (auto j = 0u; j < 2; j++) {
                 auto index_a = block_size - log2_of_block_size + 3 - (quarter_block_size * j) - (4 * i);
                 auto index_b = half_block_size + log2_of_block_size - 4 + (quarter_block_size * j) + (4 * i);
                 auto angle = 28 - (16 * i) + (56 * j);
-                butterfly_rotation_in_place(bit_depth, data, index_a, index_b, angle, true);
+                butterfly_rotation_in_place(data, index_a, index_b, angle, true);
             }
         }
 
@@ -1307,19 +1473,19 @@ inline DecoderErrorOr<void> Decoder::inverse_discrete_cosine_transform(u8 bit_de
             for (auto j = 0u; j < 4; j++) {
                 auto index_a = half_block_size + (eighth_block_size * j) + i;
                 auto index_b = half_block_size + quarter_block_size - 5 + (eighth_block_size * j) - i;
-                hadamard_rotation_in_place(bit_depth, data, index_a, index_b, (j & 1) != 0);
+                hadamard_rotation_in_place(data, index_a, index_b, (j & 1) != 0);
             }
         }
     }
 
     // 5. If n is greater than or equal to 4:
-    if (log2_of_block_size >= 4) {
+    if constexpr (log2_of_block_size >= 4) {
         // a. Invoke B( n0-n+2-i-n2*j, n1+n-3+i+n2*j, 24+48*j, 1 ) for i = 0..(n==5), j = 0..1.
         for (auto i = 0u; i <= (log2_of_block_size == 5); i++) {
             for (auto j = 0u; j < 2; j++) {
                 auto index_a = block_size - log2_of_block_size + 2 - i - (quarter_block_size * j);
                 auto index_b = half_block_size + log2_of_block_size - 3 + i + (quarter_block_size * j);
-                butterfly_rotation_in_place(bit_depth, data, index_a, index_b, 24 + (48 * j), true);
+                butterfly_rotation_in_place(data, index_a, index_b, 24 + (48 * j), true);
             }
         }
 
@@ -1328,37 +1494,38 @@ inline DecoderErrorOr<void> Decoder::inverse_discrete_cosine_transform(u8 bit_de
             for (auto j = 0u; j < 2; j++) {
                 auto index_a = half_block_size + (quarter_block_size * j) + i;
                 auto index_b = half_block_size + quarter_block_size - 1 + (quarter_block_size * j) - i;
-                hadamard_rotation_in_place(bit_depth, data, index_a, index_b, (j & 1) != 0);
+                hadamard_rotation_in_place(data, index_a, index_b, (j & 1) != 0);
             }
         }
     }
 
     // 6. If n is greater than or equal to 3:
-    if (log2_of_block_size >= 3) {
+    if constexpr (log2_of_block_size >= 3) {
         // a. Invoke B( n0-n3-1-i, n1+n3+i, 16, 1 ) for i = 0..(n3-1).
         for (auto i = 0u; i < eighth_block_size; i++) {
             auto index_a = block_size - eighth_block_size - 1 - i;
             auto index_b = half_block_size + eighth_block_size + i;
-            butterfly_rotation_in_place(bit_depth, data, index_a, index_b, 16, true);
+            butterfly_rotation_in_place(data, index_a, index_b, 16, true);
         }
     }
 
     // 7. Invoke H( i, n0-1-i, 0 ) for i = 0..(n1-1).
     for (auto i = 0u; i < half_block_size; i++)
-        hadamard_rotation_in_place(bit_depth, data, i, block_size - 1 - i, false);
+        hadamard_rotation_in_place(data, i, block_size - 1 - i, false);
 
     return {};
 }
 
-inline void Decoder::inverse_asymmetric_discrete_sine_transform_input_array_permutation(Span<Intermediate> data, u8 log2_of_block_size)
+template<u8 log2_of_block_size>
+inline void Decoder::inverse_asymmetric_discrete_sine_transform_input_array_permutation(Span<Intermediate> data)
 {
     // The variable n0 is set equal to 1<<n.
-    auto block_size = 1u << log2_of_block_size;
+    constexpr auto block_size = 1u << log2_of_block_size;
     // The variable n1 is set equal to 1<<(n-1).
     // We can iterate by 2 at a time instead of taking half block size.
 
     // A temporary array named copyT is set equal to T.
-    Array<Intermediate, maximum_transform_size> data_copy;
+    Array<Intermediate, block_size> data_copy;
     AK::TypedTransfer<Intermediate>::copy(data_copy.data(), data.data(), block_size);
 
     // The values at even locations T[ 2 * i ] are set equal to copyT[ n0 - 1 - 2 * i ] for i = 0..(n1-1).
@@ -1369,7 +1536,8 @@ inline void Decoder::inverse_asymmetric_discrete_sine_transform_input_array_perm
     }
 }
 
-inline void Decoder::inverse_asymmetric_discrete_sine_transform_output_array_permutation(Span<Intermediate> data, u8 log2_of_block_size)
+template<u8 log2_of_block_size>
+inline void Decoder::inverse_asymmetric_discrete_sine_transform_output_array_permutation(Span<Intermediate> data)
 {
     auto block_size = 1u << log2_of_block_size;
 
@@ -1399,7 +1567,7 @@ inline void Decoder::inverse_asymmetric_discrete_sine_transform_output_array_per
     }
 }
 
-inline void Decoder::inverse_asymmetric_discrete_sine_transform_4(u8 bit_depth, Span<Intermediate> data)
+inline void Decoder::inverse_asymmetric_discrete_sine_transform_4(Span<Intermediate> data)
 {
     VERIFY(data.size() == 4);
     const i64 sinpi_1_9 = 5283;
@@ -1445,22 +1613,19 @@ inline void Decoder::inverse_asymmetric_discrete_sine_transform_4(u8 bit_depth, 
     s3 = x0 + x1 - x3;
 
     // T[ 0 ] = Round2( s0, 14 )
-    data[0] = round_2(s0, 14);
+    data[0] = rounded_right_shift(s0, 14);
     // T[ 1 ] = Round2( s1, 14 )
-    data[1] = round_2(s1, 14);
+    data[1] = rounded_right_shift(s1, 14);
     // T[ 2 ] = Round2( s2, 14 )
-    data[2] = round_2(s2, 14);
+    data[2] = rounded_right_shift(s2, 14);
     // T[ 3 ] = Round2( s3, 14 )
-    data[3] = round_2(s3, 14);
+    data[3] = rounded_right_shift(s3, 14);
 
     // (8.7.1.1) The inverse asymmetric discrete sine transforms also make use of an intermediate array named S.
     // The values in this array require higher precision to avoid overflow. Using signed integers with 24 +
     // BitDepth bits of precision is enough to avoid overflow.
-    const u8 bits = 24 + bit_depth;
-    VERIFY(check_bounds(data[0], bits));
-    VERIFY(check_bounds(data[1], bits));
-    VERIFY(check_bounds(data[2], bits));
-    VERIFY(check_bounds(data[3], bits));
+    // Note: Since bounds checks just ensure that we will not have resulting values that will overflow, it's non-fatal
+    // to allow these bounds to be violated. Therefore, we can avoid the performance cost here.
 }
 
 // The function SB( a, b, angle, 0 ) performs a butterfly rotation.
@@ -1495,33 +1660,31 @@ inline void Decoder::hadamard_rotation(Span<S> source, Span<D> destination, size
     S a = source[index_a];
     S b = source[index_b];
     // 1. T[ a ] is set equal to Round2( S[ a ] + S[ b ], 14 ).
-    destination[index_a] = round_2(a + b, 14);
+    destination[index_a] = rounded_right_shift(a + b, 14);
     // 2. T[ b ] is set equal to Round2( S[ a ] - S[ b ], 14 ).
-    destination[index_b] = round_2(a - b, 14);
+    destination[index_b] = rounded_right_shift(a - b, 14);
 }
 
-inline DecoderErrorOr<void> Decoder::inverse_asymmetric_discrete_sine_transform_8(u8 bit_depth, Span<Intermediate> data)
+inline DecoderErrorOr<void> Decoder::inverse_asymmetric_discrete_sine_transform_8(Span<Intermediate> data)
 {
     VERIFY(data.size() == 8);
     // This process does an in-place transform of the array T using:
 
     // A higher precision array S for intermediate results.
+    // (8.7.1.1) NOTE - The values in array S require higher precision to avoid overflow. Using signed integers with
+    // 24 + BitDepth bits of precision is enough to avoid overflow.
     Array<i64, 8> high_precision_temp;
 
     // The following ordered steps apply:
 
     // 1. Invoke the ADST input array permutation process specified in section 8.7.1.4 with the input variable n set
     //    equal to 3.
-    inverse_asymmetric_discrete_sine_transform_input_array_permutation(data, 3);
+    inverse_asymmetric_discrete_sine_transform_input_array_permutation<3>(data);
 
     // 2. Invoke SB( 2*i, 1+2*i, 30-8*i, 1 ) for i = 0..3.
     for (auto i = 0u; i < 4; i++)
         butterfly_rotation(data, high_precision_temp.span(), 2 * i, 1 + (2 * i), 30 - (8 * i), true);
-    // (8.7.1.1) NOTE - The values in array S require higher precision to avoid overflow. Using signed integers with
-    // 24 + BitDepth bits of precision is enough to avoid overflow.
-    const u8 bits = 24 + bit_depth;
-    for (auto i = 0u; i < 8; i++)
-        VERIFY(check_bounds(high_precision_temp[i], bits));
+
     // 3. Invoke SH( i, 4+i ) for i = 0..3.
     for (auto i = 0u; i < 4; i++)
         hadamard_rotation(high_precision_temp.span(), data, i, 4 + i);
@@ -1529,24 +1692,21 @@ inline DecoderErrorOr<void> Decoder::inverse_asymmetric_discrete_sine_transform_
     // 4. Invoke SB( 4+3*i, 5+i, 24-16*i, 1 ) for i = 0..1.
     for (auto i = 0u; i < 2; i++)
         butterfly_rotation(data, high_precision_temp.span(), 4 + (3 * i), 5 + i, 24 - (16 * i), true);
-    // Check again that we haven't exceeded the integer bounds.
-    for (auto i = 0u; i < 8; i++)
-        VERIFY(check_bounds(high_precision_temp[i], bits));
     // 5. Invoke SH( 4+i, 6+i ) for i = 0..1.
     for (auto i = 0u; i < 2; i++)
         hadamard_rotation(high_precision_temp.span(), data, 4 + i, 6 + i);
 
     // 6. Invoke H( i, 2+i, 0 ) for i = 0..1.
     for (auto i = 0u; i < 2; i++)
-        hadamard_rotation_in_place(bit_depth, data, i, 2 + i, false);
+        hadamard_rotation_in_place(data, i, 2 + i, false);
 
     // 7. Invoke B( 2+4*i, 3+4*i, 16, 1 ) for i = 0..1.
     for (auto i = 0u; i < 2; i++)
-        butterfly_rotation_in_place(bit_depth, data, 2 + (4 * i), 3 + (4 * i), 16, true);
+        butterfly_rotation_in_place(data, 2 + (4 * i), 3 + (4 * i), 16, true);
 
     // 8. Invoke the ADST output array permutation process specified in section 8.7.1.5 with the input variable n
     //    set equal to 3.
-    inverse_asymmetric_discrete_sine_transform_output_array_permutation(data, 3);
+    inverse_asymmetric_discrete_sine_transform_output_array_permutation<3>(data);
 
     // 9. Set T[ 1+2*i ] equal to -T[ 1+2*i ] for i = 0..3.
     for (auto i = 0u; i < 4; i++) {
@@ -1556,29 +1716,26 @@ inline DecoderErrorOr<void> Decoder::inverse_asymmetric_discrete_sine_transform_
     return {};
 }
 
-inline DecoderErrorOr<void> Decoder::inverse_asymmetric_discrete_sine_transform_16(u8 bit_depth, Span<Intermediate> data)
+inline DecoderErrorOr<void> Decoder::inverse_asymmetric_discrete_sine_transform_16(Span<Intermediate> data)
 {
     VERIFY(data.size() == 16);
     // This process does an in-place transform of the array T using:
 
     // A higher precision array S for intermediate results.
+    // (8.7.1.1) The inverse asymmetric discrete sine transforms also make use of an intermediate array named S.
+    // The values in this array require higher precision to avoid overflow. Using signed integers with 24 +
+    // BitDepth bits of precision is enough to avoid overflow.
     Array<i64, 16> high_precision_temp;
 
     // The following ordered steps apply:
 
     // 1. Invoke the ADST input array permutation process specified in section 8.7.1.4 with the input variable n set
     // equal to 4.
-    inverse_asymmetric_discrete_sine_transform_input_array_permutation(data, 4);
+    inverse_asymmetric_discrete_sine_transform_input_array_permutation<4>(data);
 
     // 2. Invoke SB( 2*i, 1+2*i, 31-4*i, 1 ) for i = 0..7.
     for (auto i = 0u; i < 8; i++)
         butterfly_rotation(data, high_precision_temp.span(), 2 * i, 1 + (2 * i), 31 - (4 * i), true);
-    // (8.7.1.1) The inverse asymmetric discrete sine transforms also make use of an intermediate array named S.
-    // The values in this array require higher precision to avoid overflow. Using signed integers with 24 +
-    // BitDepth bits of precision is enough to avoid overflow.
-    const u8 bits = 24 + bit_depth;
-    for (auto i = 0u; i < 16; i++)
-        VERIFY(check_bounds(data[i], bits));
     // 3. Invoke SH( i, 8+i ) for i = 0..7.
     for (auto i = 0u; i < 8; i++)
         hadamard_rotation(high_precision_temp.span(), data, i, 8 + i);
@@ -1586,24 +1743,18 @@ inline DecoderErrorOr<void> Decoder::inverse_asymmetric_discrete_sine_transform_
     // 4. Invoke SB( 8+2*i, 9+2*i, 28-16*i, 1 ) for i = 0..3.
     for (auto i = 0u; i < 4; i++)
         butterfly_rotation(data, high_precision_temp.span(), 8 + (2 * i), 9 + (2 * i), 128 + 28 - (16 * i), true);
-    // Check again that we haven't exceeded the integer bounds.
-    for (auto i = 0u; i < 16; i++)
-        VERIFY(check_bounds(data[i], bits));
     // 5. Invoke SH( 8+i, 12+i ) for i = 0..3.
     for (auto i = 0u; i < 4; i++)
         hadamard_rotation(high_precision_temp.span(), data, 8 + i, 12 + i);
 
     // 6. Invoke H( i, 4+i, 0 ) for i = 0..3.
     for (auto i = 0u; i < 4; i++)
-        hadamard_rotation_in_place(bit_depth, data, i, 4 + i, false);
+        hadamard_rotation_in_place(data, i, 4 + i, false);
 
     // 7. Invoke SB( 4+8*i+3*j, 5+8*i+j, 24-16*j, 1 ) for i = 0..1, for j = 0..1.
     for (auto i = 0u; i < 2; i++)
         for (auto j = 0u; j < 2; j++)
             butterfly_rotation(data, high_precision_temp.span(), 4 + (8 * i) + (3 * j), 5 + (8 * i) + j, 24 - (16 * j), true);
-    // Check again that we haven't exceeded the integer bounds.
-    for (auto i = 0u; i < 16; i++)
-        VERIFY(check_bounds(data[i], bits));
     // 8. Invoke SH( 4+8*j+i, 6+8*j+i ) for i = 0..1, j = 0..1.
     for (auto i = 0u; i < 2; i++)
         for (auto j = 0u; j < 2; j++)
@@ -1612,15 +1763,15 @@ inline DecoderErrorOr<void> Decoder::inverse_asymmetric_discrete_sine_transform_
     // 9. Invoke H( 8*j+i, 2+8*j+i, 0 ) for i = 0..1, for j = 0..1.
     for (auto i = 0u; i < 2; i++)
         for (auto j = 0u; j < 2; j++)
-            hadamard_rotation_in_place(bit_depth, data, (8 * j) + i, 2 + (8 * j) + i, false);
+            hadamard_rotation_in_place(data, (8 * j) + i, 2 + (8 * j) + i, false);
     // 10. Invoke B( 2+4*j+8*i, 3+4*j+8*i, 48+64*(i^j), 0 ) for i = 0..1, for j = 0..1.
     for (auto i = 0u; i < 2; i++)
         for (auto j = 0u; j < 2; j++)
-            butterfly_rotation_in_place(bit_depth, data, 2 + (4 * j) + (8 * i), 3 + (4 * j) + (8 * i), 48 + (64 * (i ^ j)), false);
+            butterfly_rotation_in_place(data, 2 + (4 * j) + (8 * i), 3 + (4 * j) + (8 * i), 48 + (64 * (i ^ j)), false);
 
     // 11. Invoke the ADST output array permutation process specified in section 8.7.1.5 with the input variable n
     // set equal to 4.
-    inverse_asymmetric_discrete_sine_transform_output_array_permutation(data, 4);
+    inverse_asymmetric_discrete_sine_transform_output_array_permutation<4>(data);
 
     // 12. Set T[ 1+12*j+2*i ] equal to -T[ 1+12*j+2*i ] for i = 0..1, for j = 0..1.
     for (auto i = 0u; i < 2; i++) {
@@ -1632,117 +1783,121 @@ inline DecoderErrorOr<void> Decoder::inverse_asymmetric_discrete_sine_transform_
     return {};
 }
 
-inline DecoderErrorOr<void> Decoder::inverse_asymmetric_discrete_sine_transform(u8 bit_depth, Span<Intermediate> data, u8 log2_of_block_size)
+template<u8 log2_of_block_size>
+inline DecoderErrorOr<void> Decoder::inverse_asymmetric_discrete_sine_transform(Span<Intermediate> data)
 {
     // 8.7.1.9 Inverse ADST Process
 
     // This process performs an in-place inverse ADST process on the array T of size 2^n for 2 ≤ n ≤ 4.
-    if (log2_of_block_size < 2 || log2_of_block_size > 4)
+    if constexpr (log2_of_block_size < 2 || log2_of_block_size > 4)
         return DecoderError::corrupted("Block size was out of range"sv);
 
     // The process to invoke depends on n as follows:
-    if (log2_of_block_size == 2) {
+    if constexpr (log2_of_block_size == 2) {
         // − If n is equal to 2, invoke the Inverse ADST4 process specified in section 8.7.1.6.
-        inverse_asymmetric_discrete_sine_transform_4(bit_depth, data);
+        inverse_asymmetric_discrete_sine_transform_4(data);
         return {};
     }
-    if (log2_of_block_size == 3) {
+    if constexpr (log2_of_block_size == 3) {
         // − Otherwise if n is equal to 3, invoke the Inverse ADST8 process specified in section 8.7.1.7.
-        return inverse_asymmetric_discrete_sine_transform_8(bit_depth, data);
+        return inverse_asymmetric_discrete_sine_transform_8(data);
     }
     // − Otherwise (n is equal to 4), invoke the Inverse ADST16 process specified in section 8.7.1.8.
-    return inverse_asymmetric_discrete_sine_transform_16(bit_depth, data);
+    return inverse_asymmetric_discrete_sine_transform_16(data);
 }
 
-DecoderErrorOr<void> Decoder::inverse_transform_2d(BlockContext const& block_context, Span<Intermediate> dequantized, u8 log2_of_block_size, TransformSet transform_set)
+template<u8 log2_of_block_size>
+ALWAYS_INLINE DecoderErrorOr<void> Decoder::inverse_transform_2d(BlockContext const& block_context, Span<Intermediate> dequantized, TransformSet transform_set)
 {
+    static_assert(log2_of_block_size >= 2 && log2_of_block_size <= 5);
+
     // This process performs a 2D inverse transform for an array of size 2^n by 2^n stored in the 2D array Dequant.
     // The input to this process is a variable n (log2_of_block_size) that specifies the base 2 logarithm of the width of the transform.
 
     // 1. Set the variable n0 (block_size) equal to 1 << n.
-    auto block_size = 1u << log2_of_block_size;
+    constexpr auto block_size = 1u << log2_of_block_size;
 
-    Array<Intermediate, maximum_transform_size> row_array;
+    Array<Intermediate, block_size * block_size> row_array;
     Span<Intermediate> row = row_array.span().trim(block_size);
 
     // 2. The row transforms with i = 0..(n0-1) are applied as follows:
     for (auto i = 0u; i < block_size; i++) {
         // 1. Set T[ j ] equal to Dequant[ i ][ j ] for j = 0..(n0-1).
         for (auto j = 0u; j < block_size; j++)
-            row[j] = dequantized[index_from_row_and_column(i, j, block_size)];
+            row[j] = dequantized[i * block_size + j];
 
         // 2. If Lossless is equal to 1, invoke the Inverse WHT process as specified in section 8.7.1.10 with shift equal
         //    to 2.
-        if (block_context.frame_context.is_lossless()) {
+        if (block_context.frame_context.lossless) {
             TRY(inverse_walsh_hadamard_transform(row, log2_of_block_size, 2));
-            continue;
-        }
-        switch (transform_set.second_transform) {
-        case TransformType::DCT:
-            // Otherwise, if TxType is equal to DCT_DCT or TxType is equal to ADST_DCT, apply an inverse DCT as
-            // follows:
-            // 1. Invoke the inverse DCT permutation process as specified in section 8.7.1.2 with the input variable n.
-            TRY(inverse_discrete_cosine_transform_array_permutation(row, log2_of_block_size));
-            // 2. Invoke the inverse DCT process as specified in section 8.7.1.3 with the input variable n.
-            TRY(inverse_discrete_cosine_transform(block_context.frame_context.color_config.bit_depth, row, log2_of_block_size));
-            break;
-        case TransformType::ADST:
-            // 4. Otherwise (TxType is equal to DCT_ADST or TxType is equal to ADST_ADST), invoke the inverse ADST
-            //    process as specified in section 8.7.1.9 with input variable n.
-            TRY(inverse_asymmetric_discrete_sine_transform(block_context.frame_context.color_config.bit_depth, row, log2_of_block_size));
-            break;
-        default:
-            return DecoderError::corrupted("Unknown tx_type"sv);
+        } else {
+            switch (transform_set.second_transform) {
+            case TransformType::DCT:
+                // Otherwise, if TxType is equal to DCT_DCT or TxType is equal to ADST_DCT, apply an inverse DCT as
+                // follows:
+                // 1. Invoke the inverse DCT permutation process as specified in section 8.7.1.2 with the input variable n.
+                TRY(inverse_discrete_cosine_transform_array_permutation<log2_of_block_size>(row));
+                // 2. Invoke the inverse DCT process as specified in section 8.7.1.3 with the input variable n.
+                TRY(inverse_discrete_cosine_transform<log2_of_block_size>(row));
+                break;
+            case TransformType::ADST:
+                // 4. Otherwise (TxType is equal to DCT_ADST or TxType is equal to ADST_ADST), invoke the inverse ADST
+                //    process as specified in section 8.7.1.9 with input variable n.
+                TRY(inverse_asymmetric_discrete_sine_transform<log2_of_block_size>(row));
+                break;
+            default:
+                return DecoderError::corrupted("Unknown tx_type"sv);
+            }
         }
 
         // 5. Set Dequant[ i ][ j ] equal to T[ j ] for j = 0..(n0-1).
         for (auto j = 0u; j < block_size; j++)
-            dequantized[index_from_row_and_column(i, j, block_size)] = row[j];
+            dequantized[i * block_size + j] = row[j];
     }
 
-    Array<Intermediate, maximum_transform_size> column_array;
+    Array<Intermediate, block_size * block_size> column_array;
     auto column = column_array.span().trim(block_size);
 
     // 3. The column transforms with j = 0..(n0-1) are applied as follows:
     for (auto j = 0u; j < block_size; j++) {
         // 1. Set T[ i ] equal to Dequant[ i ][ j ] for i = 0..(n0-1).
         for (auto i = 0u; i < block_size; i++)
-            column[i] = dequantized[index_from_row_and_column(i, j, block_size)];
+            column[i] = dequantized[i * block_size + j];
 
         // 2. If Lossless is equal to 1, invoke the Inverse WHT process as specified in section 8.7.1.10 with shift equal
         //    to 0.
-        if (block_context.frame_context.is_lossless()) {
-            TRY(inverse_walsh_hadamard_transform(column, log2_of_block_size, 2));
-            continue;
-        }
-        switch (transform_set.first_transform) {
-        case TransformType::DCT:
-            // Otherwise, if TxType is equal to DCT_DCT or TxType is equal to DCT_ADST, apply an inverse DCT as
-            // follows:
-            // 1. Invoke the inverse DCT permutation process as specified in section 8.7.1.2 with the input variable n.
-            TRY(inverse_discrete_cosine_transform_array_permutation(column, log2_of_block_size));
-            // 2. Invoke the inverse DCT process as specified in section 8.7.1.3 with the input variable n.
-            TRY(inverse_discrete_cosine_transform(block_context.frame_context.color_config.bit_depth, column, log2_of_block_size));
-            break;
-        case TransformType::ADST:
-            // 4. Otherwise (TxType is equal to ADST_DCT or TxType is equal to ADST_ADST), invoke the inverse ADST
-            //    process as specified in section 8.7.1.9 with input variable n.
-            TRY(inverse_asymmetric_discrete_sine_transform(block_context.frame_context.color_config.bit_depth, column, log2_of_block_size));
-            break;
-        default:
-            VERIFY_NOT_REACHED();
+        if (block_context.frame_context.lossless) {
+            TRY(inverse_walsh_hadamard_transform(column, log2_of_block_size, 0));
+        } else {
+            switch (transform_set.first_transform) {
+            case TransformType::DCT:
+                // Otherwise, if TxType is equal to DCT_DCT or TxType is equal to DCT_ADST, apply an inverse DCT as
+                // follows:
+                // 1. Invoke the inverse DCT permutation process as specified in section 8.7.1.2 with the input variable n.
+                TRY(inverse_discrete_cosine_transform_array_permutation<log2_of_block_size>(column));
+                // 2. Invoke the inverse DCT process as specified in section 8.7.1.3 with the input variable n.
+                TRY(inverse_discrete_cosine_transform<log2_of_block_size>(column));
+                break;
+            case TransformType::ADST:
+                // 4. Otherwise (TxType is equal to ADST_DCT or TxType is equal to ADST_ADST), invoke the inverse ADST
+                //    process as specified in section 8.7.1.9 with input variable n.
+                TRY(inverse_asymmetric_discrete_sine_transform<log2_of_block_size>(column));
+                break;
+            default:
+                VERIFY_NOT_REACHED();
+            }
         }
 
         // 5. If Lossless is equal to 1, set Dequant[ i ][ j ] equal to T[ i ] for i = 0..(n0-1).
         for (auto i = 0u; i < block_size; i++)
-            dequantized[index_from_row_and_column(i, j, block_size)] = column[i];
+            dequantized[i * block_size + j] = column[i];
 
         // 6. Otherwise (Lossless is equal to 0), set Dequant[ i ][ j ] equal to Round2( T[ i ], Min( 6, n + 2 ) )
         //    for i = 0..(n0-1).
-        if (!block_context.frame_context.is_lossless()) {
+        if (!block_context.frame_context.lossless) {
             for (auto i = 0u; i < block_size; i++) {
-                auto index = index_from_row_and_column(i, j, block_size);
-                dequantized[index] = round_2(dequantized[index], min(6, log2_of_block_size + 2));
+                auto index = i * block_size + j;
+                dequantized[index] = rounded_right_shift(dequantized[index], min(6, log2_of_block_size + 2));
             }
         }
     }
@@ -1784,22 +1939,42 @@ DecoderErrorOr<void> Decoder::update_reference_frames(FrameContext const& frame_
             for (auto plane = 0u; plane < 3; plane++) {
                 auto width = frame_context.size().width();
                 auto height = frame_context.size().height();
-                auto stride = frame_context.columns() * 8;
-
+                auto stride = frame_context.decoded_size(plane > 0).width();
                 if (plane > 0) {
-                    width = (width + frame_context.color_config.subsampling_x) >> frame_context.color_config.subsampling_x;
-                    height = (height + frame_context.color_config.subsampling_y) >> frame_context.color_config.subsampling_y;
-                    stride >>= frame_context.color_config.subsampling_x;
+                    width = y_size_to_uv_size(frame_context.color_config.subsampling_x, width);
+                    height = y_size_to_uv_size(frame_context.color_config.subsampling_y, height);
                 }
 
-                auto original_buffer = get_output_buffer(plane);
+                auto const& original_buffer = get_output_buffer(plane);
                 auto& frame_store_buffer = reference_frame.frame_planes[plane];
-                frame_store_buffer.resize_and_keep_capacity(width * height);
+                auto frame_store_width = width + MV_BORDER * 2;
+                auto frame_store_height = height + MV_BORDER * 2;
+                frame_store_buffer.resize_and_keep_capacity(frame_store_width * frame_store_height);
 
-                for (auto x = 0u; x < width; x++) {
-                    for (auto y = 0u; y < height; y++) {
-                        auto sample = original_buffer[index_from_row_and_column(y, x, stride)];
-                        frame_store_buffer[index_from_row_and_column(y, x, width)] = sample;
+                VERIFY(original_buffer.size() >= width * height);
+                for (auto destination_y = 0u; destination_y < frame_store_height; destination_y++) {
+                    // Offset the source row by the motion vector border and then clamp it to the range of 0...height.
+                    // This will create an extended border on the top and bottom of the reference frame to avoid having to bounds check
+                    // inter-prediction.
+                    auto source_y = min(destination_y >= MV_BORDER ? destination_y - MV_BORDER : 0, height - 1);
+                    auto const* source = &original_buffer[source_y * stride];
+                    auto* destination = &frame_store_buffer[destination_y * frame_store_width + MV_BORDER];
+                    AK::TypedTransfer<RemoveReference<decltype(*destination)>>::copy(destination, source, width);
+                }
+
+                for (auto destination_y = 0u; destination_y < frame_store_height; destination_y++) {
+                    // Stretch the leftmost samples out into the border.
+                    auto sample = frame_store_buffer[destination_y * frame_store_width + MV_BORDER];
+
+                    for (auto destination_x = 0u; destination_x < MV_BORDER; destination_x++) {
+                        frame_store_buffer[destination_y * frame_store_width + destination_x] = sample;
+                    }
+
+                    // Stretch the rightmost samples out into the border.
+                    sample = frame_store_buffer[destination_y * frame_store_width + MV_BORDER + width - 1];
+
+                    for (auto destination_x = MV_BORDER + width; destination_x < frame_store_width; destination_x++) {
+                        frame_store_buffer[destination_y * frame_store_width + destination_x] = sample;
                     }
                 }
             }

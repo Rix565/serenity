@@ -4,16 +4,18 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ConstrainedStream.h>
 #include <AK/Debug.h>
+#include <AK/Endian.h>
 #include <AK/LEB128.h>
+#include <AK/MemoryStream.h>
 #include <AK/ScopeGuard.h>
 #include <AK/ScopeLogger.h>
-#include <LibCore/MemoryStream.h>
 #include <LibWasm/Types.h>
 
 namespace Wasm {
 
-ParseError with_eof_check(Core::Stream::Stream const& stream, ParseError error_if_not_eof)
+ParseError with_eof_check(Stream const& stream, ParseError error_if_not_eof)
 {
     if (stream.is_eof())
         return ParseError::UnexpectedEof;
@@ -21,15 +23,15 @@ ParseError with_eof_check(Core::Stream::Stream const& stream, ParseError error_i
 }
 
 template<typename T>
-static auto parse_vector(Core::Stream::Stream& stream)
+static auto parse_vector(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger;
     if constexpr (requires { T::parse(stream); }) {
         using ResultT = typename decltype(T::parse(stream))::ValueType;
-        size_t count;
-        Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-        if (!LEB128::read_unsigned(wrapped_stream, count))
+        auto count_or_error = stream.read_value<LEB128<size_t>>();
+        if (count_or_error.is_error())
             return ParseResult<Vector<ResultT>> { with_eof_check(stream, ParseError::ExpectedSize) };
+        size_t count = count_or_error.release_value();
 
         Vector<ResultT> entries;
         for (size_t i = 0; i < count; ++i) {
@@ -40,30 +42,30 @@ static auto parse_vector(Core::Stream::Stream& stream)
         }
         return ParseResult<Vector<ResultT>> { move(entries) };
     } else {
-        size_t count;
-        Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-        if (!LEB128::read_unsigned(wrapped_stream, count))
+        auto count_or_error = stream.read_value<LEB128<size_t>>();
+        if (count_or_error.is_error())
             return ParseResult<Vector<T>> { with_eof_check(stream, ParseError::ExpectedSize) };
+        size_t count = count_or_error.release_value();
 
         Vector<T> entries;
         for (size_t i = 0; i < count; ++i) {
             if constexpr (IsSame<T, size_t>) {
-                size_t value;
-                Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-                if (!LEB128::read_unsigned(wrapped_stream, value))
+                auto value_or_error = stream.read_value<LEB128<size_t>>();
+                if (value_or_error.is_error())
                     return ParseResult<Vector<T>> { with_eof_check(stream, ParseError::ExpectedSize) };
+                size_t value = value_or_error.release_value();
                 entries.append(value);
             } else if constexpr (IsSame<T, ssize_t>) {
-                ssize_t value;
-                Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-                if (!LEB128::read_signed(wrapped_stream, value))
+                auto value_or_error = stream.read_value<LEB128<ssize_t>>();
+                if (value_or_error.is_error())
                     return ParseResult<Vector<T>> { with_eof_check(stream, ParseError::ExpectedSize) };
+                ssize_t value = value_or_error.release_value();
                 entries.append(value);
             } else if constexpr (IsSame<T, u8>) {
                 if (count > Constants::max_allowed_vector_size)
                     return ParseResult<Vector<T>> { ParseError::HugeAllocationRequested };
                 entries.resize(count);
-                if (stream.read_entire_buffer({ entries.data(), entries.size() }).is_error())
+                if (stream.read_until_filled({ entries.data(), entries.size() }).is_error())
                     return ParseResult<Vector<T>> { with_eof_check(stream, ParseError::InvalidInput) };
                 break; // Note: We read this all in one go!
             }
@@ -72,7 +74,7 @@ static auto parse_vector(Core::Stream::Stream& stream)
     }
 }
 
-static ParseResult<DeprecatedString> parse_name(Core::Stream::Stream& stream)
+static ParseResult<DeprecatedString> parse_name(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger;
     auto data = parse_vector<u8>(stream);
@@ -88,8 +90,8 @@ struct ParseUntilAnyOfResult {
     Vector<T> values;
 };
 template<typename T, u8... terminators, typename... Args>
-static ParseResult<ParseUntilAnyOfResult<T>> parse_until_any_of(Core::Stream::Stream& stream, Args&... args)
-requires(requires(Core::Stream::Stream& stream, Args... args) { T::parse(stream, args...); })
+static ParseResult<ParseUntilAnyOfResult<T>> parse_until_any_of(Stream& stream, Args&... args)
+requires(requires(Stream& stream, Args... args) { T::parse(stream, args...); })
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger;
     ReconsumableStream new_stream { stream };
@@ -118,7 +120,7 @@ requires(requires(Core::Stream::Stream& stream, Args... args) { T::parse(stream,
     }
 }
 
-ParseResult<ValueType> ValueType::parse(Core::Stream::Stream& stream)
+ParseResult<ValueType> ValueType::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("ValueType"sv);
     auto tag_or_error = stream.read_value<u8>();
@@ -145,7 +147,7 @@ ParseResult<ValueType> ValueType::parse(Core::Stream::Stream& stream)
     }
 }
 
-ParseResult<ResultType> ResultType::parse(Core::Stream::Stream& stream)
+ParseResult<ResultType> ResultType::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("ResultType"sv);
     auto types = parse_vector<ValueType>(stream);
@@ -154,7 +156,7 @@ ParseResult<ResultType> ResultType::parse(Core::Stream::Stream& stream)
     return ResultType { types.release_value() };
 }
 
-ParseResult<FunctionType> FunctionType::parse(Core::Stream::Stream& stream)
+ParseResult<FunctionType> FunctionType::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("FunctionType"sv);
     auto tag_or_error = stream.read_value<u8>();
@@ -178,7 +180,7 @@ ParseResult<FunctionType> FunctionType::parse(Core::Stream::Stream& stream)
     return FunctionType { parameters_result.release_value(), results_result.release_value() };
 }
 
-ParseResult<Limits> Limits::parse(Core::Stream::Stream& stream)
+ParseResult<Limits> Limits::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Limits"sv);
     auto flag_or_error = stream.read_value<u8>();
@@ -190,24 +192,23 @@ ParseResult<Limits> Limits::parse(Core::Stream::Stream& stream)
     if (flag > 1)
         return with_eof_check(stream, ParseError::InvalidTag);
 
-    size_t min;
-    Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-    if (!LEB128::read_unsigned(wrapped_stream, min))
+    auto min_or_error = stream.read_value<LEB128<size_t>>();
+    if (min_or_error.is_error())
         return with_eof_check(stream, ParseError::ExpectedSize);
+    size_t min = min_or_error.release_value();
 
     Optional<u32> max;
     if (flag) {
-        size_t value;
-        Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-        if (!LEB128::read_unsigned(wrapped_stream, value))
+        auto value_or_error = stream.read_value<LEB128<size_t>>();
+        if (value_or_error.is_error())
             return with_eof_check(stream, ParseError::ExpectedSize);
-        max = value;
+        max = value_or_error.release_value();
     }
 
     return Limits { static_cast<u32>(min), move(max) };
 }
 
-ParseResult<MemoryType> MemoryType::parse(Core::Stream::Stream& stream)
+ParseResult<MemoryType> MemoryType::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("MemoryType"sv);
     auto limits_result = Limits::parse(stream);
@@ -216,7 +217,7 @@ ParseResult<MemoryType> MemoryType::parse(Core::Stream::Stream& stream)
     return MemoryType { limits_result.release_value() };
 }
 
-ParseResult<TableType> TableType::parse(Core::Stream::Stream& stream)
+ParseResult<TableType> TableType::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("TableType"sv);
     auto type_result = ValueType::parse(stream);
@@ -230,7 +231,7 @@ ParseResult<TableType> TableType::parse(Core::Stream::Stream& stream)
     return TableType { type_result.release_value(), limits_result.release_value() };
 }
 
-ParseResult<GlobalType> GlobalType::parse(Core::Stream::Stream& stream)
+ParseResult<GlobalType> GlobalType::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("GlobalType"sv);
     auto type_result = ValueType::parse(stream);
@@ -249,7 +250,7 @@ ParseResult<GlobalType> GlobalType::parse(Core::Stream::Stream& stream)
     return GlobalType { type_result.release_value(), mutable_ == 0x01 };
 }
 
-ParseResult<BlockType> BlockType::parse(Core::Stream::Stream& stream)
+ParseResult<BlockType> BlockType::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("BlockType"sv);
     auto kind_or_error = stream.read_value<u8>();
@@ -261,18 +262,18 @@ ParseResult<BlockType> BlockType::parse(Core::Stream::Stream& stream)
         return BlockType {};
 
     {
-        auto value_stream = Core::Stream::FixedMemoryStream::construct(ReadonlyBytes { &kind, 1 }).release_value_but_fixme_should_propagate_errors();
-        if (auto value_type = ValueType::parse(*value_stream); !value_type.is_error())
+        FixedMemoryStream value_stream { ReadonlyBytes { &kind, 1 } };
+        if (auto value_type = ValueType::parse(value_stream); !value_type.is_error())
             return BlockType { value_type.release_value() };
     }
 
     ReconsumableStream new_stream { stream };
     new_stream.unread({ &kind, 1 });
 
-    ssize_t index_value;
-    Core::Stream::WrapInAKInputStream wrapped_new_stream { new_stream };
-    if (!LEB128::read_signed(wrapped_new_stream, index_value))
+    auto index_value_or_error = stream.read_value<LEB128<ssize_t>>();
+    if (index_value_or_error.is_error())
         return with_eof_check(stream, ParseError::ExpectedIndex);
+    ssize_t index_value = index_value_or_error.release_value();
 
     if (index_value < 0) {
         dbgln("Invalid type index {}", index_value);
@@ -282,7 +283,7 @@ ParseResult<BlockType> BlockType::parse(Core::Stream::Stream& stream)
     return BlockType { TypeIndex(index_value) };
 }
 
-ParseResult<Vector<Instruction>> Instruction::parse(Core::Stream::Stream& stream, InstructionPointer& ip)
+ParseResult<Vector<Instruction>> Instruction::parse(Stream& stream, InstructionPointer& ip)
 {
     struct NestedInstructionState {
         Vector<Instruction> prior_instructions;
@@ -414,16 +415,16 @@ ParseResult<Vector<Instruction>> Instruction::parse(Core::Stream::Stream& stream
         case Instructions::i64_store8.value():
         case Instructions::i64_store16.value():
         case Instructions::i64_store32.value(): {
-            Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-
             // op (align offset)
-            size_t align;
-            if (!LEB128::read_unsigned(wrapped_stream, align))
+            auto align_or_error = stream.read_value<LEB128<size_t>>();
+            if (align_or_error.is_error())
                 return with_eof_check(stream, ParseError::InvalidInput);
+            size_t align = align_or_error.release_value();
 
-            size_t offset;
-            if (!LEB128::read_unsigned(wrapped_stream, offset))
+            auto offset_or_error = stream.read_value<LEB128<size_t>>();
+            if (offset_or_error.is_error())
                 return with_eof_check(stream, ParseError::InvalidInput);
+            size_t offset = offset_or_error.release_value();
 
             resulting_instructions.append(Instruction { opcode, MemoryArgument { static_cast<u32>(align), static_cast<u32>(offset) } });
             break;
@@ -465,29 +466,30 @@ ParseResult<Vector<Instruction>> Instruction::parse(Core::Stream::Stream& stream
             break;
         }
         case Instructions::i32_const.value(): {
-            i32 value;
-            Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-            if (!LEB128::read_signed(wrapped_stream, value))
+            auto value_or_error = stream.read_value<LEB128<i32>>();
+            if (value_or_error.is_error())
                 return with_eof_check(stream, ParseError::ExpectedSignedImmediate);
+            i32 value = value_or_error.release_value();
 
             resulting_instructions.append(Instruction { opcode, value });
             break;
         }
         case Instructions::i64_const.value(): {
             // op literal
-            i64 value;
-            Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-            if (!LEB128::read_signed(wrapped_stream, value))
+            auto value_or_error = stream.read_value<LEB128<i64>>();
+            if (value_or_error.is_error())
                 return with_eof_check(stream, ParseError::ExpectedSignedImmediate);
+            i64 value = value_or_error.release_value();
 
             resulting_instructions.append(Instruction { opcode, value });
             break;
         }
         case Instructions::f32_const.value(): {
             // op literal
-            LittleEndian<u32> value;
-            if (stream.read_entire_buffer(value.bytes()).is_error())
+            auto value_or_error = stream.read_value<LittleEndian<u32>>();
+            if (value_or_error.is_error())
                 return with_eof_check(stream, ParseError::ExpectedFloatingImmediate);
+            auto value = value_or_error.release_value();
 
             auto floating = bit_cast<float>(static_cast<u32>(value));
             resulting_instructions.append(Instruction { opcode, floating });
@@ -495,9 +497,10 @@ ParseResult<Vector<Instruction>> Instruction::parse(Core::Stream::Stream& stream
         }
         case Instructions::f64_const.value(): {
             // op literal
-            LittleEndian<u64> value;
-            if (stream.read_entire_buffer(value.bytes()).is_error())
+            auto value_or_error = stream.read_value<LittleEndian<u64>>();
+            if (value_or_error.is_error())
                 return with_eof_check(stream, ParseError::ExpectedFloatingImmediate);
+            auto value = value_or_error.release_value();
 
             auto floating = bit_cast<double>(static_cast<u64>(value));
             resulting_instructions.append(Instruction { opcode, floating });
@@ -676,10 +679,10 @@ ParseResult<Vector<Instruction>> Instruction::parse(Core::Stream::Stream& stream
             break;
         case 0xfc: {
             // These are multibyte instructions.
-            u32 selector;
-            Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-            if (!LEB128::read_unsigned(wrapped_stream, selector))
+            auto selector_or_error = stream.read_value<LEB128<u32>>();
+            if (selector_or_error.is_error())
                 return with_eof_check(stream, ParseError::InvalidInput);
+            u32 selector = selector_or_error.release_value();
             switch (selector) {
             case Instructions::i32_trunc_sat_f32_s_second:
             case Instructions::i32_trunc_sat_f32_u_second:
@@ -782,7 +785,7 @@ ParseResult<Vector<Instruction>> Instruction::parse(Core::Stream::Stream& stream
     return resulting_instructions;
 }
 
-ParseResult<CustomSection> CustomSection::parse(Core::Stream::Stream& stream)
+ParseResult<CustomSection> CustomSection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("CustomSection"sv);
     auto name = parse_name(stream);
@@ -795,7 +798,7 @@ ParseResult<CustomSection> CustomSection::parse(Core::Stream::Stream& stream)
 
     while (!stream.is_eof()) {
         char buf[16];
-        auto span_or_error = stream.read({ buf, 16 });
+        auto span_or_error = stream.read_some({ buf, 16 });
         if (span_or_error.is_error())
             break;
         auto size = span_or_error.release_value().size();
@@ -808,7 +811,7 @@ ParseResult<CustomSection> CustomSection::parse(Core::Stream::Stream& stream)
     return CustomSection(name.release_value(), move(data_buffer));
 }
 
-ParseResult<TypeSection> TypeSection::parse(Core::Stream::Stream& stream)
+ParseResult<TypeSection> TypeSection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("TypeSection"sv);
     auto types = parse_vector<FunctionType>(stream);
@@ -817,7 +820,7 @@ ParseResult<TypeSection> TypeSection::parse(Core::Stream::Stream& stream)
     return TypeSection { types.release_value() };
 }
 
-ParseResult<ImportSection::Import> ImportSection::Import::parse(Core::Stream::Stream& stream)
+ParseResult<ImportSection::Import> ImportSection::Import::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Import"sv);
     auto module = parse_name(stream);
@@ -850,7 +853,7 @@ ParseResult<ImportSection::Import> ImportSection::Import::parse(Core::Stream::St
     }
 }
 
-ParseResult<ImportSection> ImportSection::parse(Core::Stream::Stream& stream)
+ParseResult<ImportSection> ImportSection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("ImportSection"sv);
     auto imports = parse_vector<Import>(stream);
@@ -859,7 +862,7 @@ ParseResult<ImportSection> ImportSection::parse(Core::Stream::Stream& stream)
     return ImportSection { imports.release_value() };
 }
 
-ParseResult<FunctionSection> FunctionSection::parse(Core::Stream::Stream& stream)
+ParseResult<FunctionSection> FunctionSection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("FunctionSection"sv);
     auto indices = parse_vector<size_t>(stream);
@@ -874,7 +877,7 @@ ParseResult<FunctionSection> FunctionSection::parse(Core::Stream::Stream& stream
     return FunctionSection { move(typed_indices) };
 }
 
-ParseResult<TableSection::Table> TableSection::Table::parse(Core::Stream::Stream& stream)
+ParseResult<TableSection::Table> TableSection::Table::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Table"sv);
     auto type = TableType::parse(stream);
@@ -883,7 +886,7 @@ ParseResult<TableSection::Table> TableSection::Table::parse(Core::Stream::Stream
     return Table { type.release_value() };
 }
 
-ParseResult<TableSection> TableSection::parse(Core::Stream::Stream& stream)
+ParseResult<TableSection> TableSection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("TableSection"sv);
     auto tables = parse_vector<Table>(stream);
@@ -892,7 +895,7 @@ ParseResult<TableSection> TableSection::parse(Core::Stream::Stream& stream)
     return TableSection { tables.release_value() };
 }
 
-ParseResult<MemorySection::Memory> MemorySection::Memory::parse(Core::Stream::Stream& stream)
+ParseResult<MemorySection::Memory> MemorySection::Memory::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Memory"sv);
     auto type = MemoryType::parse(stream);
@@ -901,7 +904,7 @@ ParseResult<MemorySection::Memory> MemorySection::Memory::parse(Core::Stream::St
     return Memory { type.release_value() };
 }
 
-ParseResult<MemorySection> MemorySection::parse(Core::Stream::Stream& stream)
+ParseResult<MemorySection> MemorySection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("MemorySection"sv);
     auto memories = parse_vector<Memory>(stream);
@@ -910,7 +913,7 @@ ParseResult<MemorySection> MemorySection::parse(Core::Stream::Stream& stream)
     return MemorySection { memories.release_value() };
 }
 
-ParseResult<Expression> Expression::parse(Core::Stream::Stream& stream)
+ParseResult<Expression> Expression::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Expression"sv);
     InstructionPointer ip { 0 };
@@ -921,7 +924,7 @@ ParseResult<Expression> Expression::parse(Core::Stream::Stream& stream)
     return Expression { move(instructions.value().values) };
 }
 
-ParseResult<GlobalSection::Global> GlobalSection::Global::parse(Core::Stream::Stream& stream)
+ParseResult<GlobalSection::Global> GlobalSection::Global::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Global"sv);
     auto type = GlobalType::parse(stream);
@@ -933,7 +936,7 @@ ParseResult<GlobalSection::Global> GlobalSection::Global::parse(Core::Stream::St
     return Global { type.release_value(), exprs.release_value() };
 }
 
-ParseResult<GlobalSection> GlobalSection::parse(Core::Stream::Stream& stream)
+ParseResult<GlobalSection> GlobalSection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("GlobalSection"sv);
     auto result = parse_vector<Global>(stream);
@@ -942,7 +945,7 @@ ParseResult<GlobalSection> GlobalSection::parse(Core::Stream::Stream& stream)
     return GlobalSection { result.release_value() };
 }
 
-ParseResult<ExportSection::Export> ExportSection::Export::parse(Core::Stream::Stream& stream)
+ParseResult<ExportSection::Export> ExportSection::Export::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Export"sv);
     auto name = parse_name(stream);
@@ -954,10 +957,10 @@ ParseResult<ExportSection::Export> ExportSection::Export::parse(Core::Stream::St
 
     auto tag = tag_or_error.release_value();
 
-    size_t index;
-    Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-    if (!LEB128::read_unsigned(wrapped_stream, index))
+    auto index_or_error = stream.read_value<LEB128<size_t>>();
+    if (index_or_error.is_error())
         return with_eof_check(stream, ParseError::ExpectedIndex);
+    size_t index = index_or_error.release_value();
 
     switch (tag) {
     case Constants::extern_function_tag:
@@ -973,7 +976,7 @@ ParseResult<ExportSection::Export> ExportSection::Export::parse(Core::Stream::St
     }
 }
 
-ParseResult<ExportSection> ExportSection::parse(Core::Stream::Stream& stream)
+ParseResult<ExportSection> ExportSection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("ExportSection"sv);
     auto result = parse_vector<Export>(stream);
@@ -982,7 +985,7 @@ ParseResult<ExportSection> ExportSection::parse(Core::Stream::Stream& stream)
     return ExportSection { result.release_value() };
 }
 
-ParseResult<StartSection::StartFunction> StartSection::StartFunction::parse(Core::Stream::Stream& stream)
+ParseResult<StartSection::StartFunction> StartSection::StartFunction::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("StartFunction"sv);
     auto index = GenericIndexParser<FunctionIndex>::parse(stream);
@@ -991,7 +994,7 @@ ParseResult<StartSection::StartFunction> StartSection::StartFunction::parse(Core
     return StartFunction { index.release_value() };
 }
 
-ParseResult<StartSection> StartSection::parse(Core::Stream::Stream& stream)
+ParseResult<StartSection> StartSection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("StartSection"sv);
     auto result = StartFunction::parse(stream);
@@ -1000,7 +1003,7 @@ ParseResult<StartSection> StartSection::parse(Core::Stream::Stream& stream)
     return StartSection { result.release_value() };
 }
 
-ParseResult<ElementSection::SegmentType0> ElementSection::SegmentType0::parse(Core::Stream::Stream& stream)
+ParseResult<ElementSection::SegmentType0> ElementSection::SegmentType0::parse(Stream& stream)
 {
     auto expression = Expression::parse(stream);
     if (expression.is_error())
@@ -1012,7 +1015,7 @@ ParseResult<ElementSection::SegmentType0> ElementSection::SegmentType0::parse(Co
     return SegmentType0 { indices.release_value(), Active { 0, expression.release_value() } };
 }
 
-ParseResult<ElementSection::SegmentType1> ElementSection::SegmentType1::parse(Core::Stream::Stream& stream)
+ParseResult<ElementSection::SegmentType1> ElementSection::SegmentType1::parse(Stream& stream)
 {
     auto kind_or_error = stream.read_value<u8>();
     if (kind_or_error.is_error())
@@ -1028,49 +1031,60 @@ ParseResult<ElementSection::SegmentType1> ElementSection::SegmentType1::parse(Co
     return SegmentType1 { indices.release_value() };
 }
 
-ParseResult<ElementSection::SegmentType2> ElementSection::SegmentType2::parse(Core::Stream::Stream& stream)
+ParseResult<ElementSection::SegmentType2> ElementSection::SegmentType2::parse(Stream& stream)
 {
     dbgln("Type 2");
     (void)stream;
     return ParseError::NotImplemented;
 }
 
-ParseResult<ElementSection::SegmentType3> ElementSection::SegmentType3::parse(Core::Stream::Stream& stream)
+ParseResult<ElementSection::SegmentType3> ElementSection::SegmentType3::parse(Stream& stream)
 {
     dbgln("Type 3");
     (void)stream;
     return ParseError::NotImplemented;
 }
 
-ParseResult<ElementSection::SegmentType4> ElementSection::SegmentType4::parse(Core::Stream::Stream& stream)
+ParseResult<ElementSection::SegmentType4> ElementSection::SegmentType4::parse(Stream& stream)
 {
-    dbgln("Type 4");
-    (void)stream;
-    return ParseError::NotImplemented;
+    auto expression = Expression::parse(stream);
+    if (expression.is_error())
+        return expression.error();
+    auto initializers = parse_vector<Expression>(stream);
+    if (initializers.is_error())
+        return initializers.error();
+
+    return SegmentType4 {
+        .mode = Active {
+            .index = 0,
+            .expression = expression.release_value(),
+        },
+        .initializer = initializers.release_value(),
+    };
 }
 
-ParseResult<ElementSection::SegmentType5> ElementSection::SegmentType5::parse(Core::Stream::Stream& stream)
+ParseResult<ElementSection::SegmentType5> ElementSection::SegmentType5::parse(Stream& stream)
 {
     dbgln("Type 5");
     (void)stream;
     return ParseError::NotImplemented;
 }
 
-ParseResult<ElementSection::SegmentType6> ElementSection::SegmentType6::parse(Core::Stream::Stream& stream)
+ParseResult<ElementSection::SegmentType6> ElementSection::SegmentType6::parse(Stream& stream)
 {
     dbgln("Type 6");
     (void)stream;
     return ParseError::NotImplemented;
 }
 
-ParseResult<ElementSection::SegmentType7> ElementSection::SegmentType7::parse(Core::Stream::Stream& stream)
+ParseResult<ElementSection::SegmentType7> ElementSection::SegmentType7::parse(Stream& stream)
 {
     dbgln("Type 7");
     (void)stream;
     return ParseError::NotImplemented;
 }
 
-ParseResult<ElementSection::Element> ElementSection::Element::parse(Core::Stream::Stream& stream)
+ParseResult<ElementSection::Element> ElementSection::Element::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Element"sv);
     auto tag_or_error = stream.read_value<u8>();
@@ -1114,7 +1128,7 @@ ParseResult<ElementSection::Element> ElementSection::Element::parse(Core::Stream
         if (auto result = SegmentType4::parse(stream); result.is_error()) {
             return result.error();
         } else {
-            return ParseError::NotImplemented;
+            return Element { ValueType(ValueType::FunctionReference), move(result.value().initializer), move(result.value().mode) };
         }
     case 0x05:
         if (auto result = SegmentType5::parse(stream); result.is_error()) {
@@ -1139,7 +1153,7 @@ ParseResult<ElementSection::Element> ElementSection::Element::parse(Core::Stream
     }
 }
 
-ParseResult<ElementSection> ElementSection::parse(Core::Stream::Stream& stream)
+ParseResult<ElementSection> ElementSection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("ElementSection"sv);
     auto result = parse_vector<Element>(stream);
@@ -1148,13 +1162,13 @@ ParseResult<ElementSection> ElementSection::parse(Core::Stream::Stream& stream)
     return ElementSection { result.release_value() };
 }
 
-ParseResult<Locals> Locals::parse(Core::Stream::Stream& stream)
+ParseResult<Locals> Locals::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Locals"sv);
-    size_t count;
-    Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-    if (!LEB128::read_unsigned(wrapped_stream, count))
+    auto count_or_error = stream.read_value<LEB128<size_t>>();
+    if (count_or_error.is_error())
         return with_eof_check(stream, ParseError::InvalidSize);
+    size_t count = count_or_error.release_value();
 
     if (count > Constants::max_allowed_function_locals_per_type)
         return with_eof_check(stream, ParseError::HugeAllocationRequested);
@@ -1166,7 +1180,7 @@ ParseResult<Locals> Locals::parse(Core::Stream::Stream& stream)
     return Locals { static_cast<u32>(count), type.release_value() };
 }
 
-ParseResult<CodeSection::Func> CodeSection::Func::parse(Core::Stream::Stream& stream)
+ParseResult<CodeSection::Func> CodeSection::Func::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Func"sv);
     auto locals = parse_vector<Locals>(stream);
@@ -1178,15 +1192,15 @@ ParseResult<CodeSection::Func> CodeSection::Func::parse(Core::Stream::Stream& st
     return Func { locals.release_value(), body.release_value() };
 }
 
-ParseResult<CodeSection::Code> CodeSection::Code::parse(Core::Stream::Stream& stream)
+ParseResult<CodeSection::Code> CodeSection::Code::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Code"sv);
-    size_t size;
-    Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-    if (!LEB128::read_unsigned(wrapped_stream, size))
+    auto size_or_error = stream.read_value<LEB128<size_t>>();
+    if (size_or_error.is_error())
         return with_eof_check(stream, ParseError::InvalidSize);
+    size_t size = size_or_error.release_value();
 
-    auto constrained_stream = ConstrainedStream { stream, size };
+    auto constrained_stream = ConstrainedStream { MaybeOwned<Stream>(stream), size };
 
     auto func = Func::parse(constrained_stream);
     if (func.is_error())
@@ -1195,7 +1209,7 @@ ParseResult<CodeSection::Code> CodeSection::Code::parse(Core::Stream::Stream& st
     return Code { static_cast<u32>(size), func.release_value() };
 }
 
-ParseResult<CodeSection> CodeSection::parse(Core::Stream::Stream& stream)
+ParseResult<CodeSection> CodeSection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("CodeSection"sv);
     auto result = parse_vector<Code>(stream);
@@ -1204,7 +1218,7 @@ ParseResult<CodeSection> CodeSection::parse(Core::Stream::Stream& stream)
     return CodeSection { result.release_value() };
 }
 
-ParseResult<DataSection::Data> DataSection::Data::parse(Core::Stream::Stream& stream)
+ParseResult<DataSection::Data> DataSection::Data::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Data"sv);
     auto tag_or_error = stream.read_value<u8>();
@@ -1246,7 +1260,7 @@ ParseResult<DataSection::Data> DataSection::Data::parse(Core::Stream::Stream& st
     VERIFY_NOT_REACHED();
 }
 
-ParseResult<DataSection> DataSection::parse(Core::Stream::Stream& stream)
+ParseResult<DataSection> DataSection::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("DataSection"sv);
     auto data = parse_vector<Data>(stream);
@@ -1256,32 +1270,32 @@ ParseResult<DataSection> DataSection::parse(Core::Stream::Stream& stream)
     return DataSection { data.release_value() };
 }
 
-ParseResult<DataCountSection> DataCountSection::parse([[maybe_unused]] Core::Stream::Stream& stream)
+ParseResult<DataCountSection> DataCountSection::parse([[maybe_unused]] Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("DataCountSection"sv);
-    u32 value;
-    Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-    if (!LEB128::read_unsigned(wrapped_stream, value)) {
+    auto value_or_error = stream.read_value<LEB128<u32>>();
+    if (value_or_error.is_error()) {
         if (stream.is_eof()) {
             // The section simply didn't contain anything.
             return DataCountSection { {} };
         }
         return ParseError::ExpectedSize;
     }
+    u32 value = value_or_error.release_value();
 
     return DataCountSection { value };
 }
 
-ParseResult<Module> Module::parse(Core::Stream::Stream& stream)
+ParseResult<Module> Module::parse(Stream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Module"sv);
     u8 buf[4];
-    if (stream.read_entire_buffer({ buf, 4 }).is_error())
+    if (stream.read_until_filled({ buf, 4 }).is_error())
         return with_eof_check(stream, ParseError::InvalidInput);
     if (Bytes { buf, 4 } != wasm_magic.span())
         return with_eof_check(stream, ParseError::InvalidModuleMagic);
 
-    if (stream.read_entire_buffer({ buf, 4 }).is_error())
+    if (stream.read_until_filled({ buf, 4 }).is_error())
         return with_eof_check(stream, ParseError::InvalidInput);
     if (Bytes { buf, 4 } != wasm_version.span())
         return with_eof_check(stream, ParseError::InvalidModuleVersion);
@@ -1296,12 +1310,12 @@ ParseResult<Module> Module::parse(Core::Stream::Stream& stream)
 
         auto section_id = section_id_or_error.release_value();
 
-        size_t section_size;
-        Core::Stream::WrapInAKInputStream wrapped_stream { stream };
-        if (!LEB128::read_unsigned(wrapped_stream, section_size))
+        auto section_size_or_error = stream.read_value<LEB128<size_t>>();
+        if (section_size_or_error.is_error())
             return with_eof_check(stream, ParseError::ExpectedSize);
+        size_t section_size = section_size_or_error.release_value();
 
-        auto section_stream = ConstrainedStream { stream, section_size };
+        auto section_stream = ConstrainedStream { MaybeOwned<Stream>(stream), section_size };
 
         switch (section_id) {
         case CustomSection::section_id:

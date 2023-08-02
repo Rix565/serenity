@@ -7,6 +7,7 @@
 #pragma once
 
 #include <LibGfx/Rect.h>
+#include <LibJS/Heap/GCPtr.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/PixelUnits.h>
 
@@ -16,13 +17,7 @@ class LineBoxFragment {
     friend class LineBox;
 
 public:
-    enum class Type {
-        Normal,
-        Leading,
-        Trailing,
-    };
-
-    LineBoxFragment(Node const& layout_node, int start, int length, CSSPixelPoint offset, CSSPixelSize size, CSSPixels border_box_top, CSSPixels border_box_bottom, Type type)
+    LineBoxFragment(Node const& layout_node, int start, int length, CSSPixelPoint offset, CSSPixelSize size, CSSPixels border_box_top, CSSPixels border_box_bottom)
         : m_layout_node(layout_node)
         , m_start(start)
         , m_length(length)
@@ -30,7 +25,6 @@ public:
         , m_size(size)
         , m_border_box_top(border_box_top)
         , m_border_box_bottom(border_box_bottom)
-        , m_type(type)
     {
     }
 
@@ -38,7 +32,6 @@ public:
     int start() const { return m_start; }
     int length() const { return m_length; }
     CSSPixelRect const absolute_rect() const;
-    Type type() const { return m_type; }
 
     CSSPixelPoint offset() const
     {
@@ -76,8 +69,10 @@ public:
 
     CSSPixelRect selection_rect(Gfx::Font const&) const;
 
+    bool is_atomic_inline() const;
+
 private:
-    Node const& m_layout_node;
+    JS::NonnullGCPtr<Node const> m_layout_node;
     int m_start { 0 };
     int m_length { 0 };
     CSSPixelPoint m_offset;
@@ -85,7 +80,6 @@ private:
     CSSPixels m_border_box_top { 0 };
     CSSPixels m_border_box_bottom { 0 };
     CSSPixels m_baseline { 0 };
-    Type m_type { Type::Normal };
 };
 
 }

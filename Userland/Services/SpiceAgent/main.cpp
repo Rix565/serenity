@@ -1,30 +1,47 @@
 /*
  * Copyright (c) 2021, Kyle Pereira <kyle@xylepereira.me>
+ * Copyright (c) 2023, Caoimhe Byrne <caoimhebyrne06@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "SpiceAgent.h"
+#include <AK/URL.h>
+#include <LibCore/StandardPaths.h>
 #include <LibCore/System.h>
+#include <LibDesktop/Launcher.h>
+#include <LibFileSystem/FileSystem.h>
+#include <LibGUI/Application.h>
+#include <LibGUI/Clipboard.h>
 #include <LibIPC/ConnectionToServer.h>
 #include <LibMain/Main.h>
 #include <fcntl.h>
 
 static constexpr auto SPICE_DEVICE = "/dev/hvc0p1"sv;
 
-ErrorOr<int> serenity_main(Main::Arguments)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    Core::EventLoop loop;
+    if (!FileSystem::exists(SPICE_DEVICE)) {
+        return Error::from_string_literal("Failed to find spice device file!");
+    }
 
-    TRY(Core::System::pledge("unix rpath wpath stdio sendfd recvfd"));
+    // We use the application to be able to easily write to the user's clipboard.
+    auto app = TRY(GUI::Application::create(arguments));
+
+    TRY(Desktop::Launcher::add_allowed_url(URL::create_with_file_scheme(Core::StandardPaths::downloads_directory())));
+    TRY(Desktop::Launcher::seal_allowlist());
+
+    TRY(Core::System::pledge("unix rpath wpath cpath stdio sendfd recvfd"));
     TRY(Core::System::unveil(SPICE_DEVICE, "rw"sv));
-    TRY(Core::System::unveil("/tmp/session/%sid/portal/clipboard", "rw"));
+    TRY(Core::System::unveil(Core::StandardPaths::downloads_directory(), "rwc"sv));
     TRY(Core::System::unveil(nullptr, nullptr));
 
-    int serial_port_fd = TRY(Core::System::open(SPICE_DEVICE, O_RDWR));
+    auto agent = TRY(SpiceAgent::SpiceAgent::create(SPICE_DEVICE));
 
-    auto conn = TRY(ConnectionToClipboardServer::try_create());
-    auto agent = SpiceAgent(serial_port_fd, conn);
+    agent->on_disconnected_from_spice_server = [&]() {
+        app->quit();
+    };
 
-    return loop.exec();
+    TRY(agent->start());
+    return app->exec();
 }

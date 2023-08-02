@@ -18,10 +18,13 @@
 static_assert(false, "This file must only be used for macOS");
 #endif
 
-#define FixedPoint FixedPointMacOS // AK::FixedPoint conflicts with FixedPoint from MacTypes.h.
+// Several AK types conflict with MacOS types.
+#define FixedPoint FixedPointMacOS
+#define Duration DurationMacOS
 #include <CoreServices/CoreServices.h>
 #include <dispatch/dispatch.h>
 #undef FixedPoint
+#undef Duration
 
 namespace Core {
 
@@ -59,7 +62,7 @@ public:
 
         // NOTE: This isn't actually used on macOS, but is needed for FileWatcherBase.
         //       Creating it with an FD of -1 will effectively disable the notifier.
-        auto notifier = TRY(Notifier::try_create(-1, Notifier::Event::None));
+        auto notifier = TRY(Notifier::try_create(-1, Notifier::Type::None));
 
         return adopt_nonnull_ref_or_enomem(new (nothrow) FileWatcherMacOS(move(context), dispatch_queue, move(notifier)));
     }

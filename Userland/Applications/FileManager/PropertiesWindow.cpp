@@ -1,16 +1,28 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2022-2023, the SerenityOS developers.
+ * Copyright (c) 2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "PropertiesWindow.h"
+#include <AK/GenericShorthands.h>
 #include <AK/LexicalPath.h>
 #include <AK/NumberFormat.h>
 #include <Applications/FileManager/DirectoryView.h>
+#include <Applications/FileManager/PropertiesWindowArchiveTabGML.h>
+#include <Applications/FileManager/PropertiesWindowAudioTabGML.h>
+#include <Applications/FileManager/PropertiesWindowFontTabGML.h>
 #include <Applications/FileManager/PropertiesWindowGeneralTabGML.h>
+#include <Applications/FileManager/PropertiesWindowImageTabGML.h>
+#include <Applications/FileManager/PropertiesWindowPDFTabGML.h>
+#include <LibArchive/Zip.h>
+#include <LibAudio/Loader.h>
+#include <LibCore/Directory.h>
+#include <LibCore/System.h>
 #include <LibDesktop/Launcher.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/CheckBox.h>
 #include <LibGUI/FileIconProvider.h>
@@ -20,40 +32,100 @@
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/SeparatorWidget.h>
 #include <LibGUI/TabWidget.h>
+#include <LibGfx/Font/BitmapFont.h>
+#include <LibGfx/Font/FontDatabase.h>
+#include <LibGfx/Font/FontStyleMapping.h>
+#include <LibGfx/Font/OpenType/Font.h>
+#include <LibGfx/Font/Typeface.h>
+#include <LibGfx/Font/WOFF/Font.h>
+#include <LibGfx/ICC/Profile.h>
+#include <LibGfx/ICC/Tags.h>
+#include <LibPDF/Document.h>
 #include <grp.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
-PropertiesWindow::PropertiesWindow(DeprecatedString const& path, bool disable_rename, Window* parent_window)
+ErrorOr<NonnullRefPtr<PropertiesWindow>> PropertiesWindow::try_create(DeprecatedString const& path, bool disable_rename, Window* parent)
+{
+    auto window = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) PropertiesWindow(path, parent)));
+    window->set_icon(TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/properties.png"sv)));
+    TRY(window->create_widgets(disable_rename));
+    return window;
+}
+
+PropertiesWindow::PropertiesWindow(DeprecatedString const& path, Window* parent_window)
     : Window(parent_window)
 {
     auto lexical_path = LexicalPath(path);
-
-    auto main_widget = set_main_widget<GUI::Widget>().release_value_but_fixme_should_propagate_errors();
-    main_widget->set_layout<GUI::VerticalBoxLayout>();
-    main_widget->layout()->set_spacing(6);
-    main_widget->layout()->set_margins(4);
-    main_widget->set_fill_with_background_color(true);
-
-    set_rect({ 0, 0, 360, 420 });
-    set_resizable(false);
-
-    set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/properties.png"sv).release_value_but_fixme_should_propagate_errors());
-
-    auto& tab_widget = main_widget->add<GUI::TabWidget>();
-
-    auto& general_tab = tab_widget.add_tab<GUI::Widget>("General");
-    general_tab.load_from_gml(properties_window_general_tab_gml).release_value_but_fixme_should_propagate_errors();
 
     m_name = lexical_path.basename();
     m_path = lexical_path.string();
     m_parent_path = lexical_path.dirname();
 
-    m_icon = general_tab.find_descendant_of_type_named<GUI::ImageWidget>("icon");
+    set_rect({ 0, 0, 360, 420 });
+    set_resizable(false);
+}
 
-    m_name_box = general_tab.find_descendant_of_type_named<GUI::TextBox>("name");
+ErrorOr<void> PropertiesWindow::create_widgets(bool disable_rename)
+{
+    auto main_widget = TRY(set_main_widget<GUI::Widget>());
+    TRY(main_widget->try_set_layout<GUI::VerticalBoxLayout>(4, 6));
+    main_widget->set_fill_with_background_color(true);
+
+    auto tab_widget = TRY(main_widget->try_add<GUI::TabWidget>());
+    TRY(create_general_tab(tab_widget, disable_rename));
+    TRY(create_file_type_specific_tabs(tab_widget));
+
+    auto button_widget = TRY(main_widget->try_add<GUI::Widget>());
+    TRY(button_widget->try_set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 5));
+    button_widget->set_fixed_height(22);
+
+    TRY(button_widget->add_spacer());
+
+    auto ok_button = TRY(make_button("OK"_short_string, button_widget));
+    ok_button->on_click = [this](auto) {
+        if (apply_changes())
+            close();
+    };
+    auto cancel_button = TRY(make_button("Cancel"_short_string, button_widget));
+    cancel_button->on_click = [this](auto) {
+        close();
+    };
+
+    m_apply_button = TRY(make_button("Apply"_short_string, button_widget));
+    m_apply_button->on_click = [this](auto) { apply_changes(); };
+    m_apply_button->set_enabled(false);
+
+    if (S_ISDIR(m_old_mode)) {
+        m_directory_statistics_calculator = make_ref_counted<DirectoryStatisticsCalculator>(m_path);
+        m_directory_statistics_calculator->on_update = [this, origin_event_loop = &Core::EventLoop::current()](off_t total_size_in_bytes, size_t file_count, size_t directory_count) {
+            origin_event_loop->deferred_invoke([=, weak_this = make_weak_ptr<PropertiesWindow>()] {
+                if (auto strong_this = weak_this.strong_ref())
+                    strong_this->m_size_label->set_text(String::formatted("{}\n{} files, {} subdirectories", human_readable_size_long(total_size_in_bytes, UseThousandsSeparator::Yes), file_count, directory_count).release_value_but_fixme_should_propagate_errors());
+            });
+        };
+        m_directory_statistics_calculator->start();
+    }
+
+    m_on_escape = GUI::Action::create("Close properties", { Key_Escape }, [this](GUI::Action&) {
+        if (!m_apply_button->is_enabled())
+            close();
+    });
+
+    update();
+    return {};
+}
+
+ErrorOr<void> PropertiesWindow::create_general_tab(GUI::TabWidget& tab_widget, bool disable_rename)
+{
+    auto general_tab = TRY(tab_widget.try_add_tab<GUI::Widget>("General"_short_string));
+    TRY(general_tab->load_from_gml(properties_window_general_tab_gml));
+
+    m_icon = general_tab->find_descendant_of_type_named<GUI::ImageWidget>("icon");
+
+    m_name_box = general_tab->find_descendant_of_type_named<GUI::TextBox>("name");
     m_name_box->set_text(m_name);
     m_name_box->set_mode(disable_rename ? GUI::TextBox::Mode::DisplayOnly : GUI::TextBox::Mode::Editable);
     m_name_box->on_change = [&]() {
@@ -61,11 +133,13 @@ PropertiesWindow::PropertiesWindow(DeprecatedString const& path, bool disable_re
         m_apply_button->set_enabled(m_name_dirty || m_permissions_dirty);
     };
 
-    struct stat st;
-    if (lstat(path.characters(), &st)) {
-        perror("stat");
-        return;
-    }
+    auto* location = general_tab->find_descendant_of_type_named<GUI::LinkLabel>("location");
+    location->set_text(TRY(String::from_deprecated_string(m_path)));
+    location->on_click = [this] {
+        Desktop::Launcher::open(URL::create_with_file_scheme(m_parent_path, m_name));
+    };
+
+    auto st = TRY(Core::System::lstat(m_path));
 
     DeprecatedString owner_name;
     DeprecatedString group_name;
@@ -85,83 +159,354 @@ PropertiesWindow::PropertiesWindow(DeprecatedString const& path, bool disable_re
     m_mode = st.st_mode;
     m_old_mode = st.st_mode;
 
-    auto type = general_tab.find_descendant_of_type_named<GUI::Label>("type");
-    type->set_text(get_description(m_mode));
-
-    auto location = general_tab.find_descendant_of_type_named<GUI::LinkLabel>("location");
-    location->set_text(path);
-    location->on_click = [this] {
-        Desktop::Launcher::open(URL::create_with_file_scheme(m_parent_path, m_name));
-    };
+    auto* type = general_tab->find_descendant_of_type_named<GUI::Label>("type");
+    type->set_text(TRY(String::from_utf8(get_description(m_mode))));
 
     if (S_ISLNK(m_mode)) {
-        auto link_destination_or_error = Core::File::read_link(path);
+        auto link_destination_or_error = FileSystem::read_link(m_path);
         if (link_destination_or_error.is_error()) {
             perror("readlink");
         } else {
             auto link_destination = link_destination_or_error.release_value();
-            auto link_location = general_tab.find_descendant_of_type_named<GUI::LinkLabel>("link_location");
+            auto* link_location = general_tab->find_descendant_of_type_named<GUI::LinkLabel>("link_location");
             link_location->set_text(link_destination);
             link_location->on_click = [link_destination] {
-                auto link_directory = LexicalPath(link_destination);
+                auto link_directory = LexicalPath(link_destination.to_deprecated_string());
                 Desktop::Launcher::open(URL::create_with_file_scheme(link_directory.dirname(), link_directory.basename()));
             };
         }
     } else {
-        auto link_location_widget = general_tab.find_descendant_of_type_named<GUI::Widget>("link_location_widget");
-        general_tab.remove_child(*link_location_widget);
+        auto* link_location_widget = general_tab->find_descendant_of_type_named<GUI::Widget>("link_location_widget");
+        general_tab->remove_child(*link_location_widget);
     }
 
-    auto size = general_tab.find_descendant_of_type_named<GUI::Label>("size");
-    size->set_text(human_readable_size_long(st.st_size));
+    m_size_label = general_tab->find_descendant_of_type_named<GUI::Label>("size");
+    m_size_label->set_text(S_ISDIR(st.st_mode)
+            ? TRY("Calculating..."_string)
+            : TRY(String::from_deprecated_string(human_readable_size_long(st.st_size, UseThousandsSeparator::Yes))));
 
-    auto owner = general_tab.find_descendant_of_type_named<GUI::Label>("owner");
-    owner->set_text(DeprecatedString::formatted("{} ({})", owner_name, st.st_uid));
+    auto* owner = general_tab->find_descendant_of_type_named<GUI::Label>("owner");
+    owner->set_text(String::formatted("{} ({})", owner_name, st.st_uid).release_value_but_fixme_should_propagate_errors());
 
-    auto group = general_tab.find_descendant_of_type_named<GUI::Label>("group");
-    group->set_text(DeprecatedString::formatted("{} ({})", group_name, st.st_gid));
+    auto* group = general_tab->find_descendant_of_type_named<GUI::Label>("group");
+    group->set_text(String::formatted("{} ({})", group_name, st.st_gid).release_value_but_fixme_should_propagate_errors());
 
-    auto created_at = general_tab.find_descendant_of_type_named<GUI::Label>("created_at");
-    created_at->set_text(GUI::FileSystemModel::timestamp_string(st.st_ctime));
+    auto* created_at = general_tab->find_descendant_of_type_named<GUI::Label>("created_at");
+    created_at->set_text(String::from_deprecated_string(GUI::FileSystemModel::timestamp_string(st.st_ctime)).release_value_but_fixme_should_propagate_errors());
 
-    auto last_modified = general_tab.find_descendant_of_type_named<GUI::Label>("last_modified");
-    last_modified->set_text(GUI::FileSystemModel::timestamp_string(st.st_mtime));
+    auto* last_modified = general_tab->find_descendant_of_type_named<GUI::Label>("last_modified");
+    last_modified->set_text(String::from_deprecated_string(GUI::FileSystemModel::timestamp_string(st.st_mtime)).release_value_but_fixme_should_propagate_errors());
 
-    auto owner_read = general_tab.find_descendant_of_type_named<GUI::CheckBox>("owner_read");
-    auto owner_write = general_tab.find_descendant_of_type_named<GUI::CheckBox>("owner_write");
-    auto owner_execute = general_tab.find_descendant_of_type_named<GUI::CheckBox>("owner_execute");
-    setup_permission_checkboxes(*owner_read, *owner_write, *owner_execute, { S_IRUSR, S_IWUSR, S_IXUSR }, m_mode);
+    auto* owner_read = general_tab->find_descendant_of_type_named<GUI::CheckBox>("owner_read");
+    auto* owner_write = general_tab->find_descendant_of_type_named<GUI::CheckBox>("owner_write");
+    auto* owner_execute = general_tab->find_descendant_of_type_named<GUI::CheckBox>("owner_execute");
+    TRY(setup_permission_checkboxes(*owner_read, *owner_write, *owner_execute, { S_IRUSR, S_IWUSR, S_IXUSR }, m_mode));
 
-    auto group_read = general_tab.find_descendant_of_type_named<GUI::CheckBox>("group_read");
-    auto group_write = general_tab.find_descendant_of_type_named<GUI::CheckBox>("group_write");
-    auto group_execute = general_tab.find_descendant_of_type_named<GUI::CheckBox>("group_execute");
-    setup_permission_checkboxes(*group_read, *group_write, *group_execute, { S_IRGRP, S_IWGRP, S_IXGRP }, m_mode);
+    auto* group_read = general_tab->find_descendant_of_type_named<GUI::CheckBox>("group_read");
+    auto* group_write = general_tab->find_descendant_of_type_named<GUI::CheckBox>("group_write");
+    auto* group_execute = general_tab->find_descendant_of_type_named<GUI::CheckBox>("group_execute");
+    TRY(setup_permission_checkboxes(*group_read, *group_write, *group_execute, { S_IRGRP, S_IWGRP, S_IXGRP }, m_mode));
 
-    auto others_read = general_tab.find_descendant_of_type_named<GUI::CheckBox>("others_read");
-    auto others_write = general_tab.find_descendant_of_type_named<GUI::CheckBox>("others_write");
-    auto others_execute = general_tab.find_descendant_of_type_named<GUI::CheckBox>("others_execute");
-    setup_permission_checkboxes(*others_read, *others_write, *others_execute, { S_IROTH, S_IWOTH, S_IXOTH }, m_mode);
+    auto* others_read = general_tab->find_descendant_of_type_named<GUI::CheckBox>("others_read");
+    auto* others_write = general_tab->find_descendant_of_type_named<GUI::CheckBox>("others_write");
+    auto* others_execute = general_tab->find_descendant_of_type_named<GUI::CheckBox>("others_execute");
+    TRY(setup_permission_checkboxes(*others_read, *others_write, *others_execute, { S_IROTH, S_IWOTH, S_IXOTH }, m_mode));
 
-    auto& button_widget = main_widget->add<GUI::Widget>();
-    button_widget.set_layout<GUI::HorizontalBoxLayout>();
-    button_widget.set_fixed_height(22);
-    button_widget.layout()->set_spacing(5);
+    return {};
+}
 
-    button_widget.layout()->add_spacer();
+ErrorOr<void> PropertiesWindow::create_file_type_specific_tabs(GUI::TabWidget& tab_widget)
+{
+    auto mapped_file_or_error = Core::MappedFile::map(m_path);
+    if (mapped_file_or_error.is_error()) {
+        warnln("{}: {}", m_path, mapped_file_or_error.release_error());
+        return {};
+    }
+    auto mapped_file = mapped_file_or_error.release_value();
 
-    make_button("OK", button_widget).on_click = [this](auto) {
-        if (apply_changes())
-            close();
+    auto file_name_guess = Core::guess_mime_type_based_on_filename(m_path);
+    auto mime_type = Core::guess_mime_type_based_on_sniffed_bytes(mapped_file->bytes()).value_or(file_name_guess);
+
+    // FIXME: Support other archive types
+    if (mime_type == "application/zip"sv)
+        return create_archive_tab(tab_widget, move(mapped_file));
+
+    if (mime_type.starts_with("audio/"sv))
+        return create_audio_tab(tab_widget, move(mapped_file));
+
+    if (mime_type.starts_with("font/"sv) || m_path.ends_with(".font"sv))
+        return create_font_tab(tab_widget, move(mapped_file), mime_type);
+
+    if (mime_type.starts_with("image/"sv))
+        return create_image_tab(tab_widget, move(mapped_file), mime_type);
+
+    if (mime_type == "application/pdf"sv)
+        return create_pdf_tab(tab_widget, move(mapped_file));
+
+    return {};
+}
+
+ErrorOr<void> PropertiesWindow::create_archive_tab(GUI::TabWidget& tab_widget, NonnullRefPtr<Core::MappedFile> mapped_file)
+{
+    auto maybe_zip = Archive::Zip::try_create(mapped_file->bytes());
+    if (!maybe_zip.has_value()) {
+        warnln("Failed to read zip file '{}' ", m_path);
+        return {};
+    }
+    auto zip = maybe_zip.release_value();
+
+    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>(TRY("Archive"_string)));
+    TRY(tab->load_from_gml(properties_window_archive_tab_gml));
+
+    auto statistics = TRY(zip.calculate_statistics());
+
+    tab->find_descendant_of_type_named<GUI::Label>("archive_format")->set_text("ZIP"_short_string);
+    tab->find_descendant_of_type_named<GUI::Label>("archive_file_count")->set_text(TRY(String::number(statistics.file_count())));
+    tab->find_descendant_of_type_named<GUI::Label>("archive_directory_count")->set_text(TRY(String::number(statistics.directory_count())));
+    tab->find_descendant_of_type_named<GUI::Label>("archive_uncompressed_size")->set_text(TRY(String::from_deprecated_string(AK::human_readable_size(statistics.total_uncompressed_bytes()))));
+
+    return {};
+}
+
+ErrorOr<void> PropertiesWindow::create_audio_tab(GUI::TabWidget& tab_widget, NonnullRefPtr<Core::MappedFile> mapped_file)
+{
+    auto loader_or_error = Audio::Loader::create(mapped_file->bytes());
+    if (loader_or_error.is_error()) {
+        warnln("Failed to open '{}': {}", m_path, loader_or_error.release_error());
+        return {};
+    }
+    auto loader = loader_or_error.release_value();
+
+    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("Audio"_short_string));
+    TRY(tab->load_from_gml(properties_window_audio_tab_gml));
+
+    tab->find_descendant_of_type_named<GUI::Label>("audio_type")->set_text(TRY(String::from_deprecated_string(loader->format_name())));
+    auto duration_seconds = loader->total_samples() / loader->sample_rate();
+    tab->find_descendant_of_type_named<GUI::Label>("audio_duration")->set_text(TRY(String::from_deprecated_string(human_readable_digital_time(duration_seconds))));
+    tab->find_descendant_of_type_named<GUI::Label>("audio_sample_rate")->set_text(TRY(String::formatted("{} Hz", loader->sample_rate())));
+    tab->find_descendant_of_type_named<GUI::Label>("audio_format")->set_text(TRY(String::formatted("{}-bit", loader->bits_per_sample())));
+
+    auto channel_count = loader->num_channels();
+    String channels_string;
+    if (channel_count == 1 || channel_count == 2) {
+        channels_string = TRY(String::formatted("{} ({})", channel_count, channel_count == 1 ? "Mono"sv : "Stereo"sv));
+    } else {
+        channels_string = TRY(String::number(channel_count));
+    }
+    tab->find_descendant_of_type_named<GUI::Label>("audio_channels")->set_text(channels_string);
+
+    tab->find_descendant_of_type_named<GUI::Label>("audio_title")->set_text(loader->metadata().title.value_or({}));
+    tab->find_descendant_of_type_named<GUI::Label>("audio_artists")->set_text(TRY(loader->metadata().all_artists()).value_or({}));
+    tab->find_descendant_of_type_named<GUI::Label>("audio_album")->set_text(loader->metadata().album.value_or({}));
+    tab->find_descendant_of_type_named<GUI::Label>("audio_track_number")
+        ->set_text(TRY(loader->metadata().track_number.map([](auto number) { return String::number(number); })).value_or({}));
+    tab->find_descendant_of_type_named<GUI::Label>("audio_genre")->set_text(loader->metadata().genre.value_or({}));
+    tab->find_descendant_of_type_named<GUI::Label>("audio_comment")->set_text(loader->metadata().comment.value_or({}));
+
+    return {};
+}
+
+struct FontInfo {
+    enum class Format {
+        BitmapFont,
+        OpenType,
+        TrueType,
+        WOFF,
+        WOFF2,
     };
-    make_button("Cancel", button_widget).on_click = [this](auto) {
-        close();
+    Format format;
+    NonnullRefPtr<Gfx::Typeface> typeface;
+};
+static ErrorOr<FontInfo> load_font(StringView path, StringView mime_type, NonnullRefPtr<Core::MappedFile> mapped_file)
+{
+    if (path.ends_with(".font"sv)) {
+        auto font = TRY(Gfx::BitmapFont::try_load_from_mapped_file(mapped_file));
+        auto typeface = TRY(try_make_ref_counted<Gfx::Typeface>(font->family(), font->variant()));
+        typeface->add_bitmap_font(move(font));
+        return FontInfo { FontInfo::Format::BitmapFont, move(typeface) };
+    }
+
+    if (mime_type == "font/otf" || mime_type == "font/ttf") {
+        auto font = TRY(OpenType::Font::try_load_from_externally_owned_memory(mapped_file->bytes()));
+        auto typeface = TRY(try_make_ref_counted<Gfx::Typeface>(font->family(), font->variant()));
+        typeface->set_vector_font(move(font));
+        return FontInfo {
+            mime_type == "font/otf" ? FontInfo::Format::OpenType : FontInfo::Format::TrueType,
+            move(typeface)
+        };
+    }
+
+    if (mime_type == "font/woff" || mime_type == "font/woff2") {
+        auto font = TRY(WOFF::Font::try_load_from_externally_owned_memory(mapped_file->bytes()));
+        auto typeface = TRY(try_make_ref_counted<Gfx::Typeface>(font->family(), font->variant()));
+        typeface->set_vector_font(move(font));
+        return FontInfo {
+            mime_type == "font/woff" ? FontInfo::Format::WOFF : FontInfo::Format::WOFF2,
+            move(typeface)
+        };
+    }
+
+    return Error::from_string_view("Unrecognized font format."sv);
+}
+
+ErrorOr<void> PropertiesWindow::create_font_tab(GUI::TabWidget& tab_widget, NonnullRefPtr<Core::MappedFile> mapped_file, StringView mime_type)
+{
+    auto font_info_or_error = load_font(m_path, mime_type, mapped_file);
+    if (font_info_or_error.is_error()) {
+        warnln("Failed to open '{}': {}", m_path, font_info_or_error.release_error());
+        return {};
+    }
+    auto font_info = font_info_or_error.release_value();
+    auto& typeface = font_info.typeface;
+
+    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("Font"_short_string));
+    TRY(tab->load_from_gml(properties_window_font_tab_gml));
+
+    String format_name;
+    switch (font_info.format) {
+    case FontInfo::Format::BitmapFont:
+        format_name = TRY("Bitmap Font"_string);
+        break;
+    case FontInfo::Format::OpenType:
+        format_name = TRY("OpenType"_string);
+        break;
+    case FontInfo::Format::TrueType:
+        format_name = TRY("TrueType"_string);
+        break;
+    case FontInfo::Format::WOFF:
+        format_name = TRY("WOFF"_string);
+        break;
+    case FontInfo::Format::WOFF2:
+        format_name = TRY("WOFF2"_string);
+        break;
+    }
+    tab->find_descendant_of_type_named<GUI::Label>("font_format")->set_text(format_name);
+    tab->find_descendant_of_type_named<GUI::Label>("font_family")->set_text(TRY(String::from_deprecated_string(typeface->family())));
+    tab->find_descendant_of_type_named<GUI::Label>("font_fixed_width")->set_text(typeface->is_fixed_width() ? "Yes"_short_string : "No"_short_string);
+    tab->find_descendant_of_type_named<GUI::Label>("font_width")->set_text(TRY(String::from_utf8(Gfx::width_to_name(static_cast<Gfx::FontWidth>(typeface->width())))));
+
+    auto nearest_weight_class_name = [](unsigned weight) {
+        if (weight > 925)
+            return Gfx::weight_to_name(Gfx::FontWeight::ExtraBlack);
+        unsigned weight_class = clamp(round_to<unsigned>(weight / 100.0) * 100, Gfx::FontWeight::Thin, Gfx::FontWeight::Black);
+        return Gfx::weight_to_name(weight_class);
+    };
+    auto weight = typeface->weight();
+    tab->find_descendant_of_type_named<GUI::Label>("font_weight")->set_text(TRY(String::formatted("{} ({})", weight, nearest_weight_class_name(weight))));
+    tab->find_descendant_of_type_named<GUI::Label>("font_slope")->set_text(TRY(String::from_utf8(Gfx::slope_to_name(typeface->slope()))));
+
+    return {};
+}
+
+ErrorOr<void> PropertiesWindow::create_image_tab(GUI::TabWidget& tab_widget, NonnullRefPtr<Core::MappedFile> mapped_file, StringView mime_type)
+{
+    auto image_decoder = Gfx::ImageDecoder::try_create_for_raw_bytes(mapped_file->bytes(), mime_type);
+    if (!image_decoder)
+        return {};
+
+    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("Image"_short_string));
+    TRY(tab->load_from_gml(properties_window_image_tab_gml));
+
+    tab->find_descendant_of_type_named<GUI::Label>("image_type")->set_text(TRY(String::from_utf8(mime_type)));
+    tab->find_descendant_of_type_named<GUI::Label>("image_size")->set_text(TRY(String::formatted("{} x {}", image_decoder->width(), image_decoder->height())));
+
+    String animation_text;
+    if (image_decoder->is_animated()) {
+        auto loops = image_decoder->loop_count();
+        auto frames = image_decoder->frame_count();
+        StringBuilder builder;
+        if (loops == 0) {
+            TRY(builder.try_append("Loop indefinitely"sv));
+        } else if (loops == 1) {
+            TRY(builder.try_append("Once"sv));
+        } else {
+            TRY(builder.try_appendff("Loop {} times"sv, loops));
+        }
+        TRY(builder.try_appendff(" ({} frames)"sv, frames));
+
+        animation_text = TRY(builder.to_string());
+    } else {
+        animation_text = "None"_short_string;
+    }
+    tab->find_descendant_of_type_named<GUI::Label>("image_animation")->set_text(move(animation_text));
+
+    auto hide_icc_group = [&tab](String profile_text) {
+        tab->find_descendant_of_type_named<GUI::Label>("image_has_icc_profile")->set_text(profile_text);
+        tab->find_descendant_of_type_named<GUI::Widget>("image_icc_group")->set_visible(false);
     };
 
-    m_apply_button = make_button("Apply", button_widget);
-    m_apply_button->on_click = [this](auto) { apply_changes(); };
-    m_apply_button->set_enabled(false);
+    if (auto embedded_icc_bytes = TRY(image_decoder->icc_data()); embedded_icc_bytes.has_value()) {
+        auto icc_profile_or_error = Gfx::ICC::Profile::try_load_from_externally_owned_memory(embedded_icc_bytes.value());
+        if (icc_profile_or_error.is_error()) {
+            hide_icc_group(TRY("Present but invalid"_string));
+        } else {
+            auto icc_profile = icc_profile_or_error.release_value();
 
-    update();
+            tab->find_descendant_of_type_named<GUI::Label>("image_has_icc_profile")->set_text(TRY("See below"_string));
+            tab->find_descendant_of_type_named<GUI::Label>("image_icc_profile")->set_text(icc_profile->tag_string_data(Gfx::ICC::profileDescriptionTag).value_or({}));
+            tab->find_descendant_of_type_named<GUI::Label>("image_icc_copyright")->set_text(icc_profile->tag_string_data(Gfx::ICC::copyrightTag).value_or({}));
+            tab->find_descendant_of_type_named<GUI::Label>("image_icc_color_space")->set_text(TRY(String::from_utf8(data_color_space_name(icc_profile->data_color_space()))));
+            tab->find_descendant_of_type_named<GUI::Label>("image_icc_device_class")->set_text(TRY(String::from_utf8((device_class_name(icc_profile->device_class())))));
+        }
+
+    } else {
+        hide_icc_group("None"_short_string);
+    }
+
+    return {};
+}
+
+ErrorOr<void> PropertiesWindow::create_pdf_tab(GUI::TabWidget& tab_widget, NonnullRefPtr<Core::MappedFile> mapped_file)
+{
+    auto maybe_document = PDF::Document::create(mapped_file->bytes());
+    if (maybe_document.is_error()) {
+        warnln("Failed to open '{}': {}", m_path, maybe_document.error().message());
+        return {};
+    }
+    auto document = maybe_document.release_value();
+
+    if (auto handler = document->security_handler(); handler && !handler->has_user_password()) {
+        // FIXME: Show a password dialog, once we've switched to lazy-loading
+        auto tab = TRY(tab_widget.try_add_tab<GUI::Label>("PDF"_short_string));
+        tab->set_text(TRY("PDF is password-protected."_string));
+        return {};
+    }
+
+    if (auto maybe_error = document->initialize(); maybe_error.is_error()) {
+        warnln("PDF '{}' seems to be invalid: {}", m_path, maybe_error.error().message());
+        return {};
+    }
+
+    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("PDF"_short_string));
+    TRY(tab->load_from_gml(properties_window_pdf_tab_gml));
+
+    tab->find_descendant_of_type_named<GUI::Label>("pdf_version")->set_text(TRY(String::formatted("{}.{}", document->version().major, document->version().minor)));
+    tab->find_descendant_of_type_named<GUI::Label>("pdf_page_count")->set_text(TRY(String::number(document->get_page_count())));
+
+    auto maybe_info_dict = document->info_dict();
+    if (maybe_info_dict.is_error()) {
+        warnln("Failed to read InfoDict from '{}': {}", m_path, maybe_info_dict.error().message());
+    } else if (maybe_info_dict.value().has_value()) {
+        auto get_info_string = [](PDF::PDFErrorOr<Optional<DeprecatedString>> input) -> ErrorOr<String> {
+            if (input.is_error())
+                return String {};
+            if (!input.value().has_value())
+                return String {};
+            return String::from_deprecated_string(input.value().value());
+        };
+
+        auto info_dict = maybe_info_dict.release_value().release_value();
+        tab->find_descendant_of_type_named<GUI::Label>("pdf_title")->set_text(TRY(get_info_string(info_dict.title())));
+        tab->find_descendant_of_type_named<GUI::Label>("pdf_author")->set_text(TRY(get_info_string(info_dict.author())));
+        tab->find_descendant_of_type_named<GUI::Label>("pdf_subject")->set_text(TRY(get_info_string(info_dict.subject())));
+        tab->find_descendant_of_type_named<GUI::Label>("pdf_keywords")->set_text(TRY(get_info_string(info_dict.keywords())));
+        tab->find_descendant_of_type_named<GUI::Label>("pdf_creator")->set_text(TRY(get_info_string(info_dict.creator())));
+        tab->find_descendant_of_type_named<GUI::Label>("pdf_producer")->set_text(TRY(get_info_string(info_dict.producer())));
+        tab->find_descendant_of_type_named<GUI::Label>("pdf_creation_date")->set_text(TRY(get_info_string(info_dict.creation_date())));
+        tab->find_descendant_of_type_named<GUI::Label>("pdf_modification_date")->set_text(TRY(get_info_string(info_dict.modification_date())));
+    }
+
+    return {};
 }
 
 void PropertiesWindow::update()
@@ -193,7 +538,7 @@ bool PropertiesWindow::apply_changes()
         DeprecatedString new_name = m_name_box->text();
         DeprecatedString new_file = make_full_path(new_name).characters();
 
-        if (Core::File::exists(new_file)) {
+        if (FileSystem::exists(new_file)) {
             GUI::MessageBox::show(this, DeprecatedString::formatted("A file \"{}\" already exists!", new_name), "Error"sv, GUI::MessageBox::Type::Error);
             return false;
         }
@@ -226,13 +571,9 @@ bool PropertiesWindow::apply_changes()
     return true;
 }
 
-void PropertiesWindow::setup_permission_checkboxes(GUI::CheckBox& box_read, GUI::CheckBox& box_write, GUI::CheckBox& box_execute, PermissionMasks masks, mode_t mode)
+ErrorOr<void> PropertiesWindow::setup_permission_checkboxes(GUI::CheckBox& box_read, GUI::CheckBox& box_write, GUI::CheckBox& box_execute, PermissionMasks masks, mode_t mode)
 {
-    struct stat st;
-    if (lstat(m_path.characters(), &st)) {
-        perror("stat");
-        return;
-    }
+    auto st = TRY(Core::System::lstat(m_path));
 
     auto can_edit_checkboxes = st.st_uid == getuid();
 
@@ -247,11 +588,84 @@ void PropertiesWindow::setup_permission_checkboxes(GUI::CheckBox& box_read, GUI:
     box_execute.set_checked(mode & masks.execute);
     box_execute.on_checked = [&, masks](bool checked) { permission_changed(masks.execute, checked); };
     box_execute.set_enabled(can_edit_checkboxes);
+
+    return {};
 }
 
-GUI::Button& PropertiesWindow::make_button(DeprecatedString text, GUI::Widget& parent)
+ErrorOr<NonnullRefPtr<GUI::Button>> PropertiesWindow::make_button(String text, GUI::Widget& parent)
 {
-    auto& button = parent.add<GUI::Button>(text);
-    button.set_fixed_size(70, 22);
+    auto button = TRY(parent.try_add<GUI::Button>(text));
+    button->set_fixed_size(70, 22);
     return button;
+}
+
+void PropertiesWindow::close()
+{
+    GUI::Window::close();
+    if (m_directory_statistics_calculator)
+        m_directory_statistics_calculator->stop();
+}
+
+PropertiesWindow::DirectoryStatisticsCalculator::DirectoryStatisticsCalculator(DeprecatedString path)
+{
+    m_work_queue.enqueue(path);
+}
+
+void PropertiesWindow::DirectoryStatisticsCalculator::start()
+{
+    using namespace AK::TimeLiterals;
+    VERIFY(!m_background_action);
+
+    m_background_action = Threading::BackgroundAction<int>::construct(
+        [this, strong_this = NonnullRefPtr(*this)](auto& task) -> ErrorOr<int> {
+            auto timer = Core::ElapsedTimer();
+            while (!m_work_queue.is_empty()) {
+                auto base_directory = m_work_queue.dequeue();
+                auto result = Core::Directory::for_each_entry(base_directory, Core::DirIterator::SkipParentAndBaseDir, [&](auto const& entry, auto const& directory) -> ErrorOr<IterationDecision> {
+                    if (task.is_canceled())
+                        return Error::from_errno(ECANCELED);
+
+                    struct stat st = {};
+                    if (fstatat(directory.fd(), entry.name.characters(), &st, AT_SYMLINK_NOFOLLOW) < 0) {
+                        perror("fstatat");
+                        return IterationDecision::Continue;
+                    }
+
+                    if (S_ISDIR(st.st_mode)) {
+                        auto full_path = LexicalPath::join(directory.path().string(), entry.name).string();
+                        m_directory_count++;
+                        m_work_queue.enqueue(full_path);
+                    } else if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
+                        m_file_count++;
+                        m_total_size_in_bytes += st.st_size;
+                    }
+
+                    // Show the first update, then show any subsequent updates every 100ms.
+                    if (!task.is_canceled() && on_update && (!timer.is_valid() || timer.elapsed_time() > 100_ms)) {
+                        timer.start();
+                        on_update(m_total_size_in_bytes, m_file_count, m_directory_count);
+                    }
+
+                    return IterationDecision::Continue;
+                });
+                if (result.is_error() && result.error().code() == ECANCELED)
+                    return Error::from_errno(ECANCELED);
+            }
+            return 0;
+        },
+        [this](auto) -> ErrorOr<void> {
+            if (on_update)
+                on_update(m_total_size_in_bytes, m_file_count, m_directory_count);
+
+            return {};
+        },
+        [](auto) {
+            // Ignore the error.
+        });
+}
+
+void PropertiesWindow::DirectoryStatisticsCalculator::stop()
+{
+    VERIFY(m_background_action);
+    m_background_action->cancel();
 }

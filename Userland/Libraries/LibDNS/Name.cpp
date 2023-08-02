@@ -7,6 +7,7 @@
 
 #include "Name.h"
 #include <AK/Random.h>
+#include <AK/Stream.h>
 #include <AK/Vector.h>
 #include <ctype.h>
 
@@ -75,12 +76,12 @@ void Name::randomize_case()
     m_name = builder.to_deprecated_string();
 }
 
-ErrorOr<void> Name::write_to_stream(Core::Stream::Stream& stream) const
+ErrorOr<void> Name::write_to_stream(Stream& stream) const
 {
     auto parts = as_string().split_view('.');
     for (auto& part : parts) {
         TRY(stream.write_value<u8>(part.length()));
-        TRY(stream.write_entire_buffer(part.bytes()));
+        TRY(stream.write_until_depleted(part.bytes()));
     }
     TRY(stream.write_value('\0'));
     return {};

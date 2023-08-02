@@ -102,8 +102,17 @@ Optional<JS::PropertyDescriptor> cross_origin_get_own_property_helper(Variant<HT
         .property_key = property_key,
     };
 
+    // SameValue(e.[[Property]], P) can never be true at step 2.1 if P is not a string due to the different type, so we can return early.
+    if (!property_key.is_string()) {
+        return {};
+    }
+    auto const& property_key_string = property_key.as_string();
+
     // 2. For each e of CrossOriginProperties(O):
     for (auto const& entry : cross_origin_properties(object_const_variant)) {
+        if (entry.property != property_key_string)
+            continue;
+        // 1. If SameValue(e.[[Property]], P) is true, then:
         auto& cross_origin_property_descriptor_map = object.visit([](auto* o) -> CrossOriginPropertyDescriptorMap& { return o->cross_origin_property_descriptor_map(); });
 
         // 1. If the value of the [[CrossOriginPropertyDescriptorMap]] internal slot of O contains an entry whose key is crossOriginKey, then return that entry's value.
@@ -137,7 +146,7 @@ Optional<JS::PropertyDescriptor> cross_origin_get_own_property_helper(Variant<HT
         // 5. Otherwise:
         else {
             // 1. Let crossOriginGet be undefined.
-            Optional<JS::FunctionObject*> cross_origin_get;
+            Optional<JS::GCPtr<JS::FunctionObject>> cross_origin_get;
 
             // 2. If e.[[NeedsGet]] is true, then set crossOriginGet to an anonymous built-in function, created in the current Realm Record, that performs the same steps as the getter of the IDL attribute P on object O.
             if (*entry.needs_get) {
@@ -149,7 +158,7 @@ Optional<JS::PropertyDescriptor> cross_origin_get_own_property_helper(Variant<HT
             }
 
             // 3. Let crossOriginSet be undefined.
-            Optional<JS::FunctionObject*> cross_origin_set;
+            Optional<JS::GCPtr<JS::FunctionObject>> cross_origin_set;
 
             // If e.[[NeedsSet]] is true, then set crossOriginSet to an anonymous built-in function, created in the current Realm Record, that performs the same steps as the setter of the IDL attribute P on object O.
             if (*entry.needs_set) {
@@ -186,7 +195,7 @@ JS::ThrowCompletionOr<JS::Value> cross_origin_get(JS::VM& vm, JS::Object const& 
 
     // 3. If IsDataDescriptor(desc) is true, then return desc.[[Value]].
     if (descriptor->is_data_descriptor())
-        return descriptor->value;
+        return *descriptor->value;
 
     // 4. Assert: IsAccessorDescriptor(desc) is true.
     VERIFY(descriptor->is_accessor_descriptor());

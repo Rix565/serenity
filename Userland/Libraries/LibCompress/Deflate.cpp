@@ -9,7 +9,8 @@
 #include <AK/Assertions.h>
 #include <AK/BinaryHeap.h>
 #include <AK/BinarySearch.h>
-#include <LibCore/MemoryStream.h>
+#include <AK/BitStream.h>
+#include <AK/MemoryStream.h>
 #include <string.h>
 
 #include <LibCompress/Deflate.h>
@@ -28,7 +29,7 @@ CanonicalCode const& CanonicalCode::fixed_literal_codes()
     if (initialized)
         return code;
 
-    code = CanonicalCode::from_bytes(fixed_literal_bit_lengths).value();
+    code = MUST(CanonicalCode::from_bytes(fixed_literal_bit_lengths));
     initialized = true;
 
     return code;
@@ -42,13 +43,13 @@ CanonicalCode const& CanonicalCode::fixed_distance_codes()
     if (initialized)
         return code;
 
-    code = CanonicalCode::from_bytes(fixed_distance_bit_lengths).value();
+    code = MUST(CanonicalCode::from_bytes(fixed_distance_bit_lengths));
     initialized = true;
 
     return code;
 }
 
-Optional<CanonicalCode> CanonicalCode::from_bytes(ReadonlyBytes bytes)
+ErrorOr<CanonicalCode> CanonicalCode::from_bytes(ReadonlyBytes bytes)
 {
     // FIXME: I can't quite follow the algorithm here, but it seems to work.
 
@@ -62,13 +63,29 @@ Optional<CanonicalCode> CanonicalCode::from_bytes(ReadonlyBytes bytes)
             last_non_zero = i;
         }
     }
+
     if (non_zero_symbols == 1) { // special case - only 1 symbol
-        code.m_symbol_codes.append(0b10);
-        code.m_symbol_values.append(last_non_zero);
+        code.m_prefix_table[0] = PrefixTableEntry { static_cast<u16>(last_non_zero), 1u };
+        code.m_prefix_table[1] = code.m_prefix_table[0];
+        code.m_max_prefixed_code_length = 1;
+
+        if (code.m_bit_codes.size() < static_cast<size_t>(last_non_zero + 1)) {
+            TRY(code.m_bit_codes.try_resize(last_non_zero + 1));
+            TRY(code.m_bit_code_lengths.try_resize(last_non_zero + 1));
+        }
         code.m_bit_codes[last_non_zero] = 0;
         code.m_bit_code_lengths[last_non_zero] = 1;
+
         return code;
     }
+
+    struct PrefixCode {
+        u16 symbol_code { 0 };
+        u16 symbol_value { 0 };
+        u16 code_length { 0 };
+    };
+    Array<PrefixCode, 1 << CanonicalCode::max_allowed_prefixed_code_length> prefix_codes;
+    size_t number_of_prefix_codes = 0;
 
     auto next_code = 0;
     for (size_t code_length = 1; code_length <= 15; ++code_length) {
@@ -80,10 +97,24 @@ Optional<CanonicalCode> CanonicalCode::from_bytes(ReadonlyBytes bytes)
                 continue;
 
             if (next_code > start_bit)
-                return {};
+                return Error::from_string_literal("Failed to decode code lengths");
 
-            code.m_symbol_codes.append(start_bit | next_code);
-            code.m_symbol_values.append(symbol);
+            if (code_length <= CanonicalCode::max_allowed_prefixed_code_length) {
+                auto& prefix_code = prefix_codes[number_of_prefix_codes++];
+                prefix_code.symbol_code = next_code;
+                prefix_code.symbol_value = symbol;
+                prefix_code.code_length = code_length;
+
+                code.m_max_prefixed_code_length = code_length;
+            } else {
+                code.m_symbol_codes.append(start_bit | next_code);
+                code.m_symbol_values.append(symbol);
+            }
+
+            if (code.m_bit_codes.size() < symbol + 1) {
+                TRY(code.m_bit_codes.try_resize(symbol + 1));
+                TRY(code.m_bit_code_lengths.try_resize(symbol + 1));
+            }
             code.m_bit_codes[symbol] = fast_reverse16(start_bit | next_code, code_length); // DEFLATE writes huffman encoded symbols as lsb-first
             code.m_bit_code_lengths[symbol] = code_length;
 
@@ -91,33 +122,54 @@ Optional<CanonicalCode> CanonicalCode::from_bytes(ReadonlyBytes bytes)
         }
     }
 
-    if (next_code != (1 << 15)) {
-        return {};
+    if (next_code != (1 << 15))
+        return Error::from_string_literal("Failed to decode code lengths");
+
+    for (auto [symbol_code, symbol_value, code_length] : prefix_codes) {
+        if (code_length == 0 || code_length > CanonicalCode::max_allowed_prefixed_code_length)
+            break;
+
+        auto shift = code.m_max_prefixed_code_length - code_length;
+        symbol_code <<= shift;
+
+        for (size_t j = 0; j < (1u << shift); ++j) {
+            auto index = fast_reverse16(symbol_code + j, code.m_max_prefixed_code_length);
+            code.m_prefix_table[index] = PrefixTableEntry { symbol_value, code_length };
+        }
     }
 
     return code;
 }
 
-ErrorOr<u32> CanonicalCode::read_symbol(Core::Stream::LittleEndianInputBitStream& stream) const
+ErrorOr<u32> CanonicalCode::read_symbol(LittleEndianInputBitStream& stream) const
 {
-    u32 code_bits = 1;
+    auto prefix = TRY(stream.peek_bits<size_t>(m_max_prefixed_code_length));
 
-    for (;;) {
-        code_bits = code_bits << 1 | TRY(stream.read_bits(1));
-        if (code_bits >= (1 << 16))
-            return Error::from_string_literal("Symbol exceeds maximum symbol number");
+    if (auto [symbol_value, code_length] = m_prefix_table[prefix]; code_length != 0) {
+        stream.discard_previously_peeked_bits(code_length);
+        return symbol_value;
+    }
 
-        // FIXME: This is very inefficient and could greatly be improved by implementing this
-        //        algorithm: https://www.hanshq.net/zip.html#huffdec
+    auto code_bits = TRY(stream.read_bits<u16>(m_max_prefixed_code_length));
+    code_bits = fast_reverse16(code_bits, m_max_prefixed_code_length);
+    code_bits |= 1 << m_max_prefixed_code_length;
+
+    for (size_t i = m_max_prefixed_code_length; i < 16; ++i) {
         size_t index;
         if (binary_search(m_symbol_codes.span(), code_bits, &index))
             return m_symbol_values[index];
+
+        code_bits = code_bits << 1 | TRY(stream.read_bit());
     }
+
+    return Error::from_string_literal("Symbol exceeds maximum symbol number");
 }
 
-ErrorOr<void> CanonicalCode::write_symbol(Core::Stream::LittleEndianOutputBitStream& stream, u32 symbol) const
+ErrorOr<void> CanonicalCode::write_symbol(LittleEndianOutputBitStream& stream, u32 symbol) const
 {
-    TRY(stream.write_bits(m_bit_codes[symbol], m_bit_code_lengths[symbol]));
+    auto code = symbol < m_bit_codes.size() ? m_bit_codes[symbol] : 0u;
+    auto length = symbol < m_bit_code_lengths.size() ? m_bit_code_lengths[symbol] : 0u;
+    TRY(stream.write_bits(code, length));
     return {};
 }
 
@@ -142,29 +194,29 @@ ErrorOr<bool> DeflateDecompressor::CompressedBlock::try_read_more()
         u8 byte_symbol = symbol;
         m_decompressor.m_output_buffer.write({ &byte_symbol, sizeof(byte_symbol) });
         return true;
-    } else if (symbol == 256) {
+    }
+
+    if (symbol == 256) {
         m_eof = true;
         return false;
-    } else {
-        if (!m_distance_codes.has_value())
-            return Error::from_string_literal("Distance codes have not been initialized");
-
-        auto const length = TRY(m_decompressor.decode_length(symbol));
-        auto const distance_symbol = TRY(m_distance_codes.value().read_symbol(*m_decompressor.m_input_stream));
-        if (distance_symbol >= 30)
-            return Error::from_string_literal("Invalid deflate distance symbol");
-
-        auto const distance = TRY(m_decompressor.decode_distance(distance_symbol));
-
-        for (size_t idx = 0; idx < length; ++idx) {
-            u8 byte = 0;
-            TRY(m_decompressor.m_output_buffer.read_with_seekback({ &byte, sizeof(byte) }, distance));
-
-            m_decompressor.m_output_buffer.write({ &byte, sizeof(byte) });
-        }
-
-        return true;
     }
+
+    if (!m_distance_codes.has_value())
+        return Error::from_string_literal("Distance codes have not been initialized");
+
+    auto const length = TRY(m_decompressor.decode_length(symbol));
+    auto const distance_symbol = TRY(m_distance_codes.value().read_symbol(*m_decompressor.m_input_stream));
+    if (distance_symbol >= 30)
+        return Error::from_string_literal("Invalid deflate distance symbol");
+
+    auto const distance = TRY(m_decompressor.decode_distance(distance_symbol));
+
+    auto copied_length = TRY(m_decompressor.m_output_buffer.copy_from_seekback(distance, length));
+
+    // TODO: What should we do if the output buffer is full?
+    VERIFY(copied_length == length);
+
+    return true;
 }
 
 DeflateDecompressor::UncompressedBlock::UncompressedBlock(DeflateDecompressor& decompressor, size_t length)
@@ -178,9 +230,12 @@ ErrorOr<bool> DeflateDecompressor::UncompressedBlock::try_read_more()
     if (m_bytes_remaining == 0)
         return false;
 
+    if (m_decompressor.m_input_stream->is_eof())
+        return Error::from_string_literal("Input data ends in the middle of an uncompressed DEFLATE block");
+
     Array<u8, 4096> temporary_buffer;
     auto readable_bytes = temporary_buffer.span().trim(min(m_bytes_remaining, m_decompressor.m_output_buffer.empty_space()));
-    auto read_bytes = TRY(m_decompressor.m_input_stream->read(readable_bytes));
+    auto read_bytes = TRY(m_decompressor.m_input_stream->read_some(readable_bytes));
     auto written_bytes = m_decompressor.m_output_buffer.write(read_bytes);
     VERIFY(read_bytes.size() == written_bytes);
 
@@ -188,14 +243,14 @@ ErrorOr<bool> DeflateDecompressor::UncompressedBlock::try_read_more()
     return true;
 }
 
-ErrorOr<NonnullOwnPtr<DeflateDecompressor>> DeflateDecompressor::construct(Core::Stream::Handle<Core::Stream::Stream> stream)
+ErrorOr<NonnullOwnPtr<DeflateDecompressor>> DeflateDecompressor::construct(MaybeOwned<LittleEndianInputBitStream> stream)
 {
     auto output_buffer = TRY(CircularBuffer::create_empty(32 * KiB));
     return TRY(adopt_nonnull_own_or_enomem(new (nothrow) DeflateDecompressor(move(stream), move(output_buffer))));
 }
 
-DeflateDecompressor::DeflateDecompressor(Core::Stream::Handle<Core::Stream::Stream> stream, CircularBuffer output_buffer)
-    : m_input_stream(make<Core::Stream::LittleEndianInputBitStream>(move(stream)))
+DeflateDecompressor::DeflateDecompressor(MaybeOwned<LittleEndianInputBitStream> stream, CircularBuffer output_buffer)
+    : m_input_stream(move(stream))
     , m_output_buffer(move(output_buffer))
 {
 }
@@ -208,7 +263,7 @@ DeflateDecompressor::~DeflateDecompressor()
         m_uncompressed_block.~UncompressedBlock();
 }
 
-ErrorOr<Bytes> DeflateDecompressor::read(Bytes bytes)
+ErrorOr<Bytes> DeflateDecompressor::read_some(Bytes bytes)
 {
     size_t total_read = 0;
     while (total_read < bytes.size()) {
@@ -224,9 +279,8 @@ ErrorOr<Bytes> DeflateDecompressor::read(Bytes bytes)
             if (block_type == 0b00) {
                 m_input_stream->align_to_byte_boundary();
 
-                LittleEndian<u16> length, negated_length;
-                TRY(m_input_stream->read(length.bytes()));
-                TRY(m_input_stream->read(negated_length.bytes()));
+                u16 length = TRY(m_input_stream->read_value<LittleEndian<u16>>());
+                u16 negated_length = TRY(m_input_stream->read_value<LittleEndian<u16>>());
 
                 if ((length ^ 0xffff) != negated_length)
                     return Error::from_string_literal("Calculated negated length does not equal stored negated length");
@@ -300,7 +354,7 @@ ErrorOr<Bytes> DeflateDecompressor::read(Bytes bytes)
 
 bool DeflateDecompressor::is_eof() const { return m_state == State::Idle && m_read_final_bock; }
 
-ErrorOr<size_t> DeflateDecompressor::write(ReadonlyBytes)
+ErrorOr<size_t> DeflateDecompressor::write_some(ReadonlyBytes)
 {
     return Error::from_errno(EBADF);
 }
@@ -316,18 +370,19 @@ void DeflateDecompressor::close()
 
 ErrorOr<ByteBuffer> DeflateDecompressor::decompress_all(ReadonlyBytes bytes)
 {
-    auto memory_stream = TRY(Core::Stream::FixedMemoryStream::construct(bytes));
-    auto deflate_stream = TRY(DeflateDecompressor::construct(move(memory_stream)));
-    Core::Stream::AllocatingMemoryStream output_stream;
+    FixedMemoryStream memory_stream { bytes };
+    LittleEndianInputBitStream bit_stream { MaybeOwned<Stream>(memory_stream) };
+    auto deflate_stream = TRY(DeflateDecompressor::construct(MaybeOwned<LittleEndianInputBitStream>(bit_stream)));
+    AllocatingMemoryStream output_stream;
 
     auto buffer = TRY(ByteBuffer::create_uninitialized(4096));
     while (!deflate_stream->is_eof()) {
-        auto const slice = TRY(deflate_stream->read(buffer));
-        TRY(output_stream.write_entire_buffer(slice));
+        auto const slice = TRY(deflate_stream->read_some(buffer));
+        TRY(output_stream.write_until_depleted(slice));
     }
 
     auto output_buffer = TRY(ByteBuffer::create_uninitialized(output_stream.used_buffer_size()));
-    TRY(output_stream.read_entire_buffer(output_buffer));
+    TRY(output_stream.read_until_filled(output_buffer));
     return output_buffer;
 }
 
@@ -344,7 +399,7 @@ ErrorOr<u32> DeflateDecompressor::decode_length(u32 symbol)
     }
 
     if (symbol == 285)
-        return 258;
+        return DeflateDecompressor::max_back_reference_length;
 
     VERIFY_NOT_REACHED();
 }
@@ -380,40 +435,30 @@ ErrorOr<void> DeflateDecompressor::decode_codes(CanonicalCode& literal_code, Opt
 
     // Now we can extract the code that was used to encode the code lengths of the code that was used to
     // encode the block.
-
-    auto code_length_code_result = CanonicalCode::from_bytes({ code_lengths_code_lengths, sizeof(code_lengths_code_lengths) });
-    if (!code_length_code_result.has_value())
-        return Error::from_string_literal("Failed to decode code length code");
-    auto const code_length_code = code_length_code_result.value();
+    auto const code_length_code = TRY(CanonicalCode::from_bytes({ code_lengths_code_lengths, sizeof(code_lengths_code_lengths) }));
 
     // Next we extract the code lengths of the code that was used to encode the block.
-
-    Vector<u8> code_lengths;
+    Vector<u8, 286> code_lengths;
     while (code_lengths.size() < literal_code_count + distance_code_count) {
         auto symbol = TRY(code_length_code.read_symbol(*m_input_stream));
 
         if (symbol < deflate_special_code_length_copy) {
             code_lengths.append(static_cast<u8>(symbol));
-            continue;
+        } else if (symbol == deflate_special_code_length_copy) {
+            if (code_lengths.is_empty())
+                return Error::from_string_literal("Found no codes to copy before a copy block");
+            auto nrepeat = 3 + TRY(m_input_stream->read_bits(2));
+            for (size_t j = 0; j < nrepeat; ++j)
+                code_lengths.append(code_lengths.last());
         } else if (symbol == deflate_special_code_length_zeros) {
             auto nrepeat = 3 + TRY(m_input_stream->read_bits(3));
             for (size_t j = 0; j < nrepeat; ++j)
                 code_lengths.append(0);
-            continue;
-        } else if (symbol == deflate_special_code_length_long_zeros) {
+        } else {
+            VERIFY(symbol == deflate_special_code_length_long_zeros);
             auto nrepeat = 11 + TRY(m_input_stream->read_bits(7));
             for (size_t j = 0; j < nrepeat; ++j)
                 code_lengths.append(0);
-            continue;
-        } else {
-            VERIFY(symbol == deflate_special_code_length_copy);
-
-            if (code_lengths.is_empty())
-                return Error::from_string_literal("Found no codes to copy before a copy block");
-
-            auto nrepeat = 3 + TRY(m_input_stream->read_bits(2));
-            for (size_t j = 0; j < nrepeat; ++j)
-                code_lengths.append(code_lengths.last());
         }
     }
 
@@ -421,11 +466,7 @@ ErrorOr<void> DeflateDecompressor::decode_codes(CanonicalCode& literal_code, Opt
         return Error::from_string_literal("Number of code lengths does not match the sum of codes");
 
     // Now we extract the code that was used to encode literals and lengths in the block.
-
-    auto literal_code_result = CanonicalCode::from_bytes(code_lengths.span().trim(literal_code_count));
-    if (!literal_code_result.has_value())
-        return Error::from_string_literal("Failed to decode the literal code");
-    literal_code = literal_code_result.value();
+    literal_code = TRY(CanonicalCode::from_bytes(code_lengths.span().trim(literal_code_count)));
 
     // Now we extract the code that was used to encode distances in the block.
 
@@ -438,22 +479,19 @@ ErrorOr<void> DeflateDecompressor::decode_codes(CanonicalCode& literal_code, Opt
             return Error::from_string_literal("Length for a single distance code is longer than 1");
     }
 
-    auto distance_code_result = CanonicalCode::from_bytes(code_lengths.span().slice(literal_code_count));
-    if (!distance_code_result.has_value())
-        return Error::from_string_literal("Failed to decode the distance code");
-    distance_code = distance_code_result.value();
+    distance_code = TRY(CanonicalCode::from_bytes(code_lengths.span().slice(literal_code_count)));
 
     return {};
 }
 
-ErrorOr<NonnullOwnPtr<DeflateCompressor>> DeflateCompressor::construct(Core::Stream::Handle<Core::Stream::Stream> stream, CompressionLevel compression_level)
+ErrorOr<NonnullOwnPtr<DeflateCompressor>> DeflateCompressor::construct(MaybeOwned<Stream> stream, CompressionLevel compression_level)
 {
-    auto bit_stream = TRY(Core::Stream::LittleEndianOutputBitStream::construct(move(stream)));
+    auto bit_stream = TRY(try_make<LittleEndianOutputBitStream>(move(stream)));
     auto deflate_compressor = TRY(adopt_nonnull_own_or_enomem(new (nothrow) DeflateCompressor(move(bit_stream), compression_level)));
     return deflate_compressor;
 }
 
-DeflateCompressor::DeflateCompressor(NonnullOwnPtr<Core::Stream::LittleEndianOutputBitStream> stream, CompressionLevel compression_level)
+DeflateCompressor::DeflateCompressor(NonnullOwnPtr<LittleEndianOutputBitStream> stream, CompressionLevel compression_level)
     : m_compression_level(compression_level)
     , m_compression_constants(compression_constants[static_cast<int>(m_compression_level)])
     , m_output_stream(move(stream))
@@ -467,25 +505,27 @@ DeflateCompressor::~DeflateCompressor()
     VERIFY(m_finished);
 }
 
-ErrorOr<Bytes> DeflateCompressor::read(Bytes)
+ErrorOr<Bytes> DeflateCompressor::read_some(Bytes)
 {
     return Error::from_errno(EBADF);
 }
 
-ErrorOr<size_t> DeflateCompressor::write(ReadonlyBytes bytes)
+ErrorOr<size_t> DeflateCompressor::write_some(ReadonlyBytes bytes)
 {
     VERIFY(!m_finished);
 
-    if (bytes.size() == 0)
-        return 0; // recursion base case
+    size_t total_written = 0;
+    while (!bytes.is_empty()) {
+        auto n_written = bytes.copy_trimmed_to(pending_block().slice(m_pending_block_size));
+        m_pending_block_size += n_written;
 
-    auto n_written = bytes.copy_trimmed_to(pending_block().slice(m_pending_block_size));
-    m_pending_block_size += n_written;
+        if (m_pending_block_size == block_size)
+            TRY(flush());
 
-    if (m_pending_block_size == block_size)
-        TRY(flush());
-
-    return n_written + TRY(write(bytes.slice(n_written)));
+        bytes = bytes.slice(n_written);
+        total_written += n_written;
+    }
+    return total_written;
 }
 
 bool DeflateCompressor::is_eof() const
@@ -890,11 +930,10 @@ ErrorOr<void> DeflateCompressor::write_dynamic_huffman(CanonicalCode const& lite
         TRY(m_output_stream->write_bits(code_lengths_bit_lengths[code_lengths_code_lengths_order[i]], 3));
     }
 
-    auto code_lengths_code = CanonicalCode::from_bytes(code_lengths_bit_lengths);
-    VERIFY(code_lengths_code.has_value());
+    auto code_lengths_code = MUST(CanonicalCode::from_bytes(code_lengths_bit_lengths));
     for (size_t i = 0; i < encoded_lengths_count; i++) {
         auto encoded_length = encoded_lengths[i];
-        TRY(code_lengths_code->write_symbol(*m_output_stream, encoded_length.symbol));
+        TRY(code_lengths_code.write_symbol(*m_output_stream, encoded_length.symbol));
         if (encoded_length.symbol == deflate_special_code_length_copy) {
             TRY(m_output_stream->write_bits<u8>(encoded_length.count - 3, 2));
         } else if (encoded_length.symbol == deflate_special_code_length_zeros) {
@@ -924,11 +963,9 @@ ErrorOr<void> DeflateCompressor::flush()
     auto write_uncompressed = [&]() -> ErrorOr<void> {
         TRY(m_output_stream->write_bits(0b00u, 2)); // no compression
         TRY(m_output_stream->align_to_byte_boundary());
-        LittleEndian<u16> len = m_pending_block_size;
-        TRY(m_output_stream->write_entire_buffer(len.bytes()));
-        LittleEndian<u16> nlen = ~m_pending_block_size;
-        TRY(m_output_stream->write_entire_buffer(nlen.bytes()));
-        TRY(m_output_stream->write_entire_buffer(pending_block().slice(0, m_pending_block_size)));
+        TRY(m_output_stream->write_value<LittleEndian<u16>>(m_pending_block_size));
+        TRY(m_output_stream->write_value<LittleEndian<u16>>(~m_pending_block_size));
+        TRY(m_output_stream->write_until_depleted(pending_block().slice(0, m_pending_block_size)));
         return {};
     };
 
@@ -987,10 +1024,12 @@ ErrorOr<void> DeflateCompressor::flush()
     } else {
         // dynamic huffman codes
         TRY(m_output_stream->write_bits(0b10u, 2));
-        auto literal_code = CanonicalCode::from_bytes(dynamic_literal_bit_lengths);
-        VERIFY(literal_code.has_value());
-        auto distance_code = CanonicalCode::from_bytes(dynamic_distance_bit_lengths);
-        TRY(write_dynamic_huffman(literal_code.value(), literal_code_count, distance_code, distance_code_count, code_lengths_bit_lengths, code_lengths_count, encoded_lengths, encoded_lengths_count));
+        auto literal_code = MUST(CanonicalCode::from_bytes(dynamic_literal_bit_lengths));
+        auto distance_code_or_error = CanonicalCode::from_bytes(dynamic_distance_bit_lengths);
+        Optional<CanonicalCode> distance_code;
+        if (!distance_code_or_error.is_error())
+            distance_code = distance_code_or_error.release_value();
+        TRY(write_dynamic_huffman(literal_code, literal_code_count, distance_code, distance_code_count, code_lengths_bit_lengths, code_lengths_count, encoded_lengths, encoded_lengths_count));
     }
     if (m_finished)
         TRY(m_output_stream->align_to_byte_boundary());
@@ -1011,19 +1050,20 @@ ErrorOr<void> DeflateCompressor::final_flush()
     VERIFY(!m_finished);
     m_finished = true;
     TRY(flush());
+    TRY(m_output_stream->flush_buffer_to_stream());
     return {};
 }
 
 ErrorOr<ByteBuffer> DeflateCompressor::compress_all(ReadonlyBytes bytes, CompressionLevel compression_level)
 {
-    auto output_stream = TRY(try_make<Core::Stream::AllocatingMemoryStream>());
-    auto deflate_stream = TRY(DeflateCompressor::construct(Core::Stream::Handle<Core::Stream::Stream>(*output_stream), compression_level));
+    auto output_stream = TRY(try_make<AllocatingMemoryStream>());
+    auto deflate_stream = TRY(DeflateCompressor::construct(MaybeOwned<Stream>(*output_stream), compression_level));
 
-    TRY(deflate_stream->write_entire_buffer(bytes));
+    TRY(deflate_stream->write_until_depleted(bytes));
     TRY(deflate_stream->final_flush());
 
     auto buffer = TRY(ByteBuffer::create_uninitialized(output_stream->used_buffer_size()));
-    TRY(output_stream->read_entire_buffer(buffer));
+    TRY(output_stream->read_until_filled(buffer));
 
     return buffer;
 }

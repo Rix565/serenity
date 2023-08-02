@@ -20,12 +20,12 @@ bool Request::stop()
     return m_client->stop_request({}, *this);
 }
 
-void Request::stream_into(Core::Stream::Stream& stream)
+void Request::stream_into(Stream& stream)
 {
     VERIFY(!m_internal_stream_data);
 
-    m_internal_stream_data = make<InternalStreamData>(MUST(Core::Stream::File::adopt_fd(fd(), Core::Stream::OpenMode::Read)));
-    m_internal_stream_data->read_notifier = Core::Notifier::construct(fd(), Core::Notifier::Read);
+    m_internal_stream_data = make<InternalStreamData>(MUST(Core::File::adopt_fd(fd(), Core::File::OpenMode::Read)));
+    m_internal_stream_data->read_notifier = Core::Notifier::construct(fd(), Core::Notifier::Type::Read);
 
     auto user_on_finish = move(on_finish);
     on_finish = [this](auto success, auto total_size) {
@@ -41,11 +41,11 @@ void Request::stream_into(Core::Stream::Stream& stream)
             user_on_finish(m_internal_stream_data->success, m_internal_stream_data->total_size);
         }
     };
-    m_internal_stream_data->read_notifier->on_ready_to_read = [this, &stream] {
+    m_internal_stream_data->read_notifier->on_activation = [this, &stream] {
         constexpr size_t buffer_size = 256 * KiB;
         static char buf[buffer_size];
         do {
-            auto result = m_internal_stream_data->read_stream->read({ buf, buffer_size });
+            auto result = m_internal_stream_data->read_stream->read_some({ buf, buffer_size });
             if (result.is_error() && (!result.error().is_errno() || (result.error().is_errno() && result.error().code() != EINTR)))
                 break;
             if (result.is_error())
@@ -54,7 +54,7 @@ void Request::stream_into(Core::Stream::Stream& stream)
             if (read_bytes.is_empty())
                 break;
             // FIXME: What do we do if this fails?
-            stream.write_entire_buffer(read_bytes).release_value_but_fixme_should_propagate_errors();
+            stream.write_until_depleted(read_bytes).release_value_but_fixme_should_propagate_errors();
             break;
         } while (true);
 
@@ -88,9 +88,9 @@ void Request::set_should_buffer_all_input(bool value)
         m_internal_buffered_data->response_code = move(response_code);
     };
 
-    on_finish = [this](auto success, u32 total_size) {
+    on_finish = [this](auto success, auto total_size) {
         auto output_buffer = ByteBuffer::create_uninitialized(m_internal_buffered_data->payload_stream.used_buffer_size()).release_value_but_fixme_should_propagate_errors();
-        m_internal_buffered_data->payload_stream.read_entire_buffer(output_buffer).release_value_but_fixme_should_propagate_errors();
+        m_internal_buffered_data->payload_stream.read_until_filled(output_buffer).release_value_but_fixme_should_propagate_errors();
         on_buffered_request_finish(
             success,
             total_size,
@@ -102,7 +102,7 @@ void Request::set_should_buffer_all_input(bool value)
     stream_into(m_internal_buffered_data->payload_stream);
 }
 
-void Request::did_finish(Badge<RequestClient>, bool success, u32 total_size)
+void Request::did_finish(Badge<RequestClient>, bool success, u64 total_size)
 {
     if (!on_finish)
         return;
@@ -110,7 +110,7 @@ void Request::did_finish(Badge<RequestClient>, bool success, u32 total_size)
     on_finish(success, total_size);
 }
 
-void Request::did_progress(Badge<RequestClient>, Optional<u32> total_size, u32 downloaded_size)
+void Request::did_progress(Badge<RequestClient>, Optional<u64> total_size, u64 downloaded_size)
 {
     if (on_progress)
         on_progress(total_size, downloaded_size);

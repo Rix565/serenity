@@ -93,9 +93,6 @@ use_fresh_config_sub=false
 use_fresh_config_guess=false
 depends=()
 patchlevel=1
-auth_type=
-auth_import_key=
-auth_opts=()
 launcher_name=
 launcher_category=
 launcher_command=
@@ -114,7 +111,6 @@ if [[ -z ${SERENITY_BUILD_DIR:-} ]]; then
 else
     PORT_BUILD_DIR="${SERENITY_BUILD_DIR}/Ports/${port}"
 fi
-
 
 mkdir -p "${PORT_BUILD_DIR}"
 cd "${PORT_BUILD_DIR}"
@@ -300,34 +296,23 @@ do_download_file() {
     local filename="$2"
     local accept_existing="${3:-true}"
 
-    echo "Downloading URL: ${url}"
-
-    # FIXME: Serenity's curl port does not support https, even with openssl installed.
-    if which curl >/dev/null 2>&1 && ! curl https://example.com -so /dev/null; then
-        url=$(echo "$url" | sed "s/^https:\/\//http:\/\//")
-    fi
-
-    # download files
     if $accept_existing && [ -f "$filename" ]; then
         echo "$filename already exists"
+        return
+    fi
+
+    echo "Downloading URL: ${url}"
+
+    if which curl; then
+        run_nocd curl ${curlopts:-} "$url" -L -o "$filename"
     else
-        if which curl; then
-            run_nocd curl ${curlopts:-} "$url" -L -o "$filename"
-        else
-            run_nocd pro "$url" > "$filename"
-        fi
+        run_nocd pro "$url" > "$filename"
     fi
 }
 
-fetch() {
+# FIXME: Don't allow overriding fetch, support multiple protocols instead. See #20004
+func_defined fetch || fetch() {
     pre_fetch
-
-    if [ "$auth_type" = "sig" ] && [ ! -z "${auth_import_key}" ]; then
-        # import gpg key if not existing locally
-        # The default keyserver keys.openpgp.org prints "new key but contains no user ID - skipped"
-        # and fails. Use a different key server.
-        gpg --list-keys $auth_import_key || gpg --keyserver hkps://keyserver.ubuntu.com --recv-key $auth_import_key
-    fi
 
     tried_download_again=0
 
@@ -349,49 +334,22 @@ fetch() {
             read url filename auth_sum<<< $(echo "$f")
 
             # check sha256sum if given
-            if [ "$auth_type" = "sha256" ]; then
-                echo "Expecting ${auth_type}sum: $auth_sum"
-                calc_sum="$(sha256sum "${PORT_META_DIR}/${filename}" | cut -f1 -d' ')"
-                echo "${auth_type}sum($filename) = '$calc_sum'"
-                if [ "$calc_sum" != "$auth_sum" ]; then
-                    # remove downloaded file to re-download on next run
-                    rm -f "${PORT_META_DIR}/${filename}"
-                    echo "${auth_type}sums mismatching, removed erronous download."
-                    if [ $tried_download_again -eq 1 ]; then
-                        echo "Please run script again."
-                        exit 1
-                    fi
-                    echo "Trying to download the files again."
-                    tried_download_again=1
-                    verification_failed=1
+            echo "Expecting sha256sum: $auth_sum"
+            calc_sum="$(sha256sum "${PORT_META_DIR}/${filename}" | cut -f1 -d' ')"
+            echo "sha256sum($filename) = '$calc_sum'"
+            if [ "$calc_sum" != "$auth_sum" ]; then
+                # remove downloaded file to re-download on next run
+                rm -f "${PORT_META_DIR}/${filename}"
+                echo "sha256sums mismatching, removed erroneous download."
+                if [ $tried_download_again -eq 1 ]; then
+                    echo "Please run script again."
+                    exit 1
                 fi
+                echo "Trying to download the files again."
+                tried_download_again=1
+                verification_failed=1
             fi
         done
-
-        # check signature
-        if [ "$auth_type" = "sig" ]; then
-            if $NO_GPG; then
-                echo "WARNING: gpg signature check was disabled by --no-gpg-verification"
-            else
-                if $(cd "${PORT_META_DIR}" && gpg --verify "${auth_opts[@]}"); then
-                    echo "- Signature check OK."
-                else
-                    echo "- Signature check NOT OK"
-                    for f in $files; do
-                        rm -f $f
-                    done
-                    rm -rf "$workdir"
-                    echo "  Signature mismatching, removed erronous download."
-                    if [ $tried_download_again -eq 1 ]; then
-                        echo "Please run script again."
-                        exit 1
-                    fi
-                    echo "Trying to download the files again."
-                    tried_download_again=1
-                    verification_failed=1
-                fi
-            fi
-        fi
 
         if [ $verification_failed -ne 1 ]; then
             break
@@ -407,11 +365,7 @@ fetch() {
 
         if [ ! -f "$workdir"/.${filename}_extracted ]; then
             case "$filename" in
-                *.tar.gz|*.tgz)
-                    run_nocd tar -xzf "${PORT_META_DIR}/${filename}"
-                    run touch .${filename}_extracted
-                    ;;
-                *.tar.gz|*.tar.bz|*.tar.bz2|*.tar.xz|*.tar.lz|.tbz*|*.txz|*.tgz)
+                *.tar.gz|*.tar.bz|*.tar.bz2|*.tar.xz|*.tar.lz|*.tar.zst|.tbz*|*.txz|*.tgz)
                     run_nocd tar -xf "${PORT_META_DIR}/${filename}"
                     run touch .${filename}_extracted
                     ;;
@@ -422,9 +376,6 @@ fetch() {
                 *.zip)
                     run_nocd bsdtar xf "${PORT_META_DIR}/${filename}" || run_nocd unzip -qo "${PORT_META_DIR}/${filename}"
                     run touch .${filename}_extracted
-                    ;;
-                *.asc)
-                    run_nocd gpg --import "${PORT_META_DIR}/${filename}" || true
                     ;;
                 *)
                     echo "Note: no case for file $filename."
@@ -481,7 +432,7 @@ func_defined post_install || post_install() {
     :
 }
 clean() {
-    rm -rf "${PORT_BUILD_DIR}"
+    rm -rf "${PORT_BUILD_DIR}/"*
 }
 clean_dist() {
     OLDIFS=$IFS
@@ -527,19 +478,21 @@ package_install_state() {
 }
 installdepends() {
     for depend in "${depends[@]}"; do
-        if [ -z "$(package_install_state $depend)" ]; then
-            # Split colon seperated string into a list
-            IFS=':' read -ra port_directories <<< "$SERENITY_PORT_DIRS"
-            for port_dir in "${port_directories[@]}"; do
-                if [ -d "${port_dir}/$depend" ]; then
-                    (cd "${port_dir}/$depend" && ./package.sh --auto)
-                    return
-                fi
-            done
-
-            >&2 echo "Error: Dependency $depend could not be found."
-            exit 1
+        if [ -n "$(package_install_state $depend)" ]; then
+            continue
         fi
+
+        # Split colon separated string into a list
+        IFS=':' read -ra port_directories <<< "$SERENITY_PORT_DIRS"
+        for port_dir in "${port_directories[@]}"; do
+            if [ -d "${port_dir}/$depend" ]; then
+                (cd "${port_dir}/$depend" && ./package.sh --auto)
+                continue 2
+            fi
+        done
+
+        >&2 echo "Error: Dependency $depend could not be found."
+        exit 1
     done
 }
 uninstall() {
@@ -771,7 +724,18 @@ do_dev() {
         exit 1
     fi
 
-    [ -d "$workdir" ] || (
+    if [ "${1:-}" != "--no-depends" ]; then
+        do_installdepends
+    fi
+    if [ -d "$workdir" ] && [ ! -d "$workdir/.git" ]; then
+        if prompt_yes_no "- Would you like to clean the working directory (i.e. ./package.sh clean)?"; then
+            do_clean
+        fi
+    fi
+
+    local force_patch_regeneration='false'
+
+    [ -d "$workdir" ] || {
         do_fetch
         pushd "$workdir"
         if [ ! -d ".git" ]; then
@@ -834,10 +798,11 @@ do_dev() {
                     else
                         # The patch didn't apply, oh no!
                         # Ask the user to figure it out :shrug:
-                        git am "$patch" || true
+                        git am --keep-cr --keep-non-patch --3way "$patch" || true
                         >&2 echo "- This patch does not apply, you'll be dropped into a shell to investigate and fix this, quit the shell when the problem is resolved."
                         >&2 echo "Note that the patch needs to be committed into the current repository!"
                         launch_user_shell
+                        force_patch_regeneration='true'
                     fi
 
                     if ! git diff --quiet >/dev/null 2>&1; then
@@ -858,7 +823,7 @@ do_dev() {
         git tag original
 
         popd
-    )
+    }
 
     [ -d "$workdir/.git" ] || {
         >&2 echo "$workdir does not appear to be a git repository."
@@ -874,7 +839,7 @@ do_dev() {
     local current_hash="$(git -C "$workdir" rev-parse HEAD)"
 
     # If the hashes are the same, we have no changes, otherwise generate patches
-    if [ "$original_hash" != "$current_hash" ]; then
+    if [ "$original_hash" != "$current_hash" ] || [ "${force_patch_regeneration}" = "true" ]; then
         >&2 echo "Note: Regenerating patches as there are changed commits in the port repo (started at $original_hash, now is $current_hash)"
         rm -fr "${PORT_META_DIR}"/patches/*.patch
         git -C "$workdir" format-patch --no-numbered --zero-commit --no-signature --full-index refs/tags/import -o "$(realpath "${PORT_META_DIR}/patches")"
@@ -889,7 +854,7 @@ parse_arguments() {
         return
     fi
     case "$1" in
-        fetch|patch|shell|configure|build|install|installdepends|clean|clean_dist|clean_all|uninstall|showproperty|generate_patch_readme)
+        build|clean|clean_all|clean_dist|configure|dev|fetch|generate_patch_readme|install|installdepends|patch|shell|showproperty|uninstall)
             method=$1
             shift
             do_${method} "$@"
@@ -906,20 +871,8 @@ parse_arguments() {
             export PS1="(serenity):\w$ "
             bash --norc
             ;;
-        dev)
-            shift
-            if [ "${1:-}" != "--no-depends" ]; then
-                do_installdepends
-            fi
-            if [ -d "$workdir" ] && [ ! -d "$workdir/.git" ]; then
-                if prompt_yes_no "- Would you like to clean the working direcory (i.e. ./package.sh clean)?"; then
-                    do_clean
-                fi
-            fi
-            do_dev
-            ;;
         *)
-            >&2 echo "I don't understand $1! Supported arguments: fetch, patch, configure, build, install, installdepends, interactive, clean, clean_dist, clean_all, uninstall, showproperty, generate_patch_readme, dev."
+            >&2 echo "I don't understand $1! Supported arguments: build, clean, clean_all, clean_dist, configure, dev, fetch, generate_patch_readme, install, installdepends, interactive, patch, shell, showproperty, uninstall."
             exit 1
             ;;
     esac

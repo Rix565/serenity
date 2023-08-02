@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,6 +19,7 @@
 #include <LibGfx/StylePainter.h>
 #include <LibGfx/SystemTheme.h>
 #include <Services/Taskbar/TaskbarWindow.h>
+#include <WindowServer/Animation.h>
 #include <WindowServer/AppletManager.h>
 #include <WindowServer/Button.h>
 #include <WindowServer/ConnectionFromClient.h>
@@ -35,7 +36,7 @@ WindowManager& WindowManager::the()
     return *s_the;
 }
 
-WindowManager::WindowManager(Gfx::PaletteImpl const& palette)
+WindowManager::WindowManager(Gfx::PaletteImpl& palette)
     : m_switcher(WindowSwitcher::construct())
     , m_keymap_switcher(KeymapSwitcher::construct())
     , m_palette(palette)
@@ -44,7 +45,7 @@ WindowManager::WindowManager(Gfx::PaletteImpl const& palette)
 
     {
         // If we haven't created any window stacks, at least create the stationary/main window stack
-        auto row = adopt_own(*new RemoveReference<decltype(m_window_stacks[0])>());
+        auto row = adopt_own(*new RemoveReference<decltype(*m_window_stacks[0])>());
         auto main_window_stack = adopt_own(*new WindowStack(0, 0));
         main_window_stack->set_stationary_window_stack(*main_window_stack);
         m_current_window_stack = main_window_stack.ptr();
@@ -191,9 +192,9 @@ bool WindowManager::apply_workspace_settings(unsigned rows, unsigned columns, bo
 
         // While we have too many rows, merge each row too many into the new bottom row
         while (current_rows > rows) {
-            auto& row = m_window_stacks[rows];
+            auto& row = *m_window_stacks[rows];
             for (size_t column_index = 0; column_index < row.size(); column_index++) {
-                merge_window_stack(row[column_index], m_window_stacks[rows - 1][column_index]);
+                merge_window_stack(*row[column_index], *(*m_window_stacks[rows - 1])[column_index]);
                 if (rows - 1 == current_stack_row && column_index == current_stack_column)
                     need_rerender = true;
             }
@@ -203,8 +204,8 @@ bool WindowManager::apply_workspace_settings(unsigned rows, unsigned columns, bo
         // While we have too many columns, merge each column too many into the new right most column
         while (current_columns > columns) {
             for (size_t row_index = 0; row_index < current_rows; row_index++) {
-                auto& row = m_window_stacks[row_index];
-                merge_window_stack(row[columns], row[columns - 1]);
+                auto& row = *m_window_stacks[row_index];
+                merge_window_stack(*row[columns], *row[columns - 1]);
                 if (row_index == current_stack_row && columns - 1 == current_stack_column)
                     need_rerender = true;
                 row.remove(columns);
@@ -213,10 +214,10 @@ bool WindowManager::apply_workspace_settings(unsigned rows, unsigned columns, bo
         }
         // Add more rows if necessary
         while (rows > current_rows) {
-            auto row = adopt_own(*new RemoveReference<decltype(m_window_stacks[0])>());
+            auto row = adopt_own(*new RemoveReference<decltype(*m_window_stacks[0])>());
             for (size_t column_index = 0; column_index < columns; column_index++) {
                 auto window_stack = adopt_own(*new WindowStack(current_rows, column_index));
-                window_stack->set_stationary_window_stack(m_window_stacks[0][0]);
+                window_stack->set_stationary_window_stack(*(*m_window_stacks[0])[0]);
                 row->append(move(window_stack));
             }
             m_window_stacks.append(move(row));
@@ -226,10 +227,10 @@ bool WindowManager::apply_workspace_settings(unsigned rows, unsigned columns, bo
         while (columns > current_columns) {
             for (size_t row_index = 0; row_index < current_rows; row_index++) {
                 auto& row = m_window_stacks[row_index];
-                while (row.size() < columns) {
-                    auto window_stack = adopt_own(*new WindowStack(row_index, row.size()));
-                    window_stack->set_stationary_window_stack(m_window_stacks[0][0]);
-                    row.append(move(window_stack));
+                while (row->size() < columns) {
+                    auto window_stack = adopt_own(*new WindowStack(row_index, row->size()));
+                    window_stack->set_stationary_window_stack(*(*m_window_stacks[0])[0]);
+                    row->append(move(window_stack));
                 }
             }
             current_columns++;
@@ -237,7 +238,7 @@ bool WindowManager::apply_workspace_settings(unsigned rows, unsigned columns, bo
 
         if (removing_current_stack) {
             // If we're on a window stack that was removed, we need to move...
-            m_current_window_stack = &m_window_stacks[new_current_row][new_current_column];
+            m_current_window_stack = (*m_window_stacks[new_current_row])[new_current_column];
             Compositor::the().set_current_window_stack_no_transition(*m_current_window_stack);
             need_rerender = false; // The compositor already called invalidate_for_window_stack_merge_or_change for us
         }
@@ -320,7 +321,7 @@ bool WindowManager::is_natural_scroll() const
 WindowStack& WindowManager::window_stack_for_window(Window& window)
 {
     if (is_stationary_window_type(window.type()))
-        return m_window_stacks[0][0];
+        return *(*m_window_stacks[0])[0];
     if (auto* parent = window.parent_window(); parent && !is_stationary_window_type(parent->type()))
         return parent->window_stack();
     return current_window_stack();
@@ -335,8 +336,8 @@ void WindowManager::add_window(Window& window)
 
     if (window.is_fullscreen()) {
         auto& screen = Screen::main(); // TODO: support fullscreen windows on other screens!
-        Core::EventLoop::current().post_event(window, make<ResizeEvent>(screen.rect()));
         window.set_rect(screen.rect());
+        window.send_resize_event_to_client();
     }
 
     if (window.type() != WindowType::Desktop || is_first_window)
@@ -415,6 +416,9 @@ void WindowManager::remove_window(Window& window)
             conn.async_window_removed(conn.window_id(), window.client_id(), window.window_id());
         return IterationDecision::Continue;
     });
+
+    if (m_tile_window_overlay && m_tile_window_overlay->is_window(window))
+        stop_tile_window_animation();
 }
 
 void WindowManager::greet_window_manager(WMConnectionFromClient& conn)
@@ -738,6 +742,56 @@ void WindowManager::start_window_resize(Window& window, MouseEvent const& event,
     start_window_resize(window, event.position(), event.button(), resize_direction);
 }
 
+void WindowManager::start_tile_window_animation(Gfx::IntRect const& starting_rect)
+{
+    m_tile_window_overlay_animation = Animation::create();
+    m_tile_window_overlay_animation->set_duration(150);
+    m_tile_window_overlay_animation->on_update = [this, starting_rect](float progress, Gfx::Painter&, Screen&, Gfx::DisjointIntRectSet&) {
+        if (m_tile_window_overlay) {
+            auto target_rect = starting_rect.interpolated_to(m_tile_window_overlay->tiled_frame_rect(), progress);
+            m_tile_window_overlay->set_overlay_rect(target_rect);
+        }
+    };
+    m_tile_window_overlay_animation->start();
+}
+
+void WindowManager::stop_tile_window_animation()
+{
+    if (m_tile_window_overlay) {
+        if (m_geometry_overlay)
+            m_geometry_overlay->start_or_stop_move_to_tile_overlay_animation(nullptr);
+        m_tile_window_overlay = nullptr;
+    }
+    m_tile_window_overlay_animation = nullptr;
+}
+
+void WindowManager::show_tile_window_overlay(Window& window, Screen const& cursor_screen, WindowTileType tile_type)
+{
+    m_move_window_suggested_tile = tile_type;
+    if (tile_type != WindowTileType::None && (!m_tile_window_overlay || !m_tile_window_overlay->is_window(window))) {
+        auto tiled_frame_rect = WindowFrame::frame_rect_for_window(window, tiled_window_rect(window, cursor_screen, tile_type));
+        m_tile_window_overlay = Compositor::the().create_overlay<TileWindowOverlay>(window, tiled_frame_rect, palette());
+        m_tile_window_overlay->set_enabled(true);
+        start_tile_window_animation(window.frame().rect());
+    } else if (tile_type == WindowTileType::None) {
+        stop_tile_window_animation();
+    } else {
+        auto tiled_frame_rect = WindowFrame::frame_rect_for_window(window, tiled_window_rect(window, cursor_screen, tile_type));
+        if (m_tile_window_overlay->tiled_frame_rect() != tiled_frame_rect) {
+            m_tile_window_overlay->set_tiled_frame_rect(tiled_frame_rect);
+            start_tile_window_animation(m_tile_window_overlay->rect());
+            if (m_geometry_overlay)
+                m_geometry_overlay->window_rect_changed();
+        }
+    }
+}
+TileWindowOverlay* WindowManager::get_tile_window_overlay(Window& window) const
+{
+    if (m_tile_window_overlay && m_tile_window_overlay->is_window(window))
+        return m_tile_window_overlay.ptr();
+    return nullptr;
+}
+
 bool WindowManager::process_ongoing_window_move(MouseEvent& event)
 {
     if (!m_move_window)
@@ -746,10 +800,21 @@ bool WindowManager::process_ongoing_window_move(MouseEvent& event)
 
         dbgln_if(MOVE_DEBUG, "[WM] Finish moving Window({})", m_move_window);
 
-        if (!m_move_window->is_tiled())
+        bool did_tile = false;
+        if (m_move_window_suggested_tile != WindowTileType::None && m_system_effects.tile_window() == TileWindow::ShowTileOverlay) {
+            auto& cursor_screen = Screen::closest_to_location(event.position());
+            m_move_window->set_tiled(m_move_window_suggested_tile, cursor_screen);
+            m_move_window_suggested_tile = WindowTileType::None;
+            stop_tile_window_animation();
+            did_tile = true;
+        } else {
+            did_tile = m_move_window->is_tiled();
+        }
+
+        if (!did_tile)
             m_move_window->set_floating_rect(m_move_window->rect());
 
-        Core::EventLoop::current().post_event(*m_move_window, make<MoveEvent>(m_move_window->rect()));
+        m_move_window->send_move_event_to_client();
         m_move_window->invalidate(true, true);
         if (m_move_window->is_resizable()) {
             process_event_for_doubleclick(*m_move_window, event);
@@ -788,30 +853,44 @@ bool WindowManager::process_ongoing_window_move(MouseEvent& event)
             }
         } else {
             bool is_resizable = m_move_window->is_resizable();
+            auto tile_window = m_system_effects.tile_window();
+            bool allow_tile = is_resizable && tile_window != TileWindow::Never;
             auto pixels_moved_from_start = event.position().pixels_moved(m_move_origin);
 
-            auto event_location_relative_to_screen = event.position().translated(-cursor_screen.rect().location());
-            if (is_resizable && event_location_relative_to_screen.x() <= tiling_deadzone) {
-                if (event_location_relative_to_screen.y() <= tiling_deadzone + desktop_relative_to_screen.top())
-                    m_move_window->set_tiled(WindowTileType::TopLeft);
-                else if (event_location_relative_to_screen.y() >= desktop_relative_to_screen.height() - tiling_deadzone)
-                    m_move_window->set_tiled(WindowTileType::BottomLeft);
-                else
-                    m_move_window->set_tiled(WindowTileType::Left);
-            } else if (is_resizable && event_location_relative_to_screen.x() >= cursor_screen.width() - tiling_deadzone) {
-                if (event_location_relative_to_screen.y() <= tiling_deadzone + desktop.top())
-                    m_move_window->set_tiled(WindowTileType::TopRight);
-                else if (event_location_relative_to_screen.y() >= desktop_relative_to_screen.height() - tiling_deadzone)
-                    m_move_window->set_tiled(WindowTileType::BottomRight);
-                else
-                    m_move_window->set_tiled(WindowTileType::Right);
-            } else if (is_resizable && event_location_relative_to_screen.y() <= secondary_deadzone + desktop_relative_to_screen.top()) {
-                m_move_window->set_tiled(WindowTileType::Top);
-            } else if (is_resizable && event_location_relative_to_screen.y() >= desktop_relative_to_screen.bottom() - secondary_deadzone) {
-                m_move_window->set_tiled(WindowTileType::Bottom);
-            } else if (!m_move_window->is_tiled()) {
-                Gfx::IntPoint pos = m_move_window_origin.translated(event.position() - m_move_origin);
+            auto apply_window_tile = [&](WindowTileType tile_type) {
+                if (tile_window == TileWindow::ShowTileOverlay) {
+                    show_tile_window_overlay(*m_move_window, cursor_screen, tile_type);
+                } else if (tile_window == TileWindow::TileImmediately) {
+                    if (tile_type != WindowTileType::None) {
+                        m_move_window->set_tiled(tile_type, cursor_screen);
+                        return;
+                    }
+                }
+                auto pos = m_move_window_origin.translated(event.position() - m_move_origin);
                 m_move_window->set_position_without_repaint(pos);
+            };
+
+            auto event_location_relative_to_screen = event.position().translated(-cursor_screen.rect().location());
+            if (allow_tile && event_location_relative_to_screen.x() <= tiling_deadzone) {
+                if (event_location_relative_to_screen.y() <= tiling_deadzone + desktop_relative_to_screen.top())
+                    apply_window_tile(WindowTileType::TopLeft);
+                else if (event_location_relative_to_screen.y() >= desktop_relative_to_screen.height() - tiling_deadzone)
+                    apply_window_tile(WindowTileType::BottomLeft);
+                else
+                    apply_window_tile(WindowTileType::Left);
+            } else if (allow_tile && event_location_relative_to_screen.x() >= cursor_screen.width() - tiling_deadzone) {
+                if (event_location_relative_to_screen.y() <= tiling_deadzone + desktop.top())
+                    apply_window_tile(WindowTileType::TopRight);
+                else if (event_location_relative_to_screen.y() >= desktop_relative_to_screen.height() - tiling_deadzone)
+                    apply_window_tile(WindowTileType::BottomRight);
+                else
+                    apply_window_tile(WindowTileType::Right);
+            } else if (allow_tile && event_location_relative_to_screen.y() <= secondary_deadzone + desktop_relative_to_screen.top()) {
+                apply_window_tile(WindowTileType::Top);
+            } else if (allow_tile && event_location_relative_to_screen.y() >= desktop_relative_to_screen.bottom() - 1 - secondary_deadzone) {
+                apply_window_tile(WindowTileType::Bottom);
+            } else if (!m_move_window->is_tiled()) {
+                apply_window_tile(WindowTileType::None);
             } else if (pixels_moved_from_start > 5) {
                 Gfx::IntPoint adjusted_position = event.position().translated(-m_move_window_cursor_position);
                 m_move_window->set_untiled();
@@ -824,7 +903,7 @@ bool WindowManager::process_ongoing_window_move(MouseEvent& event)
             m_geometry_overlay->window_rect_changed();
         }
     }
-    Core::EventLoop::current().post_event(*m_move_window, make<MoveEvent>(m_move_window->rect()));
+    m_move_window->send_move_event_to_client();
     return true;
 }
 
@@ -875,7 +954,7 @@ bool WindowManager::process_ongoing_window_resize(MouseEvent const& event)
         if (!m_resize_window->is_tiled())
             m_resize_window->set_floating_rect(m_resize_window->rect());
 
-        Core::EventLoop::current().post_event(*m_resize_window, make<ResizeEvent>(m_resize_window->rect()));
+        m_resize_window->send_resize_event_to_client();
         m_resize_window->invalidate(true, true);
         m_resize_window = nullptr;
         m_geometry_overlay = nullptr;
@@ -892,12 +971,12 @@ bool WindowManager::process_ongoing_window_resize(MouseEvent const& event)
         constexpr auto hot_zone = 10;
         Gfx::IntRect tiling_rect = desktop_rect(cursor_screen).shrunken({ hot_zone, hot_zone });
         if ((m_resize_direction == ResizeDirection::Up || m_resize_direction == ResizeDirection::Down)
-            && (event.y() >= tiling_rect.bottom() || event.y() <= tiling_rect.top())) {
+            && (event.y() >= tiling_rect.bottom() - 1 || event.y() <= tiling_rect.top())) {
             m_resize_window->set_tiled(WindowTileType::VerticallyMaximized);
             return true;
         }
         if ((m_resize_direction == ResizeDirection::Left || m_resize_direction == ResizeDirection::Right)
-            && (event.x() >= tiling_rect.right() || event.x() <= tiling_rect.left())) {
+            && (event.x() > tiling_rect.right() || event.x() <= tiling_rect.left())) {
             m_resize_window->set_tiled(WindowTileType::HorizontallyMaximized);
             return true;
         }
@@ -1013,7 +1092,7 @@ bool WindowManager::process_ongoing_window_resize(MouseEvent const& event)
     if (system_effects().geometry() == ShowGeometry::OnMoveAndResize || system_effects().geometry() == ShowGeometry::OnResizeOnly) {
         m_geometry_overlay->window_rect_changed();
     }
-    Core::EventLoop::current().post_event(*m_resize_window, make<ResizeEvent>(new_rect));
+    m_resize_window->send_resize_event_to_client();
     return true;
 }
 
@@ -1042,7 +1121,12 @@ bool WindowManager::process_ongoing_drag(MouseEvent& event)
         m_dnd_client->async_drag_accepted();
         if (window->client()) {
             auto translated_event = event.translated(-window->position());
-            window->client()->async_drag_dropped(window->window_id(), translated_event.position(), m_dnd_text, m_dnd_mime_data->all_data());
+            auto copied_mime_data_or_error = m_dnd_mime_data->all_data().clone();
+            // If the mime data is so large that it causes memory troubles, we should silently drop the drag'n'drop request entirely.
+            if (copied_mime_data_or_error.is_error())
+                dbgln("Drag and drop mimetype data nearly caused OOM and was dropped: {}", copied_mime_data_or_error.release_error());
+            else
+                window->client()->async_drag_dropped(window->window_id(), translated_event.position(), m_dnd_text, copied_mime_data_or_error.release_value());
         }
     } else {
         m_dnd_client->async_drag_cancelled();
@@ -1424,7 +1508,7 @@ void WindowManager::clear_resize_candidate()
     m_resize_candidate = nullptr;
 }
 
-Gfx::IntRect WindowManager::desktop_rect(Screen& screen) const
+Gfx::IntRect WindowManager::desktop_rect(Screen const& screen) const
 {
     if (active_fullscreen_window())
         return Screen::main().rect(); // TODO: we should support fullscreen windows on any screen
@@ -1657,7 +1741,7 @@ void WindowManager::process_key_event(KeyEvent& event)
                 column--;
                 return true;
             case Key_Right:
-                if (column + 1 >= m_window_stacks[0].size())
+                if (column + 1 >= m_window_stacks[0]->size())
                     return true;
                 column++;
                 return true;
@@ -1678,7 +1762,7 @@ void WindowManager::process_key_event(KeyEvent& event)
         if (handle_window_stack_switch_key()) {
             request_close_fragile_windows();
             Window* carry_window = nullptr;
-            auto& new_window_stack = m_window_stacks[row][column];
+            auto& new_window_stack = *(*m_window_stacks[row])[column];
             if (&new_window_stack != &current_stack) {
                 if (event.modifiers() == (Mod_Ctrl | Mod_Shift | Mod_Alt))
                     carry_window = this->active_window();
@@ -1791,6 +1875,18 @@ void WindowManager::set_highlight_window(Window* new_highlight_window)
         new_highlight_window->invalidate(true, true);
         Compositor::the().invalidate_screen(new_highlight_window->frame().render_rect());
     }
+
+    if (active_fullscreen_window()) {
+        // Find the Taskbar window and invalidate it so it draws correctly
+        for_each_visible_window_from_back_to_front([](Window& window) {
+            if (window.type() == WindowType::Taskbar) {
+                window.invalidate();
+                return IterationDecision::Break;
+            }
+            return IterationDecision::Continue;
+        });
+    }
+
     // Invalidate occlusions in case the state change changes geometry
     Compositor::the().invalidate_occlusions();
 }
@@ -1953,11 +2049,11 @@ ResizeDirection WindowManager::resize_direction_of_window(Window const& window)
     return m_resize_direction;
 }
 
-Gfx::IntRect WindowManager::tiled_window_rect(Window const& window, WindowTileType tile_type, bool relative_to_window_screen) const
+Gfx::IntRect WindowManager::tiled_window_rect(Window const& window, Optional<Screen const&> cursor_screen, WindowTileType tile_type) const
 {
     VERIFY(tile_type != WindowTileType::None);
 
-    auto& screen = Screen::closest_to_rect(window.frame().rect());
+    auto const& screen = cursor_screen.has_value() ? cursor_screen.value() : Screen::closest_to_rect(window.frame().rect());
     auto rect = desktop_rect(screen);
 
     if (tile_type == WindowTileType::Maximized) {
@@ -1975,7 +2071,7 @@ Gfx::IntRect WindowManager::tiled_window_rect(Window const& window, WindowTileTy
         || tile_type == WindowTileType::TopRight
         || tile_type == WindowTileType::BottomRight) {
         rect.set_width(rect.width() / 2);
-        rect.set_x(rect.width());
+        rect.set_x(rect.x() + rect.width());
     }
 
     if (tile_type == WindowTileType::Top
@@ -1989,7 +2085,7 @@ Gfx::IntRect WindowManager::tiled_window_rect(Window const& window, WindowTileTy
         || tile_type == WindowTileType::BottomRight) {
         auto half_screen_remainder = rect.height() % 2;
         rect.set_height(rect.height() / 2 + half_screen_remainder);
-        rect.set_y(rect.height() - half_screen_remainder);
+        rect.set_y(rect.y() + rect.height() - half_screen_remainder);
     }
 
     Gfx::IntRect window_rect = window.rect();
@@ -2010,9 +2106,6 @@ Gfx::IntRect WindowManager::tiled_window_rect(Window const& window, WindowTileTy
         rect.set_y(rect.y() + window_rect.y() - window_frame_rect.y());
         rect.set_height(rect.height() - window_frame_rect.height() + window_rect.height());
     }
-
-    if (relative_to_window_screen)
-        rect.translate_by(-screen.rect().location());
     return rect;
 }
 
@@ -2065,9 +2158,9 @@ void WindowManager::invalidate_after_theme_or_font_change()
     Compositor::the().invalidate_after_theme_or_font_change();
 }
 
-bool WindowManager::update_theme(DeprecatedString theme_path, DeprecatedString theme_name, bool keep_desktop_background)
+bool WindowManager::update_theme(DeprecatedString theme_path, DeprecatedString theme_name, bool keep_desktop_background, Optional<DeprecatedString> const& color_scheme_path)
 {
-    auto error_or_new_theme = Gfx::load_system_theme(theme_path);
+    auto error_or_new_theme = Gfx::load_system_theme(theme_path, color_scheme_path);
     if (error_or_new_theme.is_error()) {
         dbgln("WindowManager: Updating theme failed, error {}", error_or_new_theme.error());
         return false;
@@ -2077,6 +2170,15 @@ bool WindowManager::update_theme(DeprecatedString theme_path, DeprecatedString t
     Gfx::set_system_theme(new_theme);
     m_palette = Gfx::PaletteImpl::create_with_anonymous_buffer(new_theme);
     g_config->write_entry("Theme", "Name", theme_name);
+    if (color_scheme_path.has_value() && color_scheme_path.value() != "Custom"sv) {
+        g_config->write_bool_entry("Theme", "LoadCustomColorScheme", true);
+        g_config->write_entry("Theme", "CustomColorSchemePath", color_scheme_path.value());
+        m_preferred_color_scheme = color_scheme_path.value();
+    } else if (!color_scheme_path.has_value()) {
+        g_config->write_bool_entry("Theme", "LoadCustomColorScheme", false);
+        g_config->remove_entry("Theme", "CustomColorSchemePath");
+        m_preferred_color_scheme = OptionalNone();
+    }
     if (!keep_desktop_background)
         g_config->remove_entry("Background", "Color");
     if (!sync_config_to_disk())
@@ -2107,7 +2209,7 @@ void WindowManager::clear_theme_override()
 {
     m_theme_overridden = false;
     auto previous_theme_name = g_config->read_entry("Theme", "Name");
-    auto previous_theme = MUST(Gfx::load_system_theme(DeprecatedString::formatted("/res/themes/{}.ini", previous_theme_name)));
+    auto previous_theme = MUST(Gfx::load_system_theme(DeprecatedString::formatted("/res/themes/{}.ini", previous_theme_name), m_preferred_color_scheme));
     Gfx::set_system_theme(previous_theme);
     m_palette = Gfx::PaletteImpl::create_with_anonymous_buffer(previous_theme);
     invalidate_after_theme_or_font_change();
@@ -2230,7 +2332,7 @@ void WindowManager::apply_cursor_theme(DeprecatedString const& theme_name)
     auto cursor_theme_config = cursor_theme_config_or_error.release_value();
 
     auto* current_cursor = Compositor::the().current_cursor();
-    auto reload_cursor = [&](RefPtr<Cursor>& cursor, DeprecatedString const& name) {
+    auto reload_cursor = [&](RefPtr<Cursor const>& cursor, DeprecatedString const& name) {
         bool is_current_cursor = current_cursor && current_cursor == cursor.ptr();
 
         static auto const s_default_cursor_path = "/res/cursor-themes/Default/arrow.x2y2.png"sv;
@@ -2291,12 +2393,12 @@ void WindowManager::set_cursor_highlight_color(Gfx::Color color)
     sync_config_to_disk();
 }
 
-void WindowManager::apply_system_effects(Vector<bool> effects, ShowGeometry geometry)
+void WindowManager::apply_system_effects(Vector<bool> effects, ShowGeometry geometry, TileWindow tile_window)
 {
-    if (m_system_effects == SystemEffects { effects, geometry })
+    if (m_system_effects == SystemEffects { effects, geometry, tile_window })
         return;
 
-    m_system_effects = { effects, geometry };
+    m_system_effects = { effects, geometry, tile_window };
     g_config->write_bool_entry("Effects", "AnimateMenus", m_system_effects.animate_menus());
     g_config->write_bool_entry("Effects", "FlashMenus", m_system_effects.flash_menus());
     g_config->write_bool_entry("Effects", "AnimateWindows", m_system_effects.animate_windows());
@@ -2308,6 +2410,7 @@ void WindowManager::apply_system_effects(Vector<bool> effects, ShowGeometry geom
     g_config->write_bool_entry("Effects", "WindowShadow", m_system_effects.window_shadow());
     g_config->write_bool_entry("Effects", "TooltipShadow", m_system_effects.tooltip_shadow());
     g_config->write_entry("Effects", "ShowGeometry", ShowGeometryTools::enum_to_string(geometry));
+    g_config->write_entry("Effects", "TileWindow", TileWindowTools::enum_to_string(tile_window));
     sync_config_to_disk();
 }
 
@@ -2326,7 +2429,8 @@ void WindowManager::load_system_effects()
         g_config->read_bool_entry("Effects", "TooltipShadow", true)
     };
     ShowGeometry geometry = ShowGeometryTools::string_to_enum(g_config->read_entry("Effects", "ShowGeometry", "OnMoveAndResize"));
-    m_system_effects = { effects, geometry };
+    TileWindow tile_window = TileWindowTools::string_to_enum(g_config->read_entry("Effects", "TileWindow", "ShowTileOverlay"));
+    m_system_effects = { effects, geometry, tile_window };
 
     ConnectionFromClient::for_each_client([&](auto& client) {
         client.async_update_system_effects(effects);

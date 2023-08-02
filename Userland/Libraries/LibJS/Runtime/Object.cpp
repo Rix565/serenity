@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -24,15 +24,15 @@
 
 namespace JS {
 
-static HashMap<Object const*, HashMap<DeprecatedFlyString, Object::IntrinsicAccessor>> s_intrinsics;
+static HashMap<GCPtr<Object const>, HashMap<DeprecatedFlyString, Object::IntrinsicAccessor>> s_intrinsics;
 
 // 10.1.12 OrdinaryObjectCreate ( proto [ , additionalInternalSlotsList ] ), https://tc39.es/ecma262/#sec-ordinaryobjectcreate
 NonnullGCPtr<Object> Object::create(Realm& realm, Object* prototype)
 {
     if (!prototype)
-        return realm.heap().allocate<Object>(realm, *realm.intrinsics().empty_object_shape()).release_allocated_value_but_fixme_should_propagate_errors();
+        return realm.heap().allocate<Object>(realm, realm.intrinsics().empty_object_shape()).release_allocated_value_but_fixme_should_propagate_errors();
     if (prototype == realm.intrinsics().object_prototype())
-        return realm.heap().allocate<Object>(realm, *realm.intrinsics().new_object_shape()).release_allocated_value_but_fixme_should_propagate_errors();
+        return realm.heap().allocate<Object>(realm, realm.intrinsics().new_object_shape()).release_allocated_value_but_fixme_should_propagate_errors();
     return realm.heap().allocate<Object>(realm, ConstructWithPrototypeTag::Tag, *prototype).release_allocated_value_but_fixme_should_propagate_errors();
 }
 
@@ -70,7 +70,8 @@ Object::Object(Shape& shape)
 
 Object::~Object()
 {
-    s_intrinsics.remove(this);
+    if (m_has_intrinsic_accessors)
+        s_intrinsics.remove(this);
 }
 
 ThrowCompletionOr<void> Object::initialize(Realm&)
@@ -139,7 +140,7 @@ ThrowCompletionOr<bool> Object::create_data_property(PropertyKey const& property
 }
 
 // 7.3.6 CreateMethodProperty ( O, P, V ), https://tc39.es/ecma262/#sec-createmethodproperty
-ThrowCompletionOr<void> Object::create_method_property(PropertyKey const& property_key, Value value)
+void Object::create_method_property(PropertyKey const& property_key, Value value)
 {
     VERIFY(property_key.is_valid());
     VERIFY(!value.is_empty());
@@ -158,7 +159,6 @@ ThrowCompletionOr<void> Object::create_method_property(PropertyKey const& proper
     MUST(internal_define_own_property(property_key, new_descriptor));
 
     // 4. Return unused.
-    return {};
 }
 
 // 7.3.7 CreateDataPropertyOrThrow ( O, P, V ), https://tc39.es/ecma262/#sec-createdatapropertyorthrow
@@ -430,23 +430,43 @@ ThrowCompletionOr<MarkedVector<Value>> Object::enumerable_own_property_names(Pro
 // 7.3.26 CopyDataProperties ( target, source, excludedItems ), https://tc39.es/ecma262/#sec-copydataproperties
 ThrowCompletionOr<void> Object::copy_data_properties(VM& vm, Value source, HashTable<PropertyKey> const& seen_names)
 {
+    // 1. If source is either undefined or null, return unused.
     if (source.is_nullish())
         return {};
 
-    auto* from_object = MUST(source.to_object(vm));
+    // 2. Let from be ! ToObject(source).
+    auto from = MUST(source.to_object(vm));
 
-    for (auto& next_key_value : TRY(from_object->internal_own_property_keys())) {
+    // 3. Let keys be ? from.[[OwnPropertyKeys]]().
+    auto keys = TRY(from->internal_own_property_keys());
+
+    // 4. For each element nextKey of keys, do
+    for (auto& next_key_value : keys) {
         auto next_key = MUST(PropertyKey::from_value(vm, next_key_value));
+
+        // a. Let excluded be false.
+        // b. For each element e of excludedItems, do
+        //    i. If SameValue(e, nextKey) is true, then
+        //        1. Set excluded to true.
         if (seen_names.contains(next_key))
             continue;
 
-        auto desc = TRY(from_object->internal_get_own_property(next_key));
+        // c. If excluded is false, then
 
+        // i. Let desc be ? from.[[GetOwnProperty]](nextKey).
+        auto desc = TRY(from->internal_get_own_property(next_key));
+
+        // ii. If desc is not undefined and desc.[[Enumerable]] is true, then
         if (desc.has_value() && desc->attributes().is_enumerable()) {
-            auto prop_value = TRY(from_object->get(next_key));
-            TRY(create_data_property_or_throw(next_key, prop_value));
+            // 1. Let propValue be ? Get(from, nextKey).
+            auto prop_value = TRY(from->get(next_key));
+
+            // 2. Perform ! CreateDataPropertyOrThrow(target, nextKey, propValue).
+            MUST(create_data_property_or_throw(next_key, prop_value));
         }
     }
+
+    // 5. Return unused.
     return {};
 }
 
@@ -456,14 +476,18 @@ PrivateElement* Object::private_element_find(PrivateName const& name)
     if (!m_private_elements)
         return nullptr;
 
-    auto element = m_private_elements->find_if([&](auto const& element) {
+    // 1. If O.[[PrivateElements]] contains a PrivateElement pe such that pe.[[Key]] is P, then
+    auto it = m_private_elements->find_if([&](auto const& element) {
         return element.key == name;
     });
 
-    if (element.is_end())
-        return nullptr;
+    if (!it.is_end()) {
+        // a. Return pe.
+        return &(*it);
+    }
 
-    return &(*element);
+    // 2. Return empty.
+    return nullptr;
 }
 
 // 7.3.28 PrivateFieldAdd ( O, P, value ), https://tc39.es/ecma262/#sec-privatefieldadd
@@ -485,7 +509,7 @@ ThrowCompletionOr<void> Object::private_field_add(PrivateName const& name, Value
         m_private_elements = make<Vector<PrivateElement>>();
 
     // 4. Append PrivateElement { [[Key]]: P, [[Kind]]: field, [[Value]]: value } to O.[[PrivateElements]].
-    m_private_elements->empend(name, PrivateElement::Kind::Field, value);
+    m_private_elements->empend(name, PrivateElement::Kind::Field, make_handle(value));
 
     // 5. Return unused.
     return {};
@@ -519,58 +543,87 @@ ThrowCompletionOr<void> Object::private_method_or_accessor_add(PrivateElement el
     return {};
 }
 
-// 7.3.30 PrivateGet ( O, P ), https://tc39.es/ecma262/#sec-privateget
+// 7.3.31 PrivateGet ( O, P ), https://tc39.es/ecma262/#sec-privateget
 ThrowCompletionOr<Value> Object::private_get(PrivateName const& name)
 {
     auto& vm = this->vm();
 
+    // 1. Let entry be PrivateElementFind(O, P).
     auto* entry = private_element_find(name);
+
+    // 2. If entry is empty, throw a TypeError exception.
     if (!entry)
         return vm.throw_completion<TypeError>(ErrorType::PrivateFieldDoesNotExistOnObject, name.description);
 
     auto& value = entry->value;
 
-    if (entry->kind != PrivateElement::Kind::Accessor)
-        return value;
+    // 3. If entry.[[Kind]] is either field or method, then
+    if (entry->kind != PrivateElement::Kind::Accessor) {
+        // a. Return entry.[[Value]].
+        return value.value();
+    }
 
-    VERIFY(value.is_accessor());
-    auto* getter = value.as_accessor().getter();
+    // Assert: entry.[[Kind]] is accessor.
+    VERIFY(value.value().is_accessor());
+
+    // 6. Let getter be entry.[[Get]].
+    auto* getter = value.value().as_accessor().getter();
+
+    // 5. If entry.[[Get]] is undefined, throw a TypeError exception.
     if (!getter)
         return vm.throw_completion<TypeError>(ErrorType::PrivateFieldGetAccessorWithoutGetter, name.description);
 
-    // 8. Return ? Call(getter, Receiver).
+    // 7. Return ? Call(getter, O).
     return TRY(call(vm, *getter, this));
 }
 
-// 7.3.31 PrivateSet ( O, P, value ), https://tc39.es/ecma262/#sec-privateset
+// 7.3.32 PrivateSet ( O, P, value ), https://tc39.es/ecma262/#sec-privateset
 ThrowCompletionOr<void> Object::private_set(PrivateName const& name, Value value)
 {
     auto& vm = this->vm();
 
+    // 1. Let entry be PrivateElementFind(O, P).
     auto* entry = private_element_find(name);
+
+    // 2. If entry is empty, throw a TypeError exception.
     if (!entry)
         return vm.throw_completion<TypeError>(ErrorType::PrivateFieldDoesNotExistOnObject, name.description);
 
+    // 3. If entry.[[Kind]] is field, then
     if (entry->kind == PrivateElement::Kind::Field) {
-        entry->value = value;
+        // a. Set entry.[[Value]] to value.
+        entry->value = make_handle(value);
         return {};
-    } else if (entry->kind == PrivateElement::Kind::Method) {
+    }
+    // 4. Else if entry.[[Kind]] is method, then
+    else if (entry->kind == PrivateElement::Kind::Method) {
+        // a. Throw a TypeError exception.
         return vm.throw_completion<TypeError>(ErrorType::PrivateFieldSetMethod, name.description);
     }
 
+    // 5. Else,
+
+    // a. Assert: entry.[[Kind]] is accessor.
     VERIFY(entry->kind == PrivateElement::Kind::Accessor);
 
     auto& accessor = entry->value;
-    VERIFY(accessor.is_accessor());
-    auto* setter = accessor.as_accessor().setter();
+    VERIFY(accessor.value().is_accessor());
+
+    // c. Let setter be entry.[[Set]].
+    auto* setter = accessor.value().as_accessor().setter();
+
+    // b. If entry.[[Set]] is undefined, throw a TypeError exception.
     if (!setter)
         return vm.throw_completion<TypeError>(ErrorType::PrivateFieldSetAccessorWithoutSetter, name.description);
 
+    // d. Perform ? Call(setter, O, « value »).
     TRY(call(vm, *setter, this, value));
+
+    // 6. Return unused.
     return {};
 }
 
-// 7.3.32 DefineField ( receiver, fieldRecord ), https://tc39.es/ecma262/#sec-definefield
+// 7.3.33 DefineField ( receiver, fieldRecord ), https://tc39.es/ecma262/#sec-definefield
 ThrowCompletionOr<void> Object::define_field(ClassFieldDefinition const& field)
 {
     auto& vm = this->vm();
@@ -606,7 +659,7 @@ ThrowCompletionOr<void> Object::define_field(ClassFieldDefinition const& field)
     return {};
 }
 
-// 7.3.33 InitializeInstanceElements ( O, constructor ), https://tc39.es/ecma262/#sec-initializeinstanceelements
+// 7.3.34 InitializeInstanceElements ( O, constructor ), https://tc39.es/ecma262/#sec-initializeinstanceelements
 ThrowCompletionOr<void> Object::initialize_instance_elements(ECMAScriptFunctionObject& constructor)
 {
     // 1. Let methods be the value of constructor.[[PrivateMethods]].
@@ -711,7 +764,7 @@ ThrowCompletionOr<Optional<PropertyDescriptor>> Object::internal_get_own_propert
     PropertyDescriptor descriptor;
 
     // 3. Let X be O's own property whose key is P.
-    auto [value, attributes] = *maybe_storage_entry;
+    auto [value, attributes, property_offset] = *maybe_storage_entry;
 
     // 4. If X is a data property, then
     if (!value.is_accessor()) {
@@ -737,6 +790,9 @@ ThrowCompletionOr<Optional<PropertyDescriptor>> Object::internal_get_own_propert
 
     // 7. Set D.[[Configurable]] to the value of X's [[Configurable]] attribute.
     descriptor.configurable = attributes.is_configurable();
+
+    // Non-standard: Add the property offset to the descriptor. This is used to populate CacheablePropertyMetadata.
+    descriptor.property_offset = property_offset;
 
     // 8. Return D.
     return descriptor;
@@ -783,7 +839,7 @@ ThrowCompletionOr<bool> Object::internal_has_property(PropertyKey const& propert
 }
 
 // 10.1.8 [[Get]] ( P, Receiver ), https://tc39.es/ecma262/#sec-ordinary-object-internal-methods-and-internal-slots-get-p-receiver
-ThrowCompletionOr<Value> Object::internal_get(PropertyKey const& property_key, Value receiver) const
+ThrowCompletionOr<Value> Object::internal_get(PropertyKey const& property_key, Value receiver, CacheablePropertyMetadata* cacheable_metadata) const
 {
     VERIFY(!receiver.is_empty());
     VERIFY(property_key.is_valid());
@@ -807,14 +863,22 @@ ThrowCompletionOr<Value> Object::internal_get(PropertyKey const& property_key, V
     }
 
     // 3. If IsDataDescriptor(desc) is true, return desc.[[Value]].
-    if (descriptor->is_data_descriptor())
+    if (descriptor->is_data_descriptor()) {
+        // Non-standard: If the caller has requested cacheable metadata and the property is an own property, fill it in.
+        if (cacheable_metadata && descriptor->property_offset.has_value()) {
+            *cacheable_metadata = CacheablePropertyMetadata {
+                .type = CacheablePropertyMetadata::Type::OwnProperty,
+                .property_offset = descriptor->property_offset.value(),
+            };
+        }
         return *descriptor->value;
+    }
 
     // 4. Assert: IsAccessorDescriptor(desc) is true.
     VERIFY(descriptor->is_accessor_descriptor());
 
     // 5. Let getter be desc.[[Get]].
-    auto* getter = *descriptor->get;
+    auto getter = *descriptor->get;
 
     // 6. If getter is undefined, return undefined.
     if (!getter)
@@ -912,7 +976,7 @@ ThrowCompletionOr<bool> Object::ordinary_set_with_own_descriptor(PropertyKey con
     VERIFY(own_descriptor->is_accessor_descriptor());
 
     // 4. Let setter be ownDesc.[[Set]].
-    auto* setter = *own_descriptor->set;
+    auto setter = *own_descriptor->set;
 
     // 5. If setter is undefined, return false.
     if (!setter)
@@ -1007,12 +1071,13 @@ static Optional<Object::IntrinsicAccessor> find_intrinsic_accessor(Object const*
     if (intrinsics == s_intrinsics.end())
         return {};
 
-    auto accessor = intrinsics->value.find(property_key.as_string());
-    if (accessor == intrinsics->value.end())
+    auto accessor_iterator = intrinsics->value.find(property_key.as_string());
+    if (accessor_iterator == intrinsics->value.end())
         return {};
 
-    intrinsics->value.remove(accessor);
-    return move(accessor->value);
+    auto accessor = accessor_iterator->value;
+    intrinsics->value.remove(accessor_iterator);
+    return accessor;
 }
 
 Optional<ValueAndAttributes> Object::storage_get(PropertyKey const& property_key) const
@@ -1021,6 +1086,7 @@ Optional<ValueAndAttributes> Object::storage_get(PropertyKey const& property_key
 
     Value value;
     PropertyAttributes attributes;
+    Optional<u32> property_offset;
 
     if (property_key.is_number()) {
         auto value_and_attributes = m_indexed_properties.get(property_key.as_number());
@@ -1033,14 +1099,17 @@ Optional<ValueAndAttributes> Object::storage_get(PropertyKey const& property_key
         if (!metadata.has_value())
             return {};
 
-        if (auto accessor = find_intrinsic_accessor(this, property_key); accessor.has_value())
-            const_cast<Object&>(*this).m_storage[metadata->offset] = (*accessor)(shape().realm());
+        if (m_has_intrinsic_accessors) {
+            if (auto accessor = find_intrinsic_accessor(this, property_key); accessor.has_value())
+                const_cast<Object&>(*this).m_storage[metadata->offset] = (*accessor)(shape().realm());
+        }
 
         value = m_storage[metadata->offset];
         attributes = metadata->attributes;
+        property_offset = metadata->offset;
     }
 
-    return ValueAndAttributes { .value = value, .attributes = attributes };
+    return ValueAndAttributes { .value = value, .attributes = attributes, .property_offset = property_offset };
 }
 
 bool Object::storage_has(PropertyKey const& property_key) const
@@ -1055,7 +1124,7 @@ void Object::storage_set(PropertyKey const& property_key, ValueAndAttributes con
 {
     VERIFY(property_key.is_valid());
 
-    auto [value, attributes] = value_and_attributes;
+    auto [value, attributes, _] = value_and_attributes;
 
     if (property_key.is_number()) {
         auto index = property_key.as_number();
@@ -1063,7 +1132,7 @@ void Object::storage_set(PropertyKey const& property_key, ValueAndAttributes con
         return;
     }
 
-    if (property_key.is_string()) {
+    if (m_has_intrinsic_accessors && property_key.is_string()) {
         if (auto intrinsics = s_intrinsics.find(this); intrinsics != s_intrinsics.end())
             intrinsics->value.remove(property_key.as_string());
     }
@@ -1105,7 +1174,7 @@ void Object::storage_delete(PropertyKey const& property_key)
     if (property_key.is_number())
         return m_indexed_properties.remove(property_key.as_number());
 
-    if (property_key.is_string()) {
+    if (m_has_intrinsic_accessors && property_key.is_string()) {
         if (auto intrinsics = s_intrinsics.find(this); intrinsics != s_intrinsics.end())
             intrinsics->value.remove(property_key.as_string());
     }
@@ -1164,6 +1233,7 @@ void Object::define_intrinsic_accessor(PropertyKey const& property_key, Property
 
     storage_set(property_key, { {}, attributes });
 
+    m_has_intrinsic_accessors = true;
     auto& intrinsics = s_intrinsics.ensure(this);
     intrinsics.set(property_key.as_string(), move(accessor));
 }
@@ -1201,7 +1271,7 @@ ThrowCompletionOr<Object*> Object::define_properties(Value properties)
     auto& vm = this->vm();
 
     // 1. Let props be ? ToObject(Properties).
-    auto* props = TRY(properties.to_object(vm));
+    auto props = TRY(properties.to_object(vm));
 
     // 2. Let keys be ? props.[[OwnPropertyKeys]]().
     auto keys = TRY(props->internal_own_property_keys());
@@ -1288,7 +1358,7 @@ Optional<Completion> Object::enumerate_object_properties(Function<Optional<Compl
 
 void Object::visit_edges(Cell::Visitor& visitor)
 {
-    Cell::visit_edges(visitor);
+    Base::visit_edges(visitor);
     visitor.visit(m_shape);
 
     for (auto& value : m_storage)
@@ -1297,11 +1367,6 @@ void Object::visit_edges(Cell::Visitor& visitor)
     m_indexed_properties.for_each_value([&visitor](auto& value) {
         visitor.visit(value);
     });
-
-    if (m_private_elements) {
-        for (auto& private_element : *m_private_elements)
-            visitor.visit(private_element.value);
-    }
 }
 
 // 7.1.1.1 OrdinaryToPrimitive ( O, hint ), https://tc39.es/ecma262/#sec-ordinarytoprimitive

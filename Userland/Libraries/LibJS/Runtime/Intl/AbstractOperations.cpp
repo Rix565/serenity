@@ -29,7 +29,7 @@ ThrowCompletionOr<Optional<::Locale::LocaleID>> is_structurally_valid_language_t
         quick_sort(variants);
 
         for (size_t i = 0; i < variants.size() - 1; ++i) {
-            if (TRY_OR_THROW_OOM(vm, variants[i].equals_ignoring_case(variants[i + 1])))
+            if (variants[i].equals_ignoring_case(variants[i + 1]))
                 return true;
         }
 
@@ -271,7 +271,7 @@ Optional<StringView> best_available_locale(StringView locale)
 
     // 2. Repeat,
     while (true) {
-        // a. If availableLocales contains an element equal to candidate, return candidate.
+        // a. If availableLocales contains candidate, return candidate.
         if (::Locale::is_locale_available(candidate))
             return candidate;
 
@@ -377,7 +377,7 @@ static auto& find_key_in_value(T& value, StringView key)
 }
 
 // 9.2.7 ResolveLocale ( availableLocales, requestedLocales, options, relevantExtensionKeys, localeData ), https://tc39.es/ecma402/#sec-resolvelocale
-ThrowCompletionOr<LocaleResult> resolve_locale(VM& vm, Vector<String> const& requested_locales, LocaleOptions const& options, Span<StringView const> relevant_extension_keys)
+ThrowCompletionOr<LocaleResult> resolve_locale(VM& vm, Vector<String> const& requested_locales, LocaleOptions const& options, ReadonlySpan<StringView> relevant_extension_keys)
 {
     // 1. Let matcher be options.[[localeMatcher]].
     auto const& matcher = options.locale_matcher;
@@ -463,7 +463,7 @@ ThrowCompletionOr<LocaleResult> resolve_locale(VM& vm, Vector<String> const& req
             // 4. Else if keyLocaleData contains "true", then
             else if (key_locale_data.contains_slow("true"sv)) {
                 // a. Let value be "true".
-                value = TRY_OR_THROW_OOM(vm, String::from_utf8("true"sv));
+                value = TRY_OR_THROW_OOM(vm, "true"_string);
 
                 // b. Let supportedExtensionAddition be the string-concatenation of "-" and key.
                 supported_extension_addition = ::Locale::Keyword { TRY_OR_THROW_OOM(vm, String::from_utf8(key)), {} };
@@ -486,7 +486,7 @@ ThrowCompletionOr<LocaleResult> resolve_locale(VM& vm, Vector<String> const& req
             // 3. If optionsValue is the empty String, then
             if (options_value->is_empty()) {
                 // a. Let optionsValue be "true".
-                options_value = TRY_OR_THROW_OOM(vm, String::from_utf8("true"sv));
+                options_value = TRY_OR_THROW_OOM(vm, "true"_string);
             }
         }
 
@@ -602,13 +602,13 @@ ThrowCompletionOr<Object*> coerce_options_to_object(VM& vm, Value options)
     }
 
     // 2. Return ? ToObject(options).
-    return TRY(options.to_object(vm));
+    return TRY(options.to_object(vm)).ptr();
 }
 
 // NOTE: 9.2.13 GetOption has been removed and is being pulled in from ECMA-262 in the Temporal proposal.
 
-// 1.2.12 GetStringOrBooleanOption ( options, property, values, trueValue, falsyValue, fallback ), https://tc39.es/proposal-intl-numberformat-v3/out/negotiation/proposed.html#sec-getstringorbooleanoption
-ThrowCompletionOr<StringOrBoolean> get_string_or_boolean_option(VM& vm, Object const& options, PropertyKey const& property, Span<StringView const> values, StringOrBoolean true_value, StringOrBoolean falsy_value, StringOrBoolean fallback)
+// 9.2.14 GetBooleanOrStringNumberFormatOption ( options, property, stringValues, fallback ), https://tc39.es/ecma402/#sec-getbooleanorstringnumberformatoption
+ThrowCompletionOr<StringOrBoolean> get_boolean_or_string_number_format_option(VM& vm, Object const& options, PropertyKey const& property, ReadonlySpan<StringView> string_values, StringOrBoolean fallback)
 {
     // 1. Let value be ? Get(options, property).
     auto value = TRY(options.get(property));
@@ -617,35 +617,27 @@ ThrowCompletionOr<StringOrBoolean> get_string_or_boolean_option(VM& vm, Object c
     if (value.is_undefined())
         return fallback;
 
-    // 3. If value is true, return trueValue.
+    // 3. If value is true, return true.
     if (value.is_boolean() && value.as_bool())
-        return true_value;
+        return StringOrBoolean { true };
 
-    // 4. Let valueBoolean be ToBoolean(value).
-    auto value_boolean = value.to_boolean();
+    // 4. If ToBoolean(value) is false, return false.
+    if (!value.to_boolean())
+        return StringOrBoolean { false };
 
-    // 5. If valueBoolean is false, return falsyValue.
-    if (!value_boolean)
-        return falsy_value;
-
-    // 6. Let value be ? ToString(value).
+    // 5. Let value be ? ToString(value).
     auto value_string = TRY(value.to_string(vm));
 
-    // 7. NOTE: For historical reasons, the strings "true" and "false" are treated the same as the boolean value true.
-    // 8. If value is "true" or "false", return fallback.
-    if (value_string.is_one_of("true"sv, "false"sv))
-        return fallback;
-
-    // 9. If values does not contain an element equal to value, throw a RangeError exception.
-    auto it = find(values.begin(), values.end(), value_string.bytes_as_string_view());
-    if (it == values.end())
+    // 6. If stringValues does not contain value, throw a RangeError exception.
+    auto it = find(string_values.begin(), string_values.end(), value_string.bytes_as_string_view());
+    if (it == string_values.end())
         return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, value_string, property.as_string());
 
-    // 10. Return value.
+    // 7. Return value.
     return StringOrBoolean { *it };
 }
 
-// 9.2.14 DefaultNumberOption ( value, minimum, maximum, fallback ), https://tc39.es/ecma402/#sec-defaultnumberoption
+// 9.2.15 DefaultNumberOption ( value, minimum, maximum, fallback ), https://tc39.es/ecma402/#sec-defaultnumberoption
 ThrowCompletionOr<Optional<int>> default_number_option(VM& vm, Value value, int minimum, int maximum, Optional<int> fallback)
 {
     // 1. If value is undefined, return fallback.
@@ -663,7 +655,7 @@ ThrowCompletionOr<Optional<int>> default_number_option(VM& vm, Value value, int 
     return floor(value.as_double());
 }
 
-// 9.2.15 GetNumberOption ( options, property, minimum, maximum, fallback ), https://tc39.es/ecma402/#sec-getnumberoption
+// 9.2.16 GetNumberOption ( options, property, minimum, maximum, fallback ), https://tc39.es/ecma402/#sec-getnumberoption
 ThrowCompletionOr<Optional<int>> get_number_option(VM& vm, Object const& options, PropertyKey const& property, int minimum, int maximum, Optional<int> fallback)
 {
     // 1. Assert: Type(options) is Object.
@@ -675,7 +667,7 @@ ThrowCompletionOr<Optional<int>> get_number_option(VM& vm, Object const& options
     return default_number_option(vm, value, minimum, maximum, move(fallback));
 }
 
-// 9.2.16 PartitionPattern ( pattern ), https://tc39.es/ecma402/#sec-partitionpattern
+// 9.2.17 PartitionPattern ( pattern ), https://tc39.es/ecma402/#sec-partitionpattern
 ThrowCompletionOr<Vector<PatternPartition>> partition_pattern(VM& vm, StringView pattern)
 {
     // 1. Let result be a new empty List.

@@ -26,13 +26,15 @@ public:
     virtual JS::ThrowCompletionOr<bool> internal_prevent_extensions() override;
     virtual JS::ThrowCompletionOr<Optional<JS::PropertyDescriptor>> internal_get_own_property(JS::PropertyKey const&) const override;
     virtual JS::ThrowCompletionOr<bool> internal_define_own_property(JS::PropertyKey const&, JS::PropertyDescriptor const&) override;
-    virtual JS::ThrowCompletionOr<JS::Value> internal_get(JS::PropertyKey const&, JS::Value receiver) const override;
+    virtual JS::ThrowCompletionOr<JS::Value> internal_get(JS::PropertyKey const&, JS::Value receiver, JS::CacheablePropertyMetadata*) const override;
     virtual JS::ThrowCompletionOr<bool> internal_set(JS::PropertyKey const&, JS::Value value, JS::Value receiver) override;
     virtual JS::ThrowCompletionOr<bool> internal_delete(JS::PropertyKey const&) override;
     virtual JS::ThrowCompletionOr<JS::MarkedVector<JS::Value>> internal_own_property_keys() const override;
 
     JS::GCPtr<Window> window() const { return m_window; }
-    void set_window(Badge<BrowsingContext>, JS::NonnullGCPtr<Window>);
+    void set_window(JS::NonnullGCPtr<Window>);
+
+    JS::NonnullGCPtr<BrowsingContext> associated_browsing_context() const;
 
 private:
     explicit WindowProxy(JS::Realm&);

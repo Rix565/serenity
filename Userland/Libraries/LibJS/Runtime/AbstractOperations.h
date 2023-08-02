@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,6 +14,7 @@
 #include <LibJS/Runtime/CanonicalIndex.h>
 #include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/Iterator.h>
 #include <LibJS/Runtime/PrivateEnvironment.h>
 #include <LibJS/Runtime/Value.h>
 
@@ -38,7 +39,7 @@ ThrowCompletionOr<Realm*> get_function_realm(VM&, FunctionObject const&);
 ThrowCompletionOr<void> initialize_bound_name(VM&, DeprecatedFlyString const&, Value, Environment*);
 bool is_compatible_property_descriptor(bool extensible, PropertyDescriptor const&, Optional<PropertyDescriptor> const& current);
 bool validate_and_apply_property_descriptor(Object*, PropertyKey const&, bool extensible, PropertyDescriptor const&, Optional<PropertyDescriptor> const& current);
-ThrowCompletionOr<Object*> get_prototype_from_constructor(VM&, FunctionObject const& constructor, Object* (Intrinsics::*intrinsic_default_prototype)());
+ThrowCompletionOr<Object*> get_prototype_from_constructor(VM&, FunctionObject const& constructor, NonnullGCPtr<Object> (Intrinsics::*intrinsic_default_prototype)());
 Object* create_unmapped_arguments_object(VM&, Span<Value> arguments);
 Object* create_mapped_arguments_object(VM&, FunctionObject&, Vector<FunctionParameter> const&, Span<Value> arguments, Environment&);
 
@@ -53,11 +54,13 @@ Completion dispose(VM& vm, Value, NonnullGCPtr<FunctionObject> method);
 Completion dispose_resources(VM& vm, Vector<DisposableResource> const& disposable, Completion completion);
 Completion dispose_resources(VM& vm, GCPtr<DeclarativeEnvironment> disposable, Completion completion);
 
+ThrowCompletionOr<Value> perform_import_call(VM&, Value specifier, Value options_value);
+
 enum class CanonicalIndexMode {
     DetectNumericRoundtrip,
     IgnoreNumericRoundtrip,
 };
-CanonicalIndex canonical_numeric_index_string(PropertyKey const&, CanonicalIndexMode needs_numeric);
+ThrowCompletionOr<CanonicalIndex> canonical_numeric_index_string(VM&, PropertyKey const&, CanonicalIndexMode needs_numeric);
 ThrowCompletionOr<String> get_substitution(VM&, Utf16View const& matched, Utf16View const& str, size_t position, Span<Value> captures, Value named_captures, Value replacement);
 
 enum class CallerMode {
@@ -142,7 +145,7 @@ ALWAYS_INLINE ThrowCompletionOr<NonnullGCPtr<Object>> construct(VM& vm, Function
 
 // 10.1.13 OrdinaryCreateFromConstructor ( constructor, intrinsicDefaultProto [ , internalSlotsList ] ), https://tc39.es/ecma262/#sec-ordinarycreatefromconstructor
 template<typename T, typename... Args>
-ThrowCompletionOr<NonnullGCPtr<T>> ordinary_create_from_constructor(VM& vm, FunctionObject const& constructor, Object* (Intrinsics::*intrinsic_default_prototype)(), Args&&... args)
+ThrowCompletionOr<NonnullGCPtr<T>> ordinary_create_from_constructor(VM& vm, FunctionObject const& constructor, NonnullGCPtr<Object> (Intrinsics::*intrinsic_default_prototype)(), Args&&... args)
 {
     auto& realm = *vm.current_realm();
     auto* prototype = TRY(get_prototype_from_constructor(vm, constructor, intrinsic_default_prototype));
@@ -176,6 +179,118 @@ Vector<T> merge_lists(Vector<T> const& a, Vector<T> const& b)
 
     // 4. Return merged.
     return merged;
+}
+
+// 4.2 AddValueToKeyedGroup ( groups, key, value ), https://tc39.es/proposal-array-grouping/#sec-add-value-to-keyed-group
+template<typename GroupsType, typename KeyType>
+void add_value_to_keyed_group(VM& vm, GroupsType& groups, KeyType key, Value value)
+{
+    // 1. For each Record { [[Key]], [[Elements]] } g of groups, do
+    //      a. If SameValue(g.[[Key]], key) is true, then
+    //      NOTE: This is performed in KeyedGroupTraits::equals for groupToMap and Traits<JS::PropertyKey>::equals for group.
+    auto existing_elements_iterator = groups.find(key);
+    if (existing_elements_iterator != groups.end()) {
+        // i. Assert: exactly one element of groups meets this criteria.
+        // NOTE: This is done on insertion into the hash map, as only `set` tells us if we overrode an entry.
+
+        // ii. Append value as the last element of g.[[Elements]].
+        existing_elements_iterator->value.append(value);
+
+        // iii. Return unused.
+        return;
+    }
+
+    // 2. Let group be the Record { [[Key]]: key, [[Elements]]: « value » }.
+    MarkedVector<Value> new_elements { vm.heap() };
+    new_elements.append(value);
+
+    // 3. Append group as the last element of groups.
+    auto result = groups.set(key, move(new_elements));
+    VERIFY(result == AK::HashSetResult::InsertedNewEntry);
+
+    // 4. Return unused.
+}
+
+// 4.1 GroupBy ( items, callbackfn, keyCoercion ), https://tc39.es/proposal-array-grouping/#sec-group-by
+template<typename GroupsType, typename KeyType>
+ThrowCompletionOr<GroupsType> group_by(VM& vm, Value items, Value callback_function)
+{
+    // 1. Perform ? RequireObjectCoercible(items).
+    TRY(require_object_coercible(vm, items));
+
+    // 2. If IsCallable(callbackfn) is false, throw a TypeError exception.
+    if (!callback_function.is_function())
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback_function.to_string_without_side_effects()));
+
+    // 3. Let groups be a new empty List.
+    GroupsType groups;
+
+    // 4. Let iteratorRecord be ? GetIterator(items).
+    // FIXME: The Array Grouping proposal is out of date - the `kind` parameter is now required.
+    auto iterator_record = TRY(get_iterator(vm, items, IteratorHint::Sync));
+
+    // 5. Let k be 0.
+    u64 k = 0;
+
+    // 6. Repeat,
+    while (true) {
+        // a. If k ≥ 2^53 - 1, then
+        if (k >= MAX_ARRAY_LIKE_INDEX) {
+            // i. Let error be ThrowCompletion(a newly created TypeError object).
+            auto error = vm.throw_completion<TypeError>(ErrorType::ArrayMaxSize);
+
+            // ii. Return ? IteratorClose(iteratorRecord, error).
+            return iterator_close(vm, iterator_record, move(error));
+        }
+
+        // b. Let next be ? IteratorStep(iteratorRecord).
+        auto next = TRY(iterator_step(vm, iterator_record));
+
+        // c. If next is false, then
+        if (!next) {
+            // i. Return groups.
+            return ThrowCompletionOr<GroupsType> { move(groups) };
+        }
+
+        // d. Let value be ? IteratorValue(next).
+        auto value = TRY(iterator_value(vm, *next));
+
+        // e. Let key be Completion(Call(callbackfn, undefined, « value, 𝔽(k) »)).
+        auto key = call(vm, callback_function, js_undefined(), value, Value(k));
+
+        // f. IfAbruptCloseIterator(key, iteratorRecord).
+        if (key.is_error())
+            return Completion { *TRY(iterator_close(vm, iterator_record, key.release_error())) };
+
+        // g. If keyCoercion is property, then
+        if constexpr (IsSame<KeyType, PropertyKey>) {
+            // i. Set key to Completion(ToPropertyKey(key)).
+            auto property_key = key.value().to_property_key(vm);
+
+            // ii. IfAbruptCloseIterator(key, iteratorRecord).
+            if (property_key.is_error())
+                return Completion { *TRY(iterator_close(vm, iterator_record, property_key.release_error())) };
+
+            add_value_to_keyed_group(vm, groups, property_key.release_value(), value);
+        }
+        // h. Else,
+        else {
+            // i. Assert: keyCoercion is zero.
+            static_assert(IsSame<KeyType, void>);
+
+            // ii. If key is -0𝔽, set key to +0𝔽.
+            if (key.value().is_negative_zero())
+                key = Value(0);
+
+            add_value_to_keyed_group(vm, groups, make_handle(key.release_value()), value);
+        }
+
+        // i. Perform AddValueToKeyedGroup(groups, key, value).
+        // NOTE: This is dependent on the `key_coercion` template parameter and thus done separately in the branches above.
+
+        // j. Set k to k + 1.
+        ++k;
+    }
 }
 
 // x modulo y, https://tc39.es/ecma262/#eqn-modulo

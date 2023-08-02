@@ -2,6 +2,7 @@
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, networkException <networkexception@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -24,7 +25,7 @@ public:
 
 class AbstractTableView : public AbstractView {
 public:
-    int row_height() const { return font().glyph_height() + vertical_padding(); }
+    int row_height() const { return font().pixel_size_rounded_up() + vertical_padding(); }
 
     virtual int horizontal_padding() const { return m_horizontal_padding; }
     void set_horizontal_padding(int padding) { m_horizontal_padding = padding; }
@@ -40,6 +41,10 @@ public:
     void set_column_headers_visible(bool);
 
     void set_column_visible(int, bool);
+    // These return/accept a comma-separated list of column ids, for storing in a config file.
+    ErrorOr<String> get_visible_columns() const;
+    void set_visible_columns(StringView column_ids);
+    Function<void()> on_visible_columns_changed;
 
     int column_width(int column) const;
     void set_column_width(int column, int width);
@@ -122,7 +127,7 @@ private:
     bool m_highlight_selected_rows { true };
 
     int m_vertical_padding { 8 };
-    int m_horizontal_padding { font().glyph_height() / 2 };
+    int m_horizontal_padding { font().pixel_size_rounded_up() / 2 };
     int m_tab_moves { 0 };
 };
 

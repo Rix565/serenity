@@ -33,11 +33,10 @@ AddEventDialog::AddEventDialog(Core::DateTime date_time, Window* parent_window)
     widget->set_layout<GUI::VerticalBoxLayout>();
 
     auto& top_container = widget->add<GUI::Widget>();
-    top_container.set_layout<GUI::VerticalBoxLayout>();
+    top_container.set_layout<GUI::VerticalBoxLayout>(4);
     top_container.set_fixed_height(45);
-    top_container.layout()->set_margins(4);
 
-    auto& add_label = top_container.add<GUI::Label>("Add title & date:");
+    auto& add_label = top_container.add<GUI::Label>("Add title & date:"_string.release_value_but_fixme_should_propagate_errors());
     add_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
     add_label.set_fixed_height(14);
     add_label.set_font(Gfx::FontDatabase::default_font().bold_variant());
@@ -46,14 +45,12 @@ AddEventDialog::AddEventDialog(Core::DateTime date_time, Window* parent_window)
     event_title_textbox.set_fixed_height(20);
 
     auto& middle_container = widget->add<GUI::Widget>();
-    middle_container.set_layout<GUI::HorizontalBoxLayout>();
+    middle_container.set_layout<GUI::HorizontalBoxLayout>(4);
     middle_container.set_fixed_height(25);
-    middle_container.layout()->set_margins(4);
 
     auto& time_container = widget->add<GUI::Widget>();
-    time_container.set_layout<GUI::HorizontalBoxLayout>();
+    time_container.set_layout<GUI::HorizontalBoxLayout>(4);
     time_container.set_fixed_height(25);
-    time_container.layout()->set_margins(4);
 
     auto& starting_month_combo = middle_container.add<GUI::ComboBox>();
     starting_month_combo.set_only_allow_values_from_model(true);
@@ -87,13 +84,13 @@ AddEventDialog::AddEventDialog(Core::DateTime date_time, Window* parent_window)
     starting_meridiem_combo.set_model(MeridiemListModel::create());
     starting_meridiem_combo.set_selected_index(0);
 
-    widget->layout()->add_spacer();
+    widget->add_spacer().release_value_but_fixme_should_propagate_errors();
 
     auto& button_container = widget->add<GUI::Widget>();
     button_container.set_fixed_height(20);
     button_container.set_layout<GUI::HorizontalBoxLayout>();
-    button_container.layout()->add_spacer();
-    auto& ok_button = button_container.add<GUI::Button>("OK");
+    button_container.add_spacer().release_value_but_fixme_should_propagate_errors();
+    auto& ok_button = button_container.add<GUI::Button>("OK"_short_string);
     ok_button.set_fixed_size(80, 20);
     ok_button.on_click = [this](auto) {
         dbgln("TODO: Add event icon on specific tile");
@@ -123,21 +120,21 @@ int AddEventDialog::MeridiemListModel::row_count(const GUI::ModelIndex&) const
     return 2;
 }
 
-DeprecatedString AddEventDialog::MonthListModel::column_name(int column) const
+ErrorOr<String> AddEventDialog::MonthListModel::column_name(int column) const
 {
     switch (column) {
     case Column::Month:
-        return "Month";
+        return "Month"_short_string;
     default:
         VERIFY_NOT_REACHED();
     }
 }
 
-DeprecatedString AddEventDialog::MeridiemListModel::column_name(int column) const
+ErrorOr<String> AddEventDialog::MeridiemListModel::column_name(int column) const
 {
     switch (column) {
     case Column::Meridiem:
-        return "Meridiem";
+        return TRY("Meridiem"_string);
     default:
         VERIFY_NOT_REACHED();
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -63,6 +63,9 @@ public:
     bool is_obeying_widget_min_size() { return m_obey_widget_min_size; }
     void set_obey_widget_min_size(bool);
 
+    bool is_auto_shrinking() const { return m_auto_shrink; }
+    void set_auto_shrink(bool);
+
     bool is_minimizable() const { return m_minimizable; }
     void set_minimizable(bool minimizable) { m_minimizable = minimizable; }
 
@@ -72,8 +75,6 @@ public:
     void set_double_buffering_enabled(bool);
     void set_has_alpha_channel(bool);
     bool has_alpha_channel() const { return m_has_alpha_channel; }
-    void set_opacity(float);
-    float opacity() const { return m_opacity_when_windowless; }
 
     void set_alpha_hit_threshold(float);
     float alpha_hit_threshold() const { return m_alpha_hit_threshold; }
@@ -96,6 +97,7 @@ public:
         Close,
     };
 
+    Function<void()> on_font_change;
     Function<void()> on_close;
     Function<CloseRequestDecision()> on_close_request;
     Function<void(bool is_preempted)> on_input_preemption_change;
@@ -125,7 +127,10 @@ public:
     void resize(Gfx::IntSize size) { set_rect({ position(), size }); }
 
     void center_on_screen();
+    void constrain_to_desktop();
+
     void center_within(Window const&);
+    void center_within(Gfx::IntRect const&);
 
     virtual void event(Core::Event&) override;
 
@@ -183,7 +188,7 @@ public:
     void set_resize_aspect_ratio(Optional<Gfx::IntSize> const& ratio);
 
     void set_cursor(Gfx::StandardCursor);
-    void set_cursor(NonnullRefPtr<Gfx::Bitmap>);
+    void set_cursor(NonnullRefPtr<Gfx::Bitmap const>);
 
     void set_icon(Gfx::Bitmap const*);
     void apply_icon();
@@ -214,8 +219,8 @@ public:
 
     void did_disable_focused_widget(Badge<Widget>);
 
-    Menu& add_menu(DeprecatedString name);
-    ErrorOr<NonnullRefPtr<Menu>> try_add_menu(DeprecatedString name);
+    Menu& add_menu(String name);
+    ErrorOr<NonnullRefPtr<Menu>> try_add_menu(String name);
     ErrorOr<void> try_add_menu(NonnullRefPtr<Menu> menu);
     void flash_menubar_menu_for(MenuItem const&);
 
@@ -229,7 +234,12 @@ public:
 
     void set_always_on_top(bool always_on_top = true);
 
-    void propagate_shortcuts_up_to_application(KeyEvent& event, Widget* widget);
+    enum class ShortcutPropagationBoundary {
+        Window,
+        Application,
+    };
+
+    void propagate_shortcuts(KeyEvent& event, Widget* widget, ShortcutPropagationBoundary = ShortcutPropagationBoundary::Application);
 
 protected:
     Window(Core::Object* parent = nullptr);
@@ -270,8 +280,6 @@ private:
     void flip(Vector<Gfx::IntRect, 32> const& dirty_rects);
     void force_update();
 
-    bool are_cursors_the_same(AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> const&, AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> const&) const;
-
     WeakPtr<Widget> m_previously_focused_widget;
 
     OwnPtr<WindowBackingStore> m_front_store;
@@ -279,9 +287,8 @@ private:
 
     NonnullRefPtr<Menubar> m_menubar;
 
-    RefPtr<Gfx::Bitmap> m_icon;
+    RefPtr<Gfx::Bitmap const> m_icon;
     int m_window_id { 0 };
-    float m_opacity_when_windowless { 1.0f };
     float m_alpha_hit_threshold { 0.0f };
     RefPtr<Widget> m_main_widget;
     WeakPtr<Widget> m_default_return_key_widget;
@@ -296,8 +303,8 @@ private:
     Gfx::IntSize m_base_size;
     WindowType m_window_type { WindowType::Normal };
     WindowMode m_window_mode { WindowMode::Modeless };
-    AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> m_cursor { Gfx::StandardCursor::None };
-    AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> m_effective_cursor { Gfx::StandardCursor::None };
+    AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap const>> m_cursor { Gfx::StandardCursor::None };
+    AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap const>> m_effective_cursor { Gfx::StandardCursor::None };
     bool m_has_alpha_channel { false };
     bool m_double_buffering_enabled { true };
     bool m_resizable { true };
@@ -316,6 +323,7 @@ private:
     bool m_moved_by_client { false };
     bool m_blocks_emoji_input { false };
     bool m_resizing { false };
+    bool m_auto_shrink { false };
 };
 
 }

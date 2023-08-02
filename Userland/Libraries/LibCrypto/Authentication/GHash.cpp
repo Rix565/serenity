@@ -6,7 +6,6 @@
 
 #include <AK/ByteReader.h>
 #include <AK/Debug.h>
-#include <AK/MemoryStream.h>
 #include <AK/Types.h>
 #include <LibCrypto/Authentication/GHash.h>
 
@@ -26,8 +25,7 @@ static void to_u8s(u8* b, u32 const* w)
 
 }
 
-namespace Crypto {
-namespace Authentication {
+namespace Crypto::Authentication {
 
 GHash::TagType GHash::process(ReadonlyBytes aad, ReadonlyBytes cipher)
 {
@@ -45,11 +43,9 @@ GHash::TagType GHash::process(ReadonlyBytes aad, ReadonlyBytes cipher)
         }
 
         if (i > buf.size()) {
-            static u8 buffer[16];
+            u8 buffer[16] = {};
             Bytes buffer_bytes { buffer, 16 };
-            OutputMemoryStream stream { buffer_bytes };
-            stream.write(buf.slice(i - 16));
-            stream.fill_to_end(0);
+            buf.slice(i - 16).copy_to(buffer_bytes);
 
             for (auto j = 0; j < 4; ++j) {
                 tag[j] ^= to_u32(buffer_bytes.offset(j * 4));
@@ -120,5 +116,4 @@ void galois_multiply(u32 (&z)[4], const u32 (&_x)[4], const u32 (&_y)[4])
     }
 }
 
-}
 }

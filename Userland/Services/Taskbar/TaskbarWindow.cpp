@@ -73,22 +73,18 @@ TaskbarWindow::TaskbarWindow()
 ErrorOr<void> TaskbarWindow::populate_taskbar()
 {
     auto main_widget = TRY(set_main_widget<TaskbarWidget>());
-    (void)TRY(main_widget->try_set_layout<GUI::HorizontalBoxLayout>());
-    main_widget->layout()->set_margins({ 2, 3, 0, 3 });
+    TRY(main_widget->try_set_layout<GUI::HorizontalBoxLayout>(GUI::Margins { 2, 3, 0, 3 }));
 
     m_quick_launch = TRY(Taskbar::QuickLaunchWidget::create());
     TRY(main_widget->try_add_child(*m_quick_launch));
 
     m_task_button_container = TRY(main_widget->try_add<GUI::Widget>());
-    (void)TRY(m_task_button_container->try_set_layout<GUI::HorizontalBoxLayout>());
-    m_task_button_container->layout()->set_spacing(3);
+    TRY(m_task_button_container->try_set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 3));
 
     m_default_icon = TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/window.png"sv));
 
     m_applet_area_container = TRY(main_widget->try_add<GUI::Frame>());
-    m_applet_area_container->set_frame_thickness(1);
-    m_applet_area_container->set_frame_shape(Gfx::FrameShape::Box);
-    m_applet_area_container->set_frame_shadow(Gfx::FrameShadow::Sunken);
+    m_applet_area_container->set_frame_style(Gfx::FrameStyle::SunkenPanel);
 
     m_clock_widget = TRY(main_widget->try_add<Taskbar::ClockWidget>());
 
@@ -114,7 +110,7 @@ void TaskbarWindow::add_system_menu(NonnullRefPtr<GUI::Menu> system_menu)
 {
     m_system_menu = move(system_menu);
 
-    m_start_button = GUI::Button::construct("Serenity");
+    m_start_button = GUI::Button::construct("Serenity"_string.release_value_but_fixme_should_propagate_errors());
     set_start_button_font(Gfx::FontDatabase::default_font().bold_variant());
     m_start_button->set_icon_spacing(0);
     auto app_icon = GUI::Icon::default_icon("ladyball"sv);
@@ -125,7 +121,7 @@ void TaskbarWindow::add_system_menu(NonnullRefPtr<GUI::Menu> system_menu)
     main->insert_child_before(*m_start_button, *m_quick_launch);
 }
 
-void TaskbarWindow::config_string_did_change(DeprecatedString const& domain, DeprecatedString const& group, DeprecatedString const& key, DeprecatedString const& value)
+void TaskbarWindow::config_string_did_change(StringView domain, StringView group, StringView key, StringView value)
 {
     if (domain == "Taskbar" && group == "Clock" && key == "TimeFormat") {
         m_clock_widget->update_format(value);
@@ -146,7 +142,7 @@ void TaskbarWindow::toggle_show_desktop()
 void TaskbarWindow::on_screen_rects_change(Vector<Gfx::IntRect, 4> const& rects, size_t main_screen_index)
 {
     auto const& rect = rects[main_screen_index];
-    Gfx::IntRect new_rect { rect.x(), rect.bottom() - taskbar_height() + 1, rect.width(), taskbar_height() };
+    Gfx::IntRect new_rect { rect.x(), rect.bottom() - taskbar_height(), rect.width(), taskbar_height() };
     set_rect(new_rect);
     update_applet_area();
 }
@@ -202,7 +198,7 @@ void TaskbarWindow::update_window_button(::Window& window, bool show_as_active)
     auto* button = window.button();
     if (!button)
         return;
-    button->set_text(window.title());
+    button->set_text(String::from_deprecated_string(window.title()).release_value_but_fixme_should_propagate_errors());
     button->set_tooltip(window.title());
     button->set_checked(show_as_active);
     button->set_visible(is_window_on_current_workspace(window));

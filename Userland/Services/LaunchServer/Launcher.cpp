@@ -12,10 +12,10 @@
 #include <AK/LexicalPath.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/ConfigFile.h>
-#include <LibCore/File.h>
 #include <LibCore/MimeData.h>
 #include <LibCore/Process.h>
 #include <LibDesktop/AppFile.h>
+#include <LibFileSystem/FileSystem.h>
 #include <errno.h>
 #include <serenity.h>
 #include <spawn.h>
@@ -141,7 +141,7 @@ Vector<DeprecatedString> Launcher::handlers_for_url(const URL& url)
 {
     Vector<DeprecatedString> handlers;
     if (url.scheme() == "file") {
-        for_each_handler_for_path(url.path(), [&](auto& handler) -> bool {
+        for_each_handler_for_path(url.serialize_path(), [&](auto& handler) -> bool {
             handlers.append(handler.executable);
             return true;
         });
@@ -161,7 +161,7 @@ Vector<DeprecatedString> Launcher::handlers_with_details_for_url(const URL& url)
 {
     Vector<DeprecatedString> handlers;
     if (url.scheme() == "file") {
-        for_each_handler_for_path(url.path(), [&](auto& handler) -> bool {
+        for_each_handler_for_path(url.serialize_path(), [&](auto& handler) -> bool {
             handlers.append(handler.to_details_str());
             return true;
         });
@@ -177,18 +177,13 @@ Vector<DeprecatedString> Launcher::handlers_with_details_for_url(const URL& url)
     return handlers;
 }
 
-Optional<DeprecatedString> Launcher::mime_type_for_file(DeprecatedString path)
+Optional<StringView> Launcher::mime_type_for_file(DeprecatedString path)
 {
-    auto file_or_error = Core::File::open(path, Core::OpenMode::ReadOnly);
-    if (file_or_error.is_error()) {
+    auto file_or_error = Core::File::open(path, Core::File::OpenMode::Read);
+    if (file_or_error.is_error())
         return {};
-    } else {
-        auto file = file_or_error.release_value();
-        // Read accounts for longest possible offset + signature we currently match against.
-        auto bytes = file->read(0x9006);
 
-        return Core::guess_mime_type_based_on_sniffed_bytes(bytes.bytes());
-    }
+    return Core::guess_mime_type_based_on_sniffed_bytes(*file_or_error.release_value());
 }
 
 bool Launcher::open_url(const URL& url, DeprecatedString const& handler_name)
@@ -211,7 +206,7 @@ bool Launcher::open_with_handler_name(const URL& url, DeprecatedString const& ha
     auto& handler = handler_optional.value();
     DeprecatedString argument;
     if (url.scheme() == "file")
-        argument = url.path();
+        argument = url.serialize_path();
     else
         argument = url.to_deprecated_string();
     return spawn(handler.executable, { argument });
@@ -308,16 +303,22 @@ void Launcher::for_each_handler_for_path(DeprecatedString const& path, Function<
         return;
 
     if (S_ISLNK(st.st_mode)) {
-        auto link_target_or_error = Core::File::read_link(path);
+        auto link_target_or_error = FileSystem::read_link(path);
         if (link_target_or_error.is_error()) {
             perror("read_link");
             return;
         }
 
-        auto link_target = LexicalPath { link_target_or_error.release_value() };
+        auto link_target = LexicalPath { link_target_or_error.release_value().to_deprecated_string() };
         LexicalPath absolute_link_target = link_target.is_absolute() ? link_target : LexicalPath::join(LexicalPath::dirname(path), link_target.string());
-        auto real_path = Core::File::real_path_for(absolute_link_target.string());
-        return for_each_handler_for_path(real_path, [&](auto const& handler) -> bool {
+        auto real_path_or_error = FileSystem::real_path(absolute_link_target.string());
+        if (real_path_or_error.is_error()) {
+            perror("real_path");
+            return;
+        }
+        auto real_path = real_path_or_error.release_value();
+
+        return for_each_handler_for_path(real_path.to_deprecated_string(), [&](auto const& handler) -> bool {
             return f(handler);
         });
     }
@@ -348,7 +349,8 @@ void Launcher::for_each_handler_for_path(DeprecatedString const& path, Function<
 bool Launcher::open_file_url(const URL& url)
 {
     struct stat st;
-    if (stat(url.path().characters(), &st) < 0) {
+    auto file_path = url.serialize_path();
+    if (stat(file_path.characters(), &st) < 0) {
         perror("stat");
         return false;
     }
@@ -356,11 +358,11 @@ bool Launcher::open_file_url(const URL& url)
     if (S_ISDIR(st.st_mode)) {
         Vector<DeprecatedString> fm_arguments;
         if (url.fragment().is_empty()) {
-            fm_arguments.append(url.path());
+            fm_arguments.append(file_path);
         } else {
             fm_arguments.append("-s");
             fm_arguments.append("-r");
-            fm_arguments.append(DeprecatedString::formatted("{}/{}", url.path(), url.fragment()));
+            fm_arguments.append(DeprecatedString::formatted("{}/{}", file_path, url.fragment()));
         }
 
         auto handler_optional = m_file_handlers.get("directory");
@@ -372,10 +374,10 @@ bool Launcher::open_file_url(const URL& url)
     }
 
     if ((st.st_mode & S_IFMT) == S_IFREG && st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))
-        return spawn(url.path(), {});
+        return spawn(file_path, {});
 
-    auto extension = LexicalPath::extension(url.path()).to_lowercase();
-    auto mime_type = mime_type_for_file(url.path());
+    auto extension = LexicalPath::extension(file_path).to_lowercase();
+    auto mime_type = mime_type_for_file(file_path);
 
     auto mime_type_or_extension = extension;
     bool should_use_mime_type = mime_type.has_value() && has_mime_handlers(mime_type.value());
@@ -389,7 +391,7 @@ bool Launcher::open_file_url(const URL& url)
 
     // Additional parameters parsing, specific for the file protocol and txt file handlers
     Vector<DeprecatedString> additional_parameters;
-    DeprecatedString filepath = url.path();
+    DeprecatedString filepath = url.serialize_path();
 
     auto parameters = url.query().split('&');
     for (auto const& parameter : parameters) {

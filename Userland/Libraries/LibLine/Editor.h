@@ -23,7 +23,6 @@
 #include <LibCore/EventLoop.h>
 #include <LibCore/Notifier.h>
 #include <LibCore/Object.h>
-#include <LibCore/Stream.h>
 #include <LibLine/KeyCallbackMachine.h>
 #include <LibLine/Span.h>
 #include <LibLine/StringMetrics.h>
@@ -267,9 +266,6 @@ private:
         Retry
     };
 
-    // FIXME: Port to Core::Property
-    void save_to(JsonObject&);
-
     ErrorOr<void> try_update_once();
     void handle_interrupt_event();
     ErrorOr<void> handle_read_event();
@@ -393,7 +389,7 @@ private:
     }
 
     void recalculate_origin();
-    ErrorOr<void> reposition_cursor(Core::Stream::Stream&, bool to_end = false);
+    ErrorOr<void> reposition_cursor(Stream&, bool to_end = false);
 
     struct CodepointRange {
         size_t start { 0 };
@@ -479,6 +475,7 @@ private:
     size_t m_history_cursor { 0 };
     size_t m_history_capacity { 1024 };
     bool m_history_dirty { false };
+    static ErrorOr<Vector<HistoryEntry>> try_load_history(StringView path);
 
     enum class InputState {
         Free,

@@ -21,7 +21,7 @@ public:
     void set_selected(bool);
 
     DeprecatedString value() const;
-    void set_value(DeprecatedString);
+    WebIDL::ExceptionOr<void> set_value(DeprecatedString);
 
     DeprecatedString text() const;
     void set_text(DeprecatedString);
@@ -40,8 +40,7 @@ private:
 
     virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
 
-    void parse_attribute(DeprecatedFlyString const& name, DeprecatedString const& value) override;
-    void did_remove_attribute(DeprecatedFlyString const& name) override;
+    void attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value) override;
 
     void ask_for_a_reset();
 

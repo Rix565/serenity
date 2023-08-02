@@ -25,9 +25,9 @@ JS::ThrowCompletionOr<void> HTMLAreaElement::initialize(JS::Realm& realm)
     return {};
 }
 
-void HTMLAreaElement::parse_attribute(DeprecatedFlyString const& name, DeprecatedString const& value)
+void HTMLAreaElement::attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value)
 {
-    HTMLElement::parse_attribute(name, value);
+    HTMLElement::attribute_changed(name, value);
     if (name == HTML::AttributeNames::href) {
         set_the_url();
     }
@@ -38,9 +38,9 @@ DeprecatedString HTMLAreaElement::hyperlink_element_utils_href() const
     return attribute(HTML::AttributeNames::href);
 }
 
-void HTMLAreaElement::set_hyperlink_element_utils_href(DeprecatedString href)
+WebIDL::ExceptionOr<void> HTMLAreaElement::set_hyperlink_element_utils_href(DeprecatedString href)
 {
-    MUST(set_attribute(HTML::AttributeNames::href, move(href)));
+    return set_attribute(HTML::AttributeNames::href, move(href));
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-tabindex

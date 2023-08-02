@@ -500,23 +500,18 @@ bool Lexer::is_numeric_literal_start() const
 bool Lexer::slash_means_division() const
 {
     auto type = m_current_token.type();
-    return type == TokenType::BigIntLiteral
-        || type == TokenType::BoolLiteral
+    return m_current_token.is_identifier_name()
+        || type == TokenType::BigIntLiteral
         || type == TokenType::BracketClose
         || type == TokenType::CurlyClose
-        || type == TokenType::Identifier
-        || type == TokenType::In
-        || type == TokenType::Instanceof
         || type == TokenType::MinusMinus
-        || type == TokenType::NullLiteral
         || type == TokenType::NumericLiteral
         || type == TokenType::ParenClose
         || type == TokenType::PlusPlus
         || type == TokenType::PrivateIdentifier
         || type == TokenType::RegexLiteral
         || type == TokenType::StringLiteral
-        || type == TokenType::TemplateLiteralEnd
-        || type == TokenType::This;
+        || type == TokenType::TemplateLiteralEnd;
 }
 
 Token Lexer::next()
@@ -836,7 +831,7 @@ Token Lexer::next()
 
     if (m_hit_invalid_unicode.has_value()) {
         value_start = m_hit_invalid_unicode.value() - 1;
-        m_current_token = Token(TokenType::Invalid, String::from_utf8("Invalid unicode codepoint in source"sv).release_value_but_fixme_should_propagate_errors(),
+        m_current_token = Token(TokenType::Invalid, "Invalid unicode codepoint in source"_string.release_value_but_fixme_should_propagate_errors(),
             ""sv, // Since the invalid unicode can occur anywhere in the current token the trivia is not correct
             m_source.substring_view(value_start + 1, min(4u, m_source.length() - value_start - 2)),
             m_filename,

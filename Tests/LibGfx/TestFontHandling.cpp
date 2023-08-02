@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Utf8View.h>
 #include <LibGfx/Font/BitmapFont.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibTest/TestCase.h>
@@ -12,21 +13,32 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#ifdef AK_OS_SERENITY
+#    define TEST_INPUT(x) ("/usr/Tests/LibGfx/test-inputs/" x)
+#else
+#    define TEST_INPUT(x) ("test-inputs/" x)
+#endif
+
 TEST_CASE(test_fontdatabase_get_by_name)
 {
-    auto name = "Liza 10 400 0"sv;
+    Gfx::FontDatabase::set_default_fonts_lookup_path(TEST_INPUT(""));
+
+    auto name = "Family 12 400 0"sv;
     auto& font_database = Gfx::FontDatabase::the();
     EXPECT(!font_database.get_by_name(name)->name().is_null());
 }
 
 TEST_CASE(test_fontdatabase_get)
 {
+    Gfx::FontDatabase::set_default_fonts_lookup_path(TEST_INPUT(""));
     auto& font_database = Gfx::FontDatabase::the();
-    EXPECT(!font_database.get("Liza", 10, 400, 0)->name().is_null());
+    EXPECT(!font_database.get("Family", 12, 400, Gfx::FontWidth::Normal, 0)->name().is_null());
 }
 
 TEST_CASE(test_fontdatabase_for_each_font)
 {
+    Gfx::FontDatabase::set_default_fonts_lookup_path(TEST_INPUT(""));
+
     auto& font_database = Gfx::FontDatabase::the();
     font_database.for_each_font([&](Gfx::Font const& font) {
         EXPECT(!font.name().is_null());
@@ -114,12 +126,15 @@ TEST_CASE(test_glyph_or_emoji_width)
     u8 glyph_width = 1;
     auto font = Gfx::BitmapFont::create(glyph_height, glyph_width, true, 256);
 
-    EXPECT(font->glyph_or_emoji_width(0));
+    Utf8View view { " "sv };
+    auto it = view.begin();
+
+    EXPECT(font->glyph_or_emoji_width(it));
 }
 
 TEST_CASE(test_load_from_file)
 {
-    auto font = Gfx::BitmapFont::load_from_file("/res/fonts/PebbletonBold14.font");
+    auto font = Gfx::BitmapFont::load_from_file(TEST_INPUT("TestFont.font"sv));
     EXPECT(!font->name().is_null());
 }
 
@@ -131,24 +146,21 @@ TEST_CASE(test_write_to_file)
 
     char path[] = "/tmp/new.font.XXXXXX";
     EXPECT(mkstemp(path) != -1);
-    EXPECT(!font->write_to_file(path).is_error());
+    TRY_OR_FAIL(font->write_to_file(path));
     unlink(path);
 }
 
 TEST_CASE(test_character_set_masking)
 {
-    auto font = Gfx::BitmapFont::try_load_from_file("/usr/Tests/LibGfx/TestFont.font");
-    EXPECT(!font.is_error());
+    auto font = TRY_OR_FAIL(Gfx::BitmapFont::try_load_from_file(TEST_INPUT("TestFont.font"sv)));
 
-    auto unmasked_font = font.value()->unmasked_character_set();
-    EXPECT(!unmasked_font.is_error());
-    EXPECT(unmasked_font.value()->glyph_index(0x0041).value() == 0x0041);
-    EXPECT(unmasked_font.value()->glyph_index(0x0100).value() == 0x0100);
-    EXPECT(unmasked_font.value()->glyph_index(0xFFFD).value() == 0xFFFD);
+    auto unmasked_font = TRY_OR_FAIL(font->unmasked_character_set());
+    EXPECT(unmasked_font->glyph_index(0x0041).value() == 0x0041);
+    EXPECT(unmasked_font->glyph_index(0x0100).value() == 0x0100);
+    EXPECT(unmasked_font->glyph_index(0xFFFD).value() == 0xFFFD);
 
-    auto masked_font = unmasked_font.value()->masked_character_set();
-    EXPECT(!masked_font.is_error());
-    EXPECT(masked_font.value()->glyph_index(0x0041).value() == 0x0041);
-    EXPECT(!masked_font.value()->glyph_index(0x0100).has_value());
-    EXPECT(masked_font.value()->glyph_index(0xFFFD).value() == 0x1FD);
+    auto masked_font = TRY_OR_FAIL(unmasked_font->masked_character_set());
+    EXPECT(masked_font->glyph_index(0x0041).value() == 0x0041);
+    EXPECT(!masked_font->glyph_index(0x0100).has_value());
+    EXPECT(masked_font->glyph_index(0xFFFD).value() == 0x1FD);
 }

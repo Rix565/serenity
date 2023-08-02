@@ -34,7 +34,7 @@ public:
     virtual ThrowCompletionOr<Value> call();
     virtual ThrowCompletionOr<NonnullGCPtr<Object>> construct(FunctionObject& new_target);
 
-    virtual DeprecatedFlyString const& name() const override { return m_name; };
+    virtual DeprecatedFlyString const& name() const override { return m_name; }
     virtual bool is_strict_mode() const override;
     virtual bool has_constructor() const override { return false; }
     virtual Realm* realm() const override { return m_realm; }
@@ -54,7 +54,7 @@ private:
     DeprecatedFlyString m_name;
     Optional<DeprecatedFlyString> m_initial_name; // [[InitialName]]
     SafeFunction<ThrowCompletionOr<Value>(VM&)> m_native_function;
-    Realm* m_realm { nullptr };
+    GCPtr<Realm> m_realm;
 };
 
 template<>

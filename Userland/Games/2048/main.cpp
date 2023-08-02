@@ -22,7 +22,6 @@
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/Statusbar.h>
 #include <LibGUI/Window.h>
-#include <LibGfx/Painter.h>
 #include <LibMain/Main.h>
 #include <stdio.h>
 #include <time.h>
@@ -33,7 +32,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     srand(time(nullptr));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
     auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-2048"sv));
 
     auto window = TRY(GUI::Window::try_create());
@@ -76,10 +75,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto statusbar = main_widget->find_descendant_of_type_named<GUI::Statusbar>("statusbar");
 
     app->on_action_enter = [&](GUI::Action& action) {
-        auto text = action.status_tip();
-        if (text.is_empty())
-            text = Gfx::parse_ampersand_string(action.text());
-        statusbar->set_override_text(move(text));
+        statusbar->set_override_text(action.status_tip());
     };
 
     app->on_action_leave = [&](GUI::Action&) {
@@ -89,7 +85,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto update = [&]() {
         board_view->set_board(&game.board());
         board_view->update();
-        statusbar->set_text(DeprecatedString::formatted("Score: {}", game.score()));
+        statusbar->set_text(String::formatted("Score: {}", game.score()).release_value_but_fixme_should_propagate_errors());
     };
 
     update();
@@ -169,7 +165,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         }
     };
 
-    auto game_menu = TRY(window->try_add_menu("&Game"));
+    auto game_menu = TRY(window->try_add_menu("&Game"_short_string));
 
     TRY(game_menu->try_add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
         start_a_new_game();
@@ -201,7 +197,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         GUI::Application::the()->quit();
     })));
 
-    auto help_menu = TRY(window->try_add_menu("&Help"));
+    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man6/2048.md"), "/bin/Help");

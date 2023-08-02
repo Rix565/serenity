@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -305,7 +305,7 @@ ThrowCompletionOr<PartialDurationRecord> to_temporal_partial_duration_record(VM&
     // 1. If Type(temporalDurationLike) is not Object, then
     if (!temporal_duration_like.is_object()) {
         // a. Throw a TypeError exception.
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, temporal_duration_like.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, temporal_duration_like.to_string_without_side_effects()));
     }
 
     // 2. Let result be a new partial Duration Record with each field set to undefined.
@@ -678,10 +678,10 @@ ThrowCompletionOr<DateDurationRecord> unbalance_duration_relative(VM& vm, double
         }
 
         // b. Let dateAdd be ? GetMethod(calendar, "dateAdd").
-        auto* date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
+        auto date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
 
         // c. Let dateUntil be ? GetMethod(calendar, "dateUntil").
-        auto* date_until = TRY(Value(calendar).get_method(vm, vm.names.dateUntil));
+        auto date_until = TRY(Value(calendar).get_method(vm, vm.names.dateUntil));
 
         // d. Repeat, while years ≠ 0,
         while (years != 0) {
@@ -692,7 +692,7 @@ ThrowCompletionOr<DateDurationRecord> unbalance_duration_relative(VM& vm, double
             auto until_options = Object::create(realm, nullptr);
 
             // iii. Perform ! CreateDataPropertyOrThrow(untilOptions, "largestUnit", "month").
-            MUST(until_options->create_data_property_or_throw(vm.names.largestUnit, PrimitiveString::create(vm, "month"sv)));
+            MUST(until_options->create_data_property_or_throw(vm.names.largestUnit, MUST_OR_THROW_OOM(PrimitiveString::create(vm, "month"sv))));
 
             // iv. Let untilResult be ? CalendarDateUntil(calendar, relativeTo, newRelativeTo, untilOptions, dateUntil).
             auto* until_result = TRY(calendar_date_until(vm, *calendar, relative_to, new_relative_to, *until_options, date_until));
@@ -719,7 +719,7 @@ ThrowCompletionOr<DateDurationRecord> unbalance_duration_relative(VM& vm, double
         }
 
         // b. Let dateAdd be ? GetMethod(calendar, "dateAdd").
-        auto* date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
+        auto date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
 
         // c. Repeat, while years ≠ 0,
         while (years != 0) {
@@ -762,7 +762,7 @@ ThrowCompletionOr<DateDurationRecord> unbalance_duration_relative(VM& vm, double
             }
 
             // ii. Let dateAdd be ? GetMethod(calendar, "dateAdd").
-            auto* date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
+            auto date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
 
             // iii. Repeat, while years ≠ 0,
             while (years != 0) {
@@ -856,7 +856,7 @@ ThrowCompletionOr<DateDurationRecord> balance_duration_relative(VM& vm, double y
     // 10. If largestUnit is "year", then
     if (largest_unit == "year"sv) {
         // a. Let dateAdd be ? GetMethod(calendar, "dateAdd").
-        auto* date_add = TRY(Value(&calendar).get_method(vm, vm.names.dateAdd));
+        auto date_add = TRY(Value(&calendar).get_method(vm, vm.names.dateAdd));
 
         // b. Let moveResult be ? MoveRelativeDate(calendar, relativeTo, oneYear, dateAdd).
         auto move_result = TRY(move_relative_date(vm, calendar, *relative_to, *one_year, date_add));
@@ -922,13 +922,13 @@ ThrowCompletionOr<DateDurationRecord> balance_duration_relative(VM& vm, double y
         new_relative_to = TRY(calendar_date_add(vm, calendar, relative_to, *one_year, nullptr, date_add));
 
         // k. Let dateUntil be ? GetMethod(calendar, "dateUntil").
-        auto* date_until = TRY(Value(&calendar).get_method(vm, vm.names.dateUntil));
+        auto date_until = TRY(Value(&calendar).get_method(vm, vm.names.dateUntil));
 
         // l. Let untilOptions be OrdinaryObjectCreate(null).
         auto until_options = Object::create(realm, nullptr);
 
         // m. Perform ! CreateDataPropertyOrThrow(untilOptions, "largestUnit", "month").
-        MUST(until_options->create_data_property_or_throw(vm.names.largestUnit, PrimitiveString::create(vm, "month"sv)));
+        MUST(until_options->create_data_property_or_throw(vm.names.largestUnit, MUST_OR_THROW_OOM(PrimitiveString::create(vm, "month"sv))));
 
         // n. Let untilResult be ? CalendarDateUntil(calendar, relativeTo, newRelativeTo, untilOptions, dateUntil).
         auto* until_result = TRY(calendar_date_until(vm, calendar, relative_to, new_relative_to, *until_options, date_until));
@@ -954,7 +954,7 @@ ThrowCompletionOr<DateDurationRecord> balance_duration_relative(VM& vm, double y
             until_options = Object::create(realm, nullptr);
 
             // vi. Perform ! CreateDataPropertyOrThrow(untilOptions, "largestUnit", "month").
-            MUST(until_options->create_data_property_or_throw(vm.names.largestUnit, PrimitiveString::create(vm, "month"sv)));
+            MUST(until_options->create_data_property_or_throw(vm.names.largestUnit, MUST_OR_THROW_OOM(PrimitiveString::create(vm, "month"sv))));
 
             // vii. Set untilResult to ? CalendarDateUntil(calendar, relativeTo, newRelativeTo, untilOptions, dateUntil).
             until_result = TRY(calendar_date_until(vm, calendar, relative_to, new_relative_to, *until_options, date_until));
@@ -966,7 +966,7 @@ ThrowCompletionOr<DateDurationRecord> balance_duration_relative(VM& vm, double y
     // 11. Else if largestUnit is "month", then
     else if (largest_unit == "month"sv) {
         // a. Let dateAdd be ? GetMethod(calendar, "dateAdd").
-        auto* date_add = TRY(Value(&calendar).get_method(vm, vm.names.dateAdd));
+        auto date_add = TRY(Value(&calendar).get_method(vm, vm.names.dateAdd));
 
         // b. Let moveResult be ? MoveRelativeDate(calendar, relativeTo, oneMonth, dateAdd).
         auto move_result = TRY(move_relative_date(vm, calendar, *relative_to, *one_month, date_add));
@@ -1004,7 +1004,7 @@ ThrowCompletionOr<DateDurationRecord> balance_duration_relative(VM& vm, double y
         VERIFY(largest_unit == "week"sv);
 
         // b. Let dateAdd be ? GetMethod(calendar, "dateAdd").
-        auto* date_add = TRY(Value(&calendar).get_method(vm, vm.names.dateAdd));
+        auto date_add = TRY(Value(&calendar).get_method(vm, vm.names.dateAdd));
 
         // c. Let moveResult be ? MoveRelativeDate(calendar, relativeTo, oneWeek, dateAdd).
         auto move_result = TRY(move_relative_date(vm, calendar, *relative_to, *one_week, date_add));
@@ -1094,7 +1094,7 @@ ThrowCompletionOr<DurationRecord> add_duration(VM& vm, double years1, double mon
         auto* date_duration2 = MUST(create_temporal_duration(vm, years2, months2, weeks2, days2, 0, 0, 0, 0, 0, 0));
 
         // d. Let dateAdd be ? GetMethod(calendar, "dateAdd").
-        auto* date_add = TRY(Value(&calendar).get_method(vm, vm.names.dateAdd));
+        auto date_add = TRY(Value(&calendar).get_method(vm, vm.names.dateAdd));
 
         // e. Let intermediate be ? CalendarDateAdd(calendar, relativeTo, dateDuration1, undefined, dateAdd).
         auto* intermediate = TRY(calendar_date_add(vm, calendar, &relative_to, *date_duration1, nullptr, date_add));
@@ -1109,7 +1109,7 @@ ThrowCompletionOr<DurationRecord> add_duration(VM& vm, double years1, double mon
         auto difference_options = Object::create(realm, nullptr);
 
         // i. Perform ! CreateDataPropertyOrThrow(differenceOptions, "largestUnit", dateLargestUnit).
-        MUST(difference_options->create_data_property_or_throw(vm.names.largestUnit, PrimitiveString::create(vm, date_largest_unit)));
+        MUST(difference_options->create_data_property_or_throw(vm.names.largestUnit, MUST_OR_THROW_OOM(PrimitiveString::create(vm, date_largest_unit))));
 
         // j. Let dateDifference be ? CalendarDateUntil(calendar, relativeTo, end, differenceOptions).
         auto* date_difference = TRY(calendar_date_until(vm, calendar, &relative_to, end, *difference_options));
@@ -1282,7 +1282,7 @@ ThrowCompletionOr<RoundedDuration> round_duration(VM& vm, double years, double m
         auto* years_duration = MUST(create_temporal_duration(vm, years, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         // b. Let dateAdd be ? GetMethod(calendar, "dateAdd").
-        auto* date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
+        auto date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
 
         // c. Let yearsLater be ? CalendarDateAdd(calendar, relativeTo, yearsDuration, undefined, dateAdd).
         auto* years_later = TRY(calendar_date_add(vm, *calendar, relative_to, *years_duration, nullptr, date_add));
@@ -1312,7 +1312,7 @@ ThrowCompletionOr<RoundedDuration> round_duration(VM& vm, double years, double m
         auto until_options = Object::create(realm, nullptr);
 
         // l. Perform ! CreateDataPropertyOrThrow(untilOptions, "largestUnit", "year").
-        MUST(until_options->create_data_property_or_throw(vm.names.largestUnit, PrimitiveString::create(vm, "year"sv)));
+        MUST(until_options->create_data_property_or_throw(vm.names.largestUnit, MUST_OR_THROW_OOM(PrimitiveString::create(vm, "year"sv))));
 
         // m. Let timePassed be ? CalendarDateUntil(calendar, relativeTo, wholeDaysLater, untilOptions).
         auto* time_passed = TRY(calendar_date_until(vm, *calendar, relative_to, whole_days_later, *until_options));
@@ -1372,7 +1372,7 @@ ThrowCompletionOr<RoundedDuration> round_duration(VM& vm, double years, double m
         auto* years_months = MUST(create_temporal_duration(vm, years, months, 0, 0, 0, 0, 0, 0, 0, 0));
 
         // b. Let dateAdd be ? GetMethod(calendar, "dateAdd").
-        auto* date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
+        auto date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
 
         // c. Let yearsMonthsLater be ? CalendarDateAdd(calendar, relativeTo, yearsMonths, undefined, dateAdd).
         auto* years_months_later = TRY(calendar_date_add(vm, *calendar, relative_to, *years_months, nullptr, date_add));
@@ -1449,7 +1449,7 @@ ThrowCompletionOr<RoundedDuration> round_duration(VM& vm, double years, double m
         auto* one_week = MUST(create_temporal_duration(vm, 0, 0, sign, 0, 0, 0, 0, 0, 0, 0));
 
         // c. Let dateAdd be ? GetMethod(calendar, "dateAdd").
-        auto* date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
+        auto date_add = TRY(Value(calendar).get_method(vm, vm.names.dateAdd));
 
         // d. Let moveResult be ? MoveRelativeDate(calendar, relativeTo, oneWeek, dateAdd).
         auto move_result = TRY(move_relative_date(vm, *calendar, *relative_to, *one_week, date_add));

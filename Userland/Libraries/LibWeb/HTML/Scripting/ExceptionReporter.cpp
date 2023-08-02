@@ -33,7 +33,7 @@ void report_exception_to_console(JS::Value value, JS::Realm& realm, ErrorInPromi
             auto const& error_value = static_cast<JS::Error const&>(object);
             for (auto& traceback_frame : error_value.traceback()) {
                 auto& function_name = traceback_frame.function_name;
-                auto& source_range = traceback_frame.source_range;
+                auto& source_range = traceback_frame.source_range();
                 dbgln("  {} at {}:{}:{}", function_name, source_range.filename(), source_range.start.line, source_range.start.column);
             }
             console.report_exception(error_value, error_in_promise == ErrorInPromise::Yes);
@@ -44,7 +44,7 @@ void report_exception_to_console(JS::Value value, JS::Realm& realm, ErrorInPromi
         dbgln("\033[31;1mUnhandled JavaScript exception{}:\033[0m {}", error_in_promise == ErrorInPromise::Yes ? " (in promise)" : "", value);
     }
 
-    console.report_exception(*JS::Error::create(realm, value.to_string_without_side_effects()), error_in_promise == ErrorInPromise::Yes);
+    console.report_exception(*JS::Error::create(realm, value.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors()), error_in_promise == ErrorInPromise::Yes);
 }
 
 // https://html.spec.whatwg.org/#report-the-exception

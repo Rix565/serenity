@@ -28,6 +28,18 @@ private:
     JS_DECLARE_NATIVE_FUNCTION(supported_locales_of);
 };
 
-ThrowCompletionOr<DateTimeFormat*> initialize_date_time_format(VM&, DateTimeFormat&, Value locales_value, Value options_value);
+enum class OptionRequired {
+    Any,
+    Date,
+    Time,
+};
+
+enum class OptionDefaults {
+    All,
+    Date,
+    Time,
+};
+
+ThrowCompletionOr<NonnullGCPtr<DateTimeFormat>> create_date_time_format(VM&, FunctionObject& new_target, Value locales_value, Value options_value, OptionRequired, OptionDefaults);
 
 }

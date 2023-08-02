@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2022-2023, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2022, MacDue <macdue@dueutil.tech>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -9,6 +9,10 @@
 #include <AK/Error.h>
 #include <AK/Optional.h>
 #include <AK/TemporaryChange.h>
+#include <LibWeb/CSS/StyleComputer.h>
+#include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
+#include <LibWeb/CSS/StyleValues/IdentifierStyleValue.h>
+#include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/ParentNode.h>
@@ -16,17 +20,14 @@
 #include <LibWeb/Dump.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/HTMLProgressElement.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
 #include <LibWeb/Layout/ListItemBox.h>
 #include <LibWeb/Layout/ListItemMarkerBox.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/Progress.h>
-#include <LibWeb/Layout/TableBox.h>
-#include <LibWeb/Layout/TableCellBox.h>
-#include <LibWeb/Layout/TableRowBox.h>
 #include <LibWeb/Layout/TableWrapper.h>
 #include <LibWeb/Layout/TextNode.h>
 #include <LibWeb/Layout/TreeBuilder.h>
+#include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/SVG/SVGForeignObjectElement.h>
 
 namespace Web::Layout {
@@ -65,7 +66,7 @@ static Layout::Node& insertion_parent_for_inline_node(Layout::NodeWithStyle& lay
     if (layout_parent.display().is_inline_outside() && layout_parent.display().is_flow_inside())
         return layout_parent;
 
-    if (layout_parent.display().is_flex_inside()) {
+    if (layout_parent.display().is_flex_inside() || layout_parent.display().is_grid_inside()) {
         layout_parent.append_child(layout_parent.create_anonymous_wrapper());
         return *layout_parent.last_child();
     }
@@ -87,12 +88,24 @@ static Layout::Node& insertion_parent_for_block_node(Layout::NodeWithStyle& layo
         return layout_parent;
     }
 
+    bool is_out_of_flow = layout_node.is_absolutely_positioned() || layout_node.is_floating();
+
+    if (is_out_of_flow
+        && !layout_parent.display().is_flex_inside()
+        && !layout_parent.display().is_grid_inside()
+        && layout_parent.last_child()->is_anonymous()
+        && layout_parent.last_child()->children_are_inline()) {
+        // Block is out-of-flow & previous sibling was wrapped in an anonymous block.
+        // Join the previous sibling inside the anonymous block.
+        return *layout_parent.last_child();
+    }
+
     if (!layout_parent.children_are_inline()) {
         // Parent block has block-level children, insert this block into parent.
         return layout_parent;
     }
 
-    if (layout_node.is_absolutely_positioned() || layout_node.is_floating()) {
+    if (is_out_of_flow) {
         // Block is out-of-flow, it can have inline siblings if necessary.
         return layout_parent;
     }
@@ -116,6 +129,9 @@ static Layout::Node& insertion_parent_for_block_node(Layout::NodeWithStyle& layo
 
 void TreeBuilder::insert_node_into_inline_or_block_ancestor(Layout::Node& node, CSS::Display display, AppendOrPrepend mode)
 {
+    if (node.display().is_contents())
+        return;
+
     if (display.is_inline_outside()) {
         // Inlines can be inserted into the nearest ancestor.
         auto& insertion_point = insertion_parent_for_inline_node(m_ancestor_stack.last());
@@ -128,11 +144,13 @@ void TreeBuilder::insert_node_into_inline_or_block_ancestor(Layout::Node& node, 
         // Non-inlines can't be inserted into an inline parent, so find the nearest non-inline ancestor.
         auto& nearest_non_inline_ancestor = [&]() -> Layout::NodeWithStyle& {
             for (auto& ancestor : m_ancestor_stack.in_reverse()) {
-                if (!ancestor.display().is_inline_outside())
+                if (ancestor->display().is_contents())
+                    continue;
+                if (!ancestor->display().is_inline_outside())
                     return ancestor;
-                if (!ancestor.display().is_flow_inside())
+                if (!ancestor->display().is_flow_inside())
                     return ancestor;
-                if (ancestor.dom_node() && is<SVG::SVGForeignObjectElement>(*ancestor.dom_node()))
+                if (ancestor->dom_node() && is<SVG::SVGForeignObjectElement>(*ancestor->dom_node()))
                     return ancestor;
             }
             VERIFY_NOT_REACHED();
@@ -154,7 +172,10 @@ ErrorOr<void> TreeBuilder::create_pseudo_element_if_needed(DOM::Element& element
     auto& document = element.document();
     auto& style_computer = document.style_computer();
 
-    auto pseudo_element_style = TRY(style_computer.compute_style(element, pseudo_element));
+    auto pseudo_element_style = TRY(style_computer.compute_pseudo_element_style_if_needed(element, pseudo_element));
+    if (!pseudo_element_style)
+        return {};
+
     auto pseudo_element_content = pseudo_element_style->content();
     auto pseudo_element_display = pseudo_element_style->display();
     // ::before and ::after only exist if they have content. `content: normal` computes to `none` for them.
@@ -164,14 +185,14 @@ ErrorOr<void> TreeBuilder::create_pseudo_element_if_needed(DOM::Element& element
         || pseudo_element_content.type == CSS::ContentData::Type::None)
         return {};
 
-    auto pseudo_element_node = DOM::Element::create_layout_node_for_display_type(document, pseudo_element_display, pseudo_element_style, nullptr);
+    auto pseudo_element_node = DOM::Element::create_layout_node_for_display_type(document, pseudo_element_display, *pseudo_element_style, nullptr);
     if (!pseudo_element_node)
         return {};
 
     pseudo_element_node->set_generated(true);
     // FIXME: Handle images, and multiple values
     if (pseudo_element_content.type == CSS::ContentData::Type::String) {
-        auto text = document.heap().allocate<DOM::Text>(document.realm(), document, pseudo_element_content.data).release_allocated_value_but_fixme_should_propagate_errors();
+        auto text = document.heap().allocate<DOM::Text>(document.realm(), document, pseudo_element_content.data.to_deprecated_string()).release_allocated_value_but_fixme_should_propagate_errors();
         auto text_node = document.heap().allocate_without_realm<Layout::TextNode>(document, *text);
         text_node->set_generated(true);
         push_parent(verify_cast<NodeWithStyle>(*pseudo_element_node));
@@ -189,11 +210,21 @@ ErrorOr<void> TreeBuilder::create_pseudo_element_if_needed(DOM::Element& element
 
 ErrorOr<void> TreeBuilder::create_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& context)
 {
-    // If the parent doesn't have a layout node, we don't need one either.
-    if (dom_node.parent_or_shadow_host() && !dom_node.parent_or_shadow_host()->layout_node())
-        return {};
-
+    JS::GCPtr<Layout::Node> layout_node;
     Optional<TemporaryChange<bool>> has_svg_root_change;
+
+    ScopeGuard remove_stale_layout_node_guard = [&] {
+        // If we didn't create a layout node for this DOM node,
+        // go through the DOM tree and remove any old layout nodes since they are now all stale.
+        if (!layout_node) {
+            dom_node.for_each_in_inclusive_subtree([&](auto& node) {
+                node.detach_layout_node({});
+                if (is<DOM::Element>(node))
+                    static_cast<DOM::Element&>(node).clear_pseudo_element_nodes({});
+                return IterationDecision::Continue;
+            });
+        }
+    };
 
     if (dom_node.is_svg_container()) {
         has_svg_root_change.emplace(context.has_svg_root, true);
@@ -203,29 +234,39 @@ ErrorOr<void> TreeBuilder::create_layout_tree(DOM::Node& dom_node, TreeBuilder::
 
     auto& document = dom_node.document();
     auto& style_computer = document.style_computer();
-    JS::GCPtr<Layout::Node> layout_node;
     RefPtr<CSS::StyleProperties> style;
     CSS::Display display;
 
     if (is<DOM::Element>(dom_node)) {
         auto& element = static_cast<DOM::Element&>(dom_node);
-        element.clear_pseudo_element_nodes({});
-        VERIFY(!element.needs_style_update());
-        style = element.computed_css_values();
-        display = style->display();
+
+        // Special path for ::placeholder, which corresponds to a synthetic DOM element inside the <input> UA shadow root.
+        // FIXME: This is very hackish. Find a better way to architect this.
+        if (element.pseudo_element() == CSS::Selector::PseudoElement::Placeholder) {
+            auto& input_element = verify_cast<HTML::HTMLInputElement>(*element.root().parent_or_shadow_host());
+            style = TRY(style_computer.compute_style(input_element, CSS::Selector::PseudoElement::Placeholder));
+            if (input_element.placeholder_value().has_value())
+                display = style->display();
+            else
+                display = CSS::Display::from_short(CSS::Display::Short::None);
+        }
+        // Common path: this is a regular DOM element. Style should be present already, thanks to Document::update_style().
+        else {
+            element.clear_pseudo_element_nodes({});
+            VERIFY(!element.needs_style_update());
+            style = element.computed_css_values();
+            display = style->display();
+        }
         if (display.is_none())
             return {};
         layout_node = element.create_layout_node(*style);
     } else if (is<DOM::Document>(dom_node)) {
         style = style_computer.create_document_style();
         display = style->display();
-        layout_node = document.heap().allocate_without_realm<Layout::InitialContainingBlock>(static_cast<DOM::Document&>(dom_node), *style);
+        layout_node = document.heap().allocate_without_realm<Layout::Viewport>(static_cast<DOM::Document&>(dom_node), *style);
     } else if (is<DOM::Text>(dom_node)) {
         layout_node = document.heap().allocate_without_realm<Layout::TextNode>(document, static_cast<DOM::Text&>(dom_node));
         display = CSS::Display(CSS::Display::Outside::Inline, CSS::Display::Inside::Flow);
-    } else if (is<DOM::ShadowRoot>(dom_node)) {
-        layout_node = document.heap().allocate_without_realm<Layout::BlockContainer>(document, &static_cast<DOM::ShadowRoot&>(dom_node), CSS::ComputedValues {});
-        display = CSS::Display(CSS::Display::Outside::Block, CSS::Display::Inside::FlowRoot);
     }
 
     if (!layout_node)
@@ -234,21 +275,24 @@ ErrorOr<void> TreeBuilder::create_layout_tree(DOM::Node& dom_node, TreeBuilder::
     if (!dom_node.parent_or_shadow_host()) {
         m_layout_root = layout_node;
     } else if (layout_node->is_svg_box()) {
-        m_ancestor_stack.last().append_child(*layout_node);
+        m_ancestor_stack.last()->append_child(*layout_node);
     } else {
         insert_node_into_inline_or_block_ancestor(*layout_node, display, AppendOrPrepend::Append);
     }
 
-    auto* shadow_root = is<DOM::Element>(dom_node) ? verify_cast<DOM::Element>(dom_node).shadow_root() : nullptr;
+    auto* shadow_root = is<DOM::Element>(dom_node) ? verify_cast<DOM::Element>(dom_node).shadow_root_internal() : nullptr;
 
     if ((dom_node.has_children() || shadow_root) && layout_node->can_have_children()) {
         push_parent(verify_cast<NodeWithStyle>(*layout_node));
-        if (shadow_root)
-            TRY(create_layout_tree(*shadow_root, context));
-
-        // This is the same as verify_cast<DOM::ParentNode>(dom_node).for_each_child
-        for (auto* node = verify_cast<DOM::ParentNode>(dom_node).first_child(); node; node = node->next_sibling())
-            TRY(create_layout_tree(*node, context));
+        if (shadow_root) {
+            for (auto* node = shadow_root->first_child(); node; node = node->next_sibling()) {
+                TRY(create_layout_tree(*node, context));
+            }
+        } else {
+            // This is the same as verify_cast<DOM::ParentNode>(dom_node).for_each_child
+            for (auto* node = verify_cast<DOM::ParentNode>(dom_node).first_child(); node; node = node->next_sibling())
+                TRY(create_layout_tree(*node, context));
+        }
         pop_parent();
     }
 
@@ -265,7 +309,7 @@ ErrorOr<void> TreeBuilder::create_layout_tree(DOM::Node& dom_node, TreeBuilder::
         auto& element = static_cast<DOM::Element&>(dom_node);
         int child_index = layout_node->parent()->index_of_child<ListItemBox>(*layout_node).value();
         auto marker_style = TRY(style_computer.compute_style(element, CSS::Selector::PseudoElement::Marker));
-        auto list_item_marker = document.heap().allocate_without_realm<ListItemMarkerBox>(document, layout_node->computed_values().list_style_type(), child_index + 1, *marker_style);
+        auto list_item_marker = document.heap().allocate_without_realm<ListItemMarkerBox>(document, layout_node->computed_values().list_style_type(), layout_node->computed_values().list_style_position(), child_index + 1, *marker_style);
         static_cast<ListItemBox&>(*layout_node).set_marker(list_item_marker);
         element.set_pseudo_element_node({}, CSS::Selector::PseudoElement::Marker, list_item_marker);
         layout_node->append_child(*list_item_marker);
@@ -275,11 +319,11 @@ ErrorOr<void> TreeBuilder::create_layout_tree(DOM::Node& dom_node, TreeBuilder::
         auto& progress = static_cast<HTML::HTMLProgressElement&>(dom_node);
         if (!progress.using_system_appearance()) {
             auto bar_style = TRY(style_computer.compute_style(progress, CSS::Selector::PseudoElement::ProgressBar));
-            bar_style->set_property(CSS::PropertyID::Display, CSS::IdentifierStyleValue::create(CSS::ValueID::InlineBlock));
+            bar_style->set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::FlowRoot)).release_value_but_fixme_should_propagate_errors());
             auto value_style = TRY(style_computer.compute_style(progress, CSS::Selector::PseudoElement::ProgressValue));
-            value_style->set_property(CSS::PropertyID::Display, CSS::IdentifierStyleValue::create(CSS::ValueID::Block));
+            value_style->set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::Block)).release_value_but_fixme_should_propagate_errors());
             auto position = progress.position();
-            value_style->set_property(CSS::PropertyID::Width, CSS::PercentageStyleValue::create(CSS::Percentage(position >= 0 ? round_to<int>(100 * position) : 0)));
+            value_style->set_property(CSS::PropertyID::Width, CSS::PercentageStyleValue::create(CSS::Percentage(position >= 0 ? round_to<int>(100 * position) : 0)).release_value_but_fixme_should_propagate_errors());
             auto bar_display = bar_style->display();
             auto value_display = value_style->display();
             auto progress_bar = DOM::Element::create_layout_node_for_display_type(document, bar_display, bar_style, nullptr);
@@ -292,28 +336,6 @@ ErrorOr<void> TreeBuilder::create_layout_tree(DOM::Node& dom_node, TreeBuilder::
             pop_parent();
             progress.set_pseudo_element_node({}, CSS::Selector::PseudoElement::ProgressBar, progress_bar);
             progress.set_pseudo_element_node({}, CSS::Selector::PseudoElement::ProgressValue, progress_value);
-        }
-    }
-
-    if (is<HTML::HTMLInputElement>(dom_node)) {
-        auto& input_element = static_cast<HTML::HTMLInputElement&>(dom_node);
-
-        if (auto placeholder_value = input_element.placeholder_value(); placeholder_value.has_value()) {
-            auto placeholder_style = TRY(style_computer.compute_style(input_element, CSS::Selector::PseudoElement::Placeholder));
-            auto placeholder = DOM::Element::create_layout_node_for_display_type(document, placeholder_style->display(), placeholder_style, nullptr);
-
-            auto text = document.heap().allocate<DOM::Text>(document.realm(), document, *placeholder_value).release_allocated_value_but_fixme_should_propagate_errors();
-            auto text_node = document.heap().allocate_without_realm<Layout::TextNode>(document, *text);
-            text_node->set_generated(true);
-
-            push_parent(verify_cast<NodeWithStyle>(*layout_node));
-            push_parent(verify_cast<NodeWithStyle>(*placeholder));
-            insert_node_into_inline_or_block_ancestor(*text_node, text_node->display(), AppendOrPrepend::Append);
-            pop_parent();
-            insert_node_into_inline_or_block_ancestor(*placeholder, placeholder->display(), AppendOrPrepend::Append);
-            pop_parent();
-
-            input_element.set_pseudo_element_node({}, CSS::Selector::PseudoElement::Placeholder, placeholder);
         }
     }
 
@@ -378,7 +400,7 @@ void TreeBuilder::remove_irrelevant_boxes(NodeWithStyle& root)
     // Children of a table-column-group which are not a table-column.
     for_each_in_tree_with_internal_display<CSS::Display::Internal::TableColumnGroup>(root, [&](Box& table_column_group) {
         table_column_group.for_each_child([&](auto& child) {
-            if (child.display().is_table_column())
+            if (!child.display().is_table_column())
                 to_remove.append(child);
         });
     });
@@ -496,17 +518,18 @@ static void for_each_sequence_of_consecutive_children_matching(NodeWithStyle& pa
 }
 
 template<typename WrapperBoxType>
-static void wrap_in_anonymous(Vector<JS::Handle<Node>>& sequence, Node* nearest_sibling)
+static void wrap_in_anonymous(Vector<JS::Handle<Node>>& sequence, Node* nearest_sibling, CSS::Display display)
 {
     VERIFY(!sequence.is_empty());
     auto& parent = *sequence.first()->parent();
     auto computed_values = parent.computed_values().clone_inherited_values();
-    static_cast<CSS::MutableComputedValues&>(computed_values).set_display(WrapperBoxType::static_display(parent.display().is_inline_outside()));
+    static_cast<CSS::MutableComputedValues&>(computed_values).set_display(display);
     auto wrapper = parent.heap().template allocate_without_realm<WrapperBoxType>(parent.document(), nullptr, move(computed_values));
     for (auto& child : sequence) {
         parent.remove_child(*child);
         wrapper->append_child(*child);
     }
+    wrapper->set_children_are_inline(parent.children_are_inline());
     if (nearest_sibling)
         parent.insert_before(*wrapper, *nearest_sibling);
     else
@@ -518,65 +541,65 @@ void TreeBuilder::generate_missing_child_wrappers(NodeWithStyle& root)
     // An anonymous table-row box must be generated around each sequence of consecutive children of a table-root box which are not proper table child boxes.
     for_each_in_tree_with_inside_display<CSS::Display::Inside::Table>(root, [&](auto& parent) {
         for_each_sequence_of_consecutive_children_matching(parent, is_not_proper_table_child, [&](auto sequence, auto nearest_sibling) {
-            wrap_in_anonymous<TableRowBox>(sequence, nearest_sibling);
+            wrap_in_anonymous<Box>(sequence, nearest_sibling, CSS::Display { CSS::Display::Internal::TableRow });
         });
     });
 
     // An anonymous table-row box must be generated around each sequence of consecutive children of a table-row-group box which are not table-row boxes.
     for_each_in_tree_with_internal_display<CSS::Display::Internal::TableRowGroup>(root, [&](auto& parent) {
         for_each_sequence_of_consecutive_children_matching(parent, is_not_table_row, [&](auto& sequence, auto nearest_sibling) {
-            wrap_in_anonymous<TableRowBox>(sequence, nearest_sibling);
+            wrap_in_anonymous<Box>(sequence, nearest_sibling, CSS::Display { CSS::Display::Internal::TableRow });
         });
     });
     // Unless explicitly mentioned otherwise, mentions of table-row-groups in this spec also encompass the specialized
     // table-header-groups and table-footer-groups.
     for_each_in_tree_with_internal_display<CSS::Display::Internal::TableHeaderGroup>(root, [&](auto& parent) {
         for_each_sequence_of_consecutive_children_matching(parent, is_not_table_row, [&](auto& sequence, auto nearest_sibling) {
-            wrap_in_anonymous<TableRowBox>(sequence, nearest_sibling);
+            wrap_in_anonymous<Box>(sequence, nearest_sibling, CSS::Display { CSS::Display::Internal::TableRow });
         });
     });
     for_each_in_tree_with_internal_display<CSS::Display::Internal::TableFooterGroup>(root, [&](auto& parent) {
         for_each_sequence_of_consecutive_children_matching(parent, is_not_table_row, [&](auto& sequence, auto nearest_sibling) {
-            wrap_in_anonymous<TableRowBox>(sequence, nearest_sibling);
+            wrap_in_anonymous<Box>(sequence, nearest_sibling, CSS::Display { CSS::Display::Internal::TableRow });
         });
     });
 
     // An anonymous table-cell box must be generated around each sequence of consecutive children of a table-row box which are not table-cell boxes. !Testcase
     for_each_in_tree_with_internal_display<CSS::Display::Internal::TableRow>(root, [&](auto& parent) {
         for_each_sequence_of_consecutive_children_matching(parent, is_not_table_cell, [&](auto& sequence, auto nearest_sibling) {
-            wrap_in_anonymous<TableCellBox>(sequence, nearest_sibling);
+            wrap_in_anonymous<BlockContainer>(sequence, nearest_sibling, CSS::Display { CSS::Display::Internal::TableCell });
         });
     });
 }
 
 void TreeBuilder::generate_missing_parents(NodeWithStyle& root)
 {
-    Vector<JS::Handle<TableBox>> table_roots_to_wrap;
+    Vector<JS::Handle<Box>> table_roots_to_wrap;
     root.for_each_in_inclusive_subtree_of_type<Box>([&](auto& parent) {
         // An anonymous table-row box must be generated around each sequence of consecutive table-cell boxes whose parent is not a table-row.
         if (is_not_table_row(parent)) {
             for_each_sequence_of_consecutive_children_matching(parent, is_table_cell, [&](auto& sequence, auto nearest_sibling) {
-                wrap_in_anonymous<TableRowBox>(sequence, nearest_sibling);
+                wrap_in_anonymous<Box>(sequence, nearest_sibling, CSS::Display { CSS::Display::Internal::TableRow });
             });
         }
 
         // A table-row is misparented if its parent is neither a table-row-group nor a table-root box.
         if (!parent.display().is_table_inside() && !is_proper_table_child(parent)) {
             for_each_sequence_of_consecutive_children_matching(parent, is_table_row, [&](auto& sequence, auto nearest_sibling) {
-                wrap_in_anonymous<TableBox>(sequence, nearest_sibling);
+                wrap_in_anonymous<Box>(sequence, nearest_sibling, CSS::Display::from_short(parent.display().is_inline_outside() ? CSS::Display::Short::InlineTable : CSS::Display::Short::Table));
             });
         }
 
         // A table-row-group, table-column-group, or table-caption box is misparented if its parent is not a table-root box.
         if (!parent.display().is_table_inside() && !is_proper_table_child(parent)) {
             for_each_sequence_of_consecutive_children_matching(parent, is_proper_table_child, [&](auto& sequence, auto nearest_sibling) {
-                wrap_in_anonymous<TableBox>(sequence, nearest_sibling);
+                wrap_in_anonymous<Box>(sequence, nearest_sibling, CSS::Display::from_short(parent.display().is_inline_outside() ? CSS::Display::Short::InlineTable : CSS::Display::Short::Table));
             });
         }
 
         // An anonymous table-wrapper box must be generated around each table-root.
         if (parent.display().is_table_inside()) {
-            table_roots_to_wrap.append(static_cast<TableBox&>(parent));
+            table_roots_to_wrap.append(parent);
         }
 
         return IterationDecision::Continue;
@@ -587,26 +610,17 @@ void TreeBuilder::generate_missing_parents(NodeWithStyle& root)
         auto& parent = *table_box->parent();
 
         CSS::ComputedValues wrapper_computed_values;
-        // The computed values of properties 'position', 'float', 'margin-*', 'top', 'right', 'bottom', and 'left' on the table element are used on the table wrapper box and not the table box;
-        // all other values of non-inheritable properties are used on the table box and not the table wrapper box.
-        // (Where the table element's values are not used on the table and table wrapper boxes, the initial values are used instead.)
-        auto& mutable_wrapper_computed_values = static_cast<CSS::MutableComputedValues&>(wrapper_computed_values);
-        if (table_box->display().is_inline_outside())
-            mutable_wrapper_computed_values.set_display(CSS::Display::from_short(CSS::Display::Short::InlineBlock));
-        else
-            mutable_wrapper_computed_values.set_display(CSS::Display::from_short(CSS::Display::Short::FlowRoot));
-        mutable_wrapper_computed_values.set_position(table_box->computed_values().position());
-        mutable_wrapper_computed_values.set_inset(table_box->computed_values().inset());
-        mutable_wrapper_computed_values.set_float(table_box->computed_values().float_());
-        mutable_wrapper_computed_values.set_clear(table_box->computed_values().clear());
-        mutable_wrapper_computed_values.set_margin(table_box->computed_values().margin());
-        table_box->reset_table_box_computed_values_used_by_wrapper_to_init_values();
+        table_box->transfer_table_box_computed_values_to_wrapper_computed_values(wrapper_computed_values);
 
         auto wrapper = parent.heap().allocate_without_realm<TableWrapper>(parent.document(), nullptr, move(wrapper_computed_values));
 
         parent.remove_child(*table_box);
         wrapper->append_child(*table_box);
-        parent.insert_before(*wrapper, *nearest_sibling);
+
+        if (nearest_sibling)
+            parent.insert_before(*wrapper, *nearest_sibling);
+        else
+            parent.append_child(*wrapper);
     }
 }
 

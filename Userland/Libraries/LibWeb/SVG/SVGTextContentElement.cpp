@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,7 +8,12 @@
 #include <AK/Utf16View.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/Utf16String.h>
+#include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/Layout/SVGTextBox.h>
+#include <LibWeb/SVG/AttributeNames.h>
+#include <LibWeb/SVG/AttributeParser.h>
+#include <LibWeb/SVG/SVGGeometryElement.h>
 #include <LibWeb/SVG/SVGTextContentElement.h>
 
 namespace Web::SVG {
@@ -23,6 +29,22 @@ JS::ThrowCompletionOr<void> SVGTextContentElement::initialize(JS::Realm& realm)
     set_prototype(&Bindings::ensure_web_prototype<Bindings::SVGTextContentElementPrototype>(realm, "SVGTextContentElement"));
 
     return {};
+}
+
+Optional<TextAnchor> SVGTextContentElement::text_anchor() const
+{
+    if (!layout_node())
+        return {};
+    switch (layout_node()->computed_values().text_anchor()) {
+    case CSS::TextAnchor::Start:
+        return TextAnchor::Start;
+    case CSS::TextAnchor::Middle:
+        return TextAnchor::Middle;
+    case CSS::TextAnchor::End:
+        return TextAnchor::End;
+    default:
+        VERIFY_NOT_REACHED();
+    }
 }
 
 // https://svgwg.org/svg2-draft/text.html#__svg__SVGTextContentElement__getNumberOfChars

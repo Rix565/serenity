@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/NonnullRefPtr.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <LibWeb/CSS/CSSConditionRule.h>
 #include <LibWeb/CSS/CSSRule.h>
 #include <LibWeb/CSS/Supports.h>
@@ -20,11 +19,11 @@ class CSSSupportsRule final : public CSSConditionRule {
     WEB_PLATFORM_OBJECT(CSSSupportsRule, CSSConditionRule);
 
 public:
-    static CSSSupportsRule* create(JS::Realm&, NonnullRefPtr<Supports>&&, CSSRuleList&);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSSupportsRule>> create(JS::Realm&, NonnullRefPtr<Supports>&&, CSSRuleList&);
 
     virtual ~CSSSupportsRule() = default;
 
-    virtual Type type() const override { return Type::Supports; };
+    virtual Type type() const override { return Type::Supports; }
 
     DeprecatedString condition_text() const override;
     void set_condition_text(DeprecatedString) override;

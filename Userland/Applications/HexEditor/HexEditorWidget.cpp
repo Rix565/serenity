@@ -17,7 +17,6 @@
 #include <AK/StringBuilder.h>
 #include <Applications/HexEditor/HexEditorWindowGML.h>
 #include <LibConfig/Client.h>
-#include <LibCore/File.h>
 #include <LibDesktop/Launcher.h>
 #include <LibFileSystemAccessClient/Client.h>
 #include <LibGUI/Action.h>
@@ -34,6 +33,7 @@
 #include <LibGUI/TextBox.h>
 #include <LibGUI/Toolbar.h>
 #include <LibGUI/ToolbarContainer.h>
+#include <LibTextCodec/Decoder.h>
 #include <string.h>
 
 REGISTER_WIDGET(HexEditor, HexEditor);
@@ -61,11 +61,11 @@ HexEditorWidget::HexEditorWidget()
     };
 
     m_editor->on_status_change = [this](int position, HexEditor::EditMode edit_mode, int selection_start, int selection_end) {
-        m_statusbar->set_text(0, DeprecatedString::formatted("Offset: {:#08X}", position));
-        m_statusbar->set_text(1, DeprecatedString::formatted("Edit Mode: {}", edit_mode == HexEditor::EditMode::Hex ? "Hex" : "Text"));
-        m_statusbar->set_text(2, DeprecatedString::formatted("Selection Start: {}", selection_start));
-        m_statusbar->set_text(3, DeprecatedString::formatted("Selection End: {}", selection_end));
-        m_statusbar->set_text(4, DeprecatedString::formatted("Selected Bytes: {}", m_editor->selection_size()));
+        m_statusbar->set_text(0, String::formatted("Offset: {:#08X}", position).release_value_but_fixme_should_propagate_errors());
+        m_statusbar->set_text(1, String::formatted("Edit Mode: {}", edit_mode == HexEditor::EditMode::Hex ? "Hex" : "Text").release_value_but_fixme_should_propagate_errors());
+        m_statusbar->set_text(2, String::formatted("Selection Start: {}", selection_start).release_value_but_fixme_should_propagate_errors());
+        m_statusbar->set_text(3, String::formatted("Selection End: {}", selection_end).release_value_but_fixme_should_propagate_errors());
+        m_statusbar->set_text(4, String::formatted("Selected Bytes: {}", m_editor->selection_size()).release_value_but_fixme_should_propagate_errors());
 
         bool has_selection = m_editor->has_selection();
         m_copy_hex_action->set_enabled(has_selection);
@@ -98,10 +98,10 @@ HexEditorWidget::HexEditorWidget()
         m_editor->update();
     };
 
-    m_new_action = GUI::Action::create("New", { Mod_Ctrl, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/new.png"sv).release_value_but_fixme_should_propagate_errors(), [this](const GUI::Action&) {
-        DeprecatedString value;
-        if (request_close() && GUI::InputBox::show(window(), value, "Enter new file size:"sv, "New file size"sv) == GUI::InputBox::ExecResult::OK && !value.is_empty()) {
-            auto file_size = value.to_uint();
+    m_new_action = GUI::Action::create("New...", { Mod_Ctrl, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/new.png"sv).release_value_but_fixme_should_propagate_errors(), [this](const GUI::Action&) {
+        String value;
+        if (request_close() && GUI::InputBox::show(window(), value, "Enter a size:"sv, "New File"sv, GUI::InputType::NonemptyText) == GUI::InputBox::ExecResult::OK) {
+            auto file_size = AK::StringUtils::convert_to_uint(value);
             if (!file_size.has_value()) {
                 GUI::MessageBox::show(window(), "Invalid file size entered."sv, "Error"sv, GUI::MessageBox::Type::Error);
                 return;
@@ -121,19 +121,19 @@ HexEditorWidget::HexEditorWidget()
         if (!request_close())
             return;
 
-        auto response = FileSystemAccessClient::Client::the().try_open_file_deprecated(window(), {}, Core::StandardPaths::home_directory(), Core::OpenMode::ReadWrite);
+        auto response = FileSystemAccessClient::Client::the().open_file(window(), { .requested_access = Core::File::OpenMode::ReadWrite });
         if (response.is_error())
             return;
 
-        open_file(response.value());
+        open_file(response.value().filename(), response.value().release_stream());
     });
 
     m_save_action = GUI::CommonActions::make_save_action([&](auto&) {
         if (m_path.is_empty())
             return m_save_as_action->activate();
 
-        if (!m_editor->save()) {
-            GUI::MessageBox::show(window(), "Unable to save file.\n"sv, "Error"sv, GUI::MessageBox::Type::Error);
+        if (auto result = m_editor->save(); result.is_error()) {
+            GUI::MessageBox::show(window(), DeprecatedString::formatted("Unable to save file: {}\n"sv, result.error()), "Error"sv, GUI::MessageBox::Type::Error);
         } else {
             window()->set_modified(false);
             m_editor->update();
@@ -142,18 +142,18 @@ HexEditorWidget::HexEditorWidget()
     });
 
     m_save_as_action = GUI::CommonActions::make_save_as_action([&](auto&) {
-        auto response = FileSystemAccessClient::Client::the().try_save_file_deprecated(window(), m_name, m_extension, Core::OpenMode::ReadWrite | Core::OpenMode::Truncate);
+        auto response = FileSystemAccessClient::Client::the().save_file(window(), m_name, m_extension, Core::File::OpenMode::ReadWrite | Core::File::OpenMode::Truncate);
         if (response.is_error())
             return;
         auto file = response.release_value();
-        if (!m_editor->save_as(file)) {
-            GUI::MessageBox::show(window(), "Unable to save file.\n"sv, "Error"sv, GUI::MessageBox::Type::Error);
+        if (auto result = m_editor->save_as(file.release_stream()); result.is_error()) {
+            GUI::MessageBox::show(window(), DeprecatedString::formatted("Unable to save file: {}\n"sv, result.error()), "Error"sv, GUI::MessageBox::Type::Error);
             return;
         }
 
         window()->set_modified(false);
-        set_path(file->filename());
-        dbgln("Wrote document to {}", file->filename());
+        set_path(file.filename());
+        dbgln("Wrote document to {}", file.filename());
     });
 
     m_undo_action = GUI::CommonActions::make_undo_action([&](auto&) {
@@ -166,7 +166,7 @@ HexEditorWidget::HexEditorWidget()
     });
     m_redo_action->set_enabled(false);
 
-    m_find_action = GUI::Action::create("&Find", { Mod_Ctrl, Key_F }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"sv).release_value_but_fixme_should_propagate_errors(), [&](const GUI::Action&) {
+    m_find_action = GUI::Action::create("&Find...", { Mod_Ctrl, Key_F }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"sv).release_value_but_fixme_should_propagate_errors(), [&](const GUI::Action&) {
         auto old_buffer = m_search_buffer;
         bool find_all = false;
         if (FindDialog::show(window(), m_search_text, m_search_buffer, find_all) == GUI::InputBox::ExecResult::OK) {
@@ -176,11 +176,11 @@ HexEditorWidget::HexEditorWidget()
                 m_search_results->update();
 
                 if (matches.is_empty()) {
-                    GUI::MessageBox::show(window(), DeprecatedString::formatted("Pattern \"{}\" not found in this file", m_search_text), "Not found"sv, GUI::MessageBox::Type::Warning);
+                    GUI::MessageBox::show(window(), DeprecatedString::formatted("Pattern \"{}\" not found in this file", m_search_text), "Not Found"sv, GUI::MessageBox::Type::Warning);
                     return;
                 }
 
-                GUI::MessageBox::show(window(), DeprecatedString::formatted("Found {} matches for \"{}\" in this file", matches.size(), m_search_text), DeprecatedString::formatted("{} matches", matches.size()), GUI::MessageBox::Type::Warning);
+                GUI::MessageBox::show(window(), DeprecatedString::formatted("Found {} matches for \"{}\" in this file", matches.size(), m_search_text), DeprecatedString::formatted("{} Matches", matches.size()), GUI::MessageBox::Type::Warning);
                 set_search_results_visible(true);
             } else {
                 bool same_buffers = false;
@@ -192,7 +192,7 @@ HexEditorWidget::HexEditorWidget()
                 auto result = m_editor->find_and_highlight(m_search_buffer, same_buffers ? last_found_index() : 0);
 
                 if (!result.has_value()) {
-                    GUI::MessageBox::show(window(), DeprecatedString::formatted("Pattern \"{}\" not found in this file", m_search_text), "Not found"sv, GUI::MessageBox::Type::Warning);
+                    GUI::MessageBox::show(window(), DeprecatedString::formatted("Pattern \"{}\" not found in this file", m_search_text), "Not Found"sv, GUI::MessageBox::Type::Warning);
                     return;
                 }
 
@@ -203,7 +203,7 @@ HexEditorWidget::HexEditorWidget()
         }
     });
 
-    m_goto_offset_action = GUI::Action::create("&Go to Offset ...", { Mod_Ctrl, Key_G }, Gfx::Bitmap::load_from_file("/res/icons/16x16/go-to.png"sv).release_value_but_fixme_should_propagate_errors(), [this](const GUI::Action&) {
+    m_goto_offset_action = GUI::Action::create("&Go to Offset...", { Mod_Ctrl, Key_G }, Gfx::Bitmap::load_from_file("/res/icons/16x16/go-to.png"sv).release_value_but_fixme_should_propagate_errors(), [this](const GUI::Action&) {
         int new_offset;
         auto result = GoToOffsetDialog::show(
             window(),
@@ -224,6 +224,7 @@ HexEditorWidget::HexEditorWidget()
 
     m_layout_search_results_action = GUI::Action::create_checkable("&Search Results", [&](auto& action) {
         set_search_results_visible(action.is_checked());
+        Config::write_bool("HexEditor"sv, "Layout"sv, "ShowSearchResults"sv, action.is_checked());
     });
 
     m_copy_hex_action = GUI::Action::create("Copy &Hex", { Mod_Ctrl, Key_C }, Gfx::Bitmap::load_from_file("/res/icons/16x16/hex.png"sv).release_value_but_fixme_should_propagate_errors(), [&](const GUI::Action&) {
@@ -242,9 +243,9 @@ HexEditorWidget::HexEditorWidget()
     m_copy_as_c_code_action->set_enabled(false);
 
     m_fill_selection_action = GUI::Action::create("Fill &Selection...", { Mod_Ctrl, Key_B }, [&](const GUI::Action&) {
-        DeprecatedString value;
-        if (GUI::InputBox::show(window(), value, "Fill byte (hex):"sv, "Fill Selection"sv) == GUI::InputBox::ExecResult::OK && !value.is_empty()) {
-            auto fill_byte = strtol(value.characters(), nullptr, 16);
+        String value;
+        if (GUI::InputBox::show(window(), value, "Fill byte (hex):"sv, "Fill Selection"sv, GUI::InputType::NonemptyText) == GUI::InputBox::ExecResult::OK) {
+            auto fill_byte = strtol(value.bytes_as_string_view().characters_without_null_termination(), nullptr, 16);
             auto result = m_editor->fill_selection(fill_byte);
             if (result.is_error())
                 GUI::MessageBox::show_error(window(), DeprecatedString::formatted("{}", result.error()));
@@ -254,6 +255,7 @@ HexEditorWidget::HexEditorWidget()
 
     m_layout_value_inspector_action = GUI::Action::create_checkable("&Value Inspector", [&](auto& action) {
         set_value_inspector_visible(action.is_checked());
+        Config::write_bool("HexEditor"sv, "Layout"sv, "ShowValueInspector"sv, action.is_checked());
     });
 
     m_toolbar->add_action(*m_new_action);
@@ -270,6 +272,13 @@ HexEditorWidget::HexEditorWidget()
     m_statusbar->segment(0).set_action(*m_goto_offset_action);
 
     m_editor->set_focus(true);
+
+    GUI::Application::the()->on_action_enter = [this](GUI::Action& action) {
+        m_statusbar->set_override_text(action.status_tip());
+    };
+    GUI::Application::the()->on_action_leave = [this](GUI::Action&) {
+        m_statusbar->set_override_text({});
+    };
 }
 
 void HexEditorWidget::update_inspector_values(size_t position)
@@ -366,7 +375,7 @@ void HexEditorWidget::update_inspector_values(size_t position)
         value_inspector_model->set_parsed_value(ValueInspectorModel::ValueType::UTF8, utf8_view.unicode_substring_view(0, 1).as_string());
 
     if (byte_read_count % 2 == 0) {
-        Utf16View utf16_view { Span<u16 const> { reinterpret_cast<u16 const*>(&unsigned_64_bit_int), 4 } };
+        Utf16View utf16_view { ReadonlySpan<u16> { reinterpret_cast<u16 const*>(&unsigned_64_bit_int), 4 } };
         size_t valid_code_units;
         utf16_view.validate(valid_code_units);
         if (valid_code_units == 0)
@@ -377,89 +386,123 @@ void HexEditorWidget::update_inspector_values(size_t position)
         value_inspector_model->set_parsed_value(ValueInspectorModel::ValueType::UTF16, "");
     }
 
+    auto selected_bytes = m_editor->get_selected_bytes();
+
+    auto ascii_string = DeprecatedString { ReadonlyBytes { selected_bytes } };
+    value_inspector_model->set_parsed_value(ValueInspectorModel::ValueType::ASCIIString, ascii_string);
+
+    Utf8View utf8_string_view { ReadonlyBytes { selected_bytes } };
+    utf8_string_view.validate(valid_bytes);
+    if (valid_bytes == 0)
+        value_inspector_model->set_parsed_value(ValueInspectorModel::ValueType::UTF8String, "");
+    else
+        // FIXME: replace control chars with something else - we don't want line breaks here ;)
+        value_inspector_model->set_parsed_value(ValueInspectorModel::ValueType::UTF8String, utf8_string_view.as_string());
+
     // FIXME: Parse as other values like Timestamp etc
+
+    auto decoder = TextCodec::decoder_for(m_value_inspector_little_endian ? "utf-16le"sv : "utf-16be"sv);
+    DeprecatedString utf16_string = decoder->to_utf8(StringView(selected_bytes.span())).release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+
+    value_inspector_model->set_parsed_value(ValueInspectorModel::ValueType::UTF16String, utf16_string);
 
     m_value_inspector->set_model(value_inspector_model);
     m_value_inspector->update();
 }
 
-void HexEditorWidget::initialize_menubar(GUI::Window& window)
+ErrorOr<void> HexEditorWidget::initialize_menubar(GUI::Window& window)
 {
-    auto& file_menu = window.add_menu("&File");
-    file_menu.add_action(*m_new_action);
-    file_menu.add_action(*m_open_action);
-    file_menu.add_action(*m_save_action);
-    file_menu.add_action(*m_save_as_action);
-    file_menu.add_separator();
-    file_menu.add_action(GUI::CommonActions::make_quit_action([this](auto&) {
+    auto file_menu = TRY(window.try_add_menu("&File"_short_string));
+    TRY(file_menu->try_add_action(*m_new_action));
+    TRY(file_menu->try_add_action(*m_open_action));
+    TRY(file_menu->try_add_action(*m_save_action));
+    TRY(file_menu->try_add_action(*m_save_as_action));
+    TRY(file_menu->try_add_separator());
+    TRY(file_menu->add_recent_files_list([&](auto& action) {
+        auto path = action.text();
+        auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(&window, path);
+        if (response.is_error())
+            return;
+
+        auto file = response.release_value();
+        open_file(file.filename(), file.release_stream());
+    }));
+    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([this](auto&) {
         if (!request_close())
             return;
         GUI::Application::the()->quit();
-    }));
+    })));
 
-    auto& edit_menu = window.add_menu("&Edit");
-    edit_menu.add_action(*m_undo_action);
-    edit_menu.add_action(*m_redo_action);
-    edit_menu.add_separator();
-    edit_menu.add_action(GUI::CommonActions::make_select_all_action([this](auto&) {
+    auto edit_menu = TRY(window.try_add_menu("&Edit"_short_string));
+    TRY(edit_menu->try_add_action(*m_undo_action));
+    TRY(edit_menu->try_add_action(*m_redo_action));
+    TRY(edit_menu->try_add_separator());
+    TRY(edit_menu->try_add_action(GUI::CommonActions::make_select_all_action([this](auto&) {
         m_editor->select_all();
         m_editor->update();
-    }));
-    edit_menu.add_action(*m_fill_selection_action);
-    edit_menu.add_separator();
-    edit_menu.add_action(*m_copy_hex_action);
-    edit_menu.add_action(*m_copy_text_action);
-    edit_menu.add_action(*m_copy_as_c_code_action);
-    edit_menu.add_separator();
-    edit_menu.add_action(*m_find_action);
-    edit_menu.add_action(GUI::Action::create("Find &Next", { Mod_None, Key_F3 }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find-next.png"sv).release_value_but_fixme_should_propagate_errors(), [&](const GUI::Action&) {
+    })));
+    TRY(edit_menu->try_add_action(*m_fill_selection_action));
+    TRY(edit_menu->try_add_separator());
+    TRY(edit_menu->try_add_action(*m_copy_hex_action));
+    TRY(edit_menu->try_add_action(*m_copy_text_action));
+    TRY(edit_menu->try_add_action(*m_copy_as_c_code_action));
+    TRY(edit_menu->try_add_separator());
+    TRY(edit_menu->try_add_action(*m_find_action));
+    TRY(edit_menu->try_add_action(GUI::Action::create("Find &Next", { Mod_None, Key_F3 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/find-next.png"sv)), [&](const GUI::Action&) {
         if (m_search_text.is_empty() || m_search_buffer.is_empty()) {
-            GUI::MessageBox::show(&window, "Nothing to search for"sv, "Not found"sv, GUI::MessageBox::Type::Warning);
+            GUI::MessageBox::show(&window, "Nothing to search for"sv, "Not Found"sv, GUI::MessageBox::Type::Warning);
             return;
         }
 
         auto result = m_editor->find_and_highlight(m_search_buffer, last_found_index());
         if (!result.has_value()) {
-            GUI::MessageBox::show(&window, DeprecatedString::formatted("No more matches for \"{}\" found in this file", m_search_text), "Not found"sv, GUI::MessageBox::Type::Warning);
+            GUI::MessageBox::show(&window, DeprecatedString::formatted("No more matches for \"{}\" found in this file", m_search_text), "Not Found"sv, GUI::MessageBox::Type::Warning);
             return;
         }
         m_editor->update();
         m_last_found_index = result.value();
-    }));
+    })));
 
-    edit_menu.add_action(GUI::Action::create("Find All &Strings", { Mod_Ctrl | Mod_Shift, Key_F }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"sv).release_value_but_fixme_should_propagate_errors(), [&](const GUI::Action&) {
+    TRY(edit_menu->try_add_action(GUI::Action::create("Find All &Strings", { Mod_Ctrl | Mod_Shift, Key_F }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"sv)), [&](const GUI::Action&) {
         int min_length = 4;
         auto matches = m_editor->find_all_strings(min_length);
         m_search_results->set_model(*new SearchResultsModel(move(matches)));
         m_search_results->update();
 
         if (matches.is_empty()) {
-            GUI::MessageBox::show(&window, "No strings found in this file"sv, "Not found"sv, GUI::MessageBox::Type::Warning);
+            GUI::MessageBox::show(&window, "No strings found in this file"sv, "Not Found"sv, GUI::MessageBox::Type::Warning);
             return;
         }
 
         set_search_results_visible(true);
         m_editor->update();
-    }));
-    edit_menu.add_separator();
-    edit_menu.add_action(*m_goto_offset_action);
+    })));
+    TRY(edit_menu->try_add_separator());
+    TRY(edit_menu->try_add_action(*m_goto_offset_action));
 
-    auto& view_menu = window.add_menu("&View");
+    auto view_menu = TRY(window.try_add_menu("&View"_short_string));
 
     auto show_toolbar = Config::read_bool("HexEditor"sv, "Layout"sv, "ShowToolbar"sv, true);
     m_layout_toolbar_action->set_checked(show_toolbar);
     m_toolbar_container->set_visible(show_toolbar);
-    view_menu.add_action(*m_layout_toolbar_action);
-    view_menu.add_action(*m_layout_search_results_action);
-    view_menu.add_action(*m_layout_value_inspector_action);
-    view_menu.add_separator();
+
+    auto show_search_results = Config::read_bool("HexEditor"sv, "Layout"sv, "ShowSearchResults"sv, false);
+    set_search_results_visible(show_search_results);
+
+    auto show_value_inspector = Config::read_bool("HexEditor"sv, "Layout"sv, "ShowValueInspector"sv, false);
+    set_value_inspector_visible(show_value_inspector);
+
+    TRY(view_menu->try_add_action(*m_layout_toolbar_action));
+    TRY(view_menu->try_add_action(*m_layout_search_results_action));
+    TRY(view_menu->try_add_action(*m_layout_value_inspector_action));
+    TRY(view_menu->try_add_separator());
 
     auto bytes_per_row = Config::read_i32("HexEditor"sv, "Layout"sv, "BytesPerRow"sv, 16);
     m_editor->set_bytes_per_row(bytes_per_row);
     m_editor->update();
 
     m_bytes_per_row_actions.set_exclusive(true);
-    auto& bytes_per_row_menu = view_menu.add_submenu("Bytes per &Row");
+    auto bytes_per_row_menu = TRY(view_menu->try_add_submenu(TRY("Bytes per &Row"_string)));
     for (int i = 8; i <= 32; i += 8) {
         auto action = GUI::Action::create_checkable(DeprecatedString::number(i), [this, i](auto&) {
             m_editor->set_bytes_per_row(i);
@@ -467,36 +510,45 @@ void HexEditorWidget::initialize_menubar(GUI::Window& window)
             Config::write_i32("HexEditor"sv, "Layout"sv, "BytesPerRow"sv, i);
         });
         m_bytes_per_row_actions.add_action(action);
-        bytes_per_row_menu.add_action(action);
+        TRY(bytes_per_row_menu->try_add_action(action));
         if (i == bytes_per_row)
             action->set_checked(true);
     }
 
     m_value_inspector_mode_actions.set_exclusive(true);
-    auto& inspector_mode_menu = view_menu.add_submenu("Value Inspector &Mode");
+    auto inspector_mode_menu = TRY(view_menu->try_add_submenu(TRY("Value Inspector &Mode"_string)));
     auto little_endian_mode = GUI::Action::create_checkable("&Little Endian", [&](auto& action) {
         m_value_inspector_little_endian = action.is_checked();
         update_inspector_values(m_editor->selection_start_offset());
+
+        Config::write_bool("HexEditor"sv, "Layout"sv, "UseLittleEndianInValueInspector"sv, m_value_inspector_little_endian);
     });
     m_value_inspector_mode_actions.add_action(little_endian_mode);
-    inspector_mode_menu.add_action(little_endian_mode);
+    TRY(inspector_mode_menu->try_add_action(little_endian_mode));
 
     auto big_endian_mode = GUI::Action::create_checkable("&Big Endian", [this](auto& action) {
         m_value_inspector_little_endian = !action.is_checked();
         update_inspector_values(m_editor->selection_start_offset());
+
+        Config::write_bool("HexEditor"sv, "Layout"sv, "UseLittleEndianInValueInspector"sv, m_value_inspector_little_endian);
     });
     m_value_inspector_mode_actions.add_action(big_endian_mode);
-    inspector_mode_menu.add_action(big_endian_mode);
+    TRY(inspector_mode_menu->try_add_action(big_endian_mode));
 
-    // Default to little endian mode
-    little_endian_mode->set_checked(true);
+    auto use_little_endian = Config::read_bool("HexEditor"sv, "Layout"sv, "UseLittleEndianInValueInspector"sv, true);
+    m_value_inspector_little_endian = use_little_endian;
 
-    auto& help_menu = window.add_menu("&Help");
-    help_menu.add_action(GUI::CommonActions::make_command_palette_action(&window));
-    help_menu.add_action(GUI::CommonActions::make_help_action([](auto&) {
-        Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/HexEditor.md"), "/bin/Help");
-    }));
-    help_menu.add_action(GUI::CommonActions::make_about_action("Hex Editor", GUI::Icon::default_icon("app-hex-editor"sv), &window));
+    little_endian_mode->set_checked(use_little_endian);
+    big_endian_mode->set_checked(!use_little_endian);
+
+    auto help_menu = TRY(window.try_add_menu("&Help"_short_string));
+    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(&window)));
+    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+        Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Applications/HexEditor.md"), "/bin/Help");
+    })));
+    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Hex Editor", GUI::Icon::default_icon("app-hex-editor"sv), &window)));
+
+    return {};
 }
 
 void HexEditorWidget::set_path(StringView path)
@@ -525,11 +577,12 @@ void HexEditorWidget::update_title()
     window()->set_title(builder.to_deprecated_string());
 }
 
-void HexEditorWidget::open_file(NonnullRefPtr<Core::File> file)
+void HexEditorWidget::open_file(String const& filename, NonnullOwnPtr<Core::File> file)
 {
     window()->set_modified(false);
-    m_editor->open_file(file);
-    set_path(file->filename());
+    m_editor->open_file(move(file));
+    set_path(filename.to_deprecated_string());
+    GUI::Application::the()->set_most_recently_open_file(filename);
 }
 
 bool HexEditorWidget::request_close()
@@ -586,9 +639,9 @@ void HexEditorWidget::drop_event(GUI::DropEvent& event)
             return;
 
         // TODO: A drop event should be considered user consent for opening a file
-        auto response = FileSystemAccessClient::Client::the().try_request_file_deprecated(window(), urls.first().path(), Core::OpenMode::ReadOnly);
+        auto response = FileSystemAccessClient::Client::the().request_file(window(), urls.first().serialize_path(), Core::File::OpenMode::Read);
         if (response.is_error())
             return;
-        open_file(response.value());
+        open_file(response.value().filename(), response.value().release_stream());
     }
 }

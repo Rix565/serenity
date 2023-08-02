@@ -60,8 +60,10 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, IDL::Effect
     // 2. Let n be the size of args.
     // 3. Initialize argcount to be min(maxarg, n).
     // 4. Remove from S all entries whose type list is not of length argcount.
-    // NOTE: Our caller already performs these steps, so our effective overload set only contains overloads with the correct number of arguments.
-    int argument_count = vm.argument_count();
+    // NOTE: The IDL-generated callers already only provide an overload set containing overloads with the correct number
+    //       of arguments. Therefore, we do not need to remove any entry from that set here. However, we do need to handle
+    //       when the number of user-provided arguments exceeds the overload set's argument count.
+    int argument_count = min(vm.argument_count(), overloads.is_empty() ? 0 : overloads.items()[0].types.size());
 
     // 5. If S is empty, then throw a TypeError.
     if (overloads.is_empty())
@@ -139,7 +141,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, IDL::Effect
                    if (type.is_union()) {
                        auto flattened_members = type.as_union().flattened_member_types();
                        for (auto const& member : flattened_members) {
-                           if (member.is_nullable())
+                           if (member->is_nullable())
                                return true;
                            // FIXME: - a dictionary type
                            // FIXME: - an annotated type whose inner type is one of the above types
@@ -351,7 +353,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, IDL::Effect
         }
 
         // 18. Otherwise: if there is an entry in S that has any at position i of its type list, then remove from S all other entries.
-        else if (overloads.has_overload_with_matching_argument_at_index(i, [](auto const& type, auto) { return type.is_any(); })) {
+        else if (overloads.has_overload_with_matching_argument_at_index(i, [](auto const& type, auto) { return type->is_any(); })) {
             overloads.remove_all_other_entries();
         }
 

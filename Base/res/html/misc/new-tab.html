@@ -40,7 +40,7 @@
 <body>
     <main>
         <br>
-        <img src="/res/icons/32x32/app-browser.png" width="64" height="64"><br><br>
+        <img src="../../icons/32x32/app-browser.png" width="64" height="64"><br><br>
         <form>
             <input type="search" name="q" id="user_query"><br><br>
             <div id="search-buttons">
@@ -49,6 +49,7 @@
                 <button type="button" onclick="search('frogfind')">FrogFind</button>
                 <button type="button" onclick="search('github')">GitHub</button>
                 <button type="button" onclick="search('google')">Google</button>
+                <button type="button" onclick="search('wiby')">Wiby</button>
                 <button type="button" onclick="search('yandex')">Yandex</button>
             </div>
         </form>
@@ -85,6 +86,9 @@
                 url.searchParams.set("q", query);
             } else if (searchEngine == "google") {
                 url = new URL("https://google.com/search");
+                url.searchParams.set("q", query);
+            } else if (searchEngine == "wiby") {
+                url = new URL("https://wiby.me");
                 url.searchParams.set("q", query);
             } else if (searchEngine == "yandex") {
                 url = new URL("https://yandex.com/search");

@@ -1,11 +1,13 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Jelle Raaijmakers <jelle@gmta.nl>
  * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "ProfileModel.h"
+#include "PercentageFormatting.h"
 #include "Profile.h"
 #include <LibGUI/FileIconProvider.h>
 #include <LibSymbolication/Symbolication.h>
@@ -72,22 +74,21 @@ int ProfileModel::column_count(GUI::ModelIndex const&) const
     return Column::__Count;
 }
 
-DeprecatedString ProfileModel::column_name(int column) const
+ErrorOr<String> ProfileModel::column_name(int column) const
 {
     switch (column) {
     case Column::SampleCount:
-        return m_profile.show_percentages() ? "% Samples" : "# Samples";
+        return m_profile.show_percentages() ? TRY("% Samples"_string) : TRY("# Samples"_string);
     case Column::SelfCount:
-        return m_profile.show_percentages() ? "% Self" : "# Self";
+        return m_profile.show_percentages() ? "% Self"_short_string : "# Self"_short_string;
     case Column::ObjectName:
-        return "Object";
+        return "Object"_short_string;
     case Column::StackFrame:
-        return "Stack Frame";
+        return TRY("Stack Frame"_string);
     case Column::SymbolAddress:
-        return "Symbol Address";
+        return TRY("Symbol Address"_string);
     default:
         VERIFY_NOT_REACHED();
-        return {};
     }
 }
 
@@ -111,25 +112,14 @@ GUI::Variant ProfileModel::data(GUI::ModelIndex const& index, GUI::ModelRole rol
         return {};
     }
     if (role == GUI::ModelRole::Display) {
-        auto round_percentages = [this](auto value) {
-            auto percentage_full_precision = round_to<int>(
-                static_cast<float>(value)
-                * 100.f
-                / static_cast<float>(m_profile.filtered_event_indices().size())
-                * percent_digits_rounding);
-            return DeprecatedString::formatted(
-                "{}.{:02}",
-                percentage_full_precision / percent_digits_rounding,
-                percentage_full_precision % percent_digits_rounding);
-        };
         if (index.column() == Column::SampleCount) {
             if (m_profile.show_percentages())
-                return round_percentages(node->event_count());
+                return format_percentage(node->event_count(), m_profile.filtered_event_indices().size());
             return node->event_count();
         }
         if (index.column() == Column::SelfCount) {
             if (m_profile.show_percentages())
-                return round_percentages(node->self_count());
+                return format_percentage(node->self_count(), m_profile.filtered_event_indices().size());
             return node->self_count();
         }
         if (index.column() == Column::ObjectName)

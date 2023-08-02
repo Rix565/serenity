@@ -7,7 +7,7 @@
 #include <LibCore/LocalServer.h>
 #include <LibCore/Notifier.h>
 #include <LibCore/SessionManagement.h>
-#include <LibCore/Stream.h>
+#include <LibCore/Socket.h>
 #include <LibCore/System.h>
 #include <LibCore/SystemServerTakeover.h>
 #include <fcntl.h>
@@ -49,8 +49,8 @@ ErrorOr<void> LocalServer::take_over_from_system_server(DeprecatedString const& 
 
 void LocalServer::setup_notifier()
 {
-    m_notifier = Notifier::construct(m_fd, Notifier::Event::Read, this);
-    m_notifier->on_ready_to_read = [this] {
+    m_notifier = Notifier::construct(m_fd, Notifier::Type::Read, this);
+    m_notifier->on_activation = [this] {
         if (on_accept) {
             auto maybe_client_socket = accept();
             if (maybe_client_socket.is_error()) {
@@ -113,7 +113,7 @@ bool LocalServer::listen(DeprecatedString const& address)
     return true;
 }
 
-ErrorOr<NonnullOwnPtr<Stream::LocalSocket>> LocalServer::accept()
+ErrorOr<NonnullOwnPtr<LocalSocket>> LocalServer::accept()
 {
     VERIFY(m_listening);
     sockaddr_un un;
@@ -133,7 +133,7 @@ ErrorOr<NonnullOwnPtr<Stream::LocalSocket>> LocalServer::accept()
     (void)fcntl(accepted_fd, F_SETFD, FD_CLOEXEC);
 #endif
 
-    return Stream::LocalSocket::adopt_fd(accepted_fd, Stream::PreventSIGPIPE::Yes);
+    return LocalSocket::adopt_fd(accepted_fd, Socket::PreventSIGPIPE::Yes);
 }
 
 }

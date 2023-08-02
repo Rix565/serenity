@@ -7,15 +7,15 @@
 #pragma once
 
 #if defined(KERNEL)
-#    include <Kernel/Assertions.h>
+#    include <Kernel/Library/Assertions.h>
 #else
 #    include <assert.h>
-#    ifndef NDEBUG
+extern "C" __attribute__((noreturn)) void ak_verification_failed(char const*);
+#    if !defined(NDEBUG) && !defined(WIN32)
 #        define VERIFY assert
 #    else
 #        define __stringify_helper(x) #x
 #        define __stringify(x) __stringify_helper(x)
-extern "C" __attribute__((noreturn)) void ak_verification_failed(char const*);
 #        define VERIFY(expr)                                                                \
             (__builtin_expect(!(expr), 0)                                                   \
                     ? ak_verification_failed(#expr "\n" __FILE__ ":" __stringify(__LINE__)) \

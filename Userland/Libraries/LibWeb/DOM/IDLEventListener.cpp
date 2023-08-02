@@ -4,17 +4,19 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibJS/Heap/Heap.h>
+#include <LibJS/Runtime/Error.h>
 #include <LibWeb/DOM/IDLEventListener.h>
 
 namespace Web::DOM {
 
-JS::NonnullGCPtr<IDLEventListener> IDLEventListener::create(JS::Realm& realm, JS::NonnullGCPtr<WebIDL::CallbackType> callback)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<IDLEventListener>> IDLEventListener::create(JS::Realm& realm, JS::NonnullGCPtr<WebIDL::CallbackType> callback)
 {
-    return realm.heap().allocate<IDLEventListener>(realm, realm, move(callback)).release_allocated_value_but_fixme_should_propagate_errors();
+    return MUST_OR_THROW_OOM(realm.heap().allocate<IDLEventListener>(realm, realm, move(callback)));
 }
 
 IDLEventListener::IDLEventListener(JS::Realm& realm, JS::NonnullGCPtr<WebIDL::CallbackType> callback)
-    : JS::Object(ConstructWithPrototypeTag::Tag, *realm.intrinsics().object_prototype())
+    : JS::Object(ConstructWithPrototypeTag::Tag, realm.intrinsics().object_prototype())
     , m_callback(move(callback))
 {
 }

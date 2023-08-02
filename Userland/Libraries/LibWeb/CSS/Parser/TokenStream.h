@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, the SerenityOS developers.
- * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,6 +9,7 @@
 
 #include <AK/Format.h>
 #include <AK/Vector.h>
+#include <LibWeb/CSS/Parser/ComponentValue.h>
 #include <LibWeb/CSS/Parser/Tokenizer.h>
 
 namespace Web::CSS::Parser {
@@ -53,14 +54,20 @@ public:
         bool m_commit { false };
     };
 
-    explicit TokenStream(Vector<T> const& tokens)
+    explicit TokenStream(Span<T const> tokens)
         : m_tokens(tokens)
         , m_eof(make_eof())
     {
     }
-    TokenStream(TokenStream<T> const&) = delete;
 
-    ~TokenStream() = default;
+    explicit TokenStream(Vector<T> const& tokens)
+        : m_tokens(tokens.span())
+        , m_eof(make_eof())
+    {
+    }
+
+    TokenStream(TokenStream<T> const&) = delete;
+    TokenStream(TokenStream<T>&&) = default;
 
     bool has_next_token()
     {
@@ -122,8 +129,13 @@ public:
         }
     }
 
+    void copy_state(Badge<Parser>, TokenStream<T> const& other)
+    {
+        m_iterator_offset = other.m_iterator_offset;
+    }
+
 private:
-    Vector<T> const& m_tokens;
+    Span<T const> m_tokens;
     int m_iterator_offset { -1 };
 
     T make_eof()

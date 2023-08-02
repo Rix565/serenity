@@ -7,7 +7,7 @@
 #pragma once
 
 #include <AK/Assertions.h>
-#include <AK/DeprecatedString.h>
+#include <AK/String.h>
 
 namespace Web::CSS {
 
@@ -16,7 +16,7 @@ public:
     Display() = default;
     ~Display() = default;
 
-    DeprecatedString to_deprecated_string() const;
+    ErrorOr<String> to_string() const;
 
     bool operator==(Display const& other) const
     {
@@ -70,6 +70,11 @@ public:
         None,
     };
 
+    enum class ListItem {
+        No,
+        Yes,
+    };
+
     enum class Type {
         OutsideAndInside,
         Internal,
@@ -107,7 +112,14 @@ public:
     bool is_block_outside() const { return is_outside_and_inside() && outside() == Outside::Block; }
     bool is_inline_outside() const { return is_outside_and_inside() && outside() == Outside::Inline; }
     bool is_inline_block() const { return is_inline_outside() && is_flow_root_inside(); }
-    bool is_list_item() const { return is_outside_and_inside() && m_value.outside_inside.list_item == ListItem::Yes; }
+
+    ListItem list_item() const
+    {
+        VERIFY(is_outside_and_inside());
+        return m_value.outside_inside.list_item;
+    }
+
+    bool is_list_item() const { return is_outside_and_inside() && list_item() == ListItem::Yes; }
 
     Inside inside() const
     {
@@ -126,6 +138,7 @@ public:
         None,
         Contents,
         Block,
+        Flow,
         FlowRoot,
         Inline,
         InlineBlock,
@@ -137,14 +150,8 @@ public:
         Grid,
         InlineGrid,
         Ruby,
-        BlockRuby,
         Table,
         InlineTable,
-    };
-
-    enum class ListItem {
-        No,
-        Yes,
     };
 
     static Display from_short(Short short_)
@@ -156,10 +163,12 @@ public:
             return Display { Box::Contents };
         case Short::Block:
             return Display { Outside::Block, Inside::Flow };
-        case Short::FlowRoot:
-            return Display { Outside::Block, Inside::FlowRoot };
         case Short::Inline:
             return Display { Outside::Inline, Inside::Flow };
+        case Short::Flow:
+            return Display { Outside::Block, Inside::Flow };
+        case Short::FlowRoot:
+            return Display { Outside::Block, Inside::FlowRoot };
         case Short::InlineBlock:
             return Display { Outside::Inline, Inside::FlowRoot };
         case Short::RunIn:
@@ -178,8 +187,6 @@ public:
             return Display { Outside::Inline, Inside::Grid };
         case Short::Ruby:
             return Display { Outside::Inline, Inside::Ruby };
-        case Short::BlockRuby:
-            return Display { Outside::Block, Inside::Ruby };
         case Short::Table:
             return Display { Outside::Block, Inside::Table };
         case Short::InlineTable:

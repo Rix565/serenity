@@ -5,11 +5,15 @@
  */
 
 #include <AK/Debug.h>
+#include <AK/Function.h>
+#include <AK/Queue.h>
 #include <AK/QuickSort.h>
 #include <AK/RedBlackTree.h>
 #include <AK/Stack.h>
+#include <AK/Trie.h>
 #include <LibRegex/Regex.h>
 #include <LibRegex/RegexBytecodeStreamOptimizer.h>
+#include <LibUnicode/CharacterTypes.h>
 #if REGEX_DEBUG
 #    include <AK/ScopeGuard.h>
 #    include <AK/ScopeLogger.h>
@@ -24,9 +28,13 @@ void Regex<Parser>::run_optimization_passes()
 {
     parser_result.bytecode.flatten();
 
+    auto blocks = split_basic_blocks(parser_result.bytecode);
+    if (attempt_rewrite_entire_match_as_substring_search(blocks))
+        return;
+
     // Rewrite fork loops as atomic groups
     // e.g. a*b -> (ATOMIC a*)b
-    attempt_rewrite_loops_as_atomic_groups(split_basic_blocks(parser_result.bytecode));
+    attempt_rewrite_loops_as_atomic_groups(blocks);
 
     parser_result.bytecode.flatten();
 }
@@ -124,6 +132,37 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
     HashTable<CharClass> lhs_char_classes;
     HashTable<CharClass> lhs_negated_char_classes;
 
+    auto has_any_unicode_property = false;
+    HashTable<Unicode::GeneralCategory> lhs_unicode_general_categories;
+    HashTable<Unicode::Property> lhs_unicode_properties;
+    HashTable<Unicode::Script> lhs_unicode_scripts;
+    HashTable<Unicode::Script> lhs_unicode_script_extensions;
+    HashTable<Unicode::GeneralCategory> lhs_negated_unicode_general_categories;
+    HashTable<Unicode::Property> lhs_negated_unicode_properties;
+    HashTable<Unicode::Script> lhs_negated_unicode_scripts;
+    HashTable<Unicode::Script> lhs_negated_unicode_script_extensions;
+
+    auto any_unicode_property_matches = [&](u32 code_point) {
+        if (any_of(lhs_negated_unicode_general_categories, [code_point](auto category) { return Unicode::code_point_has_general_category(code_point, category); }))
+            return false;
+        if (any_of(lhs_negated_unicode_properties, [code_point](auto property) { return Unicode::code_point_has_property(code_point, property); }))
+            return false;
+        if (any_of(lhs_negated_unicode_scripts, [code_point](auto script) { return Unicode::code_point_has_script(code_point, script); }))
+            return false;
+        if (any_of(lhs_negated_unicode_script_extensions, [code_point](auto script) { return Unicode::code_point_has_script_extension(code_point, script); }))
+            return false;
+
+        if (any_of(lhs_unicode_general_categories, [code_point](auto category) { return Unicode::code_point_has_general_category(code_point, category); }))
+            return true;
+        if (any_of(lhs_unicode_properties, [code_point](auto property) { return Unicode::code_point_has_property(code_point, property); }))
+            return true;
+        if (any_of(lhs_unicode_scripts, [code_point](auto script) { return Unicode::code_point_has_script(code_point, script); }))
+            return true;
+        if (any_of(lhs_unicode_script_extensions, [code_point](auto script) { return Unicode::code_point_has_script_extension(code_point, script); }))
+            return true;
+        return false;
+    };
+
     auto range_contains = [&]<typename T>(T& value) -> bool {
         u32 start;
         u32 end;
@@ -134,6 +173,12 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
         } else {
             start = value;
             end = value;
+        }
+
+        if (has_any_unicode_property) {
+            // We have some properties, and a range is present
+            // Instead of checking every single code point in the range, assume it's a match.
+            return start != end || any_unicode_property_matches(start);
         }
 
         auto* max = lhs_ranges.find_smallest_not_below(start);
@@ -203,9 +248,33 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
             // We've handled this before coming here.
             break;
         case CharacterCompareType::Property:
+            has_any_unicode_property = true;
+            if (!current_lhs_inversion_state())
+                lhs_unicode_properties.set(static_cast<Unicode::Property>(pair.value));
+            else
+                lhs_negated_unicode_properties.set(static_cast<Unicode::Property>(pair.value));
+            break;
         case CharacterCompareType::GeneralCategory:
+            has_any_unicode_property = true;
+            if (!current_lhs_inversion_state())
+                lhs_unicode_general_categories.set(static_cast<Unicode::GeneralCategory>(pair.value));
+            else
+                lhs_negated_unicode_general_categories.set(static_cast<Unicode::GeneralCategory>(pair.value));
+            break;
         case CharacterCompareType::Script:
+            has_any_unicode_property = true;
+            if (!current_lhs_inversion_state())
+                lhs_unicode_scripts.set(static_cast<Unicode::Script>(pair.value));
+            else
+                lhs_negated_unicode_scripts.set(static_cast<Unicode::Script>(pair.value));
+            break;
         case CharacterCompareType::ScriptExtension:
+            has_any_unicode_property = true;
+            if (!current_lhs_inversion_state())
+                lhs_unicode_script_extensions.set(static_cast<Unicode::Script>(pair.value));
+            else
+                lhs_negated_unicode_script_extensions.set(static_cast<Unicode::Script>(pair.value));
+            break;
         case CharacterCompareType::And:
         case CharacterCompareType::Or:
         case CharacterCompareType::EndAndOr:
@@ -251,7 +320,7 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
                 return true;
             break;
         case CharacterCompareType::Char:
-            if (!current_lhs_inversion_state() && range_contains(pair.value))
+            if (current_lhs_inversion_state() ^ range_contains(pair.value))
                 return true;
             break;
         case CharacterCompareType::String:
@@ -259,12 +328,12 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
             //        Just bail out to avoid false positives.
             return true;
         case CharacterCompareType::CharClass:
-            if (!current_lhs_inversion_state() && char_class_contains(static_cast<CharClass>(pair.value)))
+            if (current_lhs_inversion_state() ^ char_class_contains(static_cast<CharClass>(pair.value)))
                 return true;
             break;
         case CharacterCompareType::CharRange: {
             auto range = CharRange(pair.value);
-            if (!current_lhs_inversion_state() && range_contains(range))
+            if (current_lhs_inversion_state() ^ range_contains(range))
                 return true;
             break;
         }
@@ -275,9 +344,49 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
             // We've handled this before coming here.
             break;
         case CharacterCompareType::Property:
+            // The only reasonable scenario where we can check these properties without spending too much time is if:
+            //  - the ranges are empty
+            //  - the char classes are empty
+            //  - the unicode properties are empty or contain only this property
+            if (!lhs_ranges.is_empty() || !lhs_negated_ranges.is_empty() || !lhs_char_classes.is_empty() || !lhs_negated_char_classes.is_empty())
+                return true;
+            if (has_any_unicode_property && !lhs_unicode_properties.is_empty() && !lhs_negated_unicode_properties.is_empty()) {
+                if (current_lhs_inversion_state() ^ lhs_unicode_properties.contains(static_cast<Unicode::Property>(pair.value)))
+                    return true;
+                if (false == (current_lhs_inversion_state() ^ lhs_negated_unicode_properties.contains(static_cast<Unicode::Property>(pair.value))))
+                    return true;
+            }
+            break;
         case CharacterCompareType::GeneralCategory:
+            if (!lhs_ranges.is_empty() || !lhs_negated_ranges.is_empty() || !lhs_char_classes.is_empty() || !lhs_negated_char_classes.is_empty())
+                return true;
+            if (has_any_unicode_property && !lhs_unicode_general_categories.is_empty() && !lhs_negated_unicode_general_categories.is_empty()) {
+                if (current_lhs_inversion_state() ^ lhs_unicode_general_categories.contains(static_cast<Unicode::GeneralCategory>(pair.value)))
+                    return true;
+                if (false == (current_lhs_inversion_state() ^ lhs_negated_unicode_general_categories.contains(static_cast<Unicode::GeneralCategory>(pair.value))))
+                    return true;
+            }
+            break;
         case CharacterCompareType::Script:
+            if (!lhs_ranges.is_empty() || !lhs_negated_ranges.is_empty() || !lhs_char_classes.is_empty() || !lhs_negated_char_classes.is_empty())
+                return true;
+            if (has_any_unicode_property && !lhs_unicode_scripts.is_empty() && !lhs_negated_unicode_scripts.is_empty()) {
+                if (current_lhs_inversion_state() ^ lhs_unicode_scripts.contains(static_cast<Unicode::Script>(pair.value)))
+                    return true;
+                if (false == (current_lhs_inversion_state() ^ lhs_negated_unicode_scripts.contains(static_cast<Unicode::Script>(pair.value))))
+                    return true;
+            }
+            break;
         case CharacterCompareType::ScriptExtension:
+            if (!lhs_ranges.is_empty() || !lhs_negated_ranges.is_empty() || !lhs_char_classes.is_empty() || !lhs_negated_char_classes.is_empty())
+                return true;
+            if (has_any_unicode_property && !lhs_unicode_script_extensions.is_empty() && !lhs_negated_unicode_script_extensions.is_empty()) {
+                if (current_lhs_inversion_state() ^ lhs_unicode_script_extensions.contains(static_cast<Unicode::Script>(pair.value)))
+                    return true;
+                if (false == (current_lhs_inversion_state() ^ lhs_negated_unicode_script_extensions.contains(static_cast<Unicode::Script>(pair.value))))
+                    return true;
+            }
+            break;
         case CharacterCompareType::And:
         case CharacterCompareType::Or:
         case CharacterCompareType::EndAndOr:
@@ -303,10 +412,12 @@ static AtomicRewritePreconditionResult block_satisfies_atomic_rewrite_preconditi
     Vector<Vector<CompareTypeAndValuePair>> repeated_values;
     HashTable<size_t> active_capture_groups;
     MatchState state;
+    auto has_seen_actionable_opcode = false;
     for (state.instruction_position = repeated_block.start; state.instruction_position < repeated_block.end;) {
         auto& opcode = bytecode.get_opcode(state);
         switch (opcode.opcode_id()) {
         case OpCodeId::Compare: {
+            has_seen_actionable_opcode = true;
             auto compares = static_cast<OpCode_Compare const&>(opcode).flat_compares();
             if (repeated_values.is_empty() && any_of(compares, [](auto& compare) { return compare.type == CharacterCompareType::AnyChar; }))
                 return AtomicRewritePreconditionResult::NotSatisfied;
@@ -315,6 +426,7 @@ static AtomicRewritePreconditionResult block_satisfies_atomic_rewrite_preconditi
         }
         case OpCodeId::CheckBegin:
         case OpCodeId::CheckEnd:
+            has_seen_actionable_opcode = true;
             if (repeated_values.is_empty())
                 return AtomicRewritePreconditionResult::SatisfiedWithProperHeader;
             break;
@@ -330,6 +442,13 @@ static AtomicRewritePreconditionResult block_satisfies_atomic_rewrite_preconditi
         case OpCodeId::SaveLeftCaptureGroup:
             active_capture_groups.set(static_cast<OpCode_SaveLeftCaptureGroup const&>(opcode).id());
             break;
+        case OpCodeId::ForkJump:
+        case OpCodeId::ForkReplaceJump:
+        case OpCodeId::JumpNonEmpty:
+            // We could attempt to recursively resolve the follow set, but pretending that this just goes nowhere is faster.
+            if (!has_seen_actionable_opcode)
+                return AtomicRewritePreconditionResult::NotSatisfied;
+            break;
         default:
             break;
         }
@@ -341,7 +460,9 @@ static AtomicRewritePreconditionResult block_satisfies_atomic_rewrite_preconditi
 
     bool following_block_has_at_least_one_compare = false;
     // Find the first compare in the following block, it must NOT match any of the values in `repeated_values'.
+    auto final_instruction = following_block.start;
     for (state.instruction_position = following_block.start; state.instruction_position < following_block.end;) {
+        final_instruction = state.instruction_position;
         auto& opcode = bytecode.get_opcode(state);
         switch (opcode.opcode_id()) {
         // Note: These have to exist since we're effectively repeating the following block as well
@@ -375,6 +496,13 @@ static AtomicRewritePreconditionResult block_satisfies_atomic_rewrite_preconditi
         case OpCodeId::CheckBoundary:
             // FIXME: What should we do with these? For now, consider them a failure.
             return AtomicRewritePreconditionResult::NotSatisfied;
+        case OpCodeId::ForkJump:
+        case OpCodeId::ForkReplaceJump:
+        case OpCodeId::JumpNonEmpty:
+            // See note in the previous switch, same cases.
+            if (!following_block_has_at_least_one_compare)
+                return AtomicRewritePreconditionResult::NotSatisfied;
+            break;
         default:
             break;
         }
@@ -382,9 +510,66 @@ static AtomicRewritePreconditionResult block_satisfies_atomic_rewrite_preconditi
         state.instruction_position += opcode.size();
     }
 
+    // If the following block falls through, we can't rewrite it.
+    state.instruction_position = final_instruction;
+    switch (bytecode.get_opcode(state).opcode_id()) {
+    case OpCodeId::Jump:
+    case OpCodeId::JumpNonEmpty:
+    case OpCodeId::ForkJump:
+    case OpCodeId::ForkReplaceJump:
+        break;
+    default:
+        return AtomicRewritePreconditionResult::NotSatisfied;
+    }
+
     if (following_block_has_at_least_one_compare)
         return AtomicRewritePreconditionResult::SatisfiedWithProperHeader;
     return AtomicRewritePreconditionResult::SatisfiedWithEmptyHeader;
+}
+
+template<typename Parser>
+bool Regex<Parser>::attempt_rewrite_entire_match_as_substring_search(BasicBlockList const& basic_blocks)
+{
+    // If there's no jumps, we can probably rewrite this as a substring search (Compare { string = str }).
+    if (basic_blocks.size() > 1)
+        return false;
+
+    if (basic_blocks.is_empty()) {
+        parser_result.optimization_data.pure_substring_search = ""sv;
+        return true; // Empty regex, sure.
+    }
+
+    auto& bytecode = parser_result.bytecode;
+
+    auto is_unicode = parser_result.options.has_flag_set(AllFlags::Unicode);
+
+    // We have a single basic block, let's see if it's a series of character or string compares.
+    StringBuilder final_string;
+    MatchState state;
+    while (state.instruction_position < bytecode.size()) {
+        auto& opcode = bytecode.get_opcode(state);
+        switch (opcode.opcode_id()) {
+        case OpCodeId::Compare: {
+            auto& compare = static_cast<OpCode_Compare const&>(opcode);
+            for (auto& flat_compare : compare.flat_compares()) {
+                if (flat_compare.type != CharacterCompareType::Char)
+                    return false;
+
+                if (is_unicode || flat_compare.value <= 0x7f)
+                    final_string.append_code_point(flat_compare.value);
+                else
+                    final_string.append(bit_cast<char>(static_cast<u8>(flat_compare.value)));
+            }
+            break;
+        }
+        default:
+            return false;
+        }
+        state.instruction_position += opcode.size();
+    }
+
+    parser_result.optimization_data.pure_substring_search = final_string.to_deprecated_string();
+    return true;
 }
 
 template<typename Parser>
@@ -484,7 +669,8 @@ void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const&
             if (is_an_eligible_jump(opcode, state.instruction_position, forking_block.start, AlternateForm::DirectLoopWithoutHeader)) {
                 // We've found RE0 (and RE1 is just the following block, if any), let's see if the precondition applies.
                 // if RE1 is empty, there's no first(RE1), so this is an automatic pass.
-                if (!fork_fallback_block.has_value() || fork_fallback_block->end == fork_fallback_block->start) {
+                if (!fork_fallback_block.has_value()
+                    || (fork_fallback_block->end == fork_fallback_block->start && block_satisfies_atomic_rewrite_precondition(bytecode, forking_block, *fork_fallback_block) != AtomicRewritePreconditionResult::NotSatisfied)) {
                     candidate_blocks.append({ forking_block, fork_fallback_block, AlternateForm::DirectLoopWithoutHeader });
                     break;
                 }
@@ -632,6 +818,9 @@ void Optimizer::append_alternation(ByteCode& target, ByteCode&& left, ByteCode&&
     append_alternation(target, alternatives);
 }
 
+template<typename K, typename V, typename KTraits>
+using OrderedHashMapForTrie = OrderedHashMap<K, V, KTraits>;
+
 void Optimizer::append_alternation(ByteCode& target, Span<ByteCode> alternatives)
 {
     if (alternatives.size() == 0)
@@ -663,127 +852,311 @@ void Optimizer::append_alternation(ByteCode& target, Span<ByteCode> alternatives
     };
 #endif
 
-    Vector<Vector<Detail::Block>> basic_blocks;
-    basic_blocks.ensure_capacity(alternatives.size());
+    // First, find incoming jump edges.
+    // We need them for two reasons:
+    // - We need to distinguish between insn-A-jumped-to-by-insn-B and insn-A-jumped-to-by-insn-C (as otherwise we'd break trie invariants)
+    // - We need to know which jumps to patch when we're done
 
-    for (auto& entry : alternatives)
-        basic_blocks.append(Regex<PosixBasicParser>::split_basic_blocks(entry));
-
-    size_t left_skip = 0;
-    size_t shared_block_count = basic_blocks.first().size();
-    for (auto& entry : basic_blocks)
-        shared_block_count = min(shared_block_count, entry.size());
+    struct JumpEdge {
+        Span<ByteCodeValueType const> jump_insn;
+    };
+    Vector<HashMap<size_t, Vector<JumpEdge>>> incoming_jump_edges_for_each_alternative;
+    incoming_jump_edges_for_each_alternative.resize(alternatives.size());
 
     MatchState state;
-    for (size_t block_index = 0; block_index < shared_block_count; block_index++) {
-        auto& left_block = basic_blocks.first()[block_index];
-        auto left_end = block_index + 1 == basic_blocks.first().size() ? left_block.end : basic_blocks.first()[block_index + 1].start;
-        auto can_continue = true;
+
+    for (size_t i = 0; i < alternatives.size(); ++i) {
+        auto& alternative = alternatives[i];
+        // Add a jump to the "end" of the block; this is implicit in the bytecode, but we need it to be explicit in the trie.
+        // Jump{offset=0}
+        alternative.append(static_cast<ByteCodeValueType>(OpCodeId::Jump));
+        alternative.append(0);
+
+        auto& incoming_jump_edges = incoming_jump_edges_for_each_alternative[i];
+
+        auto alternative_bytes = alternative.spans<1>().singular_span();
+        for (state.instruction_position = 0; state.instruction_position < alternative.size();) {
+            auto& opcode = alternative.get_opcode(state);
+            auto opcode_bytes = alternative_bytes.slice(state.instruction_position, opcode.size());
+
+            switch (opcode.opcode_id()) {
+            case OpCodeId::Jump:
+                incoming_jump_edges.ensure(static_cast<OpCode_Jump const&>(opcode).offset() + state.instruction_position).append({ opcode_bytes });
+                break;
+            case OpCodeId::JumpNonEmpty:
+                incoming_jump_edges.ensure(static_cast<OpCode_JumpNonEmpty const&>(opcode).offset() + state.instruction_position).append({ opcode_bytes });
+                break;
+            case OpCodeId::ForkJump:
+                incoming_jump_edges.ensure(static_cast<OpCode_ForkJump const&>(opcode).offset() + state.instruction_position).append({ opcode_bytes });
+                break;
+            case OpCodeId::ForkStay:
+                incoming_jump_edges.ensure(static_cast<OpCode_ForkStay const&>(opcode).offset() + state.instruction_position).append({ opcode_bytes });
+                break;
+            case OpCodeId::ForkReplaceJump:
+                incoming_jump_edges.ensure(static_cast<OpCode_ForkReplaceJump const&>(opcode).offset() + state.instruction_position).append({ opcode_bytes });
+                break;
+            case OpCodeId::ForkReplaceStay:
+                incoming_jump_edges.ensure(static_cast<OpCode_ForkReplaceStay const&>(opcode).offset() + state.instruction_position).append({ opcode_bytes });
+                break;
+            case OpCodeId::Repeat:
+                incoming_jump_edges.ensure(static_cast<OpCode_Repeat const&>(opcode).offset() + state.instruction_position).append({ opcode_bytes });
+                break;
+            default:
+                break;
+            }
+            state.instruction_position += opcode.size();
+        }
+    }
+
+    struct QualifiedIP {
+        size_t alternative_index;
+        size_t instruction_position;
+    };
+    using Tree = Trie<DisjointSpans<ByteCodeValueType const>, Vector<QualifiedIP>, Traits<DisjointSpans<ByteCodeValueType const>>, void, OrderedHashMapForTrie>;
+    Tree trie { {} }; // Root node is empty, key{ instruction_bytes, dependent_instruction_bytes... } -> IP
+
+    size_t common_hits = 0;
+    size_t total_nodes = 0;
+    size_t total_bytecode_entries_in_tree = 0;
+    for (size_t i = 0; i < alternatives.size(); ++i) {
+        auto& alternative = alternatives[i];
+        auto& incoming_jump_edges = incoming_jump_edges_for_each_alternative[i];
+
+        auto* active_node = &trie;
+        auto alternative_span = alternative.spans<1>().singular_span();
+        for (state.instruction_position = 0; state.instruction_position < alternative_span.size();) {
+            total_nodes += 1;
+            auto& opcode = alternative.get_opcode(state);
+            auto opcode_bytes = alternative_span.slice(state.instruction_position, opcode.size());
+            Vector<Span<ByteCodeValueType const>> node_key_bytes;
+            node_key_bytes.append(opcode_bytes);
+
+            if (auto edges = incoming_jump_edges.get(state.instruction_position); edges.has_value()) {
+                for (auto& edge : *edges)
+                    node_key_bytes.append(edge.jump_insn);
+            }
+
+            active_node = static_cast<decltype(active_node)>(MUST(active_node->ensure_child(DisjointSpans<ByteCodeValueType const> { move(node_key_bytes) })));
+
+            if (active_node->has_metadata()) {
+                active_node->metadata_value().append({ i, state.instruction_position });
+                common_hits += 1;
+            } else {
+                active_node->set_metadata(Vector<QualifiedIP> { QualifiedIP { i, state.instruction_position } });
+                total_bytecode_entries_in_tree += opcode.size();
+            }
+            state.instruction_position += opcode.size();
+        }
+    }
+
+    if constexpr (REGEX_DEBUG) {
+        Function<void(decltype(trie)&, size_t)> print_tree = [&](decltype(trie)& node, size_t indent = 0) mutable {
+            DeprecatedString name = "(no ip)";
+            DeprecatedString insn;
+            if (node.has_metadata()) {
+                name = DeprecatedString::formatted(
+                    "{}@{} ({} node{})",
+                    node.metadata_value().first().instruction_position,
+                    node.metadata_value().first().alternative_index,
+                    node.metadata_value().size(),
+                    node.metadata_value().size() == 1 ? "" : "s");
+
+                MatchState state;
+                state.instruction_position = node.metadata_value().first().instruction_position;
+                auto& opcode = alternatives[node.metadata_value().first().alternative_index].get_opcode(state);
+                insn = DeprecatedString::formatted("{} {}", opcode.to_deprecated_string(), opcode.arguments_string());
+            }
+            dbgln("{:->{}}| {} -- {}", "", indent * 2, name, insn);
+            for (auto& child : node.children())
+                print_tree(static_cast<decltype(trie)&>(*child.value), indent + 1);
+        };
+
+        print_tree(trie, 0);
+    }
+
+    // This is really only worth it if we don't blow up the size by the 2-extra-instruction-per-node scheme, similarly, if no nodes are shared, we're better off not using a tree.
+    auto tree_cost = (total_nodes - common_hits) * 2;
+    auto chain_cost = total_nodes + alternatives.size() * 2;
+    dbgln_if(REGEX_DEBUG, "Total nodes: {}, common hits: {} (tree cost = {}, chain cost = {})", total_nodes, common_hits, tree_cost, chain_cost);
+
+    if (common_hits == 0 || tree_cost > chain_cost) {
+        // It's better to lay these out as a normal sequence of instructions.
+        auto patch_start = target.size();
         for (size_t i = 1; i < alternatives.size(); ++i) {
-            auto& right_blocks = basic_blocks[i];
-            auto& right_block = right_blocks[block_index];
-            auto right_end = block_index + 1 == right_blocks.size() ? right_block.end : right_blocks[block_index + 1].start;
-
-            if (left_end - left_block.start != right_end - right_block.start) {
-                can_continue = false;
-                break;
-            }
-
-            if (alternatives[0].spans().slice(left_block.start, left_end - left_block.start) != alternatives[i].spans().slice(right_block.start, right_end - right_block.start)) {
-                can_continue = false;
-                break;
-            }
-        }
-        if (!can_continue)
-            break;
-
-        size_t i = 0;
-        for (auto& entry : alternatives) {
-            auto& blocks = basic_blocks[i];
-            auto& block = blocks[block_index];
-            auto end = block_index + 1 == blocks.size() ? block.end : blocks[block_index + 1].start;
-            state.instruction_position = block.start;
-            size_t skip = 0;
-            while (state.instruction_position < end) {
-                auto& opcode = entry.get_opcode(state);
-                state.instruction_position += opcode.size();
-                skip = state.instruction_position;
-            }
-            left_skip = min(skip, left_skip);
-        }
-    }
-
-    dbgln_if(REGEX_DEBUG, "Skipping {}/{} bytecode entries from {}", left_skip, 0, alternatives[0].size());
-
-    if (left_skip > 0) {
-        target.extend(alternatives[0].release_slice(basic_blocks.first().first().start, left_skip));
-        auto first = true;
-        for (auto& entry : alternatives) {
-            if (first) {
-                first = false;
-                continue;
-            }
-            entry = entry.release_slice(left_skip);
-        }
-    }
-
-    if (all_of(alternatives, [](auto& entry) { return entry.is_empty(); }))
-        return;
-
-    size_t patch_start = target.size();
-    for (size_t i = 1; i < alternatives.size(); ++i) {
-        target.empend(static_cast<ByteCodeValueType>(OpCodeId::ForkJump));
-        target.empend(0u); // To be filled later.
-    }
-
-    size_t size_to_jump = 0;
-    bool seen_one_empty = false;
-    for (size_t i = alternatives.size(); i > 0; --i) {
-        auto& entry = alternatives[i - 1];
-        if (entry.is_empty()) {
-            if (seen_one_empty)
-                continue;
-            seen_one_empty = true;
+            target.empend(static_cast<ByteCodeValueType>(OpCodeId::ForkJump));
+            target.empend(0u); // To be filled later.
         }
 
-        auto is_first = i == 1;
-        auto instruction_size = entry.size() + (is_first ? 0 : 2); // Jump; -> +2
-        size_to_jump += instruction_size;
-
-        if (!is_first)
-            target[patch_start + (i - 2) * 2 + 1] = size_to_jump + (alternatives.size() - i) * 2;
-
-        dbgln_if(REGEX_DEBUG, "{} size = {}, cum={}", i - 1, instruction_size, size_to_jump);
-    }
-
-    seen_one_empty = false;
-    for (size_t i = alternatives.size(); i > 0; --i) {
-        auto& chunk = alternatives[i - 1];
-        if (chunk.is_empty()) {
-            if (seen_one_empty)
-                continue;
-            seen_one_empty = true;
-        }
-
-        ByteCode* previous_chunk = nullptr;
-        size_t j = i - 1;
-        auto seen_one_empty_before = chunk.is_empty();
-        while (j >= 1) {
-            --j;
-            auto& candidate_chunk = alternatives[j];
-            if (candidate_chunk.is_empty()) {
-                if (seen_one_empty_before)
+        size_t size_to_jump = 0;
+        bool seen_one_empty = false;
+        for (size_t i = alternatives.size(); i > 0; --i) {
+            auto& entry = alternatives[i - 1];
+            if (entry.is_empty()) {
+                if (seen_one_empty)
                     continue;
+                seen_one_empty = true;
             }
-            previous_chunk = &candidate_chunk;
-            break;
+
+            auto is_first = i == 1;
+            auto instruction_size = entry.size() + (is_first ? 0 : 2); // Jump; -> +2
+            size_to_jump += instruction_size;
+
+            if (!is_first)
+                target[patch_start + (i - 2) * 2 + 1] = size_to_jump + (alternatives.size() - i) * 2;
+
+            dbgln_if(REGEX_DEBUG, "{} size = {}, cum={}", i - 1, instruction_size, size_to_jump);
         }
 
-        size_to_jump -= chunk.size() + (previous_chunk ? 2 : 0);
+        seen_one_empty = false;
+        for (size_t i = alternatives.size(); i > 0; --i) {
+            auto& chunk = alternatives[i - 1];
+            if (chunk.is_empty()) {
+                if (seen_one_empty)
+                    continue;
+                seen_one_empty = true;
+            }
 
-        target.extend(move(chunk));
-        target.empend(static_cast<ByteCodeValueType>(OpCodeId::Jump));
-        target.empend(size_to_jump); // Jump to the _END label
+            ByteCode* previous_chunk = nullptr;
+            size_t j = i - 1;
+            auto seen_one_empty_before = chunk.is_empty();
+            while (j >= 1) {
+                --j;
+                auto& candidate_chunk = alternatives[j];
+                if (candidate_chunk.is_empty()) {
+                    if (seen_one_empty_before)
+                        continue;
+                }
+                previous_chunk = &candidate_chunk;
+                break;
+            }
+
+            size_to_jump -= chunk.size() + (previous_chunk ? 2 : 0);
+
+            target.extend(move(chunk));
+            target.empend(static_cast<ByteCodeValueType>(OpCodeId::Jump));
+            target.empend(size_to_jump); // Jump to the _END label
+        }
+    } else {
+        target.ensure_capacity(total_bytecode_entries_in_tree + common_hits * 6);
+
+        auto node_is = [](Tree const* node, QualifiedIP ip) {
+            if (!node->has_metadata())
+                return false;
+            for (auto& node_ip : node->metadata_value()) {
+                if (node_ip.alternative_index == ip.alternative_index && node_ip.instruction_position == ip.instruction_position)
+                    return true;
+            }
+            return false;
+        };
+
+        struct Patch {
+            QualifiedIP source_ip;
+            size_t target_ip;
+            bool done { false };
+        };
+        Vector<Patch> patch_locations;
+        patch_locations.ensure_capacity(total_nodes);
+
+        auto add_patch_point = [&](Tree const* node, size_t target_ip) {
+            if (!node->has_metadata())
+                return;
+            auto& node_ip = node->metadata_value().first();
+            patch_locations.append({ node_ip, target_ip });
+        };
+
+        Queue<Tree*> nodes_to_visit;
+        nodes_to_visit.enqueue(&trie);
+
+        // each node:
+        //   node.re
+        //   forkjump child1
+        //   forkjump child2
+        //   ...
+        while (!nodes_to_visit.is_empty()) {
+            auto const* node = nodes_to_visit.dequeue();
+            for (auto& patch : patch_locations) {
+                if (!patch.done && node_is(node, patch.source_ip)) {
+                    auto value = static_cast<ByteCodeValueType>(target.size() - patch.target_ip - 1);
+                    target[patch.target_ip] = value;
+                    patch.done = true;
+                }
+            }
+
+            if (!node->value().individual_spans().is_empty()) {
+                auto insn_bytes = node->value().individual_spans().first();
+
+                target.ensure_capacity(target.size() + insn_bytes.size());
+                state.instruction_position = target.size();
+                target.append(insn_bytes);
+
+                auto& opcode = target.get_opcode(state);
+
+                ssize_t jump_offset;
+                auto is_jump = true;
+                auto patch_location = state.instruction_position + 1;
+
+                switch (opcode.opcode_id()) {
+                case OpCodeId::Jump:
+                    jump_offset = static_cast<OpCode_Jump const&>(opcode).offset();
+                    break;
+                case OpCodeId::JumpNonEmpty:
+                    jump_offset = static_cast<OpCode_JumpNonEmpty const&>(opcode).offset();
+                    break;
+                case OpCodeId::ForkJump:
+                    jump_offset = static_cast<OpCode_ForkJump const&>(opcode).offset();
+                    break;
+                case OpCodeId::ForkStay:
+                    jump_offset = static_cast<OpCode_ForkStay const&>(opcode).offset();
+                    break;
+                case OpCodeId::ForkReplaceJump:
+                    jump_offset = static_cast<OpCode_ForkReplaceJump const&>(opcode).offset();
+                    break;
+                case OpCodeId::ForkReplaceStay:
+                    jump_offset = static_cast<OpCode_ForkReplaceStay const&>(opcode).offset();
+                    break;
+                case OpCodeId::Repeat:
+                    jump_offset = static_cast<ssize_t>(0) - static_cast<ssize_t>(static_cast<OpCode_Repeat const&>(opcode).offset());
+                    break;
+                default:
+                    is_jump = false;
+                    break;
+                }
+
+                if (is_jump) {
+                    VERIFY(node->has_metadata());
+                    auto& ip = node->metadata_value().first();
+                    patch_locations.append({ QualifiedIP { ip.alternative_index, ip.instruction_position + jump_offset + opcode.size() }, patch_location });
+                }
+            }
+
+            for (auto const& child : node->children()) {
+                auto* child_node = static_cast<Tree*>(child.value.ptr());
+                target.append(static_cast<ByteCodeValueType>(OpCodeId::ForkJump));
+                add_patch_point(child_node, target.size());
+                target.append(static_cast<ByteCodeValueType>(0));
+                nodes_to_visit.enqueue(child_node);
+            }
+        }
+
+        for (auto& patch : patch_locations) {
+            if (patch.done)
+                continue;
+
+            auto& alternative = alternatives[patch.source_ip.alternative_index];
+            if (patch.source_ip.instruction_position >= alternative.size()) {
+                // This just wants to jump to the end of the alternative, which is fine.
+                // Patch it to jump to the end of the target instead.
+                target[patch.target_ip] = static_cast<ByteCodeValueType>(target.size() - patch.target_ip - 1);
+                continue;
+            }
+
+            dbgln("Regex Tree / Unpatched jump: {}@{} -> {}@{}",
+                patch.source_ip.instruction_position,
+                patch.source_ip.alternative_index,
+                patch.target_ip,
+                target[patch.target_ip]);
+            VERIFY_NOT_REACHED();
+        }
     }
 }
 

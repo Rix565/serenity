@@ -274,7 +274,7 @@ template<>
 struct __MakeUnsigned<bool> {
     using Type = bool;
 };
-#ifdef AK_ARCH_AARCH64
+#if ARCH(AARCH64)
 template<>
 struct __MakeUnsigned<wchar_t> {
     using Type = wchar_t;
@@ -332,7 +332,7 @@ template<>
 struct __MakeSigned<char> {
     using Type = char;
 };
-#ifdef AK_ARCH_AARCH64
+#if ARCH(AARCH64)
 template<>
 struct __MakeSigned<wchar_t> {
     using Type = void;
@@ -448,12 +448,19 @@ inline constexpr bool IsFundamental = IsArithmetic<T> || IsVoid<T> || IsNullPoin
 template<typename T, T... Ts>
 struct IntegerSequence {
     using Type = T;
-    static constexpr unsigned size() noexcept { return sizeof...(Ts); };
+    static constexpr unsigned size() noexcept { return sizeof...(Ts); }
 };
 
 template<unsigned... Indices>
 using IndexSequence = IntegerSequence<unsigned, Indices...>;
 
+#if __has_builtin(__make_integer_seq)
+template<typename T, T N>
+using MakeIntegerSequence = __make_integer_seq<IntegerSequence, T, N>;
+#elif __has_builtin(__integer_pack)
+template<typename T, T N>
+using MakeIntegerSequence = IntegerSequence<T, __integer_pack(N)...>;
+#else
 template<typename T, T N, T... Ts>
 auto make_integer_sequence_impl()
 {
@@ -465,6 +472,7 @@ auto make_integer_sequence_impl()
 
 template<typename T, T N>
 using MakeIntegerSequence = decltype(make_integer_sequence_impl<T, N>());
+#endif
 
 template<unsigned N>
 using MakeIndexSequence = MakeIntegerSequence<unsigned, N>;
@@ -521,9 +529,6 @@ inline constexpr bool IsTrivial = __is_trivial(T);
 
 template<typename T>
 inline constexpr bool IsTriviallyCopyable = __is_trivially_copyable(T);
-
-template<typename T, typename... Args>
-inline constexpr bool IsCallableWithArguments = requires(T t) { t(declval<Args>()...); };
 
 template<typename T, typename... Args>
 inline constexpr bool IsConstructible = requires { ::new T(declval<Args>()...); };
@@ -635,7 +640,6 @@ using AK::Detail::IntegerSequence;
 using AK::Detail::IsArithmetic;
 using AK::Detail::IsAssignable;
 using AK::Detail::IsBaseOf;
-using AK::Detail::IsCallableWithArguments;
 using AK::Detail::IsClass;
 using AK::Detail::IsConst;
 using AK::Detail::IsConstructible;

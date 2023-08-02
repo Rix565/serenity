@@ -20,10 +20,10 @@ public:
     virtual JS::GCPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::StyleProperties>) override;
 
     double value() const;
-    void set_value(double);
+    WebIDL::ExceptionOr<void> set_value(double);
 
     double max() const;
-    void set_max(double value);
+    WebIDL::ExceptionOr<void> set_max(double value);
 
     double position() const;
 
@@ -39,6 +39,9 @@ public:
 private:
     HTMLProgressElement(DOM::Document&, DOM::QualifiedName);
 
+    // ^DOM::Node
+    virtual bool is_html_progress_element() const final { return true; }
+
     virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
 
     void progress_position_updated();
@@ -46,4 +49,9 @@ private:
     bool is_determinate() const { return has_attribute(HTML::AttributeNames::value); }
 };
 
+}
+
+namespace Web::DOM {
+template<>
+inline bool Node::fast_is<HTML::HTMLProgressElement>() const { return is_html_progress_element(); }
 }

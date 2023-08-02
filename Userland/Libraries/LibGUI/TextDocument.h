@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,7 +9,6 @@
 #pragma once
 
 #include <AK/HashTable.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
 #include <AK/RefCounted.h>
@@ -26,13 +26,20 @@
 
 namespace GUI {
 
-constexpr Time COMMAND_COMMIT_TIME = Time::from_milliseconds(400);
+constexpr Duration COMMAND_COMMIT_TIME = Duration::from_milliseconds(400);
 
 struct TextDocumentSpan {
     TextRange range;
     Gfx::TextAttributes attributes;
     u64 data { 0 };
     bool is_skippable { false };
+};
+
+struct TextDocumentFoldingRegion {
+    TextRange range;
+    bool is_folded { false };
+    // This pointer is only used to identify that two TDFRs are the same.
+    RawPtr<class TextDocumentLine> line_ptr;
 };
 
 class TextDocument : public RefCounted<TextDocument> {
@@ -62,15 +69,19 @@ public:
     virtual ~TextDocument() = default;
 
     size_t line_count() const { return m_lines.size(); }
-    TextDocumentLine const& line(size_t line_index) const { return m_lines[line_index]; }
-    TextDocumentLine& line(size_t line_index) { return m_lines[line_index]; }
+    TextDocumentLine const& line(size_t line_index) const { return *m_lines[line_index]; }
+    TextDocumentLine& line(size_t line_index) { return *m_lines[line_index]; }
 
     void set_spans(u32 span_collection_index, Vector<TextDocumentSpan> spans);
 
-    bool set_text(StringView, AllowCallback = AllowCallback::Yes);
+    enum class IsNewDocument {
+        No,
+        Yes,
+    };
+    bool set_text(StringView, AllowCallback = AllowCallback::Yes, IsNewDocument = IsNewDocument::Yes);
 
-    NonnullOwnPtrVector<TextDocumentLine> const& lines() const { return m_lines; }
-    NonnullOwnPtrVector<TextDocumentLine>& lines() { return m_lines; }
+    Vector<NonnullOwnPtr<TextDocumentLine>> const& lines() const { return m_lines; }
+    Vector<NonnullOwnPtr<TextDocumentLine>>& lines() { return m_lines; }
 
     bool has_spans() const { return !m_spans.is_empty(); }
     Vector<TextDocumentSpan>& spans() { return m_spans; }
@@ -78,6 +89,16 @@ public:
     void set_span_at_index(size_t index, TextDocumentSpan span) { m_spans[index] = move(span); }
 
     TextDocumentSpan const* span_at(TextPosition const&) const;
+
+    void set_folding_regions(Vector<TextDocumentFoldingRegion>);
+    bool has_folding_regions() const { return !m_folding_regions.is_empty(); }
+    Vector<TextDocumentFoldingRegion>& folding_regions() { return m_folding_regions; }
+    Vector<TextDocumentFoldingRegion> const& folding_regions() const { return m_folding_regions; }
+    Optional<TextDocumentFoldingRegion&> folding_region_starting_on_line(size_t line);
+    // Returns all folded FoldingRegions that are not contained inside another folded region.
+    Vector<TextDocumentFoldingRegion const&> currently_folded_regions() const;
+    // Returns true if any part of the line is currently visible. (Not inside a folded FoldingRegion.)
+    bool line_is_visible(size_t line) const;
 
     void append_line(NonnullOwnPtr<TextDocumentLine>);
     NonnullOwnPtr<TextDocumentLine> take_line(size_t line_index);
@@ -101,6 +122,9 @@ public:
 
     TextPosition next_position_after(TextPosition const&, SearchShouldWrap = SearchShouldWrap::Yes) const;
     TextPosition previous_position_before(TextPosition const&, SearchShouldWrap = SearchShouldWrap::Yes) const;
+
+    size_t get_next_grapheme_cluster_boundary(TextPosition const& cursor) const;
+    size_t get_previous_grapheme_cluster_boundary(TextPosition const& cursor) const;
 
     u32 code_point_at(TextPosition const&) const;
 
@@ -130,8 +154,6 @@ public:
     TextPosition insert_at(TextPosition const&, StringView, Client const* = nullptr);
     void remove(TextRange const&);
 
-    virtual bool is_code_document() const { return false; }
-
     bool is_empty() const;
     bool is_modified() const { return m_undo_stack.is_current_modified(); }
     void set_unmodified();
@@ -142,9 +164,10 @@ protected:
 private:
     void merge_span_collections();
 
-    NonnullOwnPtrVector<TextDocumentLine> m_lines;
+    Vector<NonnullOwnPtr<TextDocumentLine>> m_lines;
     HashMap<u32, Vector<TextDocumentSpan>> m_span_collections;
     Vector<TextDocumentSpan> m_spans;
+    Vector<TextDocumentFoldingRegion> m_folding_regions;
 
     HashTable<Client*> m_clients;
     bool m_client_notifications_enabled { true };
@@ -207,9 +230,9 @@ public:
     }
 
 protected:
-    bool commit_time_expired() const { return Time::now_monotonic() - m_timestamp >= COMMAND_COMMIT_TIME; }
+    bool commit_time_expired() const { return MonotonicTime::now() - m_timestamp >= COMMAND_COMMIT_TIME; }
 
-    Time m_timestamp = Time::now_monotonic();
+    MonotonicTime m_timestamp = MonotonicTime::now();
     TextDocument& m_document;
     TextDocument::Client const* m_client { nullptr };
 };
@@ -233,7 +256,7 @@ private:
 
 class RemoveTextCommand : public TextDocumentUndoCommand {
 public:
-    RemoveTextCommand(TextDocument&, DeprecatedString const&, TextRange const&);
+    RemoveTextCommand(TextDocument&, DeprecatedString const&, TextRange const&, TextPosition const&);
     virtual ~RemoveTextCommand() = default;
     virtual void undo() override;
     virtual void redo() override;
@@ -244,6 +267,7 @@ public:
 private:
     DeprecatedString m_text;
     TextRange m_range;
+    TextPosition m_original_cursor_position;
 };
 
 class InsertLineCommand : public TextDocumentUndoCommand {
@@ -270,19 +294,17 @@ private:
 class ReplaceAllTextCommand final : public GUI::TextDocumentUndoCommand {
 
 public:
-    ReplaceAllTextCommand(GUI::TextDocument& document, DeprecatedString const& new_text, GUI::TextRange const& range, DeprecatedString const& action_text);
+    ReplaceAllTextCommand(GUI::TextDocument& document, DeprecatedString const& new_text, DeprecatedString const& action_text);
     virtual ~ReplaceAllTextCommand() = default;
     void redo() override;
     void undo() override;
     bool merge_with(GUI::Command const&) override;
     DeprecatedString action_text() const override;
     DeprecatedString const& text() const { return m_new_text; }
-    TextRange const& range() const { return m_range; }
 
 private:
     DeprecatedString m_original_text;
     DeprecatedString m_new_text;
-    GUI::TextRange m_range;
     DeprecatedString m_action_text;
 };
 

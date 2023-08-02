@@ -23,10 +23,11 @@
 #include <LibCore/Event.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/File.h>
-#include <LibCore/Stream.h>
 #include <LibCore/System.h>
 #include <LibCore/Timer.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibLine/Editor.h>
+#include <Shell/PosixParser.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -220,7 +221,7 @@ Vector<DeprecatedString> Shell::expand_globs(StringView path, StringView base)
     }
 
     StringBuilder resolved_base_path_builder;
-    resolved_base_path_builder.append(Core::File::real_path_for(base));
+    resolved_base_path_builder.append(FileSystem::real_path(base).release_value_but_fixme_should_propagate_errors());
     if (S_ISDIR(statbuf.st_mode))
         resolved_base_path_builder.append('/');
 
@@ -289,16 +290,16 @@ Vector<DeprecatedString> Shell::expand_globs(Vector<StringView> path_segments, S
     }
 }
 
-Vector<AST::Command> Shell::expand_aliases(Vector<AST::Command> initial_commands)
+ErrorOr<Vector<AST::Command>> Shell::expand_aliases(Vector<AST::Command> initial_commands)
 {
     Vector<AST::Command> commands;
 
-    Function<void(AST::Command&)> resolve_aliases_and_append = [&](auto& command) {
+    Function<ErrorOr<void>(AST::Command&)> resolve_aliases_and_append = [&](auto& command) -> ErrorOr<void> {
         if (!command.argv.is_empty()) {
             auto alias = resolve_alias(command.argv[0]);
             if (!alias.is_null()) {
                 auto argv0 = command.argv.take_first();
-                auto subcommand_ast = Parser { alias }.parse();
+                auto subcommand_ast = parse(alias, false);
                 if (subcommand_ast) {
                     while (subcommand_ast->is_execute()) {
                         auto* ast = static_cast<AST::Execute*>(subcommand_ast.ptr());
@@ -308,12 +309,12 @@ Vector<AST::Command> Shell::expand_aliases(Vector<AST::Command> initial_commands
                     NonnullRefPtr<AST::Node> substitute = adopt_ref(*new AST::Join(subcommand_nonnull->position(),
                         subcommand_nonnull,
                         adopt_ref(*new AST::CommandLiteral(subcommand_nonnull->position(), command))));
-                    auto res = substitute->run(*this);
-                    for (auto& subst_command : res->resolve_as_commands(*this)) {
+                    auto res = TRY(substitute->run(*this));
+                    for (auto& subst_command : TRY(res->resolve_as_commands(*this))) {
                         if (!subst_command.argv.is_empty() && subst_command.argv.first() == argv0) // Disallow an alias resolving to itself.
                             commands.append(subst_command);
                         else
-                            resolve_aliases_and_append(subst_command);
+                            TRY(resolve_aliases_and_append(subst_command));
                     }
                 } else {
                     commands.append(command);
@@ -324,10 +325,12 @@ Vector<AST::Command> Shell::expand_aliases(Vector<AST::Command> initial_commands
         } else {
             commands.append(command);
         }
+
+        return {};
     };
 
     for (auto& command : initial_commands)
-        resolve_aliases_and_append(command);
+        TRY(resolve_aliases_and_append(command));
 
     return commands;
 }
@@ -337,20 +340,20 @@ DeprecatedString Shell::resolve_path(DeprecatedString path) const
     if (!path.starts_with('/'))
         path = DeprecatedString::formatted("{}/{}", cwd, path);
 
-    return Core::File::real_path_for(path);
+    return FileSystem::real_path(path).release_value_but_fixme_should_propagate_errors().to_deprecated_string();
 }
 
 Shell::LocalFrame* Shell::find_frame_containing_local_variable(StringView name)
 {
     for (size_t i = m_local_frames.size(); i > 0; --i) {
         auto& frame = m_local_frames[i - 1];
-        if (frame.local_variables.contains(name))
-            return &frame;
+        if (frame->local_variables.contains(name))
+            return frame;
     }
     return nullptr;
 }
 
-RefPtr<AST::Value> Shell::lookup_local_variable(StringView name) const
+ErrorOr<RefPtr<AST::Value const>> Shell::look_up_local_variable(StringView name) const
 {
     if (auto* frame = find_frame_containing_local_variable(name))
         return frame->local_variables.get(name).value();
@@ -361,15 +364,15 @@ RefPtr<AST::Value> Shell::lookup_local_variable(StringView name) const
     return nullptr;
 }
 
-RefPtr<AST::Value> Shell::get_argument(size_t index) const
+ErrorOr<RefPtr<AST::Value const>> Shell::get_argument(size_t index) const
 {
     if (index == 0)
-        return adopt_ref(*new AST::StringValue(current_script));
+        return adopt_ref(*new AST::StringValue(TRY(String::from_deprecated_string(current_script))));
 
     --index;
-    if (auto argv = lookup_local_variable("ARGV"sv)) {
+    if (auto argv = TRY(look_up_local_variable("ARGV"sv))) {
         if (argv->is_list_without_resolution()) {
-            AST::ListValue* list = static_cast<AST::ListValue*>(argv.ptr());
+            AST::ListValue const* list = static_cast<AST::ListValue const*>(argv.ptr());
             if (list->values().size() <= index)
                 return nullptr;
 
@@ -385,12 +388,12 @@ RefPtr<AST::Value> Shell::get_argument(size_t index) const
     return nullptr;
 }
 
-DeprecatedString Shell::local_variable_or(StringView name, DeprecatedString const& replacement) const
+ErrorOr<DeprecatedString> Shell::local_variable_or(StringView name, DeprecatedString const& replacement) const
 {
-    auto value = lookup_local_variable(name);
+    auto value = TRY(look_up_local_variable(name));
     if (value) {
         StringBuilder builder;
-        builder.join(' ', value->resolve_as_list(*this));
+        builder.join(' ', TRY(const_cast<AST::Value&>(*value).resolve_as_list(const_cast<Shell&>(*this))));
         return builder.to_deprecated_string();
     }
     return replacement;
@@ -405,7 +408,16 @@ void Shell::set_local_variable(DeprecatedString const& name, RefPtr<AST::Value> 
         }
     }
 
-    m_local_frames.last().local_variables.set(name, move(value));
+    LocalFrame* selected_frame = nullptr;
+    if (m_in_posix_mode) {
+        // POSIX mode: Drop everything in the closest function frame (or the global frame if there is no function frame).
+        auto& closest_function_frame = m_local_frames.last_matching([](auto& frame) { return frame->is_function_frame; }).value();
+        selected_frame = closest_function_frame.ptr();
+    } else {
+        selected_frame = m_local_frames.last().ptr();
+    }
+
+    selected_frame->local_variables.set(name, move(value));
 }
 
 void Shell::unset_local_variable(StringView name, bool only_in_current_frame)
@@ -416,7 +428,7 @@ void Shell::unset_local_variable(StringView name, bool only_in_current_frame)
         return;
     }
 
-    m_local_frames.last().local_variables.remove(name);
+    m_local_frames.last()->local_variables.remove(name);
 }
 
 void Shell::define_function(DeprecatedString name, Vector<DeprecatedString> argnames, RefPtr<AST::Node> body)
@@ -456,7 +468,7 @@ bool Shell::invoke_function(const AST::Command& command, int& retval)
         return true;
     }
 
-    auto frame = push_frame(DeprecatedString::formatted("function {}", function.name));
+    auto frame = push_frame(DeprecatedString::formatted("function {}", function.name), LocalFrameKind::FunctionOrGlobal);
     size_t index = 0;
     for (auto& arg : function.arguments) {
         ++index;
@@ -478,18 +490,18 @@ bool Shell::invoke_function(const AST::Command& command, int& retval)
 
 DeprecatedString Shell::format(StringView source, ssize_t& cursor) const
 {
-    Formatter formatter(source, cursor);
+    Formatter formatter(source, cursor, m_in_posix_mode);
     auto result = formatter.format();
     cursor = formatter.cursor();
 
     return result;
 }
 
-Shell::Frame Shell::push_frame(DeprecatedString name)
+Shell::Frame Shell::push_frame(DeprecatedString name, Shell::LocalFrameKind kind)
 {
-    m_local_frames.append(make<LocalFrame>(name, decltype(LocalFrame::local_variables) {}));
+    m_local_frames.append(make<LocalFrame>(name, decltype(LocalFrame::local_variables) {}, kind));
     dbgln_if(SH_DEBUG, "New frame '{}' at {:p}", name, &m_local_frames.last());
-    return { m_local_frames, m_local_frames.last() };
+    return { m_local_frames, *m_local_frames.last() };
 }
 
 void Shell::pop_frame()
@@ -502,11 +514,11 @@ Shell::Frame::~Frame()
 {
     if (!should_destroy_frame)
         return;
-    if (&frames.last() != &frame) {
+    if (frames.last() != &frame) {
         dbgln("Frame destruction order violation near {:p} (container = {:p}) in '{}'", &frame, this, frame.name);
         dbgln("Current frames:");
         for (auto& frame : frames)
-            dbgln("- {:p}: {}", &frame, frame.name);
+            dbgln("- {:p}: {}", &frame, frame->name);
         VERIFY_NOT_REACHED();
     }
     (void)frames.take_last();
@@ -519,15 +531,16 @@ DeprecatedString Shell::resolve_alias(StringView name) const
 
 Optional<Shell::RunnablePath> Shell::runnable_path_for(StringView name)
 {
-    auto parts = name.split_view('/');
-    auto path = name.to_deprecated_string();
-    if (parts.size() > 1) {
-        auto file = Core::File::open(path.characters(), Core::OpenMode::ReadOnly);
-        if (!file.is_error() && !file.value()->is_directory() && access(path.characters(), X_OK) == 0)
+    auto parts = name.find('/');
+    if (parts.has_value()) {
+        auto file_or_error = Core::File::open(name, Core::File::OpenMode::Read);
+        if (!file_or_error.is_error()
+            && !FileSystem::is_directory(file_or_error.value()->fd())
+            && !Core::System::access(name, X_OK).is_error())
             return RunnablePath { RunnablePath::Kind::Executable, name };
     }
 
-    auto* found = binary_search(cached_path.span(), path, nullptr, RunnablePathComparator {});
+    auto* found = binary_search(cached_path.span(), name, nullptr, RunnablePathComparator {});
     if (!found)
         return {};
 
@@ -581,20 +594,20 @@ int Shell::run_command(StringView cmd, Optional<SourcePosition> source_position_
     if (cmd.is_empty())
         return 0;
 
-    auto command = Parser(cmd, m_is_interactive).parse();
+    auto command = parse(cmd, m_is_interactive);
 
     if (!command)
         return 0;
 
     if constexpr (SH_DEBUG) {
         dbgln("Command follows");
-        command->dump(0);
+        (void)command->dump(0);
     }
 
     if (command->is_syntax_error()) {
         auto& error_node = command->syntax_error_node();
         auto& position = error_node.position();
-        raise_error(ShellError::EvaluatedSyntaxError, error_node.error_text(), position);
+        raise_error(ShellError::EvaluatedSyntaxError, error_node.error_text().bytes_as_string_view(), position);
     }
 
     if (!has_error(ShellError::None)) {
@@ -632,9 +645,9 @@ ErrorOr<RefPtr<Job>> Shell::run_command(const AST::Command& command)
     }
 
     // Resolve redirections.
-    NonnullRefPtrVector<AST::Rewiring> rewirings;
+    Vector<NonnullRefPtr<AST::Rewiring>> rewirings;
     auto resolve_redirection = [&](auto& redirection) -> ErrorOr<void> {
-        auto rewiring = TRY(redirection.apply());
+        auto rewiring = TRY(redirection->apply());
 
         if (rewiring->fd_action != AST::Rewiring::Close::ImmediatelyCloseNew)
             rewirings.append(*rewiring);
@@ -673,18 +686,18 @@ ErrorOr<RefPtr<Job>> Shell::run_command(const AST::Command& command)
     auto apply_rewirings = [&]() -> ErrorOr<void> {
         for (auto& rewiring : rewirings) {
 
-            dbgln_if(SH_DEBUG, "in {}<{}>, dup2({}, {})", command.argv.is_empty() ? "(<Empty>)" : command.argv[0].characters(), getpid(), rewiring.old_fd, rewiring.new_fd);
-            int rc = dup2(rewiring.old_fd, rewiring.new_fd);
+            dbgln_if(SH_DEBUG, "in {}<{}>, dup2({}, {})", command.argv.is_empty() ? "(<Empty>)"sv : command.argv[0], getpid(), rewiring->old_fd, rewiring->new_fd);
+            int rc = dup2(rewiring->old_fd, rewiring->new_fd);
             if (rc < 0)
                 return Error::from_syscall("dup2"sv, rc);
-            // {new,old}_fd is closed via the `fds` collector, but rewiring.other_pipe_end->{new,old}_fd
+            // {new,old}_fd is closed via the `fds` collector, but rewiring->other_pipe_end->{new,old}_fd
             // isn't yet in that collector when the first child spawns.
-            if (rewiring.other_pipe_end) {
-                if (rewiring.fd_action == AST::Rewiring::Close::RefreshNew) {
-                    if (rewiring.other_pipe_end && close(rewiring.other_pipe_end->new_fd) < 0)
+            if (rewiring->other_pipe_end) {
+                if (rewiring->fd_action == AST::Rewiring::Close::RefreshNew) {
+                    if (rewiring->other_pipe_end && close(rewiring->other_pipe_end->new_fd) < 0)
                         perror("close other pipe end");
-                } else if (rewiring.fd_action == AST::Rewiring::Close::RefreshOld) {
-                    if (rewiring.other_pipe_end && close(rewiring.other_pipe_end->old_fd) < 0)
+                } else if (rewiring->fd_action == AST::Rewiring::Close::RefreshOld) {
+                    if (rewiring->other_pipe_end && close(rewiring->other_pipe_end->old_fd) < 0)
                         perror("close other pipe end");
                 }
             }
@@ -700,7 +713,7 @@ ErrorOr<RefPtr<Job>> Shell::run_command(const AST::Command& command)
     for (auto& redirection : command.redirections)
         TRY(resolve_redirection(redirection));
 
-    if (int local_return_code = 0; command.should_wait && run_builtin(command, rewirings, local_return_code)) {
+    if (int local_return_code = 0; command.should_wait && TRY(run_builtin(command, rewirings, local_return_code))) {
         last_return_code = local_return_code;
         for (auto& next_in_chain : command.next_chain)
             run_tail(command, next_in_chain, *last_return_code);
@@ -712,7 +725,7 @@ ErrorOr<RefPtr<Job>> Shell::run_command(const AST::Command& command)
         SavedFileDescriptors fds { rewirings };
 
         for (auto& rewiring : rewirings)
-            TRY(Core::System::dup2(rewiring.old_fd, rewiring.new_fd));
+            TRY(Core::System::dup2(rewiring->old_fd, rewiring->new_fd));
 
         if (int local_return_code = 0; invoke_function(command, local_return_code)) {
             last_return_code = local_return_code;
@@ -734,11 +747,13 @@ ErrorOr<RefPtr<Job>> Shell::run_command(const AST::Command& command)
     }
 
     Vector<char const*> argv;
-    Vector<DeprecatedString> copy_argv = command.argv;
+    Vector<DeprecatedString> copy_argv;
     argv.ensure_capacity(command.argv.size() + 1);
 
-    for (auto& arg : copy_argv)
-        argv.append(arg.characters());
+    for (auto& arg : command.argv) {
+        copy_argv.append(arg.to_deprecated_string());
+        argv.append(copy_argv.last().characters());
+    }
 
     argv.append(nullptr);
 
@@ -789,7 +804,7 @@ ErrorOr<RefPtr<Job>> Shell::run_command(const AST::Command& command)
             _exit(last_return_code.value_or(0));
         }
 
-        if (int local_return_code = 0; run_builtin(command, {}, local_return_code))
+        if (int local_return_code = 0; TRY(run_builtin(command, {}, local_return_code)))
             _exit(local_return_code);
 
         if (int local_return_code = 0; invoke_function(command, local_return_code))
@@ -875,6 +890,24 @@ ErrorOr<RefPtr<Job>> Shell::run_command(const AST::Command& command)
     return *job;
 }
 
+ErrorOr<void> Shell::execute_process(Span<StringView> argv)
+{
+    Vector<DeprecatedString> strings;
+    Vector<char const*> args;
+    TRY(strings.try_ensure_capacity(argv.size()));
+    TRY(args.try_ensure_capacity(argv.size() + 1));
+
+    for (auto& entry : argv) {
+        strings.unchecked_append(entry);
+        args.unchecked_append(strings.last().characters());
+    }
+
+    args.append(nullptr);
+
+    // NOTE: noreturn.
+    execute_process(move(args));
+}
+
 void Shell::execute_process(Vector<char const*>&& argv)
 {
     for (auto& promise : m_active_promises) {
@@ -906,11 +939,21 @@ void Shell::execute_process(Vector<char const*>&& argv)
         }
         if (saved_errno == ENOENT) {
             do {
-                auto file_result = Core::File::open(argv[0], Core::OpenMode::ReadOnly);
+                auto path_as_string_or_error = String::from_utf8({ argv[0], strlen(argv[0]) });
+                if (path_as_string_or_error.is_error())
+                    break;
+                auto file_result = Core::File::open(path_as_string_or_error.value(), Core::File::OpenMode::Read);
                 if (file_result.is_error())
                     break;
-                auto& file = file_result.value();
-                auto line = file->read_line();
+                auto buffered_file_result = Core::InputBufferedFile::create(file_result.release_value());
+                if (buffered_file_result.is_error())
+                    break;
+                auto file = buffered_file_result.release_value();
+                Array<u8, 1 * KiB> line_buf;
+                auto line_or_error = file->read_line(line_buf);
+                if (line_or_error.is_error())
+                    break;
+                auto line = line_or_error.release_value();
                 if (!line.starts_with("#!"sv))
                     break;
                 GenericLexer shebang_lexer { line.substring_view(2) };
@@ -979,7 +1022,7 @@ void Shell::run_tail(RefPtr<Job> job)
     }
 }
 
-NonnullRefPtrVector<Job> Shell::run_commands(Vector<AST::Command>& commands)
+Vector<NonnullRefPtr<Job>> Shell::run_commands(Vector<AST::Command>& commands)
 {
     if (m_error != ShellError::None) {
         possibly_print_error();
@@ -988,7 +1031,7 @@ NonnullRefPtrVector<Job> Shell::run_commands(Vector<AST::Command>& commands)
         return {};
     }
 
-    NonnullRefPtrVector<Job> spawned_jobs;
+    Vector<NonnullRefPtr<Job>> spawned_jobs;
 
     for (auto& command : commands) {
         if constexpr (SH_DEBUG) {
@@ -996,13 +1039,13 @@ NonnullRefPtrVector<Job> Shell::run_commands(Vector<AST::Command>& commands)
             for (auto& arg : command.argv)
                 dbgln("argv: {}", arg);
             for (auto& redir : command.redirections) {
-                if (redir.is_path_redirection()) {
+                if (redir->is_path_redirection()) {
                     auto path_redir = (const AST::PathRedirection*)&redir;
                     dbgln("redir path '{}' <-({})-> {}", path_redir->path, (int)path_redir->direction, path_redir->fd);
-                } else if (redir.is_fd_redirection()) {
+                } else if (redir->is_fd_redirection()) {
                     auto* fdredir = (const AST::FdRedirection*)&redir;
                     dbgln("redir fd {} -> {}", fdredir->old_fd, fdredir->new_fd);
-                } else if (redir.is_close_redirection()) {
+                } else if (redir->is_close_redirection()) {
                     auto close_redir = (const AST::CloseRedirection*)&redir;
                     dbgln("close fd {}", close_redir->fd);
                 } else {
@@ -1045,18 +1088,26 @@ bool Shell::run_file(DeprecatedString const& filename, bool explicitly_invoked)
     TemporaryChange interactive_change { m_is_interactive, false };
     TemporaryChange<Optional<SourcePosition>> source_change { m_source_position, SourcePosition { .source_file = filename, .literal_source_text = {}, .position = {} } };
 
-    auto file_result = Core::File::open(filename, Core::OpenMode::ReadOnly);
-    if (file_result.is_error()) {
-        auto error = DeprecatedString::formatted("'{}': {}", escape_token_for_single_quotes(filename), file_result.error());
+    auto file_or_error = Core::File::open(filename, Core::File::OpenMode::Read);
+    if (file_or_error.is_error()) {
+        auto error = DeprecatedString::formatted("'{}': {}", escape_token_for_single_quotes(filename), file_or_error.error());
         if (explicitly_invoked)
             raise_error(ShellError::OpenFailure, error);
         else
             dbgln("open() failed for {}", error);
         return false;
     }
-    auto file = file_result.value();
-    auto data = file->read_all();
-    return run_command(data) == 0;
+    auto file = file_or_error.release_value();
+    auto data_or_error = file->read_until_eof();
+    if (data_or_error.is_error()) {
+        auto error = DeprecatedString::formatted("'{}': {}", escape_token_for_single_quotes(filename), data_or_error.error());
+        if (explicitly_invoked)
+            raise_error(ShellError::OpenFailure, error);
+        else
+            dbgln("reading after open() failed for {}", error);
+        return false;
+    }
+    return run_command(data_or_error.value()) == 0;
 }
 
 bool Shell::is_allowed_to_modify_termios(const AST::Command& command) const
@@ -1064,11 +1115,18 @@ bool Shell::is_allowed_to_modify_termios(const AST::Command& command) const
     if (command.argv.is_empty())
         return false;
 
-    auto value = lookup_local_variable("PROGRAMS_ALLOWED_TO_MODIFY_DEFAULT_TERMIOS"sv);
-    if (!value)
+    auto value = look_up_local_variable("PROGRAMS_ALLOWED_TO_MODIFY_DEFAULT_TERMIOS"sv);
+    if (value.is_error())
         return false;
 
-    return value->resolve_as_list(*this).contains_slow(command.argv[0]);
+    if (!value.value())
+        return false;
+
+    auto result = const_cast<AST::Value&>(*value.value()).resolve_as_list(const_cast<Shell&>(*this));
+    if (result.is_error())
+        return false;
+
+    return result.value().contains_slow(command.argv[0]);
 }
 
 void Shell::restore_ios()
@@ -1093,7 +1151,7 @@ void Shell::block_on_pipeline(RefPtr<AST::Pipeline> pipeline)
 
 void Shell::block_on_job(RefPtr<Job> job)
 {
-    TemporaryChange<Job const*> current_job { m_current_job, job.ptr() };
+    TemporaryChange<Job*> current_job { m_current_job, job.ptr() };
 
     if (!job)
         return;
@@ -1364,7 +1422,7 @@ void Shell::cache_path()
         cached_path.append({ RunnablePath::Kind::Alias, name });
     }
 
-    // TODO: Can we make this rely on Core::File::resolve_executable_from_environment()?
+    // TODO: Can we make this rely on Core::System::resolve_executable_from_environment()?
     DeprecatedString path = getenv("PATH");
     if (!path.is_empty()) {
         auto directories = path.split(':');
@@ -1408,14 +1466,13 @@ void Shell::remove_entry_from_cache(StringView entry)
         cached_path.remove(index);
 }
 
-void Shell::highlight(Line::Editor& editor) const
+ErrorOr<void> Shell::highlight(Line::Editor& editor) const
 {
     auto line = editor.line();
-    Parser parser(line, m_is_interactive);
-    auto ast = parser.parse();
+    auto ast = parse(line, m_is_interactive);
     if (!ast)
-        return;
-    ast->highlight_in_editor(editor, const_cast<Shell&>(*this));
+        return {};
+    return ast->highlight_in_editor(editor, const_cast<Shell&>(*this));
 }
 
 Vector<Line::CompletionSuggestion> Shell::complete()
@@ -1426,14 +1483,12 @@ Vector<Line::CompletionSuggestion> Shell::complete()
 
 Vector<Line::CompletionSuggestion> Shell::complete(StringView line)
 {
-    Parser parser(line, m_is_interactive);
-
-    auto ast = parser.parse();
+    auto ast = parse(line, m_is_interactive);
 
     if (!ast)
         return {};
 
-    return ast->complete_for_editor(*this, line.length());
+    return ast->complete_for_editor(*this, line.length()).release_value_but_fixme_should_propagate_errors();
 }
 
 Vector<Line::CompletionSuggestion> Shell::complete_path(StringView base, StringView part, size_t offset, ExecutableOnly executable_only, AST::Node const* command_node, AST::Node const* node, EscapeMode escape_mode)
@@ -1581,7 +1636,7 @@ Vector<Line::CompletionSuggestion> Shell::complete_variable(StringView name, siz
 
     // Look at local variables.
     for (auto& frame : m_local_frames) {
-        for (auto& variable : frame.local_variables) {
+        for (auto& variable : frame->local_variables) {
             if (variable.key.starts_with(pattern) && !suggestions.contains_slow(variable.key))
                 suggestions.append(variable.key);
         }
@@ -1668,29 +1723,27 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
     if (command_node->would_execute())
         return Error::from_string_literal("Refusing to complete nodes that would execute");
 
-    DeprecatedString program_name_storage;
+    String program_name_storage;
     if (known_program_name.is_null()) {
         auto node = command_node->leftmost_trivial_literal();
         if (!node)
             return Error::from_string_literal("Cannot complete");
 
-        program_name_storage = node->run(*this)->resolve_as_string(*this);
+        program_name_storage = TRY(TRY(const_cast<AST::Node&>(*node).run(*this))->resolve_as_string(*this));
         known_program_name = program_name_storage;
     }
 
-    auto program_name = known_program_name;
-
     AST::Command completion_command;
-    completion_command.argv.append(program_name);
-    completion_command = expand_aliases({ completion_command }).last();
+    completion_command.argv.append(program_name_storage);
+    completion_command = TRY(expand_aliases({ completion_command })).last();
 
-    auto completion_utility_name = DeprecatedString::formatted("_complete_{}", completion_command.argv[0]);
+    auto completion_utility_name = TRY(String::formatted("_complete_{}", completion_command.argv[0]));
     if (binary_search(cached_path.span(), completion_utility_name, nullptr, RunnablePathComparator {}) != nullptr)
         completion_command.argv[0] = completion_utility_name;
     else if (!options.invoke_program_for_autocomplete)
         return Error::from_string_literal("Refusing to use the program itself as completion source");
 
-    completion_command.argv.extend({ "--complete", "--" });
+    completion_command.argv.extend({ TRY("--complete"_string), "--"_short_string });
 
     struct Visitor : public AST::NodeVisitor {
         Visitor(Shell& shell, AST::Position position)
@@ -1702,12 +1755,12 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
 
         Shell& shell;
         AST::Position completion_position;
-        Vector<Vector<DeprecatedString>> lists;
+        Vector<Vector<String>> lists;
         bool fail { false };
 
         void push_list() { lists.empend(); }
-        Vector<DeprecatedString> pop_list() { return lists.take_last(); }
-        Vector<DeprecatedString>& list() { return lists.last(); }
+        Vector<String> pop_list() { return lists.take_last(); }
+        Vector<String>& list() { return lists.last(); }
 
         bool should_include(AST::Node const* node) const { return node->position().end_offset <= completion_position.end_offset; }
 
@@ -1719,8 +1772,11 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
 
         virtual void visit(AST::BraceExpansion const* node) override
         {
-            if (should_include(node))
-                list().extend(static_cast<AST::Node*>(const_cast<AST::BraceExpansion*>(node))->run(shell)->resolve_as_list(shell));
+            if (should_include(node)) {
+                auto value = static_cast<AST::Node*>(const_cast<AST::BraceExpansion*>(node))->run(shell).release_value_but_fixme_should_propagate_errors();
+                auto entries = value->resolve_as_list(shell).release_value_but_fixme_should_propagate_errors();
+                list().extend(move(entries));
+            }
         }
 
         virtual void visit(AST::CommandLiteral const* node) override
@@ -1745,7 +1801,7 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
             auto list = pop_list();
             StringBuilder builder;
             builder.join(""sv, list);
-            this->list().append(builder.to_deprecated_string());
+            this->list().append(builder.to_string().release_value_but_fixme_should_propagate_errors());
         }
 
         virtual void visit(AST::Glob const* node) override
@@ -1764,7 +1820,7 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
             auto list = pop_list();
             StringBuilder builder;
             builder.join(""sv, list);
-            this->list().append(builder.to_deprecated_string());
+            this->list().append(builder.to_string().release_value_but_fixme_should_propagate_errors());
         }
 
         virtual void visit(AST::ImmediateExpression const* node) override
@@ -1785,14 +1841,20 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
 
         virtual void visit(AST::SimpleVariable const* node) override
         {
-            if (should_include(node))
-                list().extend(static_cast<AST::Node*>(const_cast<AST::SimpleVariable*>(node))->run(shell)->resolve_as_list(shell));
+            if (should_include(node)) {
+                auto values = static_cast<AST::Node*>(const_cast<AST::SimpleVariable*>(node))->run(shell).release_value_but_fixme_should_propagate_errors();
+                auto entries = values->resolve_as_list(shell).release_value_but_fixme_should_propagate_errors();
+                list().extend(move(entries));
+            }
         }
 
         virtual void visit(AST::SpecialVariable const* node) override
         {
-            if (should_include(node))
-                list().extend(static_cast<AST::Node*>(const_cast<AST::SpecialVariable*>(node))->run(shell)->resolve_as_list(shell));
+            if (should_include(node)) {
+                auto values = static_cast<AST::Node*>(const_cast<AST::SpecialVariable*>(node))->run(shell).release_value_but_fixme_should_propagate_errors();
+                auto entries = values->resolve_as_list(shell).release_value_but_fixme_should_propagate_errors();
+                list().extend(move(entries));
+            }
         }
 
         virtual void visit(AST::Juxtaposition const* node) override
@@ -1813,7 +1875,7 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
                 for (auto& right_entry : right) {
                     builder.append(left_entry);
                     builder.append(right_entry);
-                    list().append(builder.to_deprecated_string());
+                    list().append(builder.to_string().release_value_but_fixme_should_propagate_errors());
                     builder.clear();
                 }
             }
@@ -1827,8 +1889,11 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
 
         virtual void visit(AST::Tilde const* node) override
         {
-            if (should_include(node))
-                list().extend(static_cast<AST::Node*>(const_cast<AST::Tilde*>(node))->run(shell)->resolve_as_list(shell));
+            if (should_include(node)) {
+                auto values = static_cast<AST::Node*>(const_cast<AST::Tilde*>(node))->run(shell).release_value_but_fixme_should_propagate_errors();
+                auto entries = values->resolve_as_list(shell).release_value_but_fixme_should_propagate_errors();
+                list().extend(move(entries));
+            }
         }
 
         virtual void visit(AST::PathRedirectionNode const*) override { }
@@ -1847,9 +1912,10 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
 
     completion_command.argv.extend(visitor.list());
 
+    auto devnull = TRY("/dev/null"_string);
     completion_command.should_wait = true;
-    completion_command.redirections.append(AST::PathRedirection::create("/dev/null", STDERR_FILENO, AST::PathRedirection::Write));
-    completion_command.redirections.append(AST::PathRedirection::create("/dev/null", STDIN_FILENO, AST::PathRedirection::Read));
+    completion_command.redirections.append(AST::PathRedirection::create(devnull, STDERR_FILENO, AST::PathRedirection::Write));
+    completion_command.redirections.append(AST::PathRedirection::create(devnull, STDIN_FILENO, AST::PathRedirection::Read));
 
     auto execute_node = make_ref_counted<AST::Execute>(
         AST::Position {},
@@ -1864,15 +1930,15 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
 
     // Restrict the process to effectively readonly access to the FS.
     auto scoped_promise = promise({
-        .exec_promises = "stdio rpath prot_exec no_error",
+        .exec_promises = "stdio rpath prot_exec map_fixed no_error",
         .unveils = {
             { "/", "rx" },
         },
     });
     {
         TemporaryChange change(m_is_interactive, false);
-        execute_node->for_each_entry(*this, [&](NonnullRefPtr<AST::Value> entry) -> IterationDecision {
-            auto result = entry->resolve_as_string(*this);
+        TRY(execute_node->for_each_entry(*this, [&](NonnullRefPtr<AST::Value> entry) -> ErrorOr<IterationDecision> {
+            auto result = TRY(entry->resolve_as_string(*this));
             JsonParser parser(result);
             auto parsed_result = parser.parse();
             if (parsed_result.is_error())
@@ -1915,7 +1981,7 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
             }
 
             return IterationDecision::Continue;
-        });
+        }));
     }
 
     auto pgid = getpgrp();
@@ -2009,11 +2075,25 @@ bool Shell::has_history_event(StringView source)
     return visitor.has_history_event;
 }
 
+void Shell::setup_keybinds()
+{
+    m_editor->register_key_input_callback('\n', [this](Line::Editor& editor) {
+        auto ast = parse(editor.line(), false);
+        if (ast && ast->is_syntax_error() && ast->syntax_error_node().is_continuable())
+            return true;
+
+        return EDITOR_INTERNAL_FUNCTION(finish)(editor);
+    });
+}
+
 bool Shell::read_single_line()
 {
     while (true) {
         restore_ios();
         bring_cursor_to_beginning_of_a_line();
+        m_editor->initialize();
+        setup_keybinds();
+
         auto line_result = m_editor->get_line(prompt());
 
         if (line_result.is_error()) {
@@ -2142,7 +2222,7 @@ void Shell::notify_child_event()
 Shell::Shell()
     : m_default_constructed(true)
 {
-    push_frame("main").leak_frame();
+    push_frame("main", LocalFrameKind::FunctionOrGlobal).leak_frame();
 
     int rc = gethostname(hostname, Shell::HostNameSize);
     if (rc < 0)
@@ -2178,14 +2258,15 @@ Shell::Shell()
     cache_path();
 }
 
-Shell::Shell(Line::Editor& editor, bool attempt_interactive)
-    : m_editor(editor)
+Shell::Shell(Line::Editor& editor, bool attempt_interactive, bool posix_mode)
+    : m_in_posix_mode(posix_mode)
+    , m_editor(editor)
 {
     uid = getuid();
     tcsetpgrp(0, getpgrp());
     m_pid = getpid();
 
-    push_frame("main").leak_frame();
+    push_frame("main", LocalFrameKind::FunctionOrGlobal).leak_frame();
 
     int rc = gethostname(hostname, Shell::HostNameSize);
     if (rc < 0)
@@ -2224,14 +2305,6 @@ Shell::Shell(Line::Editor& editor, bool attempt_interactive)
         m_editor->load_history(get_history_path());
         cache_path();
     }
-
-    m_editor->register_key_input_callback('\n', [](Line::Editor& editor) {
-        auto ast = Parser(editor.line()).parse();
-        if (ast && ast->is_syntax_error() && ast->syntax_error_node().is_continuable())
-            return true;
-
-        return EDITOR_INTERNAL_FUNCTION(finish)(editor);
-    });
 
     start_timer(3000);
 }
@@ -2283,7 +2356,7 @@ u64 Shell::find_last_job_id() const
     return job_id;
 }
 
-Job const* Shell::find_job(u64 id, bool is_pid)
+Job* Shell::find_job(u64 id, bool is_pid)
 {
     for (auto& entry : jobs) {
         if (is_pid) {
@@ -2310,30 +2383,6 @@ void Shell::kill_job(Job const* job, int sig)
     }
 }
 
-void Shell::save_to(JsonObject& object)
-{
-    Core::Object::save_to(object);
-    object.set("working_directory", cwd);
-    object.set("username", username);
-    object.set("user_home_path", home);
-    object.set("user_id", uid);
-    object.set("directory_stack_size", directory_stack.size());
-    object.set("cd_history_size", cd_history.size());
-
-    // Jobs.
-    JsonArray job_objects;
-    for (auto& job_entry : jobs) {
-        JsonObject job_object;
-        job_object.set("pid", job_entry.value->pid());
-        job_object.set("pgid", job_entry.value->pgid());
-        job_object.set("running_time", job_entry.value->timer().elapsed());
-        job_object.set("command", job_entry.value->cmd());
-        job_object.set("is_running_in_background", job_entry.value->is_running_in_background());
-        job_objects.append(move(job_object));
-    }
-    object.set("jobs", move(job_objects));
-}
-
 void Shell::possibly_print_error() const
 {
     switch (m_error) {
@@ -2353,6 +2402,12 @@ void Shell::possibly_print_error() const
         break;
     case ShellError::LaunchError:
         warnln("Shell: {}", m_error_description);
+        break;
+    case ShellError::PipeFailure:
+        warnln("Shell: pipe() failed for {}", m_error_description);
+        break;
+    case ShellError::WriteFailure:
+        warnln("Shell: write() failed for {}", m_error_description);
         break;
     case ShellError::InternalControlFlowBreak:
     case ShellError::InternalControlFlowContinue:
@@ -2387,28 +2442,47 @@ void Shell::possibly_print_error() const
             }
         };
         int line = -1;
-        DeprecatedString current_line;
+        // FIXME: Support arbitrarily long lines?
+        auto line_buf_or_error = ByteBuffer::create_uninitialized(4 * KiB);
+        if (line_buf_or_error.is_error()) {
+            warnln("Shell: Internal error while trying to display source information: {} (while allocating line buffer for {})", line_buf_or_error.error(), source_position.source_file);
+            return;
+        }
+        auto line_buf = line_buf_or_error.release_value();
+        StringView current_line;
         i64 line_to_skip_to = max(source_position.position->start_line.line_number, 2ul) - 2;
 
         if (!source_position.source_file.is_null()) {
-            auto file = Core::File::open(source_position.source_file, Core::OpenMode::ReadOnly);
-            if (file.is_error()) {
-                warnln("Shell: Internal error while trying to display source information: {} (while reading '{}')", file.error(), source_position.source_file);
+            auto file_or_error = Core::File::open(source_position.source_file, Core::File::OpenMode::Read);
+            if (file_or_error.is_error()) {
+                warnln("Shell: Internal error while trying to display source information: {} (while reading '{}')", file_or_error.error(), source_position.source_file);
                 return;
             }
+            auto file = Core::InputBufferedFile::create(file_or_error.release_value());
             while (line < line_to_skip_to) {
-                if (file.value()->eof())
+                if (file.value()->is_eof())
                     return;
-                current_line = file.value()->read_line();
+                auto current_line_or_error = file.value()->read_line(line_buf);
+                if (current_line_or_error.is_error()) {
+                    warnln("Shell: Internal error while trying to display source information: {} (while reading line {} of '{}')", current_line_or_error.error(), line, source_position.source_file);
+                    return;
+                }
+                current_line = current_line_or_error.release_value();
                 ++line;
             }
 
             for (; line < (i64)source_position.position->end_line.line_number + 2; ++line) {
                 do_line(line, current_line);
-                if (file.value()->eof())
-                    current_line = "";
-                else
-                    current_line = file.value()->read_line();
+                if (file.value()->is_eof()) {
+                    current_line = ""sv;
+                } else {
+                    auto current_line_or_error = file.value()->read_line(line_buf);
+                    if (current_line_or_error.is_error()) {
+                        warnln("Shell: Internal error while trying to display source information: {} (while reading line {} of '{}')", current_line_or_error.error(), line, source_position.source_file);
+                        return;
+                    }
+                    current_line = current_line_or_error.release_value();
+                }
             }
         } else if (!source_position.literal_source_text.is_empty()) {
             GenericLexer lexer { source_position.literal_source_text };
@@ -2422,7 +2496,7 @@ void Shell::possibly_print_error() const
             for (; line < (i64)source_position.position->end_line.line_number + 2; ++line) {
                 do_line(line, current_line);
                 if (lexer.is_eof())
-                    current_line = "";
+                    current_line = ""sv;
                 else
                     current_line = lexer.consume_line();
             }
@@ -2485,6 +2559,32 @@ void Shell::timer_event(Core::TimerEvent& event)
         m_editor->save_history(get_history_path());
 }
 
+RefPtr<AST::Node> Shell::parse(StringView input, bool interactive, bool as_command) const
+{
+    if (m_in_posix_mode) {
+        Posix::Parser parser(input);
+        if (as_command) {
+            auto node = parser.parse();
+            if constexpr (SHELL_POSIX_PARSER_DEBUG) {
+                dbgln("Parsed with the POSIX Parser:");
+                (void)node->dump(0);
+            }
+            return node;
+        }
+
+        return parser.parse_word_list();
+    }
+
+    Parser parser { input, interactive };
+    if (as_command)
+        return parser.parse();
+
+    auto nodes = parser.parse_as_multiple_expressions();
+    return make_ref_counted<AST::ListConcatenate>(
+        nodes.is_empty() ? AST::Position { 0, 0, { 0, 0 }, { 0, 0 } } : nodes.first()->position(),
+        move(nodes));
+}
+
 void FileDescriptionCollector::collect()
 {
     for (auto fd : m_fds)
@@ -2502,10 +2602,10 @@ void FileDescriptionCollector::add(int fd)
     m_fds.append(fd);
 }
 
-SavedFileDescriptors::SavedFileDescriptors(NonnullRefPtrVector<AST::Rewiring> const& intended_rewirings)
+SavedFileDescriptors::SavedFileDescriptors(Vector<NonnullRefPtr<AST::Rewiring>> const& intended_rewirings)
 {
     for (auto& rewiring : intended_rewirings) {
-        int new_fd = dup(rewiring.new_fd);
+        int new_fd = dup(rewiring->new_fd);
         if (new_fd < 0) {
             if (errno != EBADF)
                 perror("dup");
@@ -2519,7 +2619,7 @@ SavedFileDescriptors::SavedFileDescriptors(NonnullRefPtrVector<AST::Rewiring> co
         auto rc = fcntl(new_fd, F_SETFD, flags | FD_CLOEXEC);
         VERIFY(rc == 0);
 
-        m_saves.append({ rewiring.new_fd, new_fd });
+        m_saves.append({ rewiring->new_fd, new_fd });
         m_collector.add(new_fd);
     }
 }

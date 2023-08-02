@@ -1,11 +1,10 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <Kernel/InterruptDisabler.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
@@ -22,7 +21,9 @@ ErrorOr<void> Process::do_kill(Process& process, int signal)
     if (!can_send_signal)
         return EPERM;
     if (process.is_kernel_process()) {
-        dbgln("Attempted to send signal {} to kernel process {} ({})", signal, process.name(), process.pid());
+        process.name().with([&](auto& process_name) {
+            dbgln("Attempted to send signal {} to kernel process {} ({})", signal, process_name->view(), process.pid());
+        });
         return EPERM;
     }
     if (signal != 0)
@@ -32,8 +33,6 @@ ErrorOr<void> Process::do_kill(Process& process, int signal)
 
 ErrorOr<void> Process::do_killpg(ProcessGroupID pgrp, int signal)
 {
-    InterruptDisabler disabler;
-
     VERIFY(pgrp >= 0);
 
     // Send the signal to all processes in the given group.
@@ -66,8 +65,6 @@ ErrorOr<void> Process::do_killpg(ProcessGroupID pgrp, int signal)
 
 ErrorOr<void> Process::do_killall(int signal)
 {
-    InterruptDisabler disabler;
-
     bool any_succeeded = false;
     ErrorOr<void> error;
 
@@ -105,7 +102,7 @@ ErrorOr<void> Process::do_killself(int signal)
 
 ErrorOr<FlatPtr> Process::sys$kill(pid_t pid_or_pgid, int signal)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     if (pid_or_pgid == pid().value())
         TRY(require_promise(Pledge::stdio));
     else
@@ -137,7 +134,7 @@ ErrorOr<FlatPtr> Process::sys$kill(pid_t pid_or_pgid, int signal)
 
 ErrorOr<FlatPtr> Process::sys$killpg(pid_t pgrp, int signum)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::proc));
     if (signum < 1 || signum >= 32)
         return EINVAL;

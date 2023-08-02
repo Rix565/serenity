@@ -8,10 +8,19 @@
 
 #include <AK/LexicalPath.h>
 #include <AK/Optional.h>
+#include <AK/String.h>
 #include <LibCore/StandardPaths.h>
+#include <LibGUI/ComboBox.h>
 #include <LibGUI/Dialog.h>
+#include <LibGUI/FileTypeFilter.h>
 #include <LibGUI/ImageWidget.h>
 #include <LibGUI/Model.h>
+
+namespace FileSystemAccessServer {
+
+class ConnectionFromClient;
+
+}
 
 namespace GUI {
 
@@ -28,8 +37,10 @@ public:
         Save
     };
 
-    static Optional<DeprecatedString> get_open_filepath(Window* parent_window, DeprecatedString const& window_title = {}, StringView path = Core::StandardPaths::home_directory(), bool folder = false, ScreenPosition screen_position = Dialog::ScreenPosition::CenterWithinParent);
+    static Optional<DeprecatedString> get_open_filepath(Window* parent_window, DeprecatedString const& window_title = {}, StringView path = Core::StandardPaths::home_directory(), bool folder = false, ScreenPosition screen_position = Dialog::ScreenPosition::CenterWithinParent, Optional<Vector<FileTypeFilter>> allowed_file_types = {});
     static Optional<DeprecatedString> get_save_filepath(Window* parent_window, DeprecatedString const& title, DeprecatedString const& extension, StringView path = Core::StandardPaths::home_directory(), ScreenPosition screen_position = Dialog::ScreenPosition::CenterWithinParent);
+
+    static ErrorOr<Optional<String>> get_filepath(Badge<FileSystemAccessServer::ConnectionFromClient>, i32 window_server_client_id, i32 parent_window_id, Mode, StringView window_title, StringView file_basename = {}, StringView path = Core::StandardPaths::home_directory(), Optional<Vector<FileTypeFilter>> = {});
 
     virtual ~FilePicker() override;
 
@@ -43,19 +54,19 @@ private:
     // ^GUI::ModelClient
     virtual void model_did_update(unsigned) override;
 
-    FilePicker(Window* parent_window, Mode type = Mode::Open, StringView filename = "Untitled"sv, StringView path = Core::StandardPaths::home_directory(), ScreenPosition screen_position = Dialog::ScreenPosition::CenterWithinParent);
+    FilePicker(Window* parent_window, Mode type = Mode::Open, StringView filename = "Untitled"sv, StringView path = Core::StandardPaths::home_directory(), ScreenPosition screen_position = Dialog::ScreenPosition::CenterWithinParent, Optional<Vector<FileTypeFilter>> allowed_file_types = {});
 
-    static DeprecatedString ok_button_name(Mode mode)
+    static String ok_button_name(Mode mode)
     {
         switch (mode) {
         case Mode::Open:
         case Mode::OpenMultiple:
         case Mode::OpenFolder:
-            return "Open";
+            return "Open"_short_string;
         case Mode::Save:
-            return "Save";
+            return "Save"_short_string;
         default:
-            return "OK";
+            return "OK"_short_string;
         }
     }
 
@@ -67,6 +78,9 @@ private:
     RefPtr<MultiView> m_view;
     NonnullRefPtr<FileSystemModel> m_model;
     DeprecatedString m_selected_file;
+
+    Vector<DeprecatedString> m_allowed_file_types_names;
+    Optional<Vector<FileTypeFilter>> m_allowed_file_types;
 
     RefPtr<GUI::Label> m_error_label;
 

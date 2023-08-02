@@ -7,12 +7,11 @@
 #pragma once
 
 #include <AK/Function.h>
-#include <AK/NonnullRefPtrVector.h>
+#include <LibWeb/CSS/CSSNamespaceRule.h>
 #include <LibWeb/CSS/CSSRule.h>
 #include <LibWeb/CSS/CSSRuleList.h>
 #include <LibWeb/CSS/CSSStyleRule.h>
 #include <LibWeb/CSS/StyleSheet.h>
-#include <LibWeb/Loader/Resource.h>
 
 namespace Web::CSS {
 
@@ -24,7 +23,7 @@ class CSSStyleSheet final
     WEB_PLATFORM_OBJECT(CSSStyleSheet, StyleSheet);
 
 public:
-    static CSSStyleSheet* create(JS::Realm&, CSSRuleList& rules, MediaList& media, Optional<AK::URL> location);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSStyleSheet>> create(JS::Realm&, CSSRuleList& rules, MediaList& media, Optional<AK::URL> location);
 
     virtual ~CSSStyleSheet() override = default;
 
@@ -46,8 +45,11 @@ public:
     void for_each_effective_style_rule(Function<void(CSSStyleRule const&)> const& callback) const;
     // Returns whether the match state of any media queries changed after evaluation.
     bool evaluate_media_queries(HTML::Window const&);
+    void for_each_effective_keyframes_at_rule(Function<void(CSSKeyframesRule const&)> const& callback) const;
 
     void set_style_sheet_list(Badge<StyleSheetList>, StyleSheetList*);
+
+    Optional<StringView> default_namespace() const;
 
 private:
     CSSStyleSheet(JS::Realm&, CSSRuleList&, MediaList&, Optional<AK::URL> location);
@@ -55,10 +57,13 @@ private:
     virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    CSSRuleList* m_rules { nullptr };
+    void recalculate_namespaces();
+
+    JS::GCPtr<CSSRuleList> m_rules;
+    JS::GCPtr<CSSNamespaceRule> m_default_namespace_rule;
 
     JS::GCPtr<StyleSheetList> m_style_sheet_list;
-    CSSRule* m_owner_css_rule { nullptr };
+    JS::GCPtr<CSSRule> m_owner_css_rule;
 };
 
 }

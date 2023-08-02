@@ -8,6 +8,7 @@
 
 #include <AK/HashMap.h>
 #include <AK/NonnullRefPtr.h>
+#include <AK/WeakPtr.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibWeb/Forward.h>
 
@@ -18,6 +19,13 @@ class BrowsingContextGroup final : public JS::Cell {
 
 public:
     static JS::NonnullGCPtr<BrowsingContextGroup> create_a_new_browsing_context_group(Page&);
+
+    struct BrowsingContextGroupAndDocument {
+        JS::NonnullGCPtr<HTML::BrowsingContextGroup> browsing_context;
+        JS::NonnullGCPtr<DOM::Document> document;
+    };
+    static WebIDL::ExceptionOr<BrowsingContextGroupAndDocument> create_a_new_browsing_context_group_and_document(Page&);
+
     ~BrowsingContextGroup();
 
     Page* page() { return m_page; }
@@ -34,7 +42,7 @@ private:
     virtual void visit_edges(Cell::Visitor&) override;
 
     // https://html.spec.whatwg.org/multipage/browsers.html#browsing-context-group-set
-    OrderedHashTable<BrowsingContext*> m_browsing_context_set;
+    OrderedHashTable<JS::NonnullGCPtr<BrowsingContext>> m_browsing_context_set;
 
     WeakPtr<Page> m_page;
 };

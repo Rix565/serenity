@@ -5,14 +5,15 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/CharacterTypes.h>
 #include <AK/DeprecatedString.h>
+#include <AK/HashMap.h>
 #include <AK/QuickSort.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
-#include <ctype.h>
 
 struct Line {
     StringView key;
@@ -54,14 +55,15 @@ struct Options {
     size_t key_field { 0 };
     bool unique { false };
     bool numeric { false };
+    bool reverse { false };
     StringView separator { "\0", 1 };
     Vector<DeprecatedString> files;
 };
 
 static ErrorOr<void> load_file(Options options, StringView filename, Vector<Line>& lines, HashTable<Line>& seen)
 {
-    auto file = TRY(Core::Stream::BufferedFile::create(
-        TRY(Core::Stream::File::open_file_or_standard_stream(filename, Core::Stream::OpenMode::Read))));
+    auto file = TRY(Core::InputBufferedFile::create(
+        TRY(Core::File::open_file_or_standard_stream(filename, Core::File::OpenMode::Read))));
 
     // FIXME: Unlimited line length
     auto buffer = TRY(ByteBuffer::create_uninitialized(4096));
@@ -72,7 +74,7 @@ static ErrorOr<void> load_file(Options options, StringView filename, Vector<Line
         if (options.key_field != 0) {
             auto split = (options.separator[0])
                 ? line.split_view(options.separator[0])
-                : line.split_view(isspace);
+                : line.split_view(is_ascii_space);
             if (options.key_field - 1 >= split.size()) {
                 key = ""sv;
             } else {
@@ -103,6 +105,7 @@ ErrorOr<int> serenity_main([[maybe_unused]] Main::Arguments arguments)
     args_parser.add_option(options.unique, "Don't emit duplicate lines", "unique", 'u');
     args_parser.add_option(options.numeric, "treat the key field as a number", "numeric", 'n');
     args_parser.add_option(options.separator, "The separator to split fields by", "sep", 't', "char");
+    args_parser.add_option(options.reverse, "Sort in reverse order", "reverse", 'r');
     args_parser.add_positional_argument(options.files, "Files to sort", "file", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
 
@@ -119,9 +122,15 @@ ErrorOr<int> serenity_main([[maybe_unused]] Main::Arguments arguments)
 
     quick_sort(lines);
 
-    for (auto& line : lines) {
-        outln("{}", line.line);
-    }
+    auto print_lines = [](auto const& lines) {
+        for (auto& line : lines)
+            outln("{}", line.line);
+    };
+
+    if (options.reverse)
+        print_lines(lines.in_reverse());
+    else
+        print_lines(lines);
 
     return 0;
 }

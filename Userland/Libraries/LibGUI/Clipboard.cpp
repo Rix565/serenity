@@ -19,7 +19,7 @@ class ConnectionToClipboardServer final
     IPC_CLIENT_CONNECTION(ConnectionToClipboardServer, "/tmp/session/%sid/portal/clipboard"sv)
 
 private:
-    ConnectionToClipboardServer(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+    ConnectionToClipboardServer(NonnullOwnPtr<Core::LocalSocket> socket)
         : IPC::ConnectionToServer<ClipboardClientEndpoint, ClipboardServerEndpoint>(*this, move(socket))
     {
     }
@@ -37,9 +37,10 @@ static ConnectionToClipboardServer& connection()
     return *s_connection;
 }
 
-void Clipboard::initialize(Badge<Application>)
+ErrorOr<void> Clipboard::initialize(Badge<Application>)
 {
-    s_connection = ConnectionToClipboardServer::try_create().release_value_but_fixme_should_propagate_errors();
+    s_connection = TRY(ConnectionToClipboardServer::try_create());
+    return {};
 }
 
 Clipboard& Clipboard::the()
@@ -57,15 +58,20 @@ Clipboard& Clipboard::the()
 Clipboard::DataAndType Clipboard::fetch_data_and_type() const
 {
     auto response = connection().get_clipboard_data();
-    if (!response.data().is_valid())
+    auto type = response.mime_type();
+    auto& metadata = response.metadata();
+
+    auto metadata_clone_or_error = metadata.clone();
+    if (metadata_clone_or_error.is_error())
         return {};
+
+    if (!response.data().is_valid())
+        return { {}, type, metadata_clone_or_error.release_value() };
     auto data = ByteBuffer::copy(response.data().data<void>(), response.data().size());
     if (data.is_error())
         return {};
 
-    auto type = response.mime_type();
-    auto metadata = response.metadata().entries();
-    return { data.release_value(), type, metadata };
+    return { data.release_value(), type, metadata_clone_or_error.release_value() };
 }
 
 RefPtr<Gfx::Bitmap> Clipboard::DataAndType::as_bitmap() const
@@ -123,29 +129,55 @@ RefPtr<Gfx::Bitmap> Clipboard::DataAndType::as_bitmap() const
     return bitmap;
 }
 
+ErrorOr<Clipboard::DataAndType> Clipboard::DataAndType::from_json(JsonObject const& object)
+{
+    if (!object.has("data"sv) && !object.has("mime_type"sv))
+        return Error::from_string_literal("JsonObject does not contain necessary fields");
+
+    DataAndType result;
+    result.data = object.get_deprecated_string("data"sv)->to_byte_buffer();
+    result.mime_type = *object.get_deprecated_string("mime_type"sv);
+    // FIXME: Also read metadata
+
+    return result;
+}
+
+ErrorOr<JsonObject> Clipboard::DataAndType::to_json() const
+{
+    JsonObject object;
+    object.set("data", TRY(DeprecatedString::from_utf8(data.bytes())));
+    object.set("mime_type", mime_type);
+    // FIXME: Also write metadata
+
+    return object;
+}
+
 void Clipboard::set_data(ReadonlyBytes data, DeprecatedString const& type, HashMap<DeprecatedString, DeprecatedString> const& metadata)
 {
+    if (data.is_empty()) {
+        connection().async_set_clipboard_data({}, type, metadata.clone().release_value_but_fixme_should_propagate_errors());
+        return;
+    }
+
     auto buffer_or_error = Core::AnonymousBuffer::create_with_size(data.size());
     if (buffer_or_error.is_error()) {
         dbgln("GUI::Clipboard::set_data() failed to create a buffer");
         return;
     }
     auto buffer = buffer_or_error.release_value();
-    if (!data.is_empty())
-        memcpy(buffer.data<void>(), data.data(), data.size());
-
-    connection().async_set_clipboard_data(move(buffer), type, metadata);
+    memcpy(buffer.data<void>(), data.data(), data.size());
+    connection().async_set_clipboard_data(move(buffer), type, metadata.clone().release_value_but_fixme_should_propagate_errors());
 }
 
 void Clipboard::set_bitmap(Gfx::Bitmap const& bitmap, HashMap<DeprecatedString, DeprecatedString> const& additional_metadata)
 {
-    HashMap<DeprecatedString, DeprecatedString> metadata(additional_metadata);
+    HashMap<DeprecatedString, DeprecatedString> metadata = additional_metadata.clone().release_value_but_fixme_should_propagate_errors();
     metadata.set("width", DeprecatedString::number(bitmap.width()));
     metadata.set("height", DeprecatedString::number(bitmap.height()));
     metadata.set("scale", DeprecatedString::number(bitmap.scale()));
     metadata.set("format", DeprecatedString::number((int)bitmap.format()));
     metadata.set("pitch", DeprecatedString::number(bitmap.pitch()));
-    set_data({ bitmap.scanline(0), bitmap.size_in_bytes() }, "image/x-serenityos", metadata);
+    set_data({ bitmap.scanline(0), bitmap.size_in_bytes() }, "image/x-serenityos", move(metadata));
 }
 
 void Clipboard::clear()

@@ -6,6 +6,11 @@
 
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/Parser/Parser.h>
+#include <LibWeb/CSS/StyleProperties.h>
+#include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
+#include <LibWeb/CSS/StyleValues/IdentifierStyleValue.h>
+#include <LibWeb/CSS/StyleValues/ImageStyleValue.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/HTMLTableCellElement.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
 
@@ -30,16 +35,22 @@ void HTMLTableCellElement::apply_presentational_hints(CSS::StyleProperties& styl
 {
     for_each_attribute([&](auto& name, auto& value) {
         if (name == HTML::AttributeNames::bgcolor) {
-            auto color = Color::from_string(value);
+            // https://html.spec.whatwg.org/multipage/rendering.html#tables-2:rules-for-parsing-a-legacy-colour-value
+            auto color = parse_legacy_color_value(value);
             if (color.has_value())
-                style.set_property(CSS::PropertyID::BackgroundColor, CSS::ColorStyleValue::create(color.value()));
+                style.set_property(CSS::PropertyID::BackgroundColor, CSS::ColorStyleValue::create(color.value()).release_value_but_fixme_should_propagate_errors());
+            return;
+        }
+        if (name == HTML::AttributeNames::valign) {
+            if (auto parsed_value = parse_css_value(CSS::Parser::ParsingContext { document() }, value.view(), CSS::PropertyID::VerticalAlign).release_value_but_fixme_should_propagate_errors())
+                style.set_property(CSS::PropertyID::VerticalAlign, parsed_value.release_nonnull());
             return;
         }
         if (name == HTML::AttributeNames::align) {
-            if (value.equals_ignoring_case("center"sv) || value.equals_ignoring_case("middle"sv)) {
-                style.set_property(CSS::PropertyID::TextAlign, CSS::IdentifierStyleValue::create(CSS::ValueID::LibwebCenter));
+            if (value.equals_ignoring_ascii_case("center"sv) || value.equals_ignoring_ascii_case("middle"sv)) {
+                style.set_property(CSS::PropertyID::TextAlign, CSS::IdentifierStyleValue::create(CSS::ValueID::LibwebCenter).release_value_but_fixme_should_propagate_errors());
             } else {
-                if (auto parsed_value = parse_css_value(CSS::Parser::ParsingContext { document() }, value.view(), CSS::PropertyID::TextAlign))
+                if (auto parsed_value = parse_css_value(CSS::Parser::ParsingContext { document() }, value.view(), CSS::PropertyID::TextAlign).release_value_but_fixme_should_propagate_errors())
                     style.set_property(CSS::PropertyID::TextAlign, parsed_value.release_nonnull());
             }
             return;
@@ -52,6 +63,10 @@ void HTMLTableCellElement::apply_presentational_hints(CSS::StyleProperties& styl
             if (auto parsed_value = parse_nonzero_dimension_value(value))
                 style.set_property(CSS::PropertyID::Height, parsed_value.release_nonnull());
             return;
+        } else if (name == HTML::AttributeNames::background) {
+            if (auto parsed_value = document().parse_url(value); parsed_value.is_valid())
+                style.set_property(CSS::PropertyID::BackgroundImage, CSS::ImageStyleValue::create(parsed_value).release_value_but_fixme_should_propagate_errors());
+            return;
         }
     });
 }
@@ -61,9 +76,9 @@ unsigned int HTMLTableCellElement::col_span() const
     return attribute(HTML::AttributeNames::colspan).to_uint().value_or(1);
 }
 
-void HTMLTableCellElement::set_col_span(unsigned int value)
+WebIDL::ExceptionOr<void> HTMLTableCellElement::set_col_span(unsigned int value)
 {
-    MUST(set_attribute(HTML::AttributeNames::colspan, DeprecatedString::number(value)));
+    return set_attribute(HTML::AttributeNames::colspan, DeprecatedString::number(value));
 }
 
 unsigned int HTMLTableCellElement::row_span() const
@@ -71,9 +86,9 @@ unsigned int HTMLTableCellElement::row_span() const
     return attribute(HTML::AttributeNames::rowspan).to_uint().value_or(1);
 }
 
-void HTMLTableCellElement::set_row_span(unsigned int value)
+WebIDL::ExceptionOr<void> HTMLTableCellElement::set_row_span(unsigned int value)
 {
-    MUST(set_attribute(HTML::AttributeNames::rowspan, DeprecatedString::number(value)));
+    return set_attribute(HTML::AttributeNames::rowspan, DeprecatedString::number(value));
 }
 
 Optional<ARIA::Role> HTMLTableCellElement::default_role() const

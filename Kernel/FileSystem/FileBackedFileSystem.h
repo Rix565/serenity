@@ -28,7 +28,7 @@ protected:
     // Note: We require all FileBackedFileSystem to implement something that actually
     // takes into account the fact that we will clean the last mount of the filesystem,
     // therefore, removing the file system with it from the Kernel memory.
-    virtual ErrorOr<void> prepare_to_clear_last_mount() override = 0;
+    virtual ErrorOr<void> prepare_to_clear_last_mount(Inode& mount_guest_inode) override = 0;
 
     virtual ErrorOr<void> initialize_while_locked() = 0;
     virtual bool is_initialized_while_locked() = 0;
@@ -38,6 +38,6 @@ private:
     virtual bool is_file_backed() const override { return true; }
 
     IntrusiveListNode<FileBackedFileSystem> m_file_backed_file_system_node;
-    mutable NonnullLockRefPtr<OpenFileDescription> m_file_description;
+    NonnullRefPtr<OpenFileDescription> const m_file_description;
 };
 }

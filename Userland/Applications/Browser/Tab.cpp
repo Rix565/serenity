@@ -4,6 +4,7 @@
  * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
  * Copyright (c) 2022, networkException <networkexception@serenityos.org>
+ * Copyright (c) 2023, Cameron Youell <cameronyouell@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -20,6 +21,7 @@
 #include <AK/StringBuilder.h>
 #include <AK/URL.h>
 #include <Applications/Browser/TabGML.h>
+#include <Applications/BrowserSettings/Defaults.h>
 #include <LibConfig/Client.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
@@ -37,7 +39,7 @@
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/SyntaxHighlighter/SyntaxHighlighter.h>
 #include <LibWeb/Layout/BlockContainer.h>
-#include <LibWeb/Layout/InitialContainingBlock.h>
+#include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWebView/OutOfProcessWebView.h>
 
@@ -53,7 +55,7 @@ URL url_from_user_input(DeprecatedString const& input)
     if (input.starts_with('?') && !g_search_engine.is_empty())
         return URL(g_search_engine.replace("{}"sv, URL::percent_encode(input.substring_view(1)), ReplaceMode::FirstOnly));
 
-    URL url_with_http_schema = URL(DeprecatedString::formatted("http://{}", input));
+    URL url_with_http_schema = URL(DeprecatedString::formatted("https://{}", input));
     if (url_with_http_schema.is_valid() && url_with_http_schema.port().has_value())
         return url_with_http_schema;
 
@@ -89,7 +91,7 @@ void Tab::view_source(const URL& url, DeprecatedString const& source)
     window->show();
 }
 
-void Tab::update_status(Optional<DeprecatedString> text_override, i32 count_waiting)
+void Tab::update_status(Optional<String> text_override, i32 count_waiting)
 {
     if (text_override.has_value()) {
         m_statusbar->set_text(*text_override);
@@ -97,7 +99,7 @@ void Tab::update_status(Optional<DeprecatedString> text_override, i32 count_wait
     }
 
     if (m_loaded) {
-        m_statusbar->set_text("");
+        m_statusbar->set_text({});
         return;
     }
 
@@ -105,14 +107,14 @@ void Tab::update_status(Optional<DeprecatedString> text_override, i32 count_wait
 
     if (count_waiting == 0) {
         // ex: "Loading google.com"
-        m_statusbar->set_text(DeprecatedString::formatted("Loading {}", m_navigating_url->host()));
+        m_statusbar->set_text(String::formatted("Loading {}", m_navigating_url->serialized_host().release_value_but_fixme_should_propagate_errors()).release_value_but_fixme_should_propagate_errors());
     } else {
         // ex: "google.com is waiting on 5 resources"
-        m_statusbar->set_text(DeprecatedString::formatted("{} is waiting on {} resource{}", m_navigating_url->host(), count_waiting, count_waiting == 1 ? ""sv : "s"sv));
+        m_statusbar->set_text(String::formatted("{} is waiting on {} resource{}", m_navigating_url->serialized_host().release_value_but_fixme_should_propagate_errors(), count_waiting, count_waiting == 1 ? ""sv : "s"sv).release_value_but_fixme_should_propagate_errors());
     }
 }
 
-Tab::Tab(BrowserWindow& window)
+Tab::Tab(BrowserWindow& window, WebView::UseJavaScriptBytecode use_javascript_bytecode)
 {
     load_from_gml(tab_gml).release_value_but_fixme_should_propagate_errors();
 
@@ -121,15 +123,13 @@ Tab::Tab(BrowserWindow& window)
 
     auto& webview_container = *find_descendant_of_type_named<GUI::Widget>("webview_container");
 
-    m_web_content_view = webview_container.add<WebView::OutOfProcessWebView>();
+    m_web_content_view = webview_container.add<WebView::OutOfProcessWebView>(use_javascript_bytecode);
 
-    auto preferred_color_scheme = Web::CSS::preferred_color_scheme_from_string(Config::read_string("Browser"sv, "Preferences"sv, "ColorScheme"sv, "auto"sv));
+    auto preferred_color_scheme = Web::CSS::preferred_color_scheme_from_string(Config::read_string("Browser"sv, "Preferences"sv, "ColorScheme"sv, Browser::default_color_scheme));
     m_web_content_view->set_preferred_color_scheme(preferred_color_scheme);
 
-    if (g_content_filters_enabled)
-        m_web_content_view->set_content_filters(g_content_filters);
-    else
-        m_web_content_view->set_content_filters({});
+    content_filters_changed();
+    autoplay_allowlist_changed();
 
     m_web_content_view->set_proxy_mappings(g_proxies, g_proxy_mappings);
     if (!g_webdriver_content_ipc_path.is_empty())
@@ -145,7 +145,7 @@ Tab::Tab(BrowserWindow& window)
             i++;
             m_go_back_context_menu->add_action(GUI::Action::create(url.to_deprecated_string(), g_icon_bag.filetype_html, [this, i](auto&) { go_back(i); }));
         }
-        m_go_back_context_menu->popup(go_back_button.screen_relative_rect().bottom_left());
+        m_go_back_context_menu->popup(go_back_button.screen_relative_rect().bottom_left().moved_up(1));
     };
 
     auto& go_forward_button = toolbar.add_action(window.go_forward_action());
@@ -158,7 +158,7 @@ Tab::Tab(BrowserWindow& window)
             i++;
             m_go_forward_context_menu->add_action(GUI::Action::create(url.to_deprecated_string(), g_icon_bag.filetype_html, [this, i](auto&) { go_forward(i); }));
         }
-        m_go_forward_context_menu->popup(go_forward_button.screen_relative_rect().bottom_left());
+        m_go_forward_context_menu->popup(go_forward_button.screen_relative_rect().bottom_left().moved_up(1));
     };
 
     auto& go_home_button = toolbar.add_action(window.go_home_action());
@@ -197,9 +197,20 @@ Tab::Tab(BrowserWindow& window)
 
     auto bookmark_action = GUI::Action::create(
         "Bookmark current URL", { Mod_Ctrl, Key_D }, [this](auto&) {
-            bookmark_current_url();
+            if (auto result = bookmark_current_url(); result.is_error())
+                GUI::MessageBox::show_error(this->window().main_widget()->window(), MUST(String::formatted("Failed to bookmark URL: {}", result.error())));
         },
         this);
+
+    m_reset_zoom_button = toolbar.add<GUI::Button>();
+    m_reset_zoom_button->set_tooltip("Reset zoom level");
+    m_reset_zoom_button->on_click = [&](auto) {
+        view().reset_zoom();
+        update_reset_zoom_button();
+    };
+    m_reset_zoom_button->set_button_style(Gfx::ButtonStyle::Coolbar);
+    m_reset_zoom_button->set_visible(false);
+    m_reset_zoom_button->set_preferred_width(GUI::SpecialDimension::Shrink);
 
     m_bookmark_button = toolbar.add<GUI::Button>();
     m_bookmark_button->set_action(bookmark_action);
@@ -326,8 +337,10 @@ Tab::Tab(BrowserWindow& window)
     m_link_context_menu->add_separator();
     m_link_context_menu->add_action(window.inspect_dom_node_action());
 
-    view().on_link_context_menu_request = [this](auto& url, auto screen_position) {
+    view().on_link_context_menu_request = [this](auto& url, auto widget_position) {
         m_link_context_menu_url = url;
+
+        auto screen_position = view().screen_relative_rect().location().translated(widget_position);
         m_link_context_menu->popup(screen_position, m_link_context_menu_default_action);
     };
 
@@ -353,24 +366,111 @@ Tab::Tab(BrowserWindow& window)
     m_image_context_menu->add_separator();
     m_image_context_menu->add_action(window.inspect_dom_node_action());
 
-    view().on_image_context_menu_request = [this](auto& image_url, auto screen_position, Gfx::ShareableBitmap const& shareable_bitmap) {
+    view().on_image_context_menu_request = [this](auto& image_url, auto widget_position, Gfx::ShareableBitmap const& shareable_bitmap) {
         m_image_context_menu_url = image_url;
         m_image_context_menu_bitmap = shareable_bitmap;
+
+        auto screen_position = view().screen_relative_rect().location().translated(widget_position);
         m_image_context_menu->popup(screen_position);
+    };
+
+    m_media_context_menu_play_pause_action = GUI::Action::create("&Play", g_icon_bag.play, [this](auto&) {
+        view().toggle_media_play_state();
+    });
+    m_media_context_menu_mute_unmute_action = GUI::Action::create("&Mute", g_icon_bag.mute, [this](auto&) {
+        view().toggle_media_mute_state();
+    });
+    m_media_context_menu_controls_action = GUI::Action::create_checkable("Show &Controls", [this](auto&) {
+        view().toggle_media_controls_state();
+    });
+    m_media_context_menu_loop_action = GUI::Action::create_checkable("&Loop", [this](auto&) {
+        view().toggle_media_loop_state();
+    });
+
+    m_audio_context_menu = GUI::Menu::construct();
+    m_audio_context_menu->add_action(*m_media_context_menu_play_pause_action);
+    m_audio_context_menu->add_action(*m_media_context_menu_mute_unmute_action);
+    m_audio_context_menu->add_action(*m_media_context_menu_controls_action);
+    m_audio_context_menu->add_action(*m_media_context_menu_loop_action);
+    m_audio_context_menu->add_separator();
+    m_audio_context_menu->add_action(GUI::Action::create("&Open Audio", g_icon_bag.filetype_audio, [this](auto&) {
+        view().on_link_click(m_media_context_menu_url, "", 0);
+    }));
+    m_audio_context_menu->add_action(GUI::Action::create("Open Audio in New &Tab", g_icon_bag.new_tab, [this](auto&) {
+        view().on_link_click(m_media_context_menu_url, "_blank", 0);
+    }));
+    m_audio_context_menu->add_separator();
+    m_audio_context_menu->add_action(GUI::Action::create("Copy Audio &URL", g_icon_bag.copy, [this](auto&) {
+        GUI::Clipboard::the().set_plain_text(m_media_context_menu_url.to_deprecated_string());
+    }));
+    m_audio_context_menu->add_separator();
+    m_audio_context_menu->add_action(GUI::Action::create("&Download", g_icon_bag.download, [this](auto&) {
+        start_download(m_media_context_menu_url);
+    }));
+    m_audio_context_menu->add_separator();
+    m_audio_context_menu->add_action(window.inspect_dom_node_action());
+
+    m_video_context_menu = GUI::Menu::construct();
+    m_video_context_menu->add_action(*m_media_context_menu_play_pause_action);
+    m_video_context_menu->add_action(*m_media_context_menu_mute_unmute_action);
+    m_video_context_menu->add_action(*m_media_context_menu_controls_action);
+    m_video_context_menu->add_action(*m_media_context_menu_loop_action);
+    m_video_context_menu->add_separator();
+    m_video_context_menu->add_action(GUI::Action::create("&Open Video", g_icon_bag.filetype_video, [this](auto&) {
+        view().on_link_click(m_media_context_menu_url, "", 0);
+    }));
+    m_video_context_menu->add_action(GUI::Action::create("Open Video in New &Tab", g_icon_bag.new_tab, [this](auto&) {
+        view().on_link_click(m_media_context_menu_url, "_blank", 0);
+    }));
+    m_video_context_menu->add_separator();
+    m_video_context_menu->add_action(GUI::Action::create("Copy Video &URL", g_icon_bag.copy, [this](auto&) {
+        GUI::Clipboard::the().set_plain_text(m_media_context_menu_url.to_deprecated_string());
+    }));
+    m_video_context_menu->add_separator();
+    m_video_context_menu->add_action(GUI::Action::create("&Download", g_icon_bag.download, [this](auto&) {
+        start_download(m_media_context_menu_url);
+    }));
+    m_video_context_menu->add_separator();
+    m_video_context_menu->add_action(window.inspect_dom_node_action());
+
+    view().on_media_context_menu_request = [this](auto widget_position, Web::Page::MediaContextMenu const& menu) {
+        m_media_context_menu_url = menu.media_url;
+
+        if (menu.is_playing) {
+            m_media_context_menu_play_pause_action->set_icon(g_icon_bag.pause);
+            m_media_context_menu_play_pause_action->set_text("&Pause"sv);
+        } else {
+            m_media_context_menu_play_pause_action->set_icon(g_icon_bag.play);
+            m_media_context_menu_play_pause_action->set_text("&Play"sv);
+        }
+
+        if (menu.is_muted) {
+            m_media_context_menu_mute_unmute_action->set_icon(g_icon_bag.unmute);
+            m_media_context_menu_mute_unmute_action->set_text("Un&mute"sv);
+        } else {
+            m_media_context_menu_mute_unmute_action->set_icon(g_icon_bag.mute);
+            m_media_context_menu_mute_unmute_action->set_text("&Mute"sv);
+        }
+
+        m_media_context_menu_controls_action->set_checked(menu.has_user_agent_controls);
+        m_media_context_menu_loop_action->set_checked(menu.is_looping);
+
+        auto screen_position = view().screen_relative_rect().location().translated(widget_position);
+
+        if (menu.is_video)
+            m_video_context_menu->popup(screen_position);
+        else
+            m_audio_context_menu->popup(screen_position);
     };
 
     view().on_link_middle_click = [this](auto& href, auto&, auto) {
         view().on_link_click(href, "_blank", 0);
     };
 
-    view().on_title_change = [this](auto& title) {
-        if (title.is_null()) {
-            m_history.update_title(url().to_deprecated_string());
-            m_title = url().to_deprecated_string();
-        } else {
-            m_history.update_title(title);
-            m_title = title;
-        }
+    view().on_title_change = [this](auto const& title) {
+        m_history.update_title(title);
+        m_title = title;
+
         if (on_title_change)
             on_title_change(m_title);
     };
@@ -419,8 +519,8 @@ Tab::Tab(BrowserWindow& window)
             m_dom_inspector_widget->set_dom_json(dom_tree);
     };
 
-    view().on_get_dom_node_properties = [this](auto node_id, auto& specified, auto& computed, auto& custom_properties, auto& node_box_sizing) {
-        m_dom_inspector_widget->set_dom_node_properties_json({ node_id }, specified, computed, custom_properties, node_box_sizing);
+    view().on_get_dom_node_properties = [this](auto node_id, auto& specified, auto& computed, auto& custom_properties, auto& node_box_sizing, auto& aria_properties_state) {
+        m_dom_inspector_widget->set_dom_node_properties_json({ node_id }, specified, computed, custom_properties, node_box_sizing, aria_properties_state);
     };
 
     view().on_get_accessibility_tree = [this](auto& accessibility_tree) {
@@ -448,14 +548,12 @@ Tab::Tab(BrowserWindow& window)
     m_statusbar = *find_descendant_of_type_named<GUI::Statusbar>("statusbar");
 
     view().on_link_hover = [this](auto& url) {
-        if (url.is_valid())
-            update_status(url.to_deprecated_string());
-        else
-            update_status();
+        update_status(String::from_deprecated_string(url.to_deprecated_string()).release_value_but_fixme_should_propagate_errors());
     };
 
-    view().on_url_drop = [this](auto& url) {
-        load(url);
+    view().on_link_unhover = [this]() {
+        view().set_override_cursor(Gfx::StandardCursor::None);
+        update_status();
     };
 
     view().on_back_button = [this] {
@@ -466,6 +564,19 @@ Tab::Tab(BrowserWindow& window)
     view().on_forward_button = [this] {
         if (m_history.can_go_forward())
             go_forward();
+    };
+
+    view().on_new_tab = [this](auto activate_tab) {
+        auto& tab = this->window().create_new_tab(URL("about:blank"), activate_tab);
+        return tab.view().handle();
+    };
+
+    view().on_activate_tab = [this]() {
+        on_activate_tab_request(*this);
+    };
+
+    view().on_close = [this] {
+        on_tab_close_request(*this);
     };
 
     m_tab_context_menu = GUI::Menu::construct();
@@ -482,6 +593,26 @@ Tab::Tab(BrowserWindow& window)
         on_tab_close_other_request(*this);
     }));
 
+    auto take_visible_screenshot_action = GUI::Action::create(
+        "Take &Visible Screenshot"sv, g_icon_bag.filetype_image, [this](auto&) {
+            if (auto result = view().take_screenshot(WebView::ViewImplementation::ScreenshotType::Visible); result.is_error()) {
+                auto error = String::formatted("{}", result.error()).release_value_but_fixme_should_propagate_errors();
+                GUI::MessageBox::show_error(&this->window(), error);
+            }
+        },
+        this);
+    take_visible_screenshot_action->set_status_tip("Save a screenshot of the visible portion of the current tab to the Downloads directory"_string.release_value_but_fixme_should_propagate_errors());
+
+    auto take_full_screenshot_action = GUI::Action::create(
+        "Take &Full Screenshot"sv, g_icon_bag.filetype_image, [this](auto&) {
+            if (auto result = view().take_screenshot(WebView::ViewImplementation::ScreenshotType::Full); result.is_error()) {
+                auto error = String::formatted("{}", result.error()).release_value_but_fixme_should_propagate_errors();
+                GUI::MessageBox::show_error(&this->window(), error);
+            }
+        },
+        this);
+    take_full_screenshot_action->set_status_tip("Save a screenshot of the entirety of the current tab to the Downloads directory"_string.release_value_but_fixme_should_propagate_errors());
+
     m_page_context_menu = GUI::Menu::construct();
     m_page_context_menu->add_action(window.go_back_action());
     m_page_context_menu->add_action(window.go_forward_action());
@@ -490,15 +621,28 @@ Tab::Tab(BrowserWindow& window)
     m_page_context_menu->add_action(window.copy_selection_action());
     m_page_context_menu->add_action(window.select_all_action());
     m_page_context_menu->add_separator();
+    m_page_context_menu->add_action(move(take_visible_screenshot_action));
+    m_page_context_menu->add_action(move(take_full_screenshot_action));
+    m_page_context_menu->add_separator();
     m_page_context_menu->add_action(window.view_source_action());
     m_page_context_menu->add_action(window.inspect_dom_tree_action());
     m_page_context_menu->add_action(window.inspect_dom_node_action());
-    m_page_context_menu->add_separator();
-    m_page_context_menu->add_action(window.take_visible_screenshot_action());
-    m_page_context_menu->add_action(window.take_full_screenshot_action());
-    view().on_context_menu_request = [&](auto screen_position) {
+
+    view().on_context_menu_request = [&](auto widget_position) {
+        auto screen_position = view().screen_relative_rect().location().translated(widget_position);
         m_page_context_menu->popup(screen_position);
     };
+}
+
+void Tab::update_reset_zoom_button()
+{
+    auto zoom_level = view().zoom_level();
+    if (zoom_level != 1.0f) {
+        m_reset_zoom_button->set_text(MUST(String::formatted("{}%", round_to<int>(zoom_level * 100))));
+        m_reset_zoom_button->set_visible(true);
+    } else {
+        m_reset_zoom_button->set_visible(false);
+    }
 }
 
 Optional<URL> Tab::url_from_location_bar(MayAppendTLD may_append_tld)
@@ -564,18 +708,19 @@ void Tab::update_actions()
     window.go_forward_action().set_enabled(m_history.can_go_forward());
 }
 
-void Tab::bookmark_current_url()
+ErrorOr<void> Tab::bookmark_current_url()
 {
     auto url = this->url().to_deprecated_string();
     if (BookmarksBarWidget::the().contains_bookmark(url)) {
-        BookmarksBarWidget::the().remove_bookmark(url);
+        TRY(BookmarksBarWidget::the().remove_bookmark(url));
     } else {
-        BookmarksBarWidget::the().add_bookmark(url, m_title);
+        TRY(BookmarksBarWidget::the().add_bookmark(url, m_title));
     }
-    update_bookmark_button(url);
+
+    return {};
 }
 
-void Tab::update_bookmark_button(DeprecatedString const& url)
+void Tab::update_bookmark_button(StringView url)
 {
     if (BookmarksBarWidget::the().contains_bookmark(url)) {
         m_bookmark_button->set_icon(g_icon_bag.bookmark_filled);
@@ -598,7 +743,11 @@ void Tab::did_become_active()
     };
 
     BookmarksBarWidget::the().on_bookmark_hover = [this](auto&, auto& url) {
-        m_statusbar->set_text(url);
+        m_statusbar->set_text(String::from_deprecated_string(url).release_value_but_fixme_should_propagate_errors());
+    };
+
+    BookmarksBarWidget::the().on_bookmark_change = [this]() {
+        update_bookmark_button(url().to_deprecated_string());
     };
 
     BookmarksBarWidget::the().remove_from_parent();
@@ -622,6 +771,14 @@ void Tab::content_filters_changed()
         m_web_content_view->set_content_filters(g_content_filters);
     else
         m_web_content_view->set_content_filters({});
+}
+
+void Tab::autoplay_allowlist_changed()
+{
+    if (g_autoplay_allowed_on_all_websites)
+        m_web_content_view->set_autoplay_allowed_on_all_websites();
+    else
+        m_web_content_view->set_autoplay_allowlist(g_autoplay_allowlist);
 }
 
 void Tab::proxy_mappings_changed()
@@ -664,7 +821,7 @@ void Tab::show_inspector_window(Browser::Tab::InspectorTarget inspector_target)
     if (!m_dom_inspector_widget) {
         auto window = GUI::Window::construct(&this->window());
         window->set_window_mode(GUI::WindowMode::Modeless);
-        window->resize(300, 500);
+        window->resize(325, 500);
         window->set_title("Inspector");
         window->set_icon(g_icon_bag.inspector_object);
         window->on_close = [&]() {
@@ -729,7 +886,7 @@ void Tab::show_storage_inspector()
     if (!m_storage_widget) {
         auto storage_window = GUI::Window::construct(&window());
         storage_window->resize(500, 300);
-        storage_window->set_title("Storage inspector");
+        storage_window->set_title("Storage Inspector");
         storage_window->set_icon(g_icon_bag.cookie);
         m_storage_widget = storage_window->set_main_widget<StorageWidget>().release_value_but_fixme_should_propagate_errors();
         m_storage_widget->on_update_cookie = [this](Web::Cookie::Cookie cookie) {
@@ -747,13 +904,13 @@ void Tab::show_storage_inspector()
     if (on_get_local_storage_entries) {
         auto local_storage_entries = on_get_local_storage_entries();
         m_storage_widget->clear_local_storage_entries();
-        m_storage_widget->set_local_storage_entries(local_storage_entries);
+        m_storage_widget->set_local_storage_entries(move(local_storage_entries));
     }
 
     if (on_get_session_storage_entries) {
         auto session_storage_entries = on_get_session_storage_entries();
         m_storage_widget->clear_session_storage_entries();
-        m_storage_widget->set_session_storage_entries(session_storage_entries);
+        m_storage_widget->set_session_storage_entries(move(session_storage_entries));
     }
 
     auto* window = m_storage_widget->window();

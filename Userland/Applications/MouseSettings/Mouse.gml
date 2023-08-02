@@ -5,7 +5,7 @@
     }
 
     @GUI::GroupBox {
-        title: "Cursor Speed"
+        title: "Cursor speed"
         fixed_height: 106
         layout: @GUI::VerticalBoxLayout {
             margins: [6]
@@ -17,10 +17,10 @@
                 spacing: 16
             }
 
-            @GUI::Label {
+            @GUI::ImageWidget {
                 fixed_width: 32
                 fixed_height: 32
-                icon: "/res/graphics/mouse-cursor-speed.png"
+                bitmap: "/res/graphics/mouse-cursor-speed.png"
             }
 
             @GUI::Label {
@@ -53,7 +53,7 @@
     }
 
     @GUI::GroupBox {
-        title: "Scroll Wheel"
+        title: "Scroll wheel"
         fixed_height: 106
         layout: @GUI::VerticalBoxLayout {
             margins: [6]
@@ -65,10 +65,10 @@
                 spacing: 16
             }
 
-            @GUI::Label {
+            @GUI::ImageWidget {
                 fixed_width: 32
                 fixed_height: 32
-                icon: "/res/graphics/scroll-wheel-step-size.png"
+                bitmap: "/res/graphics/scroll-wheel-step-size.png"
             }
 
             @GUI::Label {
@@ -114,7 +114,7 @@
     }
 
     @GUI::GroupBox {
-        title: "Double-click Speed"
+        title: "Double-click speed"
         fixed_height: 106
         layout: @GUI::VerticalBoxLayout {
             margins: [6]
@@ -163,7 +163,7 @@
     }
 
     @GUI::GroupBox {
-        title: "Button Configuration"
+        title: "Button configuration"
         fixed_height: 68
         layout: @GUI::VerticalBoxLayout {
             margins: [16, 8, 8]
@@ -175,10 +175,10 @@
                 spacing: 16
             }
 
-            @GUI::Label {
+            @GUI::ImageWidget {
                 fixed_width: 32
                 fixed_height: 32
-                name: "switch_buttons_image_label"
+                name: "switch_buttons_image"
             }
 
             @GUI::CheckBox {

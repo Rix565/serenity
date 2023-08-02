@@ -80,12 +80,17 @@ include(lagom_compile_options)
 
 include(GNUInstallDirs) # make sure to include before we mess w/RPATH
 
+# Mirror the structure of the installed tree to ensure that rpaths
+# always remain valid.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}")
+
 set(CMAKE_SKIP_BUILD_RPATH FALSE)
-set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 # See slide 100 of the following ppt :^)
 # https://crascit.com/wp-content/uploads/2019/09/Deep-CMake-For-Library-Authors-Craig-Scott-CppCon-2019.pdf
 if (APPLE)
-    # FIXME: This doesn't work for the full BUILD_LAGOM=ON build, see #10055
     set(CMAKE_MACOSX_RPATH TRUE)
     set(CMAKE_INSTALL_NAME_DIR "@rpath")
     set(CMAKE_INSTALL_RPATH "@loader_path/../lib")
@@ -119,6 +124,14 @@ if (ENABLE_UNDEFINED_SANITIZER)
     set(LINKER_FLAGS "${LINKER_FLAGS} -fsanitize=undefined")
 endif()
 
+if (ENABLE_COMPILETIME_FORMAT_CHECK)
+    add_compile_definitions(ENABLE_COMPILETIME_FORMAT_CHECK)
+endif()
+
+if (ENABLE_LAGOM_MOLD)
+    add_link_options(-fuse-ld=mold)
+endif()
+
 if (ENABLE_FUZZERS)
     add_compile_options(-fno-omit-frame-pointer)
 endif()
@@ -131,8 +144,7 @@ if (ENABLE_LAGOM_LADYBIRD AND (ENABLE_FUZZERS OR ENABLE_COMPILER_EXPLORER_BUILD)
 endif()
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang$")
-    # Clang's default constexpr-steps limit is 1048576(2^20), GCC doesn't have one
-    add_compile_options(-Wno-overloaded-virtual -Wno-user-defined-literals -fconstexpr-steps=16777216)
+    add_compile_options(-Wno-overloaded-virtual)
     # FIXME: Re-enable this check when the warning stops triggering, or document why we can't stop it from triggering.
     # For now, there is a lot of unused private fields in LibWeb that trigger this that could be removed.
     # See issue #14137 for details
@@ -144,7 +156,6 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang$")
     endif()
 
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    add_compile_options(-Wno-expansion-to-defined)
     if (ENABLE_FUZZERS_LIBFUZZER)
         message(FATAL_ERROR
             "Fuzzer Sanitizer (-fsanitize=fuzzer) is only supported for Fuzzer targets with LLVM. "
@@ -251,12 +262,13 @@ function(lagom_test source)
     cmake_parse_arguments(LAGOM_TEST "" "WORKING_DIRECTORY" "LIBS" ${ARGN})
     get_filename_component(name ${source} NAME_WE)
     add_executable(${name} ${source})
-    target_link_libraries(${name} PRIVATE LibCore LibTest LibTestMain ${LAGOM_TEST_LIBS})
+    target_link_libraries(${name} PRIVATE LibCore LibFileSystem LibTest LibTestMain ${LAGOM_TEST_LIBS})
     add_test(
-            NAME ${name}
-            COMMAND ${name}
-            WORKING_DIRECTORY ${LAGOM_TEST_WORKING_DIRECTORY}
+        NAME ${name}
+        COMMAND ${name}
+        WORKING_DIRECTORY ${LAGOM_TEST_WORKING_DIRECTORY}
     )
+    set_target_properties(${name} PROPERTIES LAGOM_WORKING_DIRECTORY "${LAGOM_TEST_WORKING_DIRECTORY}")
 endfunction()
 
 function(serenity_test test_src sub_dir)
@@ -331,10 +343,22 @@ install(TARGETS LibC LibCrypt LibSystem NoCoverage EXPORT LagomTargets)
 add_serenity_subdirectory(AK)
 add_serenity_subdirectory(Userland/Libraries/LibCore)
 target_link_libraries(LibCore PRIVATE Threads::Threads)
+if (${CMAKE_SYSTEM_NAME} MATCHES "NetBSD")
+    # NetBSD has its shm_open and shm_unlink functions in librt so we need to link that
+    target_link_libraries(LibCore PRIVATE librt.so)
+endif()
+if (${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
+    # Solaris has socket and networking related functions in two extra libraries
+    target_link_libraries(LibCore PRIVATE nsl socket)
+endif()
 target_sources(LibCore PRIVATE ${AK_SOURCES})
 
 # LibMain
 add_serenity_subdirectory(Userland/Libraries/LibMain)
+
+# LibFileSystem
+# This is needed even if Lagom is not enabled because it is depended upon by code generators.
+add_serenity_subdirectory(Userland/Libraries/LibFileSystem)
 
 # LibTimeZone
 # This is needed even if Lagom is not enabled because it is depended upon by code generators.
@@ -366,7 +390,9 @@ if (BUILD_LAGOM)
         Audio
         Compress
         Crypto
+        Cpp
         DNS
+        Diff
         Gemini
         Gfx
         GL
@@ -378,8 +404,10 @@ if (BUILD_LAGOM)
         JS
         Line
         Locale
+        Manual
         Markdown
         PDF
+        Protocol
         Regex
         SoftGPU
         SQL
@@ -398,31 +426,35 @@ if (BUILD_LAGOM)
         list(APPEND lagom_standard_libraries Web)
 
         # WebView
+        list(APPEND LIBWEBVIEW_SOURCES "../../Userland/Libraries/LibWebView/AccessibilityTreeModel.cpp")
         list(APPEND LIBWEBVIEW_SOURCES "../../Userland/Libraries/LibWebView/DOMTreeModel.cpp")
         list(APPEND LIBWEBVIEW_SOURCES "../../Userland/Libraries/LibWebView/StylePropertiesModel.cpp")
         list(APPEND LIBWEBVIEW_SOURCES "../../Userland/Libraries/LibWebView/ViewImplementation.cpp")
         list(APPEND LIBWEBVIEW_SOURCES "../../Userland/Libraries/LibWebView/WebContentClient.cpp")
+        list(APPEND LIBWEBVIEW_SOURCES "../../Userland/Libraries/LibWebView/RequestServerAdapter.cpp")
 
         compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/WebContent/WebContentServer.ipc WebContent/WebContentServerEndpoint.h)
         compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/WebContent/WebContentClient.ipc WebContent/WebContentClientEndpoint.h)
         compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/WebContent/WebDriverClient.ipc WebContent/WebDriverClientEndpoint.h)
         compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/WebContent/WebDriverServer.ipc WebContent/WebDriverServerEndpoint.h)
+        compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/RequestServer/RequestClient.ipc RequestServer/RequestClientEndpoint.h)
+        compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/RequestServer/RequestServer.ipc RequestServer/RequestServerEndpoint.h)
 
         list(APPEND LIBWEBVIEW_GENERATED_SOURCES WebContent/WebContentClientEndpoint.h)
         list(APPEND LIBWEBVIEW_GENERATED_SOURCES WebContent/WebContentServerEndpoint.h)
         list(APPEND LIBWEBVIEW_GENERATED_SOURCES WebContent/WebDriverClientEndpoint.h)
         list(APPEND LIBWEBVIEW_GENERATED_SOURCES WebContent/WebDriverServerEndpoint.h)
+        list(APPEND LIBWEBVIEW_GENERATED_SOURCES RequestServer/RequestClientEndpoint.h)
+        list(APPEND LIBWEBVIEW_GENERATED_SOURCES RequestServer/RequestServerEndpoint.h)
 
         set(GENERATED_SOURCES ${LIBWEBVIEW_GENERATED_SOURCES})
         lagom_lib(LibWebView webview
             SOURCES ${LIBWEBVIEW_SOURCES} ${LIBWEBVIEW_GENERATED_SOURCES}
-            LIBS LibGfx LibGUI LibIPC LibWeb)
+            LIBS LibGfx LibGUI LibIPC LibWeb LibProtocol)
         unset(GENERATED_SOURCES)
     endif()
 
-    # FIXME: Excluding arm64 is a temporary hack to circumvent a build problem
-    #        for Lagom on Apple M1
-    if (NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm64" AND NOT EMSCRIPTEN)
+    if (NOT EMSCRIPTEN)
         # FIXME: Create a LIBELF_SOURCES macro similar to AK
         file(GLOB LIBELF_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibELF/*.cpp")
         # There's no way we can reliably make the dynamic loading classes cross platform
@@ -451,9 +483,6 @@ if (BUILD_LAGOM)
         SOURCES ${LIBGUI_SOURCES}
         LIBS LibGfx LibSyntax)
 
-    # FIXME: Why doesn't RPATH of the tests handle this properly?
-    set_target_properties(LibSoftGPU PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-
     # FIXME: LibLocaleData is an object lib in Lagom, because the weak symbol trick we use on serenity
     #    straight up isn't supposed to work per ELF rules
     target_link_libraries(LibLocale PRIVATE LibTimeZone)
@@ -463,15 +492,17 @@ if (BUILD_LAGOM)
 
     add_serenity_subdirectory(Userland/Shell)
 
-    if (ENABLE_LAGOM_LADYBIRD)
-        add_serenity_subdirectory(Ladybird)
-    endif()
-
     if (NOT ENABLE_FUZZERS AND NOT ENABLE_COMPILER_EXPLORER_BUILD AND NOT ANDROID)
         # Lagom Services
         add_serenity_subdirectory(Userland/Services)
 
         # Lagom Utilities
+        add_executable(abench ../../Userland/Utilities/abench.cpp)
+        target_link_libraries(abench LibCore LibMain LibFileSystem LibAudio)
+
+        add_executable(aconv ../../Userland/Utilities/aconv.cpp)
+        target_link_libraries(aconv LibCore LibMain LibFileSystem LibAudio)
+
         if (NOT EMSCRIPTEN)
             add_executable(adjtime ../../Userland/Utilities/adjtime.cpp)
             target_link_libraries(adjtime LibCore LibMain)
@@ -484,16 +515,33 @@ if (BUILD_LAGOM)
             target_link_libraries(disasm LibCore LibELF LibX86 LibMain)
         endif()
 
+        if (NOT EMSCRIPTEN)
+            # LibELF is part of LibC in SerenityOS builds, but not in Lagom.
+            add_executable(file ../../Userland/Utilities/file.cpp)
+            target_link_libraries(file LibAudio LibArchive LibCompress LibCore LibELF LibGfx LibIPC LibMain)
+        endif()
+
         add_executable(gml-format ../../Userland/Utilities/gml-format.cpp)
         target_link_libraries(gml-format LibCore LibGUI LibMain)
 
-        if (ENABLE_LAGOM_LIBWEB)
-            add_executable(headless-browser ../../Userland/Utilities/headless-browser.cpp ../../Userland/Services/WebContent/WebDriverConnection.cpp)
-            target_link_libraries(headless-browser LibWeb LibWebSocket LibCrypto LibGemini LibHTTP LibJS LibGfx LibMain LibTLS LibIPC LibJS)
+        add_executable(gunzip ../../Userland/Utilities/gunzip.cpp)
+        target_link_libraries(gunzip LibCompress LibCore LibMain)
+
+        add_executable(gzip ../../Userland/Utilities/gzip.cpp)
+        target_link_libraries(gzip LibCompress LibCore LibMain)
+
+        if (ENABLE_LAGOM_LADYBIRD)
+            add_serenity_subdirectory(Ladybird)
         endif()
 
         add_executable(icc ../../Userland/Utilities/icc.cpp)
         target_link_libraries(icc LibCore LibGfx LibMain)
+
+        add_executable(image ../../Userland/Utilities/image.cpp)
+        target_link_libraries(image LibCore LibGfx LibMain)
+
+        add_executable(isobmff ../../Userland/Utilities/isobmff.cpp)
+        target_link_libraries(isobmff LibCore LibGfx LibMain)
 
         add_executable(ttfdisasm ../../Userland/Utilities/ttfdisasm.cpp)
         target_link_libraries(ttfdisasm LibGfx LibMain)
@@ -510,19 +558,28 @@ if (BUILD_LAGOM)
                     -sENVIRONMENT=web)
         endif()
 
+        add_executable(lzcat ../../Userland/Utilities/lzcat.cpp)
+        target_link_libraries(lzcat LibCompress LibCore LibMain)
+
         add_executable(markdown-check ../../Userland/Utilities/markdown-check.cpp)
-        target_link_libraries(markdown-check LibMarkdown LibMain)
+        target_link_libraries(markdown-check LibFileSystem LibMarkdown LibMain LibManual)
 
         if (NOT EMSCRIPTEN)
             add_executable(ntpquery ../../Userland/Utilities/ntpquery.cpp)
             target_link_libraries(ntpquery LibCore LibMain)
         endif()
 
+        add_executable(pdf ../../Userland/Utilities/pdf.cpp)
+        target_link_libraries(pdf LibCore LibGfx LibPDF LibMain)
+
         add_executable(sql ../../Userland/Utilities/sql.cpp)
-        target_link_libraries(sql LibCore LibIPC LibLine LibMain LibSQL)
+        target_link_libraries(sql LibCore LibFileSystem LibIPC LibLine LibMain LibSQL)
+
+        add_executable(tar ../../Userland/Utilities/tar.cpp)
+        target_link_libraries(tar LibArchive LibCompress LibCore LibFileSystem LibMain)
 
         add_executable(test262-runner ../../Tests/LibJS/test262-runner.cpp)
-        target_link_libraries(test262-runner LibJS LibCore)
+        target_link_libraries(test262-runner LibJS LibCore LibFileSystem)
 
         if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             include(CheckCSourceCompiles)
@@ -541,10 +598,13 @@ if (BUILD_LAGOM)
         endif()
 
         add_executable(wasm ../../Userland/Utilities/wasm.cpp)
-        target_link_libraries(wasm LibCore LibWasm LibLine LibMain)
+        target_link_libraries(wasm LibCore LibFileSystem LibWasm LibLine LibMain LibJS)
 
         add_executable(xml ../../Userland/Utilities/xml.cpp)
-        target_link_libraries(xml LibCore LibXML LibMain)
+        target_link_libraries(xml LibCore LibFileSystem LibMain LibXML)
+
+        add_executable(xzcat ../../Userland/Utilities/xzcat.cpp)
+        target_link_libraries(xzcat LibCompress LibCore LibMain)
 
         enable_testing()
         # LibTest
@@ -554,7 +614,7 @@ if (BUILD_LAGOM)
             LibTest
             ${LIBTEST_SOURCES}
         )
-        target_link_libraries(LibTest PRIVATE LibCore)
+        target_link_libraries(LibTest PRIVATE LibCore LibFileSystem)
         set_target_properties(LibTest PROPERTIES OUTPUT_NAME lagom-test)
         add_library(
             LibTestMain
@@ -565,20 +625,20 @@ if (BUILD_LAGOM)
         # LibTest tests from Tests/
         set(TEST_DIRECTORIES
             AK
-            LibAudio
             LibCrypto
             LibCompress
             LibGL
+            LibGfx
             LibLocale
             LibMarkdown
             LibPDF
             LibSQL
             LibTextCodec
-            LibTLS
             LibTTF
             LibTimeZone
             LibUnicode
             LibVideo
+            LibXML
         )
         if (ENABLE_LAGOM_LIBWEB)
             list(APPEND TEST_DIRECTORIES LibWeb)
@@ -588,9 +648,13 @@ if (BUILD_LAGOM)
             add_serenity_subdirectory("Tests/${dir}")
         endforeach()
 
-        # LibCore
-        lagom_test(../../Tests/LibCore/TestLibCoreIODevice.cpp WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../Tests/LibCore)
+        # LibTLS needs a special working directory to find cacert.pem
+        lagom_test(../../Tests/LibTLS/TestTLSHandshake.cpp LibTLS LIBS LibTLS LibCrypto)
 
+        # The FLAC tests need a special working directory to find the test files
+        lagom_test(../../Tests/LibAudio/TestFLACSpec.cpp LIBS LibAudio WORKING_DIRECTORY "${FLAC_TEST_PATH}/..")
+
+        # LibCore
         if ((LINUX OR APPLE) AND NOT EMSCRIPTEN)
             lagom_test(../../Tests/LibCore/TestLibCoreFileWatcher.cpp)
         endif()
@@ -604,23 +668,28 @@ if (BUILD_LAGOM)
         add_executable(test-js
             ../../Tests/LibJS/test-js.cpp
             ../../Userland/Libraries/LibTest/JavaScriptTestRunnerMain.cpp)
-        target_link_libraries(test-js LibCore LibTest LibJS)
+        target_link_libraries(test-js LibCore LibFileSystem LibTest LibJS)
         add_test(
             NAME JS
             COMMAND test-js --show-progress=false
         )
         set_tests_properties(JS PROPERTIES ENVIRONMENT SERENITY_SOURCE_DIR=${SERENITY_PROJECT_ROOT})
 
+        add_test(
+            NAME JS-AST
+            COMMAND test-js --ast --show-progress=false
+        )
+        set_tests_properties(JS-AST PROPERTIES ENVIRONMENT SERENITY_SOURCE_DIR=${SERENITY_PROJECT_ROOT})
+
         # Extra tests from Tests/LibJS
         lagom_test(../../Tests/LibJS/test-invalid-unicode-js.cpp LIBS LibJS)
-        lagom_test(../../Tests/LibJS/test-bytecode-js.cpp LIBS LibJS)
         lagom_test(../../Tests/LibJS/test-value-js.cpp LIBS LibJS)
 
         # Spreadsheet
         add_executable(test-spreadsheet
                 ../../Tests/Spreadsheet/test-spreadsheet.cpp
                 ../../Userland/Libraries/LibTest/JavaScriptTestRunnerMain.cpp)
-        target_link_libraries(test-spreadsheet LibCore LibTest LibJS)
+        target_link_libraries(test-spreadsheet LibCore LibFileSystem LibTest LibJS)
         add_test(
                 NAME Spreadsheet
                 COMMAND test-spreadsheet --show-progress=false
@@ -631,13 +700,15 @@ if (BUILD_LAGOM)
         add_executable(test-wasm
             ../../Tests/LibWasm/test-wasm.cpp
             ../../Userland/Libraries/LibTest/JavaScriptTestRunnerMain.cpp)
-        target_link_libraries(test-wasm LibCore LibTest LibWasm LibJS)
-        # FIXME: Don't require passing test-common.js path if you only want to pass a custom Test root path
+        target_link_libraries(test-wasm LibCore LibFileSystem LibTest LibWasm LibJS)
         add_test(
             NAME WasmParser
-            COMMAND test-wasm --show-progress=false ${CMAKE_CURRENT_BINARY_DIR}/Userland/Libraries/LibWasm/Tests ${SERENITY_PROJECT_ROOT}/Userland/Libraries/LibJS/Tests/test-common.js
+            COMMAND test-wasm --show-progress=false ${CMAKE_CURRENT_BINARY_DIR}/Userland/Libraries/LibWasm/Tests
         )
-        set_tests_properties(WasmParser PROPERTIES SKIP_RETURN_CODE 1)
+        set_tests_properties(WasmParser PROPERTIES
+            SKIP_RETURN_CODE 1
+            ENVIRONMENT SERENITY_SOURCE_DIR=${SERENITY_PROJECT_ROOT}
+        )
 
         # Tests that are not LibTest based
         # Shell
@@ -691,9 +762,15 @@ endif()
 
 if (NOT "$ENV{LAGOM_TARGET}" STREQUAL "")
     add_custom_target(run-lagom-target
-        COMMAND "${CMAKE_COMMAND}" -E env "SERENITY_SOURCE_DIR=${SERENITY_PROJECT_ROOT}" "$<TARGET_FILE:$ENV{LAGOM_TARGET}>" $ENV{LAGOM_ARGS}
+        COMMAND "${CMAKE_COMMAND}"
+            -E env "SERENITY_SOURCE_DIR=${SERENITY_PROJECT_ROOT}" "$<TARGET_FILE:$ENV{LAGOM_TARGET}>"
+            $ENV{LAGOM_ARGS}
+
+        WORKING_DIRECTORY "$<TARGET_PROPERTY:$ENV{LAGOM_TARGET},LAGOM_WORKING_DIRECTORY>"
         DEPENDS "$<TARGET_FILE:$ENV{LAGOM_TARGET}>"
         USES_TERMINAL
         VERBATIM
     )
 endif()
+
+include(ca_certificates_data)

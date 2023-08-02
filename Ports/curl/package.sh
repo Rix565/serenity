@@ -1,9 +1,8 @@
 #!/usr/bin/env -S bash ../.port_include.sh
 port='curl'
-version='7.87.0'
+version='8.2.0'
 useconfigure='true'
-files="https://curl.se/download/curl-${version}.tar.bz2 curl-${version}.tar.bz2 5d6e128761b7110946d1276aff6f0f266f2b726f5e619f7e0a057a474155f307"
-auth_type='sha256'
+files="https://curl.se/download/curl-${version}.tar.bz2 curl-${version}.tar.bz2 080aaa5bef29ab3f592101e7a95f32ddbe88b92125cb28dde479d5a104928ea4"
 depends=(
   'ca-certificates'
   'openssl'

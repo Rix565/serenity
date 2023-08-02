@@ -10,17 +10,17 @@
 #include <AK/Error.h>
 #include <AK/Function.h>
 #include <AK/OwnPtr.h>
+#include <AK/RefPtr.h>
 #include <AK/Types.h>
 #include <Kernel/FileSystem/File.h>
 #include <Kernel/FileSystem/FileSystem.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
 #include <Kernel/FileSystem/SysFS/Subsystems/Kernel/GlobalInformation.h>
-#include <Kernel/KBufferBuilder.h>
-#include <Kernel/KString.h>
-#include <Kernel/Library/LockRefPtr.h>
+#include <Kernel/Library/KBufferBuilder.h>
+#include <Kernel/Library/KString.h>
+#include <Kernel/Library/UserOrKernelBuffer.h>
 #include <Kernel/Locking/Mutex.h>
 #include <Kernel/Time/TimeManagement.h>
-#include <Kernel/UserOrKernelBuffer.h>
 
 namespace Kernel {
 

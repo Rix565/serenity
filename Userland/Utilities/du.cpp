@@ -11,7 +11,7 @@
 #include <LibCore/ArgsParser.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/DirIterator.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
 #include <limits.h>
@@ -37,7 +37,7 @@ struct DuOption {
 };
 
 static ErrorOr<void> parse_args(Main::Arguments arguments, Vector<DeprecatedString>& files, DuOption& du_option);
-static ErrorOr<u64> print_space_usage(DeprecatedString const& path, DuOption const& du_option, size_t current_depth, bool inside_dir = false);
+static u64 print_space_usage(DeprecatedString const& path, DuOption const& du_option, size_t current_depth, bool inside_dir = false);
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
@@ -47,7 +47,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(parse_args(arguments, files, du_option));
 
     for (auto const& file : files)
-        TRY(print_space_usage(file, du_option, 0));
+        print_space_usage(file, du_option, 0);
 
     return 0;
 }
@@ -66,8 +66,7 @@ ErrorOr<void> parse_args(Main::Arguments arguments, Vector<DeprecatedString>& fi
         "time",
         0,
         "time-type",
-        [&du_option](auto const* option_ptr) {
-            StringView option { option_ptr, strlen(option_ptr) };
+        [&du_option](StringView option) {
             if (option == "mtime"sv || option == "modification"sv)
                 du_option.time_type = DuOption::TimeType::Modification;
             else if (option == "ctime"sv || option == "status"sv || option == "use"sv)
@@ -87,7 +86,7 @@ ErrorOr<void> parse_args(Main::Arguments arguments, Vector<DeprecatedString>& fi
         nullptr,
         'k',
         nullptr,
-        [&du_option](auto const*) {
+        [&du_option](StringView) {
             du_option.block_size = 1024;
             return true;
         }
@@ -116,7 +115,7 @@ ErrorOr<void> parse_args(Main::Arguments arguments, Vector<DeprecatedString>& fi
     if (!pattern.is_empty())
         du_option.excluded_patterns.append(pattern);
     if (!exclude_from.is_empty()) {
-        auto file = TRY(Core::Stream::File::open(exclude_from, Core::Stream::OpenMode::Read));
+        auto file = TRY(Core::File::open(exclude_from, Core::File::OpenMode::Read));
         auto const buff = TRY(file->read_until_eof());
         if (!buff.is_empty()) {
             DeprecatedString patterns = DeprecatedString::copy(buff, Chomp);
@@ -135,28 +134,35 @@ ErrorOr<void> parse_args(Main::Arguments arguments, Vector<DeprecatedString>& fi
     return {};
 }
 
-ErrorOr<u64> print_space_usage(DeprecatedString const& path, DuOption const& du_option, size_t current_depth, bool inside_dir)
+u64 print_space_usage(DeprecatedString const& path, DuOption const& du_option, size_t current_depth, bool inside_dir)
 {
     u64 size = 0;
-    struct stat path_stat = TRY(Core::System::lstat(path));
+    auto path_stat_or_error = Core::System::lstat(path);
+    if (path_stat_or_error.is_error()) {
+        warnln("du: cannot stat '{}': {}", path, path_stat_or_error.release_error());
+        return 0;
+    }
+
+    auto path_stat = path_stat_or_error.release_value();
     bool const is_directory = S_ISDIR(path_stat.st_mode);
     if (is_directory) {
         auto di = Core::DirIterator(path, Core::DirIterator::SkipParentAndBaseDir);
         if (di.has_error()) {
-            outln("du: cannot read directory '{}': {}", path, di.error_string());
-            return Error::from_string_literal("An error occurred. See previous error.");
+            auto error = di.error();
+            warnln("du: cannot read directory '{}': {}", path, error);
+            return 0;
         }
 
         while (di.has_next()) {
             auto const child_path = di.next_full_path();
-            size += TRY(print_space_usage(child_path, du_option, current_depth + 1, true));
+            size += print_space_usage(child_path, du_option, current_depth + 1, true);
         }
     }
 
     auto const basename = LexicalPath::basename(path);
     for (auto const& pattern : du_option.excluded_patterns) {
         if (basename.matches(pattern, CaseSensitivity::CaseSensitive))
-            return { 0 };
+            return 0;
     }
 
     if (!du_option.apparent_size) {
@@ -201,5 +207,5 @@ ErrorOr<u64> print_space_usage(DeprecatedString const& path, DuOption const& du_
         outln("\t{}\t{}", formatted_time, path);
     }
 
-    return { size };
+    return size;
 }

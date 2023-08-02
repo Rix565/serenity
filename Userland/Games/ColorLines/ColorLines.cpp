@@ -17,7 +17,7 @@
 
 ColorLines::BitmapArray ColorLines::build_marble_color_bitmaps()
 {
-    auto marble_bitmap = MUST(Gfx::Bitmap::load_from_file("/res/icons/colorlines/colorlines.png"sv));
+    auto marble_bitmap = MUST(Gfx::Bitmap::load_from_file("/res/graphics/colorlines/colorlines.png"sv));
     float constexpr hue_degrees[Marble::number_of_colors] = {
         0,   // Red
         45,  // Brown/Yellow
@@ -40,7 +40,7 @@ ColorLines::BitmapArray ColorLines::build_marble_color_bitmaps()
 ColorLines::BitmapArray ColorLines::build_marble_trace_bitmaps()
 {
     // Use "Paw Prints" Unicode Character (U+1F43E)
-    auto trace_bitmap = NonnullRefPtr<Gfx::Bitmap>(*Gfx::Emoji::emoji_for_code_point(0x1F43E));
+    auto trace_bitmap = NonnullRefPtr<Gfx::Bitmap const>(*Gfx::Emoji::emoji_for_code_point(0x1F43E));
     BitmapArray result;
     result.ensure_capacity(number_of_marble_trace_bitmaps);
     result.append(trace_bitmap);
@@ -179,7 +179,7 @@ void ColorLines::paint_event(GUI::PaintEvent& event)
 
     auto paint_cell = [&](GUI::Painter& painter, Gfx::IntRect rect, int color, int animation_frame) {
         painter.draw_rect(rect, Color::Black);
-        rect.shrink(0, 1, 1, 0);
+        rect.shrink(0, 2, 2, 0);
         painter.draw_line(rect.bottom_left(), rect.top_left(), Color::White);
         painter.draw_line(rect.top_left(), rect.top_right(), Color::White);
         painter.draw_line(rect.top_right(), rect.bottom_right(), Color::DarkGray);
@@ -189,7 +189,6 @@ void ColorLines::paint_event(GUI::PaintEvent& event)
         painter.draw_line(rect.top_left(), rect.top_right(), Color::LightGray);
         painter.draw_line(rect.top_right(), rect.bottom_right(), Color::MidGray);
         painter.draw_line(rect.bottom_right(), rect.bottom_left(), Color::MidGray);
-        rect.shrink(1, 1, 1, 1);
         painter.fill_rect(rect, tile_color);
         rect.shrink(1, 1, 1, 1);
         if (color >= 0 && color < Marble::number_of_colors) {
@@ -212,10 +211,9 @@ void ColorLines::paint_event(GUI::PaintEvent& event)
     // Draw score
     auto const score_text = MUST(String::formatted("{:05}"sv, m_score));
     auto text_width = static_cast<int>(ceilf(m_score_font->width(score_text)));
-    auto const glyph_height = m_score_font->glyph_height();
     auto const score_text_rect = Gfx::IntRect {
         frame_inner_rect().top_left().translated(text_margin),
-        Gfx::IntSize { text_width, glyph_height }
+        Gfx::IntSize { text_width, font().pixel_size_rounded_up() }
     };
     painter.draw_text(score_text_rect, score_text, Gfx::TextAlignment::CenterLeft, text_color);
 
@@ -223,8 +221,8 @@ void ColorLines::paint_event(GUI::PaintEvent& event)
     auto const high_score_text = MUST(String::formatted("{:05}"sv, m_high_score));
     text_width = m_score_font->width(high_score_text);
     auto const high_score_text_rect = Gfx::IntRect {
-        frame_inner_rect().top_right().translated(-(text_margin + text_width), text_margin),
-        Gfx::IntSize { text_width, glyph_height }
+        frame_inner_rect().top_right().translated(-(text_margin + text_width) - 1, text_margin),
+        Gfx::IntSize { text_width, font().pixel_size_rounded_up() }
     };
     painter.draw_text(high_score_text_rect, high_score_text, Gfx::TextAlignment::CenterLeft, text_color);
 

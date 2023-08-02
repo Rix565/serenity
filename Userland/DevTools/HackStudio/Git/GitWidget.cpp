@@ -7,8 +7,6 @@
 #include "GitWidget.h"
 #include "../Dialogs/Git/GitCommitDialog.h"
 #include "GitFilesModel.h"
-#include <LibCore/File.h>
-#include <LibCore/Stream.h>
 #include <LibDiff/Format.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/BoxLayout.h>
@@ -38,7 +36,7 @@ GitWidget::GitWidget()
     refresh_button.on_click = [this](int) { refresh(); };
 
     auto& unstaged_label = unstaged_header.add<GUI::Label>();
-    unstaged_label.set_text("Unstaged");
+    unstaged_label.set_text("Unstaged"_string.release_value_but_fixme_should_propagate_errors());
 
     unstaged_header.set_fixed_height(20);
     m_unstaged_files = unstaged.add<GitFilesView>(
@@ -66,7 +64,7 @@ GitWidget::GitWidget()
     commit_button.on_click = [this](int) { commit(); };
 
     auto& staged_label = staged_header.add<GUI::Label>();
-    staged_label.set_text("Staged");
+    staged_label.set_text("Staged"_short_string);
 
     staged_header.set_fixed_height(20);
     m_staged_files = staged.add<GitFilesView>(
@@ -156,7 +154,7 @@ void GitWidget::set_view_diff_callback(ViewDiffCallback callback)
 void GitWidget::show_diff(DeprecatedString const& file_path)
 {
     if (!m_git_repo->is_tracked(file_path)) {
-        auto file = Core::Stream::File::open(file_path, Core::Stream::OpenMode::Read).release_value_but_fixme_should_propagate_errors();
+        auto file = Core::File::open(file_path, Core::File::OpenMode::Read).release_value_but_fixme_should_propagate_errors();
         auto content = file->read_until_eof().release_value_but_fixme_should_propagate_errors();
         m_view_diff_callback("", Diff::generate_only_additions(content));
         return;

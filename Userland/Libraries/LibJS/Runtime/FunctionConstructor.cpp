@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,7 +19,7 @@
 namespace JS {
 
 FunctionConstructor::FunctionConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.Function.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.Function.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
@@ -50,7 +50,7 @@ ThrowCompletionOr<ECMAScriptFunctionObject*> FunctionConstructor::create_dynamic
         new_target = &constructor;
 
     StringView prefix;
-    Object* (Intrinsics::*fallback_prototype)() = nullptr;
+    NonnullGCPtr<Object> (Intrinsics::*fallback_prototype)() = nullptr;
 
     switch (kind) {
     // 4. If kind is normal, then
@@ -178,24 +178,17 @@ ThrowCompletionOr<ECMAScriptFunctionObject*> FunctionConstructor::create_dynamic
     // 17. If parameters is a List of errors, throw a SyntaxError exception.
     if (parameters_parser.has_errors()) {
         auto error = parameters_parser.errors()[0];
-        return vm.throw_completion<SyntaxError>(error.to_deprecated_string());
+        return vm.throw_completion<SyntaxError>(TRY_OR_THROW_OOM(vm, error.to_string()));
     }
 
     // 18. Let body be ParseText(StringToCodePoints(bodyString), bodySym).
     bool contains_direct_call_to_eval = false;
-    auto body_parser = Parser { Lexer { body_string } };
-    // Set up some parser state to accept things like return await, and yield in the plain function body.
-    body_parser.m_state.in_function_context = true;
-    if ((parse_options & FunctionNodeParseOptions::IsAsyncFunction) != 0)
-        body_parser.m_state.await_expression_is_valid = true;
-    if ((parse_options & FunctionNodeParseOptions::IsGeneratorFunction) != 0)
-        body_parser.m_state.in_generator_function_context = true;
-    (void)body_parser.parse_function_body(parameters, kind, contains_direct_call_to_eval);
+    auto body_parser = Parser::parse_function_body_from_string(body_string, parse_options, parameters, kind, contains_direct_call_to_eval);
 
     // 19. If body is a List of errors, throw a SyntaxError exception.
     if (body_parser.has_errors()) {
         auto error = body_parser.errors()[0];
-        return vm.throw_completion<SyntaxError>(error.to_deprecated_string());
+        return vm.throw_completion<SyntaxError>(TRY_OR_THROW_OOM(vm, error.to_string()));
     }
 
     // 20. NOTE: The parameters and body are parsed separately to ensure that each is valid alone. For example, new Function("/*", "*/ ) {") is not legal.
@@ -209,7 +202,7 @@ ThrowCompletionOr<ECMAScriptFunctionObject*> FunctionConstructor::create_dynamic
     // 23. If expr is a List of errors, throw a SyntaxError exception.
     if (source_parser.has_errors()) {
         auto error = source_parser.errors()[0];
-        return vm.throw_completion<SyntaxError>(error.to_deprecated_string());
+        return vm.throw_completion<SyntaxError>(TRY_OR_THROW_OOM(vm, error.to_string()));
     }
 
     // 24. Let proto be ? GetPrototypeFromConstructor(newTarget, fallbackProto).
@@ -225,7 +218,7 @@ ThrowCompletionOr<ECMAScriptFunctionObject*> FunctionConstructor::create_dynamic
     PrivateEnvironment* private_environment = nullptr;
 
     // 28. Let F be OrdinaryFunctionCreate(proto, sourceText, parameters, body, non-lexical-this, env, privateEnv).
-    auto function = ECMAScriptFunctionObject::create(realm, "anonymous", *prototype, move(source_text), expr->body(), expr->parameters(), expr->function_length(), &environment, private_environment, expr->kind(), expr->is_strict_mode(), expr->might_need_arguments_object(), contains_direct_call_to_eval);
+    auto function = ECMAScriptFunctionObject::create(realm, "anonymous", *prototype, move(source_text), expr->body(), expr->parameters(), expr->function_length(), expr->local_variables_names(), &environment, private_environment, expr->kind(), expr->is_strict_mode(), expr->might_need_arguments_object(), contains_direct_call_to_eval);
 
     // FIXME: Remove the name argument from create() and do this instead.
     // 29. Perform SetFunctionName(F, "anonymous").

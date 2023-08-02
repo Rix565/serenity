@@ -17,7 +17,7 @@ namespace PDF {
 PDFErrorOr<Vector<Operator>> Parser::parse_operators(Document* document, ReadonlyBytes bytes)
 {
     Parser parser(document, bytes);
-    parser.m_disable_encryption = true;
+    parser.m_enable_encryption = false;
     return parser.parse_operators();
 }
 
@@ -260,14 +260,14 @@ NonnullRefPtr<StringObject> Parser::parse_string()
 
     auto string_object = make_object<StringObject>(string, is_binary_string);
 
-    if (m_document->security_handler() && !m_disable_encryption)
+    if (m_document->security_handler() && m_enable_encryption)
         m_document->security_handler()->decrypt(string_object, m_current_reference_stack.last());
 
     auto unencrypted_string = string_object->string();
 
     if (unencrypted_string.bytes().starts_with(Array<u8, 2> { 0xfe, 0xff })) {
         // The string is encoded in UTF16-BE
-        string_object->set_string(TextCodec::decoder_for("utf-16be")->to_utf8(unencrypted_string));
+        string_object->set_string(TextCodec::decoder_for("utf-16be"sv)->to_utf8(unencrypted_string).release_value_but_fixme_should_propagate_errors().to_deprecated_string());
     } else if (unencrypted_string.bytes().starts_with(Array<u8, 3> { 239, 187, 191 })) {
         // The string is encoded in UTF-8. This is the default anyways, but if these bytes
         // are explicitly included, we have to trim them
@@ -432,7 +432,7 @@ PDFErrorOr<NonnullRefPtr<DictObject>> Parser::parse_dict()
         return error("Expected dict to end with \">>\"");
     m_reader.consume_whitespace();
 
-    return make_object<DictObject>(map);
+    return make_object<DictObject>(move(map));
 }
 
 PDFErrorOr<NonnullRefPtr<StreamObject>> Parser::parse_stream(NonnullRefPtr<DictObject> dict)
@@ -446,7 +446,7 @@ PDFErrorOr<NonnullRefPtr<StreamObject>> Parser::parse_stream(NonnullRefPtr<DictO
     ReadonlyBytes bytes;
 
     auto maybe_length = dict->get(CommonNames::Length);
-    if (maybe_length.has_value() && (!maybe_length->has<Reference>())) {
+    if (maybe_length.has_value() && m_document->can_resolve_references()) {
         // The PDF writer has kindly provided us with the direct length of the stream
         m_reader.save();
         auto length = TRY(m_document->resolve_to<int>(maybe_length.value()));
@@ -457,17 +457,13 @@ PDFErrorOr<NonnullRefPtr<StreamObject>> Parser::parse_stream(NonnullRefPtr<DictO
     } else {
         // We have to look for the endstream keyword
         auto stream_start = m_reader.offset();
-
-        while (true) {
-            m_reader.move_until([&](auto) { return m_reader.matches_eol(); });
-            auto potential_stream_end = m_reader.offset();
-            m_reader.consume_eol();
-            if (!m_reader.matches("endstream"))
-                continue;
-
-            bytes = m_reader.bytes().slice(stream_start, potential_stream_end - stream_start);
-            break;
+        while (!m_reader.matches("endstream")) {
+            m_reader.consume();
+            m_reader.move_until('e');
         }
+        auto stream_end = m_reader.offset();
+        m_reader.consume_eol();
+        bytes = m_reader.bytes().slice(stream_start, stream_end - stream_start);
     }
 
     m_reader.move_by(9);
@@ -475,21 +471,11 @@ PDFErrorOr<NonnullRefPtr<StreamObject>> Parser::parse_stream(NonnullRefPtr<DictO
 
     auto stream_object = make_object<StreamObject>(dict, MUST(ByteBuffer::copy(bytes)));
 
-    if (m_document->security_handler() && !m_disable_encryption)
+    if (m_document->security_handler() && m_enable_encryption)
         m_document->security_handler()->decrypt(stream_object, m_current_reference_stack.last());
 
-    if (dict->contains(CommonNames::Filter)) {
-        Vector<DeprecatedFlyString> filters;
-
-        // We may either get a single filter or an array of cascading filters
-        auto filter_object = TRY(dict->get_object(m_document, CommonNames::Filter));
-        if (filter_object->is<ArrayObject>()) {
-            auto filter_array = filter_object->cast<ArrayObject>();
-            for (size_t i = 0; i < filter_array->size(); ++i)
-                filters.append(TRY(filter_array->get_name_at(m_document, i))->name());
-        } else {
-            filters.append(filter_object->cast<NameObject>()->name());
-        }
+    if (dict->contains(CommonNames::Filter) && m_enable_filters) {
+        Vector<DeprecatedFlyString> filters = TRY(m_document->read_filters(dict));
 
         // Every filter may get its own parameter dictionary
         Vector<RefPtr<DictObject>> decode_parms_vector;
@@ -499,8 +485,10 @@ PDFErrorOr<NonnullRefPtr<StreamObject>> Parser::parse_stream(NonnullRefPtr<DictO
             if (decode_parms_object->is<ArrayObject>()) {
                 auto decode_parms_array = decode_parms_object->cast<ArrayObject>();
                 for (size_t i = 0; i < decode_parms_array->size(); ++i) {
-                    // FIXME: This entry may be the null object instead
-                    RefPtr<DictObject> decode_parms = decode_parms_array->at(i).get<NonnullRefPtr<Object>>()->cast<DictObject>();
+                    RefPtr<DictObject> decode_parms;
+                    auto entry = decode_parms_array->at(i);
+                    if (entry.has<NonnullRefPtr<Object>>())
+                        decode_parms = entry.get<NonnullRefPtr<Object>>()->cast<DictObject>();
                     decode_parms_vector.append(decode_parms);
                 }
             } else {
@@ -528,7 +516,7 @@ PDFErrorOr<Vector<Operator>> Parser::parse_operators()
     Vector<Value> operator_args;
 
     constexpr static auto is_operator_char = [](char ch) {
-        return isalpha(ch) || ch == '*' || ch == '\'';
+        return isalpha(ch) || ch == '*' || ch == '\'' || ch == '"';
     };
 
     m_reader.consume_whitespace();

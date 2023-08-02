@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2022, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -25,7 +25,7 @@ Crypto::SignedBigInteger const ns_per_day_bigint { static_cast<i64>(ns_per_day) 
 
 NonnullGCPtr<Date> Date::create(Realm& realm, double date_value)
 {
-    return realm.heap().allocate<Date>(realm, date_value, *realm.intrinsics().date_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<Date>(realm, date_value, realm.intrinsics().date_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
 }
 
 Date::Date(double date_value, Object& prototype)
@@ -34,7 +34,7 @@ Date::Date(double date_value, Object& prototype)
 {
 }
 
-DeprecatedString Date::iso_date_string() const
+ErrorOr<String> Date::iso_date_string() const
 {
     int year = year_from_time(m_date_value);
 
@@ -59,7 +59,7 @@ DeprecatedString Date::iso_date_string() const
     builder.appendff("{:03}", ms_from_time(m_date_value));
     builder.append('Z');
 
-    return builder.to_deprecated_string();
+    return builder.to_string();
 }
 
 // DayWithinYear(t), https://tc39.es/ecma262/#eqn-DayWithinYear
@@ -298,7 +298,7 @@ static i64 clip_bigint_to_sane_time(Crypto::SignedBigInteger const& value)
     static Crypto::SignedBigInteger const min_bigint { NumericLimits<i64>::min() };
     static Crypto::SignedBigInteger const max_bigint { NumericLimits<i64>::max() };
 
-    // The provided epoch (nano)seconds value is potentially out of range for AK::Time and subsequently
+    // The provided epoch (nano)seconds value is potentially out of range for AK::Duration and subsequently
     // get_time_zone_offset(). We can safely assume that the TZDB has no useful information that far
     // into the past and future anyway, so clamp it to the i64 range.
     if (value < min_bigint)
@@ -314,7 +314,7 @@ static i64 clip_bigint_to_sane_time(Crypto::SignedBigInteger const& value)
 Vector<Crypto::SignedBigInteger> get_named_time_zone_epoch_nanoseconds(StringView time_zone_identifier, i32 year, u8 month, u8 day, u8 hour, u8 minute, u8 second, u16 millisecond, u16 microsecond, u16 nanosecond)
 {
     auto local_nanoseconds = get_utc_epoch_nanoseconds(year, month, day, hour, minute, second, millisecond, microsecond, nanosecond);
-    auto local_time = Time::from_nanoseconds(clip_bigint_to_sane_time(local_nanoseconds));
+    auto local_time = UnixDateTime::from_nanoseconds_since_epoch(clip_bigint_to_sane_time(local_nanoseconds));
 
     // FIXME: LibTimeZone does not behave exactly as the spec expects. It does not consider repeated or skipped time points.
     auto offset = TimeZone::get_time_zone_offset(time_zone_identifier, local_time);
@@ -332,10 +332,10 @@ i64 get_named_time_zone_offset_nanoseconds(StringView time_zone_identifier, Cryp
     auto time_zone = TimeZone::time_zone_from_string(time_zone_identifier);
     VERIFY(time_zone.has_value());
 
-    // Since Time::from_seconds() and Time::from_nanoseconds() both take an i64, converting to
+    // Since UnixDateTime::from_seconds_since_epoch() and UnixDateTime::from_nanoseconds_since_epoch() both take an i64, converting to
     // seconds first gives us a greater range. The TZDB doesn't have sub-second offsets.
     auto seconds = epoch_nanoseconds.divided_by(s_one_billion_bigint).quotient;
-    auto time = Time::from_seconds(clip_bigint_to_sane_time(seconds));
+    auto time = UnixDateTime::from_seconds_since_epoch(clip_bigint_to_sane_time(seconds));
 
     auto offset = TimeZone::get_time_zone_offset(*time_zone, time);
     VERIFY(offset.has_value());
@@ -570,7 +570,7 @@ double parse_time_zone_offset_string(StringView offset_string)
     auto parsed_hours = *parse_result->time_zone_utc_offset_hour;
 
     // 10. Let hours be ℝ(StringToNumber(CodePointsToString(parsedHours))).
-    auto hours = string_to_number(parsed_hours)->as_double();
+    auto hours = string_to_number(parsed_hours);
 
     double minutes { 0 };
     double seconds { 0 };
@@ -587,7 +587,7 @@ double parse_time_zone_offset_string(StringView offset_string)
         auto parsed_minutes = *parse_result->time_zone_utc_offset_minute;
 
         // b. Let minutes be ℝ(StringToNumber(CodePointsToString(parsedMinutes))).
-        minutes = string_to_number(parsed_minutes)->as_double();
+        minutes = string_to_number(parsed_minutes);
     }
 
     // 13. If parseResult does not contain two MinuteSecond Parse Nodes, then
@@ -601,7 +601,7 @@ double parse_time_zone_offset_string(StringView offset_string)
         auto parsed_seconds = *parse_result->time_zone_utc_offset_second;
 
         // b. Let seconds be ℝ(StringToNumber(CodePointsToString(parsedSeconds))).
-        seconds = string_to_number(parsed_seconds)->as_double();
+        seconds = string_to_number(parsed_seconds);
     }
 
     // 15. If parseResult does not contain a TemporalDecimalFraction Parse Node, then
@@ -621,7 +621,7 @@ double parse_time_zone_offset_string(StringView offset_string)
         auto nanoseconds_string = fraction.substring_view(1, 9);
 
         // d. Let nanoseconds be ℝ(StringToNumber(nanosecondsString)).
-        nanoseconds = string_to_number(nanoseconds_string)->as_double();
+        nanoseconds = string_to_number(nanoseconds_string);
     }
 
     // 17. Return sign × (((hours × 60 + minutes) × 60 + seconds) × 10^9 + nanoseconds).

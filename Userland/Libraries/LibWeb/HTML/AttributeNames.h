@@ -7,9 +7,9 @@
 #pragma once
 
 #include <AK/DeprecatedFlyString.h>
+#include <AK/Error.h>
 
-namespace Web {
-namespace HTML {
+namespace Web::HTML {
 namespace AttributeNames {
 
 #define ENUMERATE_HTML_ATTRIBUTES                          \
@@ -51,6 +51,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(contenteditable)            \
     __ENUMERATE_HTML_ATTRIBUTE(controls)                   \
     __ENUMERATE_HTML_ATTRIBUTE(coords)                     \
+    __ENUMERATE_HTML_ATTRIBUTE(crossorigin)                \
     __ENUMERATE_HTML_ATTRIBUTE(data)                       \
     __ENUMERATE_HTML_ATTRIBUTE(datetime)                   \
     __ENUMERATE_HTML_ATTRIBUTE(declare)                    \
@@ -61,10 +62,14 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(dirname)                    \
     __ENUMERATE_HTML_ATTRIBUTE(disabled)                   \
     __ENUMERATE_HTML_ATTRIBUTE(download)                   \
+    __ENUMERATE_HTML_ATTRIBUTE(enctype)                    \
     __ENUMERATE_HTML_ATTRIBUTE(event)                      \
     __ENUMERATE_HTML_ATTRIBUTE(face)                       \
     __ENUMERATE_HTML_ATTRIBUTE(for_)                       \
     __ENUMERATE_HTML_ATTRIBUTE(form)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(formaction)                 \
+    __ENUMERATE_HTML_ATTRIBUTE(formenctype)                \
+    __ENUMERATE_HTML_ATTRIBUTE(formmethod)                 \
     __ENUMERATE_HTML_ATTRIBUTE(formnovalidate)             \
     __ENUMERATE_HTML_ATTRIBUTE(formtarget)                 \
     __ENUMERATE_HTML_ATTRIBUTE(frame)                      \
@@ -81,12 +86,14 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(imagesrcset)                \
     __ENUMERATE_HTML_ATTRIBUTE(inert)                      \
     __ENUMERATE_HTML_ATTRIBUTE(integrity)                  \
+    __ENUMERATE_HTML_ATTRIBUTE(is)                         \
     __ENUMERATE_HTML_ATTRIBUTE(ismap)                      \
     __ENUMERATE_HTML_ATTRIBUTE(itemscope)                  \
     __ENUMERATE_HTML_ATTRIBUTE(label)                      \
     __ENUMERATE_HTML_ATTRIBUTE(lang)                       \
     __ENUMERATE_HTML_ATTRIBUTE(language)                   \
     __ENUMERATE_HTML_ATTRIBUTE(link)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(loading)                    \
     __ENUMERATE_HTML_ATTRIBUTE(longdesc)                   \
     __ENUMERATE_HTML_ATTRIBUTE(loop)                       \
     __ENUMERATE_HTML_ATTRIBUTE(marginheight)               \
@@ -193,6 +200,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(poster)                     \
     __ENUMERATE_HTML_ATTRIBUTE(preload)                    \
     __ENUMERATE_HTML_ATTRIBUTE(readonly)                   \
+    __ENUMERATE_HTML_ATTRIBUTE(referrerpolicy)             \
     __ENUMERATE_HTML_ATTRIBUTE(rel)                        \
     __ENUMERATE_HTML_ATTRIBUTE(required)                   \
     __ENUMERATE_HTML_ATTRIBUTE(rev)                        \
@@ -206,6 +214,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(shape)                      \
     __ENUMERATE_HTML_ATTRIBUTE(size)                       \
     __ENUMERATE_HTML_ATTRIBUTE(sizes)                      \
+    __ENUMERATE_HTML_ATTRIBUTE(span)                       \
     __ENUMERATE_HTML_ATTRIBUTE(src)                        \
     __ENUMERATE_HTML_ATTRIBUTE(srcdoc)                     \
     __ENUMERATE_HTML_ATTRIBUTE(srclang)                    \
@@ -233,9 +242,10 @@ namespace AttributeNames {
 ENUMERATE_HTML_ATTRIBUTES
 #undef __ENUMERATE_HTML_ATTRIBUTE
 
+ErrorOr<void> initialize_strings();
+
 }
 
 bool is_boolean_attribute(DeprecatedFlyString const& attribute);
 
-}
 }
