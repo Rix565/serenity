@@ -1743,7 +1743,7 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
     else if (!options.invoke_program_for_autocomplete)
         return Error::from_string_literal("Refusing to use the program itself as completion source");
 
-    completion_command.argv.extend({ TRY("--complete"_string), "--"_short_string });
+    completion_command.argv.extend({ "--complete"_string, "--"_string });
 
     struct Visitor : public AST::NodeVisitor {
         Visitor(Shell& shell, AST::Position position)
@@ -1912,7 +1912,7 @@ ErrorOr<Vector<Line::CompletionSuggestion>> Shell::complete_via_program_itself(s
 
     completion_command.argv.extend(visitor.list());
 
-    auto devnull = TRY("/dev/null"_string);
+    auto devnull = "/dev/null"_string;
     completion_command.should_wait = true;
     completion_command.redirections.append(AST::PathRedirection::create(devnull, STDERR_FILENO, AST::PathRedirection::Write));
     completion_command.redirections.append(AST::PathRedirection::create(devnull, STDIN_FILENO, AST::PathRedirection::Read));
@@ -2258,9 +2258,7 @@ Shell::Shell()
     cache_path();
 }
 
-Shell::Shell(Line::Editor& editor, bool attempt_interactive, bool posix_mode)
-    : m_in_posix_mode(posix_mode)
-    , m_editor(editor)
+void Shell::initialize(bool attempt_interactive)
 {
     uid = getuid();
     tcsetpgrp(0, getpgrp());
@@ -2305,11 +2303,22 @@ Shell::Shell(Line::Editor& editor, bool attempt_interactive, bool posix_mode)
         m_editor->load_history(get_history_path());
         cache_path();
     }
+}
 
+Shell::Shell(Line::Editor& editor, bool attempt_interactive, bool posix_mode)
+    : m_in_posix_mode(posix_mode)
+    , m_editor(editor)
+{
+    initialize(attempt_interactive);
     start_timer(3000);
 }
 
 Shell::~Shell()
+{
+    destroy();
+}
+
+void Shell::destroy()
 {
     if (m_default_constructed)
         return;

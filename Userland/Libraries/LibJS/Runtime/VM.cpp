@@ -15,7 +15,6 @@
 #include <LibFileSystem/FileSystem.h>
 #include <LibJS/AST.h>
 #include <LibJS/Bytecode/Interpreter.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/BoundFunction.h>
@@ -44,7 +43,7 @@ ErrorOr<NonnullRefPtr<VM>> VM::create(OwnPtr<CustomData> custom_data)
 
     WellKnownSymbols well_known_symbols {
 #define __JS_ENUMERATE(SymbolName, snake_name) \
-    Symbol::create(*vm, TRY("Symbol." #SymbolName##_string), false),
+    Symbol::create(*vm, "Symbol." #SymbolName##_string, false),
         JS_ENUMERATE_WELL_KNOWN_SYMBOLS
 #undef __JS_ENUMERATE
     };
@@ -188,77 +187,34 @@ void VM::enable_default_host_import_module_dynamically_hook()
     };
 }
 
-Interpreter& VM::interpreter()
-{
-    VERIFY(!m_interpreters.is_empty());
-    return *m_interpreters.last();
-}
-
-Interpreter* VM::interpreter_if_exists()
-{
-    if (m_interpreters.is_empty())
-        return nullptr;
-    return m_interpreters.last();
-}
-
 Bytecode::Interpreter& VM::bytecode_interpreter()
 {
     return *m_bytecode_interpreter;
 }
 
-Bytecode::Interpreter* VM::bytecode_interpreter_if_exists()
+void VM::gather_roots(HashMap<Cell*, HeapRootTypeOrLocation>& roots)
 {
-    if (!Bytecode::Interpreter::enabled())
-        return nullptr;
-    return m_bytecode_interpreter;
-}
-
-void VM::push_interpreter(Interpreter& interpreter)
-{
-    m_interpreters.append(&interpreter);
-}
-
-void VM::pop_interpreter(Interpreter& interpreter)
-{
-    VERIFY(!m_interpreters.is_empty());
-    auto* popped_interpreter = m_interpreters.take_last();
-    VERIFY(popped_interpreter == &interpreter);
-}
-
-VM::InterpreterExecutionScope::InterpreterExecutionScope(Interpreter& interpreter)
-    : m_interpreter(interpreter)
-{
-    m_interpreter.vm().push_interpreter(m_interpreter);
-}
-
-VM::InterpreterExecutionScope::~InterpreterExecutionScope()
-{
-    m_interpreter.vm().pop_interpreter(m_interpreter);
-}
-
-void VM::gather_roots(HashTable<Cell*>& roots)
-{
-    roots.set(m_empty_string);
+    roots.set(m_empty_string, HeapRootType::VM);
     for (auto string : m_single_ascii_character_strings)
-        roots.set(string);
+        roots.set(string, HeapRootType::VM);
 
     auto gather_roots_from_execution_context_stack = [&roots](Vector<ExecutionContext*> const& stack) {
         for (auto& execution_context : stack) {
             if (execution_context->this_value.is_cell())
-                roots.set(&execution_context->this_value.as_cell());
+                roots.set(&execution_context->this_value.as_cell(), HeapRootType::VM);
             for (auto& argument : execution_context->arguments) {
                 if (argument.is_cell())
-                    roots.set(&argument.as_cell());
+                    roots.set(&argument.as_cell(), HeapRootType::VM);
             }
-            roots.set(execution_context->lexical_environment);
-            roots.set(execution_context->variable_environment);
-            roots.set(execution_context->private_environment);
+            roots.set(execution_context->lexical_environment, HeapRootType::VM);
+            roots.set(execution_context->variable_environment, HeapRootType::VM);
+            roots.set(execution_context->private_environment, HeapRootType::VM);
             if (auto context_owner = execution_context->context_owner)
-                roots.set(context_owner);
+                roots.set(context_owner, HeapRootType::VM);
             execution_context->script_or_module.visit(
                 [](Empty) {},
                 [&](auto& script_or_module) {
-                    roots.set(script_or_module.ptr());
+                    roots.set(script_or_module.ptr(), HeapRootType::VM);
                 });
         }
     };
@@ -268,15 +224,15 @@ void VM::gather_roots(HashTable<Cell*>& roots)
         gather_roots_from_execution_context_stack(saved_stack);
 
 #define __JS_ENUMERATE(SymbolName, snake_name) \
-    roots.set(m_well_known_symbols.snake_name);
+    roots.set(m_well_known_symbols.snake_name, HeapRootType::VM);
     JS_ENUMERATE_WELL_KNOWN_SYMBOLS
 #undef __JS_ENUMERATE
 
     for (auto& symbol : m_global_symbol_registry)
-        roots.set(symbol.value);
+        roots.set(symbol.value, HeapRootType::VM);
 
     for (auto finalization_registry : m_finalization_registry_cleanup_jobs)
-        roots.set(finalization_registry);
+        roots.set(finalization_registry, HeapRootType::VM);
 }
 
 ThrowCompletionOr<Value> VM::named_evaluation_if_anonymous_function(ASTNode const& expression, DeprecatedFlyString const& name)
@@ -296,15 +252,6 @@ ThrowCompletionOr<Value> VM::named_evaluation_if_anonymous_function(ASTNode cons
     }
 
     return execute_ast_node(expression);
-}
-
-// 13.15.5.2 Runtime Semantics: DestructuringAssignmentEvaluation, https://tc39.es/ecma262/#sec-runtime-semantics-destructuringassignmentevaluation
-ThrowCompletionOr<void> VM::destructuring_assignment_evaluation(NonnullRefPtr<BindingPattern const> const& target, Value value)
-{
-    // Note: DestructuringAssignmentEvaluation is just like BindingInitialization without an environment
-    //       And it allows member expressions. We thus trust the parser to disallow member expressions
-    //       in any non assignment binding and just call BindingInitialization with a nullptr environment
-    return binding_initialization(target, value, nullptr);
 }
 
 // 8.5.2 Runtime Semantics: BindingInitialization, https://tc39.es/ecma262/#sec-runtime-semantics-bindinginitialization
@@ -358,15 +305,11 @@ ThrowCompletionOr<void> VM::binding_initialization(NonnullRefPtr<BindingPattern 
 
 ThrowCompletionOr<Value> VM::execute_ast_node(ASTNode const& node)
 {
-    if (auto* bytecode_interpreter = bytecode_interpreter_if_exists()) {
-        auto executable = TRY(Bytecode::compile(*this, node, FunctionKind::Normal, ""sv));
-        auto result_or_error = bytecode_interpreter->run_and_return_frame(*current_realm(), *executable, nullptr);
-        if (result_or_error.value.is_error())
-            return result_or_error.value.release_error();
-        return result_or_error.frame->registers[0];
-    }
-
-    return TRY(node.execute(interpreter())).value();
+    auto executable = TRY(Bytecode::compile(*this, node, FunctionKind::Normal, ""sv));
+    auto result_or_error = bytecode_interpreter().run_and_return_frame(*current_realm(), *executable, nullptr);
+    if (result_or_error.value.is_error())
+        return result_or_error.value.release_error();
+    return result_or_error.frame->registers[0];
 }
 
 // 13.15.5.3 Runtime Semantics: PropertyDestructuringAssignmentEvaluation, https://tc39.es/ecma262/#sec-runtime-semantics-propertydestructuringassignmentevaluation
@@ -387,8 +330,6 @@ ThrowCompletionOr<void> VM::property_binding_initialization(BindingPattern const
             Reference assignment_target;
             if (auto identifier_ptr = property.name.get_pointer<NonnullRefPtr<Identifier const>>()) {
                 assignment_target = TRY(resolve_binding((*identifier_ptr)->string(), environment));
-            } else if (auto member_ptr = property.alias.get_pointer<NonnullRefPtr<MemberExpression const>>()) {
-                assignment_target = TRY((*member_ptr)->to_reference(interpreter()));
             } else {
                 VERIFY_NOT_REACHED();
             }
@@ -438,8 +379,8 @@ ThrowCompletionOr<void> VM::property_binding_initialization(BindingPattern const
                 return TRY(resolve_binding(identifier->string(), environment));
             },
             [&](NonnullRefPtr<BindingPattern const> const&) -> ThrowCompletionOr<Optional<Reference>> { return Optional<Reference> {}; },
-            [&](NonnullRefPtr<MemberExpression const> const& member_expression) -> ThrowCompletionOr<Optional<Reference>> {
-                return TRY(member_expression->to_reference(interpreter()));
+            [&](NonnullRefPtr<MemberExpression const> const&) -> ThrowCompletionOr<Optional<Reference>> {
+                VERIFY_NOT_REACHED();
             }));
 
         auto value_to_assign = TRY(object->get(name));
@@ -482,8 +423,8 @@ ThrowCompletionOr<void> VM::iterator_binding_initialization(BindingPattern const
                 return TRY(resolve_binding(identifier->string(), environment));
             },
             [&](NonnullRefPtr<BindingPattern const> const&) -> ThrowCompletionOr<Optional<Reference>> { return Optional<Reference> {}; },
-            [&](NonnullRefPtr<MemberExpression const> const& member_expression) -> ThrowCompletionOr<Optional<Reference>> {
-                return TRY(member_expression->to_reference(interpreter()));
+            [&](NonnullRefPtr<MemberExpression const> const&) -> ThrowCompletionOr<Optional<Reference>> {
+                VERIFY_NOT_REACHED();
             }));
 
         // BindingRestElement : ... BindingIdentifier
@@ -805,8 +746,8 @@ void VM::dump_backtrace() const
 {
     for (ssize_t i = m_execution_context_stack.size() - 1; i >= 0; --i) {
         auto& frame = m_execution_context_stack[i];
-        if (frame->current_node) {
-            auto source_range = frame->current_node->source_range();
+        if (frame->source_range.source_code) {
+            auto source_range = frame->source_range.realize();
             dbgln("-> {} @ {}:{},{}", frame->function_name, source_range.filename(), source_range.start.line, source_range.start.column);
         } else {
             dbgln("-> {}", frame->function_name);
@@ -861,11 +802,6 @@ VM::StoredModule* VM::get_stored_module(ScriptOrModule const&, DeprecatedString 
     if (end_or_module.is_end())
         return nullptr;
     return &(*end_or_module);
-}
-
-ThrowCompletionOr<void> VM::link_and_eval_module(Badge<Interpreter>, SourceTextModule& module)
-{
-    return link_and_eval_module(module);
 }
 
 ThrowCompletionOr<void> VM::link_and_eval_module(Badge<Bytecode::Interpreter>, SourceTextModule& module)

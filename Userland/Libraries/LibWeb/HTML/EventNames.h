@@ -34,6 +34,8 @@ namespace Web::HTML::EventNames {
     __ENUMERATE_HTML_EVENT(contextmenu)              \
     __ENUMERATE_HTML_EVENT(copy)                     \
     __ENUMERATE_HTML_EVENT(cuechange)                \
+    __ENUMERATE_HTML_EVENT(currententrychange)       \
+    __ENUMERATE_HTML_EVENT(dispose)                  \
     __ENUMERATE_HTML_EVENT(cut)                      \
     __ENUMERATE_HTML_EVENT(DOMContentLoaded)         \
     __ENUMERATE_HTML_EVENT(drag)                     \
@@ -60,6 +62,9 @@ namespace Web::HTML::EventNames {
     __ENUMERATE_HTML_EVENT(loadstart)                \
     __ENUMERATE_HTML_EVENT(message)                  \
     __ENUMERATE_HTML_EVENT(messageerror)             \
+    __ENUMERATE_HTML_EVENT(navigate)                 \
+    __ENUMERATE_HTML_EVENT(navigatesuccess)          \
+    __ENUMERATE_HTML_EVENT(navigateerror)            \
     __ENUMERATE_HTML_EVENT(offline)                  \
     __ENUMERATE_HTML_EVENT(online)                   \
     __ENUMERATE_HTML_EVENT(open)                     \
@@ -78,6 +83,7 @@ namespace Web::HTML::EventNames {
     __ENUMERATE_HTML_EVENT(reset)                    \
     __ENUMERATE_HTML_EVENT(resize)                   \
     __ENUMERATE_HTML_EVENT(scroll)                   \
+    __ENUMERATE_HTML_EVENT(scrollend)                \
     __ENUMERATE_HTML_EVENT(securitypolicyviolation)  \
     __ENUMERATE_HTML_EVENT(seeked)                   \
     __ENUMERATE_HTML_EVENT(seeking)                  \
@@ -105,6 +111,6 @@ namespace Web::HTML::EventNames {
 ENUMERATE_HTML_EVENTS
 #undef __ENUMERATE_HTML_EVENT
 
-ErrorOr<void> initialize_strings();
+void initialize_strings();
 
 }

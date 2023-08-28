@@ -164,6 +164,23 @@ compiled_action("generate_css_property_id") {
   ]
 }
 
+compiled_action("generate_css_pseudo_class") {
+  tool = "//Meta/Lagom/Tools/CodeGenerators/LibWeb:GenerateCSSPseudoClass"
+  inputs = [ "CSS/PseudoClasses.json" ]
+  outputs = [
+    "$target_gen_dir/CSS/PseudoClass.h",
+    "$target_gen_dir/CSS/PseudoClass.cpp",
+  ]
+  args = [
+    "-h",
+    rebase_path(outputs[0], root_build_dir),
+    "-c",
+    rebase_path(outputs[1], root_build_dir),
+    "-j",
+    rebase_path(inputs[0], root_build_dir),
+  ]
+}
+
 compiled_action("generate_css_transform_functions") {
   tool =
       "//Meta/Lagom/Tools/CodeGenerators/LibWeb:GenerateCSSTransformFunctions"
@@ -206,6 +223,13 @@ embed_as_string_view("generate_default_stylesheet_source") {
   namespace = "Web::CSS"
 }
 
+embed_as_string_view("generate_mathml_stylesheet_source") {
+  input = "MathML/Default.css"
+  output = "$target_gen_dir/MathML/MathMLStyleSheetSource.cpp"
+  variable_name = "mathml_stylesheet_source"
+  namespace = "Web::CSS"
+}
+
 embed_as_string_view("generate_quirks_mode_stylesheet_source") {
   input = "CSS/QuirksMode.css"
   output = "$target_gen_dir/CSS/QuirksModeStyleSheetSource.cpp"
@@ -221,9 +245,11 @@ source_set("all_generated") {
     ":generate_css_math_functions",
     ":generate_css_media_feature_id",
     ":generate_css_property_id",
+    ":generate_css_pseudo_class",
     ":generate_css_transform_functions",
     ":generate_css_value_id",
     ":generate_default_stylesheet_source",
+    ":generate_mathml_stylesheet_source",
     ":generate_quirks_mode_stylesheet_source",
     ":generate_window_or_worker_interfaces",
   ]
@@ -268,9 +294,11 @@ shared_library("LibWeb") {
            "HTML",
            "HighResolutionTime",
            "Infra",
+           "Internals",
            "IntersectionObserver",
            "Layout",
            "Loader",
+           "MathML",
            "MimeSniff",
            "NavigationTiming",
            "Page",

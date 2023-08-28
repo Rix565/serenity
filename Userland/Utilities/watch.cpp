@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Sahan Fernando <sahan.h.fernando@gmail.com>
+ * Copyright (c) 2023, Tim Ledbetter <timledbetter@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,9 +16,7 @@
 #include <LibFileSystem/FileSystem.h>
 #include <LibMain/Main.h>
 #include <errno.h>
-#include <spawn.h>
 #include <stdio.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -26,6 +25,33 @@ static bool flag_noheader = false;
 static bool flag_beep_on_fail = false;
 static int volatile exit_code = 0;
 static volatile pid_t child_pid = -1;
+
+static struct termios g_save;
+
+static ErrorOr<void> setup_tty()
+{
+    // Save previous tty settings.
+    g_save = TRY(Core::System::tcgetattr(STDOUT_FILENO));
+
+    struct termios raw = g_save;
+    raw.c_lflag &= ~(ECHO | ICANON);
+
+    // Disable echo and line buffering
+    TRY(Core::System::tcsetattr(STDOUT_FILENO, TCSAFLUSH, raw));
+
+    // Save cursor and switch to alternate buffer.
+    out("\e[s\e[?1047h");
+    return {};
+}
+
+static void teardown_tty()
+{
+    auto maybe_error = Core::System::tcsetattr(STDOUT_FILENO, TCSAFLUSH, g_save);
+    if (maybe_error.is_error())
+        warnln("Failed to reset original terminal state: {}", strerror(maybe_error.error().code()));
+
+    out("\e[?1047l\e[u");
+}
 
 static DeprecatedString build_header_string(Vector<DeprecatedString> const& command, Duration const& interval)
 {
@@ -60,6 +86,10 @@ static void handle_signal(int signal)
             exit_code = 1;
         }
     }
+    auto is_a_tty_or_error = Core::System::isatty(STDOUT_FILENO);
+    if (!is_a_tty_or_error.is_error() && is_a_tty_or_error.value())
+        teardown_tty();
+
     exit(exit_code);
 }
 
@@ -70,36 +100,40 @@ static int run_command(Vector<DeprecatedString> const& command)
     for (auto& arg : command)
         argv.unchecked_append(arg.characters());
     argv.unchecked_append(nullptr);
-
-    if ((errno = posix_spawnp(const_cast<pid_t*>(&child_pid), argv[0], nullptr, nullptr, const_cast<char**>(argv.data()), environ))) {
+    auto child_pid_or_error = Core::System::posix_spawnp(command[0], nullptr, nullptr, const_cast<char**>(argv.data()), environ);
+    if (child_pid_or_error.is_error()) {
         exit_code = 1;
-        perror("posix_spawn");
-        return errno;
+        warnln("posix_spawn: {}", strerror(child_pid_or_error.error().code()));
+        return child_pid_or_error.error().code();
     }
+
+    child_pid = child_pid_or_error.release_value();
 
     // Wait for the child to terminate, then return its exit code.
-    int status;
-    pid_t exited_pid;
+    Core::System::WaitPidResult waitpid_result;
+    int error_code = 0;
     do {
-        exited_pid = waitpid(child_pid, &status, 0);
-    } while (exited_pid < 0 && errno == EINTR);
-    VERIFY(exited_pid == child_pid);
+        auto result_or_error = Core::System::waitpid(child_pid, 0);
+        if (result_or_error.is_error())
+            error_code = result_or_error.error().code();
+        else
+            waitpid_result = result_or_error.release_value();
+    } while (waitpid_result.pid < 0 && error_code == EINTR);
+    VERIFY(waitpid_result.pid == child_pid);
     child_pid = -1;
-    if (exited_pid < 0) {
-        perror("waitpid");
+    if (error_code > 0) {
+        warnln("waitpid: {}", strerror(error_code));
         return 1;
     }
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
-    } else {
-        return 1;
+    if (WIFEXITED(waitpid_result.status)) {
+        return WEXITSTATUS(waitpid_result.status);
     }
+    return 1;
 }
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    TRY(Core::System::signal(SIGINT, handle_signal));
-    TRY(Core::System::pledge("stdio proc exec rpath"));
+    TRY(Core::System::pledge("stdio proc exec rpath tty sigaction"));
 
     Vector<DeprecatedString> files_to_watch;
     Vector<DeprecatedString> command;
@@ -124,23 +158,31 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_positional_argument(command, "Command to run", "command");
     args_parser.parse(arguments);
 
+    if (TRY(Core::System::isatty(STDOUT_FILENO)))
+        TRY(setup_tty());
+
+    struct sigaction quit_action;
+    quit_action.sa_handler = handle_signal;
+    TRY(Core::System::sigaction(SIGTERM, &quit_action, nullptr));
+    TRY(Core::System::sigaction(SIGINT, &quit_action, nullptr));
+
     DeprecatedString header;
 
     auto watch_callback = [&] {
         // Clear the screen, then reset the cursor position to the top left.
-        warn("\033[H\033[2J");
+        out("\033[H\033[2J");
         // Print the header.
         if (!flag_noheader) {
-            warnln("{}", header);
-            warnln();
+            outln("{}", header);
+            outln();
         } else {
-            fflush(stderr);
+            fflush(stdout);
         }
         if (run_command(command) != 0) {
             exit_code = 1;
             if (flag_beep_on_fail) {
-                warnln("\a");
-                fflush(stderr);
+                out("\a");
+                fflush(stdout);
             }
         }
     };
@@ -171,7 +213,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             }
         }
     } else {
-        TRY(Core::System::pledge("stdio proc exec"));
+        TRY(Core::System::pledge("stdio proc exec tty"));
 
         Duration interval;
         if (opt_interval <= 0) {

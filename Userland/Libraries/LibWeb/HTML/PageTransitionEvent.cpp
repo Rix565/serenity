@@ -9,9 +9,9 @@
 
 namespace Web::HTML {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<PageTransitionEvent>> PageTransitionEvent::create(JS::Realm& realm, FlyString const& event_name, PageTransitionEventInit const& event_init)
+JS::NonnullGCPtr<PageTransitionEvent> PageTransitionEvent::create(JS::Realm& realm, FlyString const& event_name, PageTransitionEventInit const& event_init)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<PageTransitionEvent>(realm, realm, event_name, event_init));
+    return realm.heap().allocate<PageTransitionEvent>(realm, realm, event_name, event_init);
 }
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<PageTransitionEvent>> PageTransitionEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, PageTransitionEventInit const& event_init)
@@ -27,12 +27,10 @@ PageTransitionEvent::PageTransitionEvent(JS::Realm& realm, FlyString const& even
 
 PageTransitionEvent::~PageTransitionEvent() = default;
 
-JS::ThrowCompletionOr<void> PageTransitionEvent::initialize(JS::Realm& realm)
+void PageTransitionEvent::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::PageTransitionEventPrototype>(realm, "PageTransitionEvent"));
-
-    return {};
 }
 
 }

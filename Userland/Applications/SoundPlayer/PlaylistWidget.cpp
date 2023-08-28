@@ -61,17 +61,17 @@ ErrorOr<String> PlaylistModel::column_name(int column) const
 {
     switch (column) {
     case Column::Title:
-        return "Title"_short_string;
+        return "Title"_string;
     case Column::Duration:
-        return TRY("Duration"_string);
+        return "Duration"_string;
     case Column::Group:
-        return "Group"_short_string;
+        return "Group"_string;
     case Column::Album:
-        return "Album"_short_string;
+        return "Album"_string;
     case Column::Artist:
-        return "Artist"_short_string;
+        return "Artist"_string;
     case Column::Filesize:
-        return TRY("Filesize"_string);
+        return "Filesize"_string;
     }
     VERIFY_NOT_REACHED();
 }

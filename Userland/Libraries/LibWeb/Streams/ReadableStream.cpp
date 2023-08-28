@@ -23,7 +23,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<ReadableStream>> ReadableStream::construct_
 {
     auto& vm = realm.vm();
 
-    auto readable_stream = MUST_OR_THROW_OOM(realm.heap().allocate<ReadableStream>(realm, realm));
+    auto readable_stream = realm.heap().allocate<ReadableStream>(realm, realm);
 
     // 1. If underlyingSource is missing, set it to null.
     auto underlying_source = underlying_source_object.has_value() ? JS::Value(underlying_source_object.value().ptr()) : JS::js_null();
@@ -97,21 +97,19 @@ WebIDL::ExceptionOr<ReadableStreamReader> ReadableStream::get_reader(ReadableStr
 {
     // 1. If options["mode"] does not exist, return ? AcquireReadableStreamDefaultReader(this).
     if (!options.mode.has_value())
-        return TRY(acquire_readable_stream_default_reader(*this));
+        return ReadableStreamReader { TRY(acquire_readable_stream_default_reader(*this)) };
 
     // 2. Assert: options["mode"] is "byob".
     VERIFY(*options.mode == Bindings::ReadableStreamReaderMode::Byob);
 
     // 3. Return ? AcquireReadableStreamBYOBReader(this).
-    return TRY(acquire_readable_stream_byob_reader(*this));
+    return ReadableStreamReader { TRY(acquire_readable_stream_byob_reader(*this)) };
 }
 
-JS::ThrowCompletionOr<void> ReadableStream::initialize(JS::Realm& realm)
+void ReadableStream::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::ReadableStreamPrototype>(realm, "ReadableStream"));
-
-    return {};
 }
 
 void ReadableStream::visit_edges(Cell::Visitor& visitor)

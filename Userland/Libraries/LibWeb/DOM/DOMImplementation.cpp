@@ -17,10 +17,10 @@
 
 namespace Web::DOM {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMImplementation>> DOMImplementation::create(Document& document)
+JS::NonnullGCPtr<DOMImplementation> DOMImplementation::create(Document& document)
 {
     auto& realm = document.realm();
-    return MUST_OR_THROW_OOM(realm.heap().allocate<DOMImplementation>(realm, document));
+    return realm.heap().allocate<DOMImplementation>(realm, document);
 }
 
 DOMImplementation::DOMImplementation(Document& document)
@@ -31,12 +31,10 @@ DOMImplementation::DOMImplementation(Document& document)
 
 DOMImplementation::~DOMImplementation() = default;
 
-JS::ThrowCompletionOr<void> DOMImplementation::initialize(JS::Realm& realm)
+void DOMImplementation::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::DOMImplementationPrototype>(realm, "DOMImplementation"));
-
-    return {};
 }
 
 void DOMImplementation::visit_edges(Cell::Visitor& visitor)
@@ -46,75 +44,103 @@ void DOMImplementation::visit_edges(Cell::Visitor& visitor)
 }
 
 // https://dom.spec.whatwg.org/#dom-domimplementation-createdocument
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> DOMImplementation::create_document(DeprecatedString const& namespace_, DeprecatedString const& qualified_name, JS::GCPtr<DocumentType> doctype) const
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> DOMImplementation::create_document(Optional<String> const& namespace_, String const& qualified_name, JS::GCPtr<DocumentType> doctype) const
 {
-    // FIXME: This should specifically be an XML document.
-    auto xml_document = TRY(Document::create(realm()));
+    // FIXME: 1. Let document be a new XMLDocument
+    auto xml_document = Document::create(realm());
 
     xml_document->set_ready_for_post_load_tasks(true);
 
+    // 2. Let element be null.
     JS::GCPtr<Element> element;
 
+    // 3. If qualifiedName is not the empty string, then set element to the result of running the internal createElementNS steps, given document, namespace, qualifiedName, and an empty dictionary.
     if (!qualified_name.is_empty())
-        element = TRY(xml_document->create_element_ns(namespace_, qualified_name, ElementCreationOptions {}));
+        element = TRY(xml_document->create_element_ns(namespace_.value().to_deprecated_string(), qualified_name.to_deprecated_string(), ElementCreationOptions {}));
 
+    // 4. If doctype is non-null, append doctype to document.
     if (doctype)
         TRY(xml_document->append_child(*doctype));
 
+    // 5. If element is non-null, append element to document.
     if (element)
         TRY(xml_document->append_child(*element));
 
+    // 6. document’s origin is this’s associated document’s origin.
     xml_document->set_origin(document().origin());
 
-    if (namespace_ == Namespace::HTML)
-        xml_document->set_content_type("application/xhtml+xml");
-    else if (namespace_ == Namespace::SVG)
-        xml_document->set_content_type("image/svg+xml");
-    else
-        xml_document->set_content_type("application/xml");
+    // 7. document’s content type is determined by namespace:
+    auto deprecated_namespace = namespace_.has_value() ? namespace_->to_deprecated_string() : DeprecatedString::empty();
 
+    if (deprecated_namespace == Namespace::HTML) {
+        // -> HTML namespace
+        xml_document->set_content_type("application/xhtml+xml");
+    } else if (deprecated_namespace == Namespace::SVG) {
+        // -> SVG namespace
+        xml_document->set_content_type("image/svg+xml");
+    } else {
+        // -> Any other namespace
+        xml_document->set_content_type("application/xml");
+    }
+
+    // 8. Return document.
     return xml_document;
 }
 
 // https://dom.spec.whatwg.org/#dom-domimplementation-createhtmldocument
-JS::NonnullGCPtr<Document> DOMImplementation::create_html_document(DeprecatedString const& title) const
+JS::NonnullGCPtr<Document> DOMImplementation::create_html_document(Optional<String> const& title) const
 {
-    auto html_document = Document::create(realm()).release_value_but_fixme_should_propagate_errors();
+    // 1. Let doc be a new document that is an HTML document.
+    auto html_document = Document::create(realm());
 
+    // 2. Set doc’s content type to "text/html".
     html_document->set_content_type("text/html");
+
     html_document->set_ready_for_post_load_tasks(true);
 
-    auto doctype = heap().allocate<DocumentType>(realm(), html_document).release_allocated_value_but_fixme_should_propagate_errors();
-    doctype->set_name("html");
+    // 3. Append a new doctype, with "html" as its name and with its node document set to doc, to doc.
+    auto doctype = heap().allocate<DocumentType>(realm(), html_document);
+    doctype->set_name("html"_string);
     MUST(html_document->append_child(*doctype));
 
+    // 4. Append the result of creating an element given doc, html, and the HTML namespace, to doc.
     auto html_element = create_element(html_document, HTML::TagNames::html, Namespace::HTML).release_value_but_fixme_should_propagate_errors();
     MUST(html_document->append_child(html_element));
 
+    // 5. Append the result of creating an element given doc, head, and the HTML namespace, to the html element created earlier.
     auto head_element = create_element(html_document, HTML::TagNames::head, Namespace::HTML).release_value_but_fixme_should_propagate_errors();
     MUST(html_element->append_child(head_element));
 
-    if (!title.is_null()) {
+    // 6. If title is given:
+    if (title.has_value()) {
+        // 1. Append the result of creating an element given doc, title, and the HTML namespace, to the head element created earlier.
         auto title_element = create_element(html_document, HTML::TagNames::title, Namespace::HTML).release_value_but_fixme_should_propagate_errors();
         MUST(head_element->append_child(title_element));
 
-        auto text_node = heap().allocate<Text>(realm(), html_document, title).release_allocated_value_but_fixme_should_propagate_errors();
+        // 2. Append a new Text node, with its data set to title (which could be the empty string) and its node document set to doc, to the title element created earlier.
+        auto text_node = heap().allocate<Text>(realm(), html_document, title->to_deprecated_string());
         MUST(title_element->append_child(*text_node));
     }
 
+    // 7. Append the result of creating an element given doc, body, and the HTML namespace, to the html element created earlier.
     auto body_element = create_element(html_document, HTML::TagNames::body, Namespace::HTML).release_value_but_fixme_should_propagate_errors();
     MUST(html_element->append_child(body_element));
 
+    // 8. doc’s origin is this’s associated document’s origin.
     html_document->set_origin(document().origin());
 
+    // 9. Return doc.
     return html_document;
 }
 
 // https://dom.spec.whatwg.org/#dom-domimplementation-createdocumenttype
-WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentType>> DOMImplementation::create_document_type(DeprecatedString const& qualified_name, DeprecatedString const& public_id, DeprecatedString const& system_id)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentType>> DOMImplementation::create_document_type(String const& qualified_name, String const& public_id, String const& system_id)
 {
-    TRY(Document::validate_qualified_name(realm(), qualified_name));
-    auto document_type = TRY(DocumentType::create(document()));
+    // 1. Validate qualifiedName.
+    TRY(Document::validate_qualified_name(realm(), qualified_name.to_deprecated_string()));
+
+    // 2. Return a new doctype, with qualifiedName as its name, publicId as its public ID, and systemId as its system ID, and with its node document set to the associated document of this.
+    auto document_type = DocumentType::create(document());
     document_type->set_name(qualified_name);
     document_type->set_public_id(public_id);
     document_type->set_system_id(system_id);

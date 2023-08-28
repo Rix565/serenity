@@ -26,12 +26,10 @@ Response::Response(JS::Realm& realm, JS::NonnullGCPtr<Infrastructure::Response> 
 
 Response::~Response() = default;
 
-JS::ThrowCompletionOr<void> Response::initialize(JS::Realm& realm)
+void Response::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::ResponsePrototype>(realm, "Response"));
-
-    return {};
 }
 
 void Response::visit_edges(Cell::Visitor& visitor)
@@ -52,35 +50,31 @@ ErrorOr<Optional<MimeSniff::MimeType>> Response::mime_type_impl() const
 
 // https://fetch.spec.whatwg.org/#concept-body-body
 // https://fetch.spec.whatwg.org/#ref-for-concept-body-body%E2%91%A8
-Optional<Infrastructure::Body const&> Response::body_impl() const
+JS::GCPtr<Infrastructure::Body const> Response::body_impl() const
 {
     // Objects including the Body interface mixin have an associated body (null or a body).
     // A Response object’s body is its response’s body.
-    return m_response->body().has_value()
-        ? m_response->body().value()
-        : Optional<Infrastructure::Body const&> {};
+    return m_response->body() ? m_response->body() : nullptr;
 }
 
 // https://fetch.spec.whatwg.org/#concept-body-body
 // https://fetch.spec.whatwg.org/#ref-for-concept-body-body%E2%91%A8
-Optional<Infrastructure::Body&> Response::body_impl()
+JS::GCPtr<Infrastructure::Body> Response::body_impl()
 {
     // Objects including the Body interface mixin have an associated body (null or a body).
     // A Response object’s body is its response’s body.
-    return m_response->body().has_value()
-        ? m_response->body().value()
-        : Optional<Infrastructure::Body&> {};
+    return m_response->body() ? m_response->body() : nullptr;
 }
 
 // https://fetch.spec.whatwg.org/#response-create
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::create(JS::Realm& realm, JS::NonnullGCPtr<Infrastructure::Response> response, Headers::Guard guard)
+JS::NonnullGCPtr<Response> Response::create(JS::Realm& realm, JS::NonnullGCPtr<Infrastructure::Response> response, Headers::Guard guard)
 {
     // 1. Let responseObject be a new Response object with realm.
     // 2. Set responseObject’s response to response.
-    auto response_object = MUST_OR_THROW_OOM(realm.heap().allocate<Response>(realm, realm, response));
+    auto response_object = realm.heap().allocate<Response>(realm, realm, response);
 
     // 3. Set responseObject’s headers to a new Headers object with realm, whose headers list is response’s headers list and guard is guard.
-    response_object->m_headers = MUST_OR_THROW_OOM(realm.heap().allocate<Headers>(realm, realm, response->header_list()));
+    response_object->m_headers = realm.heap().allocate<Headers>(realm, realm, response->header_list());
     response_object->m_headers->set_guard(guard);
 
     // 4. Return responseObject.
@@ -136,14 +130,14 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::construct_impl(JS::Rea
     auto& vm = realm.vm();
 
     // Referred to as 'this' in the spec.
-    auto response_object = MUST_OR_THROW_OOM(realm.heap().allocate<Response>(realm, realm, Infrastructure::Response::create(vm)));
+    auto response_object = realm.heap().allocate<Response>(realm, realm, Infrastructure::Response::create(vm));
 
     // 1. Set this’s response to a new response.
     // NOTE: This is done at the beginning as the 'this' value Response object
     //       cannot exist with a null Infrastructure::Response.
 
     // 2. Set this’s headers to a new Headers object with this’s relevant Realm, whose header list is this’s response’s header list and guard is "response".
-    response_object->m_headers = MUST_OR_THROW_OOM(realm.heap().allocate<Headers>(realm, realm, response_object->response()->header_list()));
+    response_object->m_headers = realm.heap().allocate<Headers>(realm, realm, response_object->response()->header_list());
     response_object->m_headers->set_guard(Headers::Guard::Response);
 
     // 3. Let bodyWithType be null.
@@ -160,7 +154,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::construct_impl(JS::Rea
 }
 
 // https://fetch.spec.whatwg.org/#dom-response-error
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::error(JS::VM& vm)
+JS::NonnullGCPtr<Response> Response::error(JS::VM& vm)
 {
     // The static error() method steps are to return the result of creating a Response object, given a new network error, "immutable", and this’s relevant Realm.
     // FIXME: How can we reliably get 'this', i.e. the object the function was called on, in IDL-defined functions?
@@ -186,7 +180,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::redirect(JS::VM& vm, S
 
     // 4. Let responseObject be the result of creating a Response object, given a new response, "immutable", and this’s relevant Realm.
     // FIXME: How can we reliably get 'this', i.e. the object the function was called on, in IDL-defined functions?
-    auto response_object = TRY(Response::create(realm, Infrastructure::Response::create(vm), Headers::Guard::Immutable));
+    auto response_object = Response::create(realm, Infrastructure::Response::create(vm), Headers::Guard::Immutable);
 
     // 5. Set responseObject’s response’s status to status.
     response_object->response()->set_status(status);
@@ -215,7 +209,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::json(JS::VM& vm, JS::V
 
     // 3. Let responseObject be the result of creating a Response object, given a new response, "response", and this’s relevant Realm.
     // FIXME: How can we reliably get 'this', i.e. the object the function was called on, in IDL-defined functions?
-    auto response_object = TRY(Response::create(realm, Infrastructure::Response::create(vm), Headers::Guard::Response));
+    auto response_object = Response::create(realm, Infrastructure::Response::create(vm), Headers::Guard::Response);
 
     // 4. Perform initialize a response given responseObject, init, and (body, "application/json").
     auto body_with_type = Infrastructure::BodyWithType {
@@ -296,7 +290,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::clone() const
     auto cloned_response = TRY(m_response->clone(realm));
 
     // 3. Return the result of creating a Response object, given clonedResponse, this’s headers’s guard, and this’s relevant Realm.
-    return TRY(Response::create(HTML::relevant_realm(*this), cloned_response, m_headers->guard()));
+    return Response::create(HTML::relevant_realm(*this), cloned_response, m_headers->guard());
 }
 
 }

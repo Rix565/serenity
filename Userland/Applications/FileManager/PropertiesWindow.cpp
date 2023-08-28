@@ -71,7 +71,7 @@ PropertiesWindow::PropertiesWindow(DeprecatedString const& path, Window* parent_
 ErrorOr<void> PropertiesWindow::create_widgets(bool disable_rename)
 {
     auto main_widget = TRY(set_main_widget<GUI::Widget>());
-    TRY(main_widget->try_set_layout<GUI::VerticalBoxLayout>(4, 6));
+    main_widget->set_layout<GUI::VerticalBoxLayout>(4, 6);
     main_widget->set_fill_with_background_color(true);
 
     auto tab_widget = TRY(main_widget->try_add<GUI::TabWidget>());
@@ -79,22 +79,22 @@ ErrorOr<void> PropertiesWindow::create_widgets(bool disable_rename)
     TRY(create_file_type_specific_tabs(tab_widget));
 
     auto button_widget = TRY(main_widget->try_add<GUI::Widget>());
-    TRY(button_widget->try_set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 5));
+    button_widget->set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 5);
     button_widget->set_fixed_height(22);
 
-    TRY(button_widget->add_spacer());
+    button_widget->add_spacer();
 
-    auto ok_button = TRY(make_button("OK"_short_string, button_widget));
+    auto ok_button = TRY(make_button("OK"_string, button_widget));
     ok_button->on_click = [this](auto) {
         if (apply_changes())
             close();
     };
-    auto cancel_button = TRY(make_button("Cancel"_short_string, button_widget));
+    auto cancel_button = TRY(make_button("Cancel"_string, button_widget));
     cancel_button->on_click = [this](auto) {
         close();
     };
 
-    m_apply_button = TRY(make_button("Apply"_short_string, button_widget));
+    m_apply_button = TRY(make_button("Apply"_string, button_widget));
     m_apply_button->on_click = [this](auto) { apply_changes(); };
     m_apply_button->set_enabled(false);
 
@@ -120,7 +120,7 @@ ErrorOr<void> PropertiesWindow::create_widgets(bool disable_rename)
 
 ErrorOr<void> PropertiesWindow::create_general_tab(GUI::TabWidget& tab_widget, bool disable_rename)
 {
-    auto general_tab = TRY(tab_widget.try_add_tab<GUI::Widget>("General"_short_string));
+    auto general_tab = TRY(tab_widget.try_add_tab<GUI::Widget>("General"_string));
     TRY(general_tab->load_from_gml(properties_window_general_tab_gml));
 
     m_icon = general_tab->find_descendant_of_type_named<GUI::ImageWidget>("icon");
@@ -182,7 +182,7 @@ ErrorOr<void> PropertiesWindow::create_general_tab(GUI::TabWidget& tab_widget, b
 
     m_size_label = general_tab->find_descendant_of_type_named<GUI::Label>("size");
     m_size_label->set_text(S_ISDIR(st.st_mode)
-            ? TRY("Calculating..."_string)
+            ? "Calculating..."_string
             : TRY(String::from_deprecated_string(human_readable_size_long(st.st_size, UseThousandsSeparator::Yes))));
 
     auto* owner = general_tab->find_descendant_of_type_named<GUI::Label>("owner");
@@ -255,12 +255,12 @@ ErrorOr<void> PropertiesWindow::create_archive_tab(GUI::TabWidget& tab_widget, N
     }
     auto zip = maybe_zip.release_value();
 
-    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>(TRY("Archive"_string)));
+    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("Archive"_string));
     TRY(tab->load_from_gml(properties_window_archive_tab_gml));
 
     auto statistics = TRY(zip.calculate_statistics());
 
-    tab->find_descendant_of_type_named<GUI::Label>("archive_format")->set_text("ZIP"_short_string);
+    tab->find_descendant_of_type_named<GUI::Label>("archive_format")->set_text("ZIP"_string);
     tab->find_descendant_of_type_named<GUI::Label>("archive_file_count")->set_text(TRY(String::number(statistics.file_count())));
     tab->find_descendant_of_type_named<GUI::Label>("archive_directory_count")->set_text(TRY(String::number(statistics.directory_count())));
     tab->find_descendant_of_type_named<GUI::Label>("archive_uncompressed_size")->set_text(TRY(String::from_deprecated_string(AK::human_readable_size(statistics.total_uncompressed_bytes()))));
@@ -277,7 +277,7 @@ ErrorOr<void> PropertiesWindow::create_audio_tab(GUI::TabWidget& tab_widget, Non
     }
     auto loader = loader_or_error.release_value();
 
-    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("Audio"_short_string));
+    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("Audio"_string));
     TRY(tab->load_from_gml(properties_window_audio_tab_gml));
 
     tab->find_descendant_of_type_named<GUI::Label>("audio_type")->set_text(TRY(String::from_deprecated_string(loader->format_name())));
@@ -359,30 +359,30 @@ ErrorOr<void> PropertiesWindow::create_font_tab(GUI::TabWidget& tab_widget, Nonn
     auto font_info = font_info_or_error.release_value();
     auto& typeface = font_info.typeface;
 
-    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("Font"_short_string));
+    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("Font"_string));
     TRY(tab->load_from_gml(properties_window_font_tab_gml));
 
     String format_name;
     switch (font_info.format) {
     case FontInfo::Format::BitmapFont:
-        format_name = TRY("Bitmap Font"_string);
+        format_name = "Bitmap Font"_string;
         break;
     case FontInfo::Format::OpenType:
-        format_name = TRY("OpenType"_string);
+        format_name = "OpenType"_string;
         break;
     case FontInfo::Format::TrueType:
-        format_name = TRY("TrueType"_string);
+        format_name = "TrueType"_string;
         break;
     case FontInfo::Format::WOFF:
-        format_name = TRY("WOFF"_string);
+        format_name = "WOFF"_string;
         break;
     case FontInfo::Format::WOFF2:
-        format_name = TRY("WOFF2"_string);
+        format_name = "WOFF2"_string;
         break;
     }
     tab->find_descendant_of_type_named<GUI::Label>("font_format")->set_text(format_name);
     tab->find_descendant_of_type_named<GUI::Label>("font_family")->set_text(TRY(String::from_deprecated_string(typeface->family())));
-    tab->find_descendant_of_type_named<GUI::Label>("font_fixed_width")->set_text(typeface->is_fixed_width() ? "Yes"_short_string : "No"_short_string);
+    tab->find_descendant_of_type_named<GUI::Label>("font_fixed_width")->set_text(typeface->is_fixed_width() ? "Yes"_string : "No"_string);
     tab->find_descendant_of_type_named<GUI::Label>("font_width")->set_text(TRY(String::from_utf8(Gfx::width_to_name(static_cast<Gfx::FontWidth>(typeface->width())))));
 
     auto nearest_weight_class_name = [](unsigned weight) {
@@ -404,7 +404,7 @@ ErrorOr<void> PropertiesWindow::create_image_tab(GUI::TabWidget& tab_widget, Non
     if (!image_decoder)
         return {};
 
-    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("Image"_short_string));
+    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("Image"_string));
     TRY(tab->load_from_gml(properties_window_image_tab_gml));
 
     tab->find_descendant_of_type_named<GUI::Label>("image_type")->set_text(TRY(String::from_utf8(mime_type)));
@@ -426,7 +426,7 @@ ErrorOr<void> PropertiesWindow::create_image_tab(GUI::TabWidget& tab_widget, Non
 
         animation_text = TRY(builder.to_string());
     } else {
-        animation_text = "None"_short_string;
+        animation_text = "None"_string;
     }
     tab->find_descendant_of_type_named<GUI::Label>("image_animation")->set_text(move(animation_text));
 
@@ -438,11 +438,11 @@ ErrorOr<void> PropertiesWindow::create_image_tab(GUI::TabWidget& tab_widget, Non
     if (auto embedded_icc_bytes = TRY(image_decoder->icc_data()); embedded_icc_bytes.has_value()) {
         auto icc_profile_or_error = Gfx::ICC::Profile::try_load_from_externally_owned_memory(embedded_icc_bytes.value());
         if (icc_profile_or_error.is_error()) {
-            hide_icc_group(TRY("Present but invalid"_string));
+            hide_icc_group("Present but invalid"_string);
         } else {
             auto icc_profile = icc_profile_or_error.release_value();
 
-            tab->find_descendant_of_type_named<GUI::Label>("image_has_icc_profile")->set_text(TRY("See below"_string));
+            tab->find_descendant_of_type_named<GUI::Label>("image_has_icc_profile")->set_text("See below"_string);
             tab->find_descendant_of_type_named<GUI::Label>("image_icc_profile")->set_text(icc_profile->tag_string_data(Gfx::ICC::profileDescriptionTag).value_or({}));
             tab->find_descendant_of_type_named<GUI::Label>("image_icc_copyright")->set_text(icc_profile->tag_string_data(Gfx::ICC::copyrightTag).value_or({}));
             tab->find_descendant_of_type_named<GUI::Label>("image_icc_color_space")->set_text(TRY(String::from_utf8(data_color_space_name(icc_profile->data_color_space()))));
@@ -450,7 +450,7 @@ ErrorOr<void> PropertiesWindow::create_image_tab(GUI::TabWidget& tab_widget, Non
         }
 
     } else {
-        hide_icc_group("None"_short_string);
+        hide_icc_group("None"_string);
     }
 
     return {};
@@ -467,8 +467,8 @@ ErrorOr<void> PropertiesWindow::create_pdf_tab(GUI::TabWidget& tab_widget, Nonnu
 
     if (auto handler = document->security_handler(); handler && !handler->has_user_password()) {
         // FIXME: Show a password dialog, once we've switched to lazy-loading
-        auto tab = TRY(tab_widget.try_add_tab<GUI::Label>("PDF"_short_string));
-        tab->set_text(TRY("PDF is password-protected."_string));
+        auto tab = TRY(tab_widget.try_add_tab<GUI::Label>("PDF"_string));
+        tab->set_text("PDF is password-protected."_string);
         return {};
     }
 
@@ -477,7 +477,7 @@ ErrorOr<void> PropertiesWindow::create_pdf_tab(GUI::TabWidget& tab_widget, Nonnu
         return {};
     }
 
-    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("PDF"_short_string));
+    auto tab = TRY(tab_widget.try_add_tab<GUI::Widget>("PDF"_string));
     TRY(tab->load_from_gml(properties_window_pdf_tab_gml));
 
     tab->find_descendant_of_type_named<GUI::Label>("pdf_version")->set_text(TRY(String::formatted("{}.{}", document->version().major, document->version().minor)));

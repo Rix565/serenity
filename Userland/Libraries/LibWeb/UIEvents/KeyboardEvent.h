@@ -36,9 +36,9 @@ class KeyboardEvent final : public UIEvent {
     WEB_PLATFORM_OBJECT(KeyboardEvent, UIEvent);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<KeyboardEvent>> create(JS::Realm&, FlyString const& event_name, KeyboardEventInit const& event_init = {});
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<KeyboardEvent>> construct_impl(JS::Realm&, FlyString const& event_name, KeyboardEventInit const& event_init);
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<KeyboardEvent>> create_from_platform_event(JS::Realm&, FlyString const& event_name, KeyCode, unsigned modifiers, u32 code_point);
+    [[nodiscard]] static JS::NonnullGCPtr<KeyboardEvent> create(JS::Realm&, FlyString const& event_name, KeyboardEventInit const& = {});
+    [[nodiscard]] static JS::NonnullGCPtr<KeyboardEvent> create_from_platform_event(JS::Realm&, FlyString const& event_name, KeyCode, unsigned modifiers, u32 code_point);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<KeyboardEvent>> construct_impl(JS::Realm&, FlyString const& event_name, KeyboardEventInit const&);
 
     virtual ~KeyboardEvent() override;
 
@@ -64,7 +64,7 @@ public:
 private:
     KeyboardEvent(JS::Realm&, FlyString const& event_name, KeyboardEventInit const& event_init);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     String m_key;
     String m_code;

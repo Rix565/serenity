@@ -31,7 +31,7 @@ class Cell {
     AK_MAKE_NONMOVABLE(Cell);
 
 public:
-    virtual ThrowCompletionOr<void> initialize(Realm&);
+    virtual void initialize(Realm&);
     virtual ~Cell() = default;
 
     bool is_marked() const { return m_mark; }
@@ -82,12 +82,13 @@ public:
         {
         }
 
+        virtual void visit_possible_values(ReadonlyBytes) = 0;
+
     protected:
         virtual void visit_impl(Cell&) = 0;
         virtual ~Visitor() = default;
     };
 
-    virtual bool is_environment() const { return false; }
     virtual void visit_edges(Visitor&) { }
 
     // This will be called on unmarked objects by the garbage collector in a separate pass before destruction.

@@ -245,6 +245,18 @@
     "none",
     "scale-down"
   ],
+  "outline-style": [
+    "auto",
+    "none",
+    "dotted",
+    "dashed",
+    "solid",
+    "double",
+    "groove",
+    "ridge",
+    "inset",
+    "outset"
+  ],
   "overflow": [
     "auto",
     "clip",
@@ -281,6 +293,10 @@
     "nearest",
     "to-zero",
     "up"
+  ],
+  "table-layout": [
+    "auto",
+    "fixed"
   ],
   "text-anchor": [
     "start",

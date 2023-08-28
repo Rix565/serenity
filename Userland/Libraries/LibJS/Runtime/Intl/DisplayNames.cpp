@@ -106,7 +106,7 @@ ThrowCompletionOr<Value> canonical_code_for_display_names(VM& vm, DisplayNames::
     // 1. If type is "language", then
     if (type == DisplayNames::Type::Language) {
         // a. If code does not match the unicode_language_id production, throw a RangeError exception.
-        if (!TRY_OR_THROW_OOM(vm, ::Locale::parse_unicode_language_id(code)).has_value())
+        if (!::Locale::parse_unicode_language_id(code).has_value())
             return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, code, "language"sv);
 
         // b. If IsStructurallyValidLanguageTag(code) is false, throw a RangeError exception.
@@ -166,7 +166,7 @@ ThrowCompletionOr<Value> canonical_code_for_display_names(VM& vm, DisplayNames::
             return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, code, "dateTimeField"sv);
 
         // b. Return code.
-        return MUST_OR_THROW_OOM(PrimitiveString::create(vm, code));
+        return PrimitiveString::create(vm, code);
     }
 
     // 6. Assert: type is "currency".

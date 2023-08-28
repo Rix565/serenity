@@ -8,20 +8,21 @@
  */
 
 #include "RadialGradientStyleValue.h"
+#include <LibWeb/Layout/Node.h>
 
 namespace Web::CSS {
 
-ErrorOr<String> RadialGradientStyleValue::to_string() const
+String RadialGradientStyleValue::to_string() const
 {
     StringBuilder builder;
     if (is_repeating())
-        TRY(builder.try_append("repeating-"sv));
-    TRY(builder.try_appendff("radial-gradient({} "sv,
-        m_properties.ending_shape == EndingShape::Circle ? "circle"sv : "ellipse"sv));
+        builder.append("repeating-"sv);
+    builder.appendff("radial-gradient({} "sv,
+        m_properties.ending_shape == EndingShape::Circle ? "circle"sv : "ellipse"sv);
 
-    TRY(m_properties.size.visit(
-        [&](Extent extent) -> ErrorOr<void> {
-            return builder.try_append([&] {
+    m_properties.size.visit(
+        [&](Extent extent) {
+            builder.append([&] {
                 switch (extent) {
                 case Extent::ClosestCorner:
                     return "closest-corner"sv;
@@ -36,22 +37,22 @@ ErrorOr<String> RadialGradientStyleValue::to_string() const
                 }
             }());
         },
-        [&](CircleSize const& circle_size) -> ErrorOr<void> {
-            return builder.try_append(TRY(circle_size.radius.to_string()));
+        [&](CircleSize const& circle_size) {
+            builder.append(circle_size.radius.to_string());
         },
-        [&](EllipseSize const& ellipse_size) -> ErrorOr<void> {
-            return builder.try_appendff("{} {}", TRY(ellipse_size.radius_a.to_string()), TRY(ellipse_size.radius_b.to_string()));
-        }));
+        [&](EllipseSize const& ellipse_size) {
+            builder.appendff("{} {}", ellipse_size.radius_a.to_string(), ellipse_size.radius_b.to_string());
+        });
 
     if (m_properties.position != PositionValue::center()) {
-        TRY(builder.try_appendff(" at "sv));
-        TRY(m_properties.position.serialize(builder));
+        builder.appendff(" at "sv);
+        m_properties.position.serialize(builder);
     }
 
-    TRY(builder.try_append(", "sv));
-    TRY(serialize_color_stop_list(builder, m_properties.color_stop_list));
-    TRY(builder.try_append(')'));
-    return builder.to_string();
+    builder.append(", "sv);
+    serialize_color_stop_list(builder, m_properties.color_stop_list);
+    builder.append(')');
+    return MUST(builder.to_string());
 }
 
 Gfx::FloatSize RadialGradientStyleValue::resolve_size(Layout::Node const& node, Gfx::FloatPoint center, Gfx::FloatRect const& size) const
@@ -60,8 +61,8 @@ Gfx::FloatSize RadialGradientStyleValue::resolve_size(Layout::Node const& node, 
         auto const distance_from = [&](float v, float a, float b, auto distance_function) {
             return distance_function(fabs(a - v), fabs(b - v));
         };
-        auto x_dist = distance_from(center.x(), size.left(), size.right() - 1, distance_function);
-        auto y_dist = distance_from(center.y(), size.top(), size.bottom() - 1, distance_function);
+        auto x_dist = distance_from(center.x(), size.left(), size.right(), distance_function);
+        auto y_dist = distance_from(center.y(), size.top(), size.bottom(), distance_function);
         if (m_properties.ending_shape == EndingShape::Circle) {
             auto dist = distance_function(x_dist, y_dist);
             return Gfx::FloatSize { dist, dist };
@@ -80,20 +81,20 @@ Gfx::FloatSize RadialGradientStyleValue::resolve_size(Layout::Node const& node, 
 
     auto const corner_distance = [&](auto distance_compare, Gfx::FloatPoint& corner) {
         auto top_left_distance = size.top_left().distance_from(center);
-        auto top_right_distance = size.top_right().moved_left(1).distance_from(center);
-        auto bottom_right_distance = size.bottom_right().translated(-1).distance_from(center);
-        auto bottom_left_distance = size.bottom_left().moved_up(1).distance_from(center);
+        auto top_right_distance = size.top_right().distance_from(center);
+        auto bottom_right_distance = size.bottom_right().distance_from(center);
+        auto bottom_left_distance = size.bottom_left().distance_from(center);
         auto distance = top_left_distance;
         if (distance_compare(top_right_distance, distance)) {
-            corner = size.top_right().translated(-1, 0);
+            corner = size.top_right();
             distance = top_right_distance;
         }
         if (distance_compare(bottom_right_distance, distance)) {
-            corner = size.top_right().translated(-1, 0);
+            corner = size.top_right();
             distance = bottom_right_distance;
         }
         if (distance_compare(bottom_left_distance, distance)) {
-            corner = size.top_right().translated(-1, 0);
+            corner = size.top_right();
             distance = bottom_left_distance;
         }
         return distance;
@@ -149,8 +150,8 @@ Gfx::FloatSize RadialGradientStyleValue::resolve_size(Layout::Node const& node, 
             return Gfx::FloatSize { radius.to_float(), radius.to_float() };
         },
         [&](EllipseSize const& ellipse_size) {
-            auto radius_a = ellipse_size.radius_a.resolved(node, CSS::Length::make_px(size.width())).to_px(node);
-            auto radius_b = ellipse_size.radius_b.resolved(node, CSS::Length::make_px(size.height())).to_px(node);
+            auto radius_a = ellipse_size.radius_a.resolved(node, CSS::Length::make_px(CSSPixels::nearest_value_for(size.width()))).to_px(node);
+            auto radius_b = ellipse_size.radius_b.resolved(node, CSS::Length::make_px(CSSPixels::nearest_value_for(size.height()))).to_px(node);
             return Gfx::FloatSize { radius_a.to_float(), radius_b.to_float() };
         });
 
@@ -184,11 +185,11 @@ Gfx::FloatSize RadialGradientStyleValue::resolve_size(Layout::Node const& node, 
     return resolved_size;
 }
 
-void RadialGradientStyleValue::resolve_for_size(Layout::Node const& node, CSSPixelSize paint_size) const
+void RadialGradientStyleValue::resolve_for_size(Layout::NodeWithStyleAndBoxModelMetrics const& node, CSSPixelSize paint_size) const
 {
     CSSPixelRect gradient_box { { 0, 0 }, paint_size };
-    auto center = m_properties.position.resolved(node, gradient_box).to_type<double>().to_type<float>();
-    auto gradient_size = resolve_size(node, center, gradient_box.to_type<double>().to_type<float>());
+    auto center = m_properties.position.resolved(node, gradient_box).to_type<float>();
+    auto gradient_size = resolve_size(node, center, gradient_box.to_type<float>());
     if (m_resolved.has_value() && m_resolved->gradient_size == gradient_size)
         return;
     m_resolved = ResolvedData {

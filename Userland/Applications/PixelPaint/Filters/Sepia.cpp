@@ -21,22 +21,22 @@ ErrorOr<RefPtr<GUI::Widget>> Sepia::get_settings_widget()
 {
     if (!m_settings_widget) {
         auto settings_widget = TRY(GUI::Widget::try_create());
-        TRY(settings_widget->try_set_layout<GUI::VerticalBoxLayout>());
+        settings_widget->set_layout<GUI::VerticalBoxLayout>();
 
-        auto name_label = TRY(settings_widget->try_add<GUI::Label>(TRY("Sepia Filter"_string)));
+        auto name_label = TRY(settings_widget->try_add<GUI::Label>("Sepia Filter"_string));
         name_label->set_font_weight(Gfx::FontWeight::Bold);
         name_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
         name_label->set_fixed_height(20);
 
         auto amount_container = TRY(settings_widget->try_add<GUI::Widget>());
         amount_container->set_fixed_height(20);
-        TRY(amount_container->try_set_layout<GUI::HorizontalBoxLayout>(GUI::Margins { 4, 0, 4, 0 }));
+        amount_container->set_layout<GUI::HorizontalBoxLayout>(GUI::Margins { 4, 0, 4, 0 });
 
-        auto amount_label = TRY(amount_container->try_add<GUI::Label>("Amount:"_short_string));
+        auto amount_label = TRY(amount_container->try_add<GUI::Label>("Amount:"_string));
         amount_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
         amount_label->set_fixed_size(50, 20);
 
-        auto amount_slider = TRY(amount_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "%"_short_string));
+        auto amount_slider = TRY(amount_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "%"_string));
         amount_slider->set_range(0, 100);
         amount_slider->set_value(m_amount * 100);
         amount_slider->on_change = [this](int value) {

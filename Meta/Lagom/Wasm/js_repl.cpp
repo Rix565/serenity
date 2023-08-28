@@ -15,7 +15,6 @@
 #include <LibJS/Bytecode/Generator.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Console.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Parser.h>
 #include <LibJS/Print.h>
 #include <LibJS/Runtime/ConsoleObject.h>
@@ -93,7 +92,7 @@ public:
         : GlobalObject(realm)
     {
     }
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual ~ReplObject() override = default;
 
 private:
@@ -118,11 +117,7 @@ static ErrorOr<bool> parse_and_run(JS::Interpreter& interpreter, StringView sour
         if (s_dump_ast)
             script_or_module->parse_node().dump(0);
 
-        if (auto* bytecode_interpreter = g_vm->bytecode_interpreter_if_exists()) {
-            result = bytecode_interpreter->run(*script_or_module);
-        } else {
-            result = interpreter.run(*script_or_module);
-        }
+        result = interpreter.run(*script_or_module);
 
         return ReturnEarly::No;
     };
@@ -211,9 +206,9 @@ static ErrorOr<bool> parse_and_run(JS::Interpreter& interpreter, StringView sour
     return true;
 }
 
-JS::ThrowCompletionOr<void> ReplObject::initialize(JS::Realm& realm)
+void ReplObject::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
 
     define_direct_property("global", this, JS::Attribute::Enumerable);
     u8 attr = JS::Attribute::Configurable | JS::Attribute::Writable | JS::Attribute::Enumerable;
@@ -238,8 +233,6 @@ JS::ThrowCompletionOr<void> ReplObject::initialize(JS::Realm& realm)
             return value;
         },
         attr);
-
-    return {};
 }
 
 JS_DEFINE_NATIVE_FUNCTION(ReplObject::print)

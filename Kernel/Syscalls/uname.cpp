@@ -19,6 +19,8 @@ namespace Kernel {
 #    error Unknown architecture
 #endif
 
+KString* g_version_string { nullptr };
+
 ErrorOr<FlatPtr> Process::sys$uname(Userspace<utsname*> user_buf)
 {
     VERIFY_NO_PROCESS_BIG_LOCK(this);
@@ -32,15 +34,16 @@ ErrorOr<FlatPtr> Process::sys$uname(Userspace<utsname*> user_buf)
         UNAME_MACHINE
     };
 
-    auto version_string = TRY(KString::formatted("{}.{}-dev", SERENITY_MAJOR_REVISION, SERENITY_MINOR_REVISION));
-    AK::TypedTransfer<u8>::copy(reinterpret_cast<u8*>(buf.release), version_string->bytes().data(), min(version_string->length(), UTSNAME_ENTRY_LEN - 1));
+    VERIFY(g_version_string);
+    AK::TypedTransfer<u8>::copy(reinterpret_cast<u8*>(buf.release), g_version_string->bytes().data(), min(g_version_string->length(), UTSNAME_ENTRY_LEN - 1));
 
     AK::TypedTransfer<u8>::copy(reinterpret_cast<u8*>(buf.version), SERENITY_VERSION.bytes().data(), min(SERENITY_VERSION.length(), UTSNAME_ENTRY_LEN - 1));
 
     hostname().with_shared([&](auto const& name) {
-        auto length = min(name->length(), UTSNAME_ENTRY_LEN - 1);
-        AK::TypedTransfer<char>::copy(reinterpret_cast<char*>(buf.nodename), name->characters(), length);
-        buf.nodename[length] = '\0';
+        auto name_length = name.representable_view().length();
+        VERIFY(name_length <= (UTSNAME_ENTRY_LEN - 1));
+        AK::TypedTransfer<char>::copy(reinterpret_cast<char*>(buf.nodename), name.representable_view().characters_without_null_termination(), name_length);
+        buf.nodename[name_length] = '\0';
     });
 
     TRY(copy_to_user(user_buf, &buf));

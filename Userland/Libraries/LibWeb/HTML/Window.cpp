@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
@@ -38,6 +38,7 @@
 #include <LibWeb/HTML/Focus.h>
 #include <LibWeb/HTML/Location.h>
 #include <LibWeb/HTML/MessageEvent.h>
+#include <LibWeb/HTML/Navigation.h>
 #include <LibWeb/HTML/Navigator.h>
 #include <LibWeb/HTML/Origin.h>
 #include <LibWeb/HTML/PageTransitionEvent.h>
@@ -51,6 +52,7 @@
 #include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/Infra/Base64.h>
 #include <LibWeb/Infra/CharacterTypes.h>
+#include <LibWeb/Internals/Internals.h>
 #include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/RequestIdleCallback/IdleDeadline.h>
@@ -83,9 +85,9 @@ private:
     u32 m_handle { 0 };
 };
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Window>> Window::create(JS::Realm& realm)
+JS::NonnullGCPtr<Window> Window::create(JS::Realm& realm)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<Window>(realm, realm));
+    return realm.heap().allocate<Window>(realm, realm);
 }
 
 Window::Window(JS::Realm& realm)
@@ -105,6 +107,7 @@ void Window::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_location);
     visitor.visit(m_crypto);
     visitor.visit(m_navigator);
+    visitor.visit(m_navigation);
     visitor.visit(m_custom_element_registry);
     for (auto& plugin_object : m_pdf_viewer_plugin_objects)
         visitor.visit(plugin_object);
@@ -478,12 +481,12 @@ Optional<CSS::MediaFeatureValue> Window::query_media_feature(CSS::MediaFeatureID
     // FIXME: device-aspect-ratio
     case CSS::MediaFeatureID::DeviceHeight:
         if (auto* page = this->page()) {
-            return CSS::MediaFeatureValue(CSS::Length::make_px(page->web_exposed_screen_area().height().to_double()));
+            return CSS::MediaFeatureValue(CSS::Length::make_px(page->web_exposed_screen_area().height()));
         }
         return CSS::MediaFeatureValue(0);
     case CSS::MediaFeatureID::DeviceWidth:
         if (auto* page = this->page()) {
-            return CSS::MediaFeatureValue(CSS::Length::make_px(page->web_exposed_screen_area().width().to_double()));
+            return CSS::MediaFeatureValue(CSS::Length::make_px(page->web_exposed_screen_area().width()));
         }
         return CSS::MediaFeatureValue(0);
     case CSS::MediaFeatureID::DisplayMode:
@@ -543,7 +546,8 @@ Optional<CSS::MediaFeatureValue> Window::query_media_feature(CSS::MediaFeatureID
     case CSS::MediaFeatureID::PrefersReducedTransparency:
         // FIXME: Make this a preference
         return CSS::MediaFeatureValue(CSS::ValueID::NoPreference);
-    // FIXME: resolution
+    case CSS::MediaFeatureID::Resolution:
+        return CSS::MediaFeatureValue(CSS::Resolution(device_pixel_ratio(), CSS::Resolution::Type::Dppx));
     case CSS::MediaFeatureID::Scan:
         return CSS::MediaFeatureValue(CSS::ValueID::Progressive);
     case CSS::MediaFeatureID::Scripting:
@@ -576,7 +580,7 @@ void Window::fire_a_page_transition_event(FlyString const& event_name, bool pers
     // with the persisted attribute initialized to persisted,
     PageTransitionEventInit event_init {};
     event_init.persisted = persisted;
-    auto event = PageTransitionEvent::create(associated_document().realm(), event_name, event_init).release_value_but_fixme_should_propagate_errors();
+    auto event = PageTransitionEvent::create(associated_document().realm(), event_name, event_init);
 
     // ...the cancelable attribute initialized to true,
     event->set_cancelable(true);
@@ -592,15 +596,10 @@ void Window::fire_a_page_transition_event(FlyString const& event_name, bool pers
 WebIDL::ExceptionOr<JS::NonnullGCPtr<Storage>> Window::local_storage()
 {
     // FIXME: Implement according to spec.
-    auto& vm = this->vm();
-
     static HashMap<Origin, JS::Handle<Storage>> local_storage_per_origin;
-    auto storage = TRY_OR_THROW_OOM(vm, local_storage_per_origin.try_ensure(associated_document().origin(), [this]() -> ErrorOr<JS::Handle<Storage>> {
-        auto storage_or_exception = Storage::create(realm());
-        if (storage_or_exception.is_exception())
-            return Error::from_errno(ENOMEM);
-        return *storage_or_exception.release_value();
-    }));
+    auto storage = local_storage_per_origin.ensure(associated_document().origin(), [this]() -> JS::Handle<Storage> {
+        return Storage::create(realm());
+    });
     return JS::NonnullGCPtr { *storage };
 }
 
@@ -608,15 +607,10 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Storage>> Window::local_storage()
 WebIDL::ExceptionOr<JS::NonnullGCPtr<Storage>> Window::session_storage()
 {
     // FIXME: Implement according to spec.
-    auto& vm = this->vm();
-
     static HashMap<Origin, JS::Handle<Storage>> session_storage_per_origin;
-    auto storage = TRY_OR_THROW_OOM(vm, session_storage_per_origin.try_ensure(associated_document().origin(), [this]() -> ErrorOr<JS::Handle<Storage>> {
-        auto storage_or_exception = Storage::create(realm());
-        if (storage_or_exception.is_exception())
-            return Error::from_errno(ENOMEM);
-        return *storage_or_exception.release_value();
-    }));
+    auto storage = session_storage_per_origin.ensure(associated_document().origin(), [this]() -> JS::Handle<Storage> {
+        return Storage::create(realm());
+    });
     return JS::NonnullGCPtr { *storage };
 }
 
@@ -679,7 +673,7 @@ void Window::invoke_idle_callbacks()
         // 1. Pop the top callback from window's list of runnable idle callbacks.
         auto callback = m_runnable_idle_callbacks.take_first();
         // 2. Let deadlineArg be a new IdleDeadline whose [get deadline time algorithm] is getDeadline.
-        auto deadline_arg = RequestIdleCallback::IdleDeadline::create(realm()).release_value_but_fixme_should_propagate_errors();
+        auto deadline_arg = RequestIdleCallback::IdleDeadline::create(realm());
         // 3. Call callback with deadlineArg as its argument. If an uncaught runtime script error occurs, then report the exception.
         auto result = callback->invoke(deadline_arg);
         if (result.is_error())
@@ -712,6 +706,13 @@ BrowsingContext* Window::browsing_context()
     return m_associated_document->browsing_context();
 }
 
+// https://html.spec.whatwg.org/multipage/nav-history-apis.html#window-navigable
+JS::GCPtr<Navigable> Window::navigable() const
+{
+    // A Window's navigable is the navigable whose active document is the Window's associated Document's, or null if there is no such navigable.
+    return Navigable::navigable_with_active_document(*m_associated_document);
+}
+
 // https://html.spec.whatwg.org/multipage/system-state.html#pdf-viewer-plugin-objects
 Vector<JS::NonnullGCPtr<Plugin>> Window::pdf_viewer_plugin_objects()
 {
@@ -729,11 +730,11 @@ Vector<JS::NonnullGCPtr<Plugin>> Window::pdf_viewer_plugin_objects()
 
     if (m_pdf_viewer_plugin_objects.is_empty()) {
         // FIXME: Propagate errors.
-        m_pdf_viewer_plugin_objects.append(realm().heap().allocate<Plugin>(realm(), realm(), "PDF Viewer"_string.release_value_but_fixme_should_propagate_errors()).release_allocated_value_but_fixme_should_propagate_errors());
-        m_pdf_viewer_plugin_objects.append(realm().heap().allocate<Plugin>(realm(), realm(), "Chrome PDF Viewer"_string.release_value_but_fixme_should_propagate_errors()).release_allocated_value_but_fixme_should_propagate_errors());
-        m_pdf_viewer_plugin_objects.append(realm().heap().allocate<Plugin>(realm(), realm(), "Chromium PDF Viewer"_string.release_value_but_fixme_should_propagate_errors()).release_allocated_value_but_fixme_should_propagate_errors());
-        m_pdf_viewer_plugin_objects.append(realm().heap().allocate<Plugin>(realm(), realm(), "Microsoft Edge PDF Viewer"_string.release_value_but_fixme_should_propagate_errors()).release_allocated_value_but_fixme_should_propagate_errors());
-        m_pdf_viewer_plugin_objects.append(realm().heap().allocate<Plugin>(realm(), realm(), "WebKit built-in PDF"_string.release_value_but_fixme_should_propagate_errors()).release_allocated_value_but_fixme_should_propagate_errors());
+        m_pdf_viewer_plugin_objects.append(realm().heap().allocate<Plugin>(realm(), realm(), "PDF Viewer"_string));
+        m_pdf_viewer_plugin_objects.append(realm().heap().allocate<Plugin>(realm(), realm(), "Chrome PDF Viewer"_string));
+        m_pdf_viewer_plugin_objects.append(realm().heap().allocate<Plugin>(realm(), realm(), "Chromium PDF Viewer"_string));
+        m_pdf_viewer_plugin_objects.append(realm().heap().allocate<Plugin>(realm(), realm(), "Microsoft Edge PDF Viewer"_string));
+        m_pdf_viewer_plugin_objects.append(realm().heap().allocate<Plugin>(realm(), realm(), "WebKit built-in PDF"_string));
     }
 
     return m_pdf_viewer_plugin_objects;
@@ -752,8 +753,8 @@ Vector<JS::NonnullGCPtr<MimeType>> Window::pdf_viewer_mime_type_objects()
         return {};
 
     if (m_pdf_viewer_mime_type_objects.is_empty()) {
-        m_pdf_viewer_mime_type_objects.append(realm().heap().allocate<MimeType>(realm(), realm(), "application/pdf"_string.release_value_but_fixme_should_propagate_errors()).release_allocated_value_but_fixme_should_propagate_errors());
-        m_pdf_viewer_mime_type_objects.append(realm().heap().allocate<MimeType>(realm(), realm(), "text/pdf"_string.release_value_but_fixme_should_propagate_errors()).release_allocated_value_but_fixme_should_propagate_errors());
+        m_pdf_viewer_mime_type_objects.append(realm().heap().allocate<MimeType>(realm(), realm(), "application/pdf"_string));
+        m_pdf_viewer_mime_type_objects.append(realm().heap().allocate<MimeType>(realm(), realm(), "text/pdf"_string));
     }
 
     return m_pdf_viewer_mime_type_objects;
@@ -775,7 +776,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::CallbackType>> Window::count_queuin
         auto function = JS::NativeFunction::create(realm, move(steps), 0, "size", &realm);
 
         // 3. Set globalObject’s count queuing strategy size function to a Function that represents a reference to F, with callback context equal to globalObject’s relevant settings object.
-        m_count_queuing_strategy_size_function = MUST_OR_THROW_OOM(heap().allocate<WebIDL::CallbackType>(realm, *function, relevant_settings_object(*this)));
+        m_count_queuing_strategy_size_function = heap().allocate<WebIDL::CallbackType>(realm, *function, relevant_settings_object(*this));
     }
 
     return JS::NonnullGCPtr { *m_count_queuing_strategy_size_function };
@@ -799,10 +800,17 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::CallbackType>> Window::byte_length_
         auto function = JS::NativeFunction::create(realm, move(steps), 1, "size", &realm);
 
         // 3. Set globalObject’s byte length queuing strategy size function to a Function that represents a reference to F, with callback context equal to globalObject’s relevant settings object.
-        m_byte_length_queuing_strategy_size_function = MUST_OR_THROW_OOM(heap().allocate<WebIDL::CallbackType>(realm, *function, relevant_settings_object(*this)));
+        m_byte_length_queuing_strategy_size_function = heap().allocate<WebIDL::CallbackType>(realm, *function, relevant_settings_object(*this));
     }
 
     return JS::NonnullGCPtr { *m_byte_length_queuing_strategy_size_function };
+}
+
+static bool s_internals_object_exposed = false;
+
+void Window::set_internals_object_exposed(bool exposed)
+{
+    s_internals_object_exposed = exposed;
 }
 
 WebIDL::ExceptionOr<void> Window::initialize_web_interfaces(Badge<WindowEnvironmentSettingsObject>)
@@ -812,8 +820,11 @@ WebIDL::ExceptionOr<void> Window::initialize_web_interfaces(Badge<WindowEnvironm
 
     Object::set_prototype(&Bindings::ensure_web_prototype<Bindings::WindowPrototype>(realm, "Window"));
 
-    MUST_OR_THROW_OOM(Bindings::WindowGlobalMixin::initialize(realm, *this));
-    MUST_OR_THROW_OOM(WindowOrWorkerGlobalScopeMixin::initialize(realm));
+    Bindings::WindowGlobalMixin::initialize(realm, *this);
+    WindowOrWorkerGlobalScopeMixin::initialize(realm);
+
+    if (s_internals_object_exposed)
+        define_direct_property("internals", heap().allocate<Internals::Internals>(realm, realm), JS::default_attributes);
 
     return {};
 }
@@ -869,13 +880,13 @@ void Window::set_name(String const& name)
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-location
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Location>> Window::location()
+JS::NonnullGCPtr<Location> Window::location()
 {
     auto& realm = this->realm();
 
     // The Window object's location getter steps are to return this's Location object.
     if (!m_location)
-        m_location = MUST_OR_THROW_OOM(heap().allocate<Location>(realm, realm));
+        m_location = heap().allocate<Location>(realm, realm);
     return JS::NonnullGCPtr { *m_location };
 }
 
@@ -982,13 +993,13 @@ WebIDL::ExceptionOr<JS::GCPtr<WindowProxy>> Window::open(Optional<String> const&
 }
 
 // https://html.spec.whatwg.org/multipage/system-state.html#dom-navigator
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Navigator>> Window::navigator()
+JS::NonnullGCPtr<Navigator> Window::navigator()
 {
     auto& realm = this->realm();
 
     // The navigator and clientInformation getter steps are to return this's associated Navigator.
     if (!m_navigator)
-        m_navigator = MUST_OR_THROW_OOM(heap().allocate<Navigator>(realm, realm));
+        m_navigator = heap().allocate<Navigator>(realm, realm);
     return JS::NonnullGCPtr { *m_navigator };
 }
 
@@ -1031,8 +1042,8 @@ void Window::post_message(JS::Value message, String const&)
     queue_global_task(Task::Source::PostedMessage, *this, [this, message] {
         MessageEventInit event_init {};
         event_init.data = message;
-        event_init.origin = "<origin>"_string.release_value_but_fixme_should_propagate_errors();
-        dispatch_event(MessageEvent::create(realm(), EventNames::message, event_init).release_value_but_fixme_should_propagate_errors());
+        event_init.origin = "<origin>"_string;
+        dispatch_event(MessageEvent::create(realm(), EventNames::message, event_init));
     });
 }
 
@@ -1046,11 +1057,11 @@ Variant<JS::Handle<DOM::Event>, JS::Value> Window::event() const
 }
 
 // https://w3c.github.io/csswg-drafts/cssom/#dom-window-getcomputedstyle
-WebIDL::ExceptionOr<JS::NonnullGCPtr<CSS::CSSStyleDeclaration>> Window::get_computed_style(DOM::Element& element, Optional<String> const& pseudo_element) const
+JS::NonnullGCPtr<CSS::CSSStyleDeclaration> Window::get_computed_style(DOM::Element& element, Optional<String> const& pseudo_element) const
 {
     // FIXME: Make this fully spec compliant.
     (void)pseudo_element;
-    return MUST_OR_THROW_OOM(heap().allocate<CSS::ResolvedCSSStyleDeclaration>(realm(), element));
+    return heap().allocate<CSS::ResolvedCSSStyleDeclaration>(realm(), element);
 }
 
 // https://w3c.github.io/csswg-drafts/cssom-view/#dom-window-matchmedia
@@ -1060,18 +1071,29 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<CSS::MediaQueryList>> Window::match_media(S
     auto parsed_media_query_list = parse_media_query_list(CSS::Parser::ParsingContext(associated_document()), query);
 
     // 2. Return a new MediaQueryList object, with this's associated Document as the document, with parsed media query list as its associated media query list.
-    auto media_query_list = MUST_OR_THROW_OOM(heap().allocate<CSS::MediaQueryList>(realm(), associated_document(), move(parsed_media_query_list)));
+    auto media_query_list = heap().allocate<CSS::MediaQueryList>(realm(), associated_document(), move(parsed_media_query_list));
     associated_document().add_media_query_list(media_query_list);
     return media_query_list;
 }
 
 // https://w3c.github.io/csswg-drafts/cssom-view/#dom-window-screen
-WebIDL::ExceptionOr<JS::NonnullGCPtr<CSS::Screen>> Window::screen()
+JS::NonnullGCPtr<CSS::Screen> Window::screen()
 {
     // The screen attribute must return the Screen object associated with the Window object.
     if (!m_screen)
-        m_screen = MUST_OR_THROW_OOM(heap().allocate<CSS::Screen>(realm(), *this));
+        m_screen = heap().allocate<CSS::Screen>(realm(), *this);
     return JS::NonnullGCPtr { *m_screen };
+}
+
+JS::GCPtr<CSS::VisualViewport> Window::visual_viewport()
+{
+    // If the associated document is fully active, the visualViewport attribute must return
+    // the VisualViewport object associated with the Window object’s associated document.
+    if (associated_document().is_fully_active())
+        return associated_document().visual_viewport();
+
+    // Otherwise, it must return null.
+    return nullptr;
 }
 
 // https://w3c.github.io/csswg-drafts/cssom-view/#dom-window-innerwidth
@@ -1141,7 +1163,7 @@ void Window::scroll(ScrollToOptions const& options)
     // 1. If invoked with one argument, follow these substeps:
 
     // 1. Let options be the argument.
-    auto viewport_rect = top_level_browsing_context.viewport_rect().to_type<double>().to_type<float>();
+    auto viewport_rect = top_level_browsing_context.viewport_rect().to_type<float>();
 
     // 2. Let x be the value of the left dictionary member of options, if present, or the viewport’s current scroll
     //    position on the x axis otherwise.
@@ -1374,31 +1396,45 @@ JS::GCPtr<Selection::Selection> Window::get_selection() const
 }
 
 // https://w3c.github.io/hr-time/#dom-windoworworkerglobalscope-performance
-WebIDL::ExceptionOr<JS::NonnullGCPtr<HighResolutionTime::Performance>> Window::performance()
+JS::NonnullGCPtr<HighResolutionTime::Performance> Window::performance()
 {
     if (!m_performance)
-        m_performance = MUST_OR_THROW_OOM(heap().allocate<HighResolutionTime::Performance>(realm(), *this));
+        m_performance = heap().allocate<HighResolutionTime::Performance>(realm(), *this);
     return JS::NonnullGCPtr { *m_performance };
 }
 
 // https://w3c.github.io/webcrypto/#dom-windoworworkerglobalscope-crypto
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Crypto::Crypto>> Window::crypto()
+JS::NonnullGCPtr<Crypto::Crypto> Window::crypto()
 {
     auto& realm = this->realm();
 
     if (!m_crypto)
-        m_crypto = MUST_OR_THROW_OOM(heap().allocate<Crypto::Crypto>(realm, realm));
+        m_crypto = heap().allocate<Crypto::Crypto>(realm, realm);
     return JS::NonnullGCPtr { *m_crypto };
 }
 
+// https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigation
+JS::NonnullGCPtr<Navigation> Window::navigation()
+{
+    // Upon creation of the Window object, its navigation API must be set
+    // to a new Navigation object created in the Window object's relevant realm.
+    if (!m_navigation) {
+        auto& realm = relevant_realm(*this);
+        m_navigation = heap().allocate<Navigation>(realm, realm);
+    }
+
+    // The navigation getter steps are to return this's navigation API.
+    return *m_navigation;
+}
+
 // https://html.spec.whatwg.org/multipage/custom-elements.html#dom-window-customelements
-WebIDL::ExceptionOr<JS::NonnullGCPtr<CustomElementRegistry>> Window::custom_elements()
+JS::NonnullGCPtr<CustomElementRegistry> Window::custom_elements()
 {
     auto& realm = this->realm();
 
     // The customElements attribute of the Window interface must return the CustomElementRegistry object for that Window object.
     if (!m_custom_element_registry)
-        m_custom_element_registry = MUST_OR_THROW_OOM(heap().allocate<CustomElementRegistry>(realm, realm));
+        m_custom_element_registry = heap().allocate<CustomElementRegistry>(realm, realm);
     return JS::NonnullGCPtr { *m_custom_element_registry };
 }
 

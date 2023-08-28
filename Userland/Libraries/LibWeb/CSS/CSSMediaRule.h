@@ -18,7 +18,7 @@ class CSSMediaRule final : public CSSConditionRule {
     WEB_PLATFORM_OBJECT(CSSMediaRule, CSSConditionRule);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSMediaRule>> create(JS::Realm&, MediaList& media_queries, CSSRuleList&);
+    [[nodiscard]] static JS::NonnullGCPtr<CSSMediaRule> create(JS::Realm&, MediaList& media_queries, CSSRuleList&);
 
     virtual ~CSSMediaRule() = default;
 
@@ -35,7 +35,7 @@ public:
 private:
     CSSMediaRule(JS::Realm&, MediaList&, CSSRuleList&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
     virtual DeprecatedString serialized() const override;
 

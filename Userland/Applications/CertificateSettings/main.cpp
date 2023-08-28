@@ -19,7 +19,7 @@ ErrorOr<int> serenity_main(Main::Arguments args)
 
     auto app = TRY(GUI::Application::create(args));
 
-    TRY(Core::System::unveil(TRY(String::formatted("{}/.config/certs.pem", Core::StandardPaths::home_directory())), "rwc"_short_string));
+    TRY(Core::System::unveil(TRY(String::formatted("{}/.config/certs.pem", Core::StandardPaths::home_directory())), "rwc"_string));
     TRY(Core::System::unveil("/tmp/session/%sid/portal/filesystemaccess", "rw"));
     TRY(Core::System::unveil("/etc/cacert.pem", "r"));
     TRY(Core::System::unveil("/etc/timezone", "r"));
@@ -28,7 +28,7 @@ ErrorOr<int> serenity_main(Main::Arguments args)
 
     auto app_icon = GUI::Icon::default_icon("certificate"sv);
     auto window = TRY(GUI::SettingsWindow::create("Certificate Settings", GUI::SettingsWindow::ShowDefaultsButton::No));
-    auto cert_store_widget = TRY(window->add_tab<CertificateSettings::CertificateStoreWidget>(TRY("Certificate Store"_string), "certificate"sv));
+    auto cert_store_widget = TRY(window->add_tab<CertificateSettings::CertificateStoreWidget>("Certificate Store"_string, "certificate"sv));
     window->set_icon(app_icon.bitmap_for_size(16));
 
     window->show();

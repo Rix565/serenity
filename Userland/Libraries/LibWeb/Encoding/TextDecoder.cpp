@@ -20,7 +20,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<TextDecoder>> TextDecoder::construct_impl(J
     if (!decoder.has_value())
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, TRY_OR_THROW_OOM(vm, String::formatted("Invalid encoding {}", encoding)) };
 
-    return MUST_OR_THROW_OOM(realm.heap().allocate<TextDecoder>(realm, realm, *decoder, move(encoding), false, false));
+    return realm.heap().allocate<TextDecoder>(realm, realm, *decoder, move(encoding), false, false);
 }
 
 // https://encoding.spec.whatwg.org/#dom-textdecoder
@@ -35,12 +35,10 @@ TextDecoder::TextDecoder(JS::Realm& realm, TextCodec::Decoder& decoder, Deprecat
 
 TextDecoder::~TextDecoder() = default;
 
-JS::ThrowCompletionOr<void> TextDecoder::initialize(JS::Realm& realm)
+void TextDecoder::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::TextDecoderPrototype>(realm, "TextDecoder"));
-
-    return {};
 }
 
 // https://encoding.spec.whatwg.org/#dom-textdecoder-decode

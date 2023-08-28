@@ -18,17 +18,15 @@ WeakMapConstructor::WeakMapConstructor(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> WeakMapConstructor::initialize(Realm& realm)
+void WeakMapConstructor::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
+    Base::initialize(realm);
 
     // 24.3.2.1 WeakMap.prototype, https://tc39.es/ecma262/#sec-weakmap.prototype
     define_direct_property(vm.names.prototype, realm.intrinsics().weak_map_prototype(), 0);
 
     define_direct_property(vm.names.length, Value(0), Attribute::Configurable);
-
-    return {};
 }
 
 // 24.3.1.1 WeakMap ( [ iterable ] ), https://tc39.es/ecma262/#sec-weakmap-iterable
@@ -64,7 +62,7 @@ ThrowCompletionOr<NonnullGCPtr<Object>> WeakMapConstructor::construct(FunctionOb
     // 7. Return ? AddEntriesFromIterable(map, iterable, adder).
     (void)TRY(get_iterator_values(vm, iterable, [&](Value iterator_value) -> Optional<Completion> {
         if (!iterator_value.is_object())
-            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, DeprecatedString::formatted("Iterator value {}", TRY_OR_THROW_OOM(vm, iterator_value.to_string_without_side_effects())));
+            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, DeprecatedString::formatted("Iterator value {}", iterator_value.to_string_without_side_effects()));
 
         auto key = TRY(iterator_value.as_object().get(0));
         auto value = TRY(iterator_value.as_object().get(1));

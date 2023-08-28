@@ -11,9 +11,9 @@
 
 namespace Web::HTML {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Storage>> Storage::create(JS::Realm& realm)
+JS::NonnullGCPtr<Storage> Storage::create(JS::Realm& realm)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<Storage>(realm, realm));
+    return realm.heap().allocate<Storage>(realm, realm);
 }
 
 Storage::Storage(JS::Realm& realm)
@@ -23,12 +23,10 @@ Storage::Storage(JS::Realm& realm)
 
 Storage::~Storage() = default;
 
-JS::ThrowCompletionOr<void> Storage::initialize(JS::Realm& realm)
+void Storage::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::StoragePrototype>(realm, "Storage"));
-
-    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/webstorage.html#dom-storage-length

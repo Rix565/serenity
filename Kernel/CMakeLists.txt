@@ -9,6 +9,8 @@ if ("${SERENITY_ARCH}" STREQUAL "aarch64")
     set(KERNEL_ARCH aarch64)
 elseif("${SERENITY_ARCH}" STREQUAL "x86_64")
     set(KERNEL_ARCH x86_64)
+elseif("${SERENITY_ARCH}" STREQUAL "riscv64")
+    set(KERNEL_ARCH riscv64)
 endif()
 
 set(KERNEL_HEAP_SOURCES
@@ -180,6 +182,7 @@ set(KERNEL_SOURCES
     FileSystem/SysFS/Subsystems/Kernel/Interrupts.cpp
     FileSystem/SysFS/Subsystems/Kernel/Processes.cpp
     FileSystem/SysFS/Subsystems/Kernel/CPUInfo.cpp
+    FileSystem/SysFS/Subsystems/Kernel/ConstantInformation.cpp
     FileSystem/SysFS/Subsystems/Kernel/Jails.cpp
     FileSystem/SysFS/Subsystems/Kernel/Keymap.cpp
     FileSystem/SysFS/Subsystems/Kernel/Profile.cpp
@@ -198,15 +201,13 @@ set(KERNEL_SOURCES
     FileSystem/SysFS/Subsystems/Kernel/Network/Route.cpp
     FileSystem/SysFS/Subsystems/Kernel/Network/TCP.cpp
     FileSystem/SysFS/Subsystems/Kernel/Network/UDP.cpp
-    FileSystem/SysFS/Subsystems/Kernel/Constants/ConstantInformation.cpp
-    FileSystem/SysFS/Subsystems/Kernel/Constants/Directory.cpp
-    FileSystem/SysFS/Subsystems/Kernel/Variables/BooleanVariable.cpp
-    FileSystem/SysFS/Subsystems/Kernel/Variables/CapsLockRemap.cpp
-    FileSystem/SysFS/Subsystems/Kernel/Variables/CoredumpDirectory.cpp
-    FileSystem/SysFS/Subsystems/Kernel/Variables/Directory.cpp
-    FileSystem/SysFS/Subsystems/Kernel/Variables/DumpKmallocStack.cpp
-    FileSystem/SysFS/Subsystems/Kernel/Variables/StringVariable.cpp
-    FileSystem/SysFS/Subsystems/Kernel/Variables/UBSANDeadly.cpp
+    FileSystem/SysFS/Subsystems/Kernel/Configuration/BooleanVariable.cpp
+    FileSystem/SysFS/Subsystems/Kernel/Configuration/CapsLockRemap.cpp
+    FileSystem/SysFS/Subsystems/Kernel/Configuration/CoredumpDirectory.cpp
+    FileSystem/SysFS/Subsystems/Kernel/Configuration/Directory.cpp
+    FileSystem/SysFS/Subsystems/Kernel/Configuration/DumpKmallocStack.cpp
+    FileSystem/SysFS/Subsystems/Kernel/Configuration/StringVariable.cpp
+    FileSystem/SysFS/Subsystems/Kernel/Configuration/UBSANDeadly.cpp
     FileSystem/VirtualFileSystem.cpp
     Firmware/ACPI/Initialize.cpp
     Firmware/ACPI/Parser.cpp
@@ -490,14 +491,19 @@ elseif("${SERENITY_ARCH}" STREQUAL "aarch64")
     )
 
     # Otherwise linker errors e.g undefined reference to `__aarch64_cas8_acq_rel'
-    add_compile_options(-mno-outline-atomics -latomic)
-
-    # FIXME: Remove this once compiling MemoryManager.cpp doesn't give the nonnull error anymore.
-    add_compile_options(-Wno-nonnull)
+    add_compile_options(-mno-outline-atomics)
 
     # NOTE: These files cannot use a stack protector and sanitizers, as these will cause accesses to global variables to be inserted
     #       by the compiler. The CPU cannot access global variables without the MMU as the kernel is linked for a virtual address in high memory.
     set_source_files_properties(${SOURCES_RUNNING_WITHOUT_MMU} PROPERTIES COMPILE_FLAGS "-fno-stack-protector -fno-sanitize=all")
+elseif("${SERENITY_ARCH}" STREQUAL "riscv64")
+    set(KERNEL_SOURCES
+        ${KERNEL_SOURCES}
+        Arch/Processor.cpp
+        kprintf.cpp
+    )
+
+    add_compile_options(-fno-stack-protector -fno-sanitize=all)
 endif()
 
 set(AK_SOURCES
@@ -614,7 +620,10 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set_source_files_properties(Library/MiniStdLib.cpp
         PROPERTIES COMPILE_FLAGS "-fno-tree-loop-distribution -fno-tree-loop-distribute-patterns")
 
-    add_link_options(LINKER:-z,pack-relative-relocs)
+    if ("${SERENITY_ARCH}" STREQUAL "x86_64")
+        # The BFD linker only supports RELR relocations on x86 and POWER.
+        add_link_options(LINKER:-z,pack-relative-relocs)
+    endif()
 else() # Assume Clang
     add_compile_options(-Waddress-of-packed-member)
     add_compile_options(-faligned-allocation)
@@ -767,7 +776,7 @@ endif()
 serenity_install_headers(Kernel)
 serenity_install_sources(Kernel)
 
-# aarch64 does not need a Prekernel
-if (NOT "${SERENITY_ARCH}" STREQUAL "aarch64")
+# Only x86 needs a Prekernel
+if ("${SERENITY_ARCH}" STREQUAL "x86_64")
     add_subdirectory(Prekernel)
 endif()

@@ -15,11 +15,11 @@ namespace Web::CSS {
 
 class GridTemplateAreaStyleValue final : public StyleValueWithDefaultOperators<GridTemplateAreaStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<GridTemplateAreaStyleValue>> create(Vector<Vector<String>> grid_template_area);
+    static ValueComparingNonnullRefPtr<GridTemplateAreaStyleValue> create(Vector<Vector<String>> grid_template_area);
     virtual ~GridTemplateAreaStyleValue() override = default;
 
     Vector<Vector<String>> const& grid_template_area() const { return m_grid_template_area; }
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(GridTemplateAreaStyleValue const& other) const { return m_grid_template_area == other.m_grid_template_area; }
 

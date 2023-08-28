@@ -130,15 +130,13 @@ WebIDL::ExceptionOr<JS::GCPtr<CanvasPattern>> CanvasPattern::create(JS::Realm& r
     // FIXME: 7. If image is not origin-clean, then mark pattern as not origin-clean.
 
     // 8. Return pattern.
-    return MUST_OR_THROW_OOM(realm.heap().allocate<CanvasPattern>(realm, realm, *pattern));
+    return realm.heap().allocate<CanvasPattern>(realm, realm, *pattern);
 }
 
-JS::ThrowCompletionOr<void> CanvasPattern::initialize(JS::Realm& realm)
+void CanvasPattern::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::CanvasPatternPrototype>(realm, "CanvasPattern"));
-
-    return {};
 }
 
 }

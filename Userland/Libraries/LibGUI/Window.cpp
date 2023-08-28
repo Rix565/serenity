@@ -71,8 +71,8 @@ Window* Window::from_window_id(int window_id)
     return nullptr;
 }
 
-Window::Window(Core::Object* parent)
-    : Core::Object(parent)
+Window::Window(Core::EventReceiver* parent)
+    : GUI::Object(parent)
     , m_menubar(Menubar::construct())
 {
     if (parent)
@@ -760,7 +760,7 @@ void Window::event(Core::Event& event)
     if (event.type() == Event::AppletAreaRectChange)
         return handle_applet_area_rect_change_event(static_cast<AppletAreaRectChangeEvent&>(event));
 
-    Core::Object::event(event);
+    Core::EventReceiver::event(event);
 }
 
 bool Window::is_visible() const
@@ -1318,30 +1318,23 @@ Gfx::Bitmap* Window::back_bitmap()
     return m_back_store ? &m_back_store->bitmap() : nullptr;
 }
 
-ErrorOr<void> Window::try_add_menu(NonnullRefPtr<Menu> menu)
+void Window::add_menu(NonnullRefPtr<Menu> menu)
 {
-    TRY(m_menubar->try_add_menu({}, move(menu)));
+    m_menubar->add_menu({}, move(menu));
     if (m_window_id) {
         menu->realize_menu_if_needed();
         ConnectionToWindowServer::the().async_add_menu(m_window_id, menu->menu_id());
     }
-    return {};
 }
 
-ErrorOr<NonnullRefPtr<Menu>> Window::try_add_menu(String name)
+NonnullRefPtr<Menu> Window::add_menu(String name)
 {
-    auto menu = TRY(m_menubar->try_add_menu({}, move(name)));
+    auto menu = m_menubar->add_menu({}, move(name));
     if (m_window_id) {
         menu->realize_menu_if_needed();
         ConnectionToWindowServer::the().async_add_menu(m_window_id, menu->menu_id());
     }
     return menu;
-}
-
-Menu& Window::add_menu(String name)
-{
-    auto menu = MUST(try_add_menu(move(name)));
-    return *menu;
 }
 
 void Window::flash_menubar_menu_for(MenuItem const& menu_item)

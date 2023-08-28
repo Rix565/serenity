@@ -37,7 +37,7 @@ configuration/compilation options, and some other things (see
   script in this directory. This is sometimes required when LibC changes, for
   example. Pass `clean` as first argument to remove old build files beforehand.
 
-Installed ports are being tracked in `Build/x86_64/Root/usr/Ports/packages.db` (a simple text file).
+Installed ports are being tracked in `Build/x86_64/Root/usr/Ports/installed.db` (a simple text file).
 You can delete this file at any time, in fact it must be edited or removed
 when clearing the build directory as port dependencies may not be installed
 again otherwise.
@@ -130,12 +130,16 @@ script simply defines some well-known variables and looks like this:
 
 ```bash
 #!/usr/bin/env -S bash ../.port_include.sh
-
-port="foo"
-version="1.2.3"
-useconfigure="true"
-files="https://example.com/foo-${version}.tar.gz foo-${version}.tar.gz"
-depends=("bar" "baz")
+port='foo'
+version='1.2.3'
+useconfigure='true'
+files=(
+    "https://example.com/foo-${version}.tar.gz 9acd50f9a2af37e471f761c3fe7b8dea5617e51dac802fe6c177b74abf0abb5a"
+)
+depends=(
+    'bar'
+    'baz'
+)
 ```
 
 The script in the shebang, [`.port_include.sh`](./.port_include.sh), is where
@@ -178,26 +182,30 @@ installed during the `installdepends` step.
 For example:
 
 ```bash
-depends=("ncurses" "gettext")
+depends=(
+    'gettext'
+    'ncurses'
+)
 ```
 
 #### `files`
 
-A list of external files required by the port, one per line. The format of each
-line is as follows:
+An array of external files required by the port, one per line. The format of each
+entry is as follows:
 
 ```text
-URL NAME HASH
+URL HASH
 ```
 
-Where `URL` is the URL from where the file will be downloaded (using `curl`),
-`NAME` is the output name of the downloaded file, and `HASH` is an SHA256 hash
-that will be used for verification.
+Where `URL` is the URL from where the file will be downloaded (using `curl`)
+and `HASH` is the SHA256 hash that will be used for verification.
 
 For example:
 
 ```bash
-files="https://example.com/foo-${version}.tar.xz foo-${version}.tar.xz 9acd50f9a2af37e471f761c3fe7b8dea5617e51dac802fe6c177b74abf0abb5a"
+files=(
+    "https://example.com/foo-${version}.tar.xz 9acd50f9a2af37e471f761c3fe7b8dea5617e51dac802fe6c177b74abf0abb5a"
+)
 ```
 
 If a file is a compressed tar archive, a gzip compressed file or a zip

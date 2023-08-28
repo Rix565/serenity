@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Concepts.h>
+#include <AK/FixedStringBuffer.h>
 #include <AK/HashMap.h>
 #include <AK/IntrusiveList.h>
 #include <AK/IntrusiveListRelaxedConst.h>
@@ -40,7 +41,7 @@
 
 namespace Kernel {
 
-MutexProtected<OwnPtr<KString>>& hostname();
+MutexProtected<FixedStringBuffer<UTSNAME_ENTRY_LEN - 1>>& hostname();
 UnixDateTime kgettimeofday();
 
 #define ENUMERATE_PLEDGE_PROMISES         \
@@ -72,6 +73,15 @@ UnixDateTime kgettimeofday();
     __ENUMERATE_PLEDGE_PROMISE(jail)      \
     __ENUMERATE_PLEDGE_PROMISE(mount)     \
     __ENUMERATE_PLEDGE_PROMISE(no_error)
+
+#define __ENUMERATE_PLEDGE_PROMISE(x) sizeof(#x) + 1 +
+// NOTE: We truncate the last space from the string as it's not needed (with 0 - 1).
+constexpr static unsigned all_promises_strings_length_with_spaces = ENUMERATE_PLEDGE_PROMISES 0 - 1;
+#undef __ENUMERATE_PLEDGE_PROMISE
+
+// NOTE: This is a sanity check because length of more than 1024 characters
+// is not reasonable.
+static_assert(all_promises_strings_length_with_spaces <= 1024);
 
 enum class Pledge : u32 {
 #define __ENUMERATE_PLEDGE_PROMISE(x) x,
@@ -193,13 +203,13 @@ public:
     };
 
     template<typename EntryFunction>
-    static ErrorOr<ProcessAndFirstThread> create_kernel_process(NonnullOwnPtr<KString> name, EntryFunction entry, u32 affinity = THREAD_AFFINITY_DEFAULT, RegisterProcess do_register = RegisterProcess::Yes)
+    static ErrorOr<ProcessAndFirstThread> create_kernel_process(StringView name, EntryFunction entry, u32 affinity = THREAD_AFFINITY_DEFAULT, RegisterProcess do_register = RegisterProcess::Yes)
     {
         auto* entry_func = new EntryFunction(move(entry));
-        return create_kernel_process(move(name), &Process::kernel_process_trampoline<EntryFunction>, entry_func, affinity, do_register);
+        return create_kernel_process(name, &Process::kernel_process_trampoline<EntryFunction>, entry_func, affinity, do_register);
     }
 
-    static ErrorOr<ProcessAndFirstThread> create_kernel_process(NonnullOwnPtr<KString> name, void (*entry)(void*), void* entry_data = nullptr, u32 affinity = THREAD_AFFINITY_DEFAULT, RegisterProcess do_register = RegisterProcess::Yes);
+    static ErrorOr<ProcessAndFirstThread> create_kernel_process(StringView name, void (*entry)(void*), void* entry_data = nullptr, u32 affinity = THREAD_AFFINITY_DEFAULT, RegisterProcess do_register = RegisterProcess::Yes);
     static ErrorOr<ProcessAndFirstThread> create_user_process(StringView path, UserID, GroupID, Vector<NonnullOwnPtr<KString>> arguments, Vector<NonnullOwnPtr<KString>> environment, RefPtr<TTY>);
     static void register_new(Process&);
 
@@ -207,7 +217,7 @@ public:
 
     virtual void remove_from_secondary_lists();
 
-    ErrorOr<NonnullRefPtr<Thread>> create_kernel_thread(void (*entry)(void*), void* entry_data, u32 priority, NonnullOwnPtr<KString> name, u32 affinity = THREAD_AFFINITY_DEFAULT, bool joinable = true);
+    ErrorOr<NonnullRefPtr<Thread>> create_kernel_thread(void (*entry)(void*), void* entry_data, u32 priority, StringView name, u32 affinity = THREAD_AFFINITY_DEFAULT, bool joinable = true);
 
     bool is_profiling() const { return m_profiling; }
     void set_profiling(bool profiling) { m_profiling = profiling; }
@@ -228,8 +238,9 @@ public:
     static RefPtr<Process> from_pid_ignoring_jails(ProcessID);
     static SessionID get_sid_from_pgid(ProcessGroupID pgid);
 
-    SpinlockProtected<NonnullOwnPtr<KString>, LockRank::None> const& name() const;
-    void set_name(NonnullOwnPtr<KString>);
+    using Name = FixedStringBuffer<32>;
+    SpinlockProtected<Name, LockRank::None> const& name() const;
+    void set_name(StringView);
 
     ProcessID pid() const
     {
@@ -326,17 +337,17 @@ public:
     ErrorOr<FlatPtr> sys$open(Userspace<Syscall::SC_open_params const*>);
     ErrorOr<FlatPtr> sys$close(int fd);
     ErrorOr<FlatPtr> sys$read(int fd, Userspace<u8*>, size_t);
-    ErrorOr<FlatPtr> sys$pread(int fd, Userspace<u8*>, size_t, Userspace<off_t const*>);
+    ErrorOr<FlatPtr> sys$pread(int fd, Userspace<u8*>, size_t, off_t);
     ErrorOr<FlatPtr> sys$readv(int fd, Userspace<const struct iovec*> iov, int iov_count);
     ErrorOr<FlatPtr> sys$write(int fd, Userspace<u8 const*>, size_t);
-    ErrorOr<FlatPtr> sys$pwritev(int fd, Userspace<const struct iovec*> iov, int iov_count, Userspace<off_t const*>);
+    ErrorOr<FlatPtr> sys$pwritev(int fd, Userspace<const struct iovec*> iov, int iov_count, off_t);
     ErrorOr<FlatPtr> sys$fstat(int fd, Userspace<stat*>);
     ErrorOr<FlatPtr> sys$stat(Userspace<Syscall::SC_stat_params const*>);
     ErrorOr<FlatPtr> sys$annotate_mapping(Userspace<void*>, int flags);
     ErrorOr<FlatPtr> sys$lseek(int fd, Userspace<off_t*>, int whence);
-    ErrorOr<FlatPtr> sys$ftruncate(int fd, Userspace<off_t const*>);
+    ErrorOr<FlatPtr> sys$ftruncate(int fd, off_t);
     ErrorOr<FlatPtr> sys$futimens(Userspace<Syscall::SC_futimens_params const*>);
-    ErrorOr<FlatPtr> sys$posix_fallocate(int fd, Userspace<off_t const*>, Userspace<off_t const*>);
+    ErrorOr<FlatPtr> sys$posix_fallocate(int fd, off_t, off_t);
     ErrorOr<FlatPtr> sys$kill(pid_t pid_or_pgid, int sig);
     [[noreturn]] void sys$exit(int status);
     ErrorOr<FlatPtr> sys$sigreturn(RegisterState& registers);
@@ -423,8 +434,6 @@ public:
     [[noreturn]] void sys$exit_thread(Userspace<void*>, Userspace<void*>, size_t);
     ErrorOr<FlatPtr> sys$join_thread(pid_t tid, Userspace<void**> exit_value);
     ErrorOr<FlatPtr> sys$detach_thread(pid_t tid);
-    ErrorOr<FlatPtr> sys$set_thread_name(pid_t tid, Userspace<char const*> buffer, size_t buffer_size);
-    ErrorOr<FlatPtr> sys$get_thread_name(pid_t tid, Userspace<char*> buffer, size_t buffer_size);
     ErrorOr<FlatPtr> sys$kill_thread(pid_t tid, int signal);
     ErrorOr<FlatPtr> sys$rename(Userspace<Syscall::SC_rename_params const*>);
     ErrorOr<FlatPtr> sys$mknod(Userspace<Syscall::SC_mknod_params const*>);
@@ -432,7 +441,7 @@ public:
     ErrorOr<FlatPtr> sys$getrandom(Userspace<void*>, size_t, unsigned int);
     ErrorOr<FlatPtr> sys$getkeymap(Userspace<Syscall::SC_getkeymap_params const*>);
     ErrorOr<FlatPtr> sys$setkeymap(Userspace<Syscall::SC_setkeymap_params const*>);
-    ErrorOr<FlatPtr> sys$profiling_enable(pid_t, Userspace<u64 const*>);
+    ErrorOr<FlatPtr> sys$profiling_enable(pid_t, u64);
     ErrorOr<FlatPtr> profiling_enable(pid_t, u64 event_mask);
     ErrorOr<FlatPtr> sys$profiling_disable(pid_t);
     ErrorOr<FlatPtr> sys$profiling_free_buffer(pid_t);
@@ -448,7 +457,7 @@ public:
     ErrorOr<FlatPtr> sys$sysconf(int name);
     ErrorOr<FlatPtr> sys$disown(ProcessID);
     ErrorOr<FlatPtr> sys$allocate_tls(Userspace<char const*> initial_data, size_t);
-    ErrorOr<FlatPtr> sys$prctl(int option, FlatPtr arg1, FlatPtr arg2);
+    ErrorOr<FlatPtr> sys$prctl(int option, FlatPtr arg1, FlatPtr arg2, FlatPtr arg3);
     ErrorOr<FlatPtr> sys$anon_create(size_t, int options);
     ErrorOr<FlatPtr> sys$statvfs(Userspace<Syscall::SC_statvfs_params const*> user_params);
     ErrorOr<FlatPtr> sys$fstatvfs(int fd, statvfs* buf);
@@ -603,6 +612,36 @@ public:
     ErrorOr<void> validate_mmap_prot(int prot, bool map_stack, bool map_anonymous, Memory::Region const* region = nullptr) const;
     ErrorOr<void> validate_inode_mmap_prot(int prot, bool description_readable, bool description_writable, bool map_shared) const;
 
+    template<size_t Size>
+    static ErrorOr<FixedStringBuffer<Size>> get_syscall_string_fixed_buffer(Syscall::StringArgument const& argument)
+    {
+        // NOTE: If the string is too much big for the FixedStringBuffer,
+        // we return E2BIG error here.
+        FixedStringBuffer<Size> buffer;
+        TRY(try_copy_string_from_user_into_fixed_string_buffer<Size>(reinterpret_cast<FlatPtr>(argument.characters), buffer, argument.length));
+        return buffer;
+    }
+
+    template<size_t Size>
+    static ErrorOr<FixedStringBuffer<Size>> get_syscall_name_string_fixed_buffer(Userspace<char const*> user_buffer, size_t user_length = Size)
+    {
+        // NOTE: If the string is too much big for the FixedStringBuffer,
+        // we return E2BIG error here.
+        FixedStringBuffer<Size> buffer;
+        TRY(try_copy_string_from_user_into_fixed_string_buffer<Size>(user_buffer, buffer, user_length));
+        return buffer;
+    }
+
+    template<size_t Size>
+    static ErrorOr<FixedStringBuffer<Size>> get_syscall_name_string_fixed_buffer(Syscall::StringArgument const& argument)
+    {
+        // NOTE: If the string is too much big for the FixedStringBuffer,
+        // we return ENAMETOOLONG error here.
+        FixedStringBuffer<Size> buffer;
+        TRY(try_copy_name_from_user_into_fixed_string_buffer<Size>(reinterpret_cast<FlatPtr>(argument.characters), buffer, argument.length));
+        return buffer;
+    }
+
 private:
     friend class MemoryManager;
     friend class Scheduler;
@@ -612,8 +651,9 @@ private:
     bool add_thread(Thread&);
     bool remove_thread(Thread&);
 
-    Process(NonnullOwnPtr<KString> name, NonnullRefPtr<Credentials>, ProcessID ppid, bool is_kernel_process, RefPtr<Custody> current_directory, RefPtr<Custody> executable, RefPtr<TTY> tty, UnveilNode unveil_tree, UnveilNode exec_unveil_tree, UnixDateTime creation_time);
-    static ErrorOr<ProcessAndFirstThread> create(NonnullOwnPtr<KString> name, UserID, GroupID, ProcessID ppid, bool is_kernel_process, RefPtr<Custody> current_directory = nullptr, RefPtr<Custody> executable = nullptr, RefPtr<TTY> = nullptr, Process* fork_parent = nullptr);
+    Process(StringView name, NonnullRefPtr<Credentials>, ProcessID ppid, bool is_kernel_process, RefPtr<Custody> current_directory, RefPtr<Custody> executable, RefPtr<TTY> tty, UnveilNode unveil_tree, UnveilNode exec_unveil_tree, UnixDateTime creation_time);
+    static ErrorOr<ProcessAndFirstThread> create_with_forked_name(UserID, GroupID, ProcessID ppid, bool is_kernel_process, RefPtr<Custody> current_directory = nullptr, RefPtr<Custody> executable = nullptr, RefPtr<TTY> = nullptr, Process* fork_parent = nullptr);
+    static ErrorOr<ProcessAndFirstThread> create(StringView name, UserID, GroupID, ProcessID ppid, bool is_kernel_process, RefPtr<Custody> current_directory = nullptr, RefPtr<Custody> executable = nullptr, RefPtr<TTY> = nullptr, Process* fork_parent = nullptr);
     ErrorOr<NonnullRefPtr<Thread>> attach_resources(NonnullOwnPtr<Memory::AddressSpace>&&, Process* fork_parent);
     static ProcessID allocate_pid();
 
@@ -684,7 +724,7 @@ private:
         return nullptr;
     }
 
-    SpinlockProtected<NonnullOwnPtr<KString>, LockRank::None> m_name;
+    SpinlockProtected<Name, LockRank::None> m_name;
 
     SpinlockProtected<OwnPtr<Memory::AddressSpace>, LockRank::None> m_space;
 
@@ -859,6 +899,7 @@ private:
     SpinlockProtected<Thread::ListInProcess, LockRank::None> const& thread_list() const { return m_thread_list; }
 
     ErrorOr<NonnullRefPtr<Thread>> get_thread_from_pid_or_tid(pid_t pid_or_tid, Syscall::SchedulerParametersMode mode);
+    ErrorOr<NonnullRefPtr<Thread>> get_thread_from_thread_list(pid_t tid);
 
     SpinlockProtected<Thread::ListInProcess, LockRank::None> m_thread_list {};
 
@@ -1046,7 +1087,7 @@ struct AK::Formatter<Kernel::Process> : AK::Formatter<FormatString> {
     ErrorOr<void> format(FormatBuilder& builder, Kernel::Process const& value)
     {
         return value.name().with([&](auto& process_name) {
-            return AK::Formatter<FormatString>::format(builder, "{}({})"sv, process_name->view(), value.pid().value());
+            return AK::Formatter<FormatString>::format(builder, "{}({})"sv, process_name.representable_view(), value.pid().value());
         });
     }
 };

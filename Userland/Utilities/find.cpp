@@ -12,6 +12,7 @@
 #include <AK/Vector.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
+#include <LibRegex/Regex.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -267,6 +268,41 @@ private:
     CaseSensitivity m_case_sensitivity { CaseSensitivity::CaseSensitive };
 };
 
+class RegexCommand : public Command {
+public:
+    RegexCommand(Regex<PosixExtended>&& regex)
+        : m_regex(move(regex))
+    {
+    }
+
+private:
+    virtual bool evaluate(FileData& file_data) const override
+    {
+        auto haystack = file_data.full_path.string();
+        auto match_result = m_regex.match(haystack);
+        return match_result.success;
+    }
+
+    Regex<PosixExtended> m_regex;
+};
+
+class AccessCommand final : public Command {
+public:
+    AccessCommand(mode_t mode)
+        : m_mode(mode)
+    {
+    }
+
+private:
+    virtual bool evaluate(FileData& file_data) const override
+    {
+        auto maybe_error = Core::System::access(file_data.full_path.string(), m_mode);
+        return !maybe_error.is_error();
+    }
+
+    mode_t m_mode { 0 };
+};
+
 class PrintCommand final : public Command {
 public:
     PrintCommand(char terminator = '\n')
@@ -409,6 +445,26 @@ static OwnPtr<Command> parse_simple_command(Vector<char*>& args)
         if (args.is_empty())
             fatal_error("-iname: requires additional arguments");
         return make<NameCommand>(args.take_first(), CaseSensitivity::CaseInsensitive);
+    } else if (arg == "-regex") {
+        if (args.is_empty())
+            fatal_error("-regex: requires additional arguments");
+        Regex<PosixExtended> regex { args.take_first(), PosixFlags::Default };
+        if (regex.parser_result.error != regex::Error::NoError)
+            fatal_error("{}", regex.error_string());
+        return make<RegexCommand>(move(regex));
+    } else if (arg == "-iregex") {
+        if (args.is_empty())
+            fatal_error("-iregex: requires additional arguments");
+        Regex<PosixExtended> regex { args.take_first(), PosixFlags::Insensitive };
+        if (regex.parser_result.error != regex::Error::NoError)
+            fatal_error("{}", regex.error_string());
+        return make<RegexCommand>(move(regex));
+    } else if (arg == "-readable") {
+        return make<AccessCommand>(R_OK);
+    } else if (arg == "-writable") {
+        return make<AccessCommand>(W_OK);
+    } else if (arg == "-executable") {
+        return make<AccessCommand>(X_OK);
     } else if (arg == "-print") {
         g_have_seen_action_command = true;
         return make<PrintCommand>();

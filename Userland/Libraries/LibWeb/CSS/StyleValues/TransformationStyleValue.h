@@ -16,16 +16,16 @@ namespace Web::CSS {
 
 class TransformationStyleValue final : public StyleValueWithDefaultOperators<TransformationStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<TransformationStyleValue>> create(CSS::TransformFunction transform_function, StyleValueVector&& values)
+    static ValueComparingNonnullRefPtr<TransformationStyleValue> create(CSS::TransformFunction transform_function, StyleValueVector&& values)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) TransformationStyleValue(transform_function, move(values)));
+        return adopt_ref(*new (nothrow) TransformationStyleValue(transform_function, move(values)));
     }
     virtual ~TransformationStyleValue() override = default;
 
     CSS::TransformFunction transform_function() const { return m_properties.transform_function; }
     StyleValueVector values() const { return m_properties.values; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(TransformationStyleValue const& other) const { return m_properties == other.m_properties; }
 

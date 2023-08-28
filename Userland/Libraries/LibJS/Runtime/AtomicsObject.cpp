@@ -129,9 +129,9 @@ AtomicsObject::AtomicsObject(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> AtomicsObject::initialize(Realm& realm)
+void AtomicsObject::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     auto& vm = this->vm();
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
@@ -147,9 +147,7 @@ ThrowCompletionOr<void> AtomicsObject::initialize(Realm& realm)
     define_native_function(realm, vm.names.xor_, xor_, 3, attr);
 
     // 25.4.15 Atomics [ @@toStringTag ], https://tc39.es/ecma262/#sec-atomics-@@tostringtag
-    define_direct_property(vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Atomics"sv)), Attribute::Configurable);
-
-    return {};
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Atomics"_string), Attribute::Configurable);
 }
 
 // 25.4.3 Atomics.add ( typedArray, index, value ), https://tc39.es/ecma262/#sec-atomics.add
@@ -227,7 +225,7 @@ static ThrowCompletionOr<Value> atomic_compare_exchange_impl(VM& vm, TypedArrayB
     // 9. Let elementSize be TypedArrayElementSize(typedArray).
 
     // 10. Let isLittleEndian be the value of the [[LittleEndian]] field of the surrounding agent's Agent Record.
-    constexpr bool is_little_endian = __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__;
+    constexpr bool is_little_endian = AK::HostIsLittleEndian;
 
     // 11. Let expectedBytes be NumericToRawBytes(elementType, expected, isLittleEndian).
     auto expected_bytes = MUST_OR_THROW_OOM(numeric_to_raw_bytes<T>(vm, expected, is_little_endian));

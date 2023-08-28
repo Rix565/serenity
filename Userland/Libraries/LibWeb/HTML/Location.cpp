@@ -36,9 +36,9 @@ void Location::visit_edges(Cell::Visitor& visitor)
         visitor.visit(property);
 }
 
-JS::ThrowCompletionOr<void> Location::initialize(JS::Realm& realm)
+void Location::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Object::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::LocationPrototype>(realm, "Location"));
 
     // FIXME: Implement steps 2.-4.
@@ -46,8 +46,6 @@ JS::ThrowCompletionOr<void> Location::initialize(JS::Realm& realm)
     // 5. Set the value of the [[DefaultProperties]] internal slot of location to location.[[OwnPropertyKeys]]().
     // NOTE: In LibWeb this happens before the ESO is set up, so we must avoid location's custom [[OwnPropertyKeys]].
     m_default_properties.extend(MUST(Object::internal_own_property_keys()));
-
-    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#relevant-document
@@ -58,6 +56,26 @@ JS::GCPtr<DOM::Document> Location::relevant_document() const
     // relevant global object's browsing context is non-null, and null otherwise.
     auto* browsing_context = verify_cast<HTML::Window>(HTML::relevant_global_object(*this)).browsing_context();
     return browsing_context ? browsing_context->active_document() : nullptr;
+}
+
+// https://html.spec.whatwg.org/multipage/nav-history-apis.html#location-object-navigate
+WebIDL::ExceptionOr<void> Location::navigate(AK::URL url, HistoryHandlingBehavior history_handling)
+{
+    // 1. Let navigable be location's relevant global object's navigable.
+    auto navigable = verify_cast<HTML::Window>(HTML::relevant_global_object(*this)).navigable();
+
+    // 2. Let sourceDocument be the incumbent global object's associated Document.
+    auto& source_document = verify_cast<HTML::Window>(incumbent_global_object()).associated_document();
+
+    // 3. If location's relevant Document is not yet completely loaded, and the incumbent global object does not have transient activation, then set historyHandling to "replace".
+    if (!relevant_document()->is_completely_loaded() && !verify_cast<HTML::Window>(incumbent_global_object()).has_transient_activation()) {
+        history_handling = HistoryHandlingBehavior::Replace;
+    }
+
+    // 4. Navigate navigable to url using sourceDocument, with exceptionsEnabled set to true and historyHandling set to historyHandling.
+    TRY(navigable->navigate(url, source_document, {}, nullptr, true, history_handling));
+
+    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#concept-location-url
@@ -255,7 +273,7 @@ WebIDL::ExceptionOr<String> Location::search() const
     auto url = this->url();
 
     // 2. If this's url's query is either null or the empty string, return the empty string.
-    if (url.query().is_empty())
+    if (!url.query().has_value() || url.query()->is_empty())
         return String {};
 
     // 3. Return "?", followed by this's url's query.
@@ -281,11 +299,11 @@ WebIDL::ExceptionOr<String> Location::hash() const
     auto url = this->url();
 
     // 2. If this's url's fragment is either null or the empty string, return the empty string.
-    if (url.fragment().is_empty())
+    if (!url.fragment().has_value() || url.fragment()->is_empty())
         return String {};
 
     // 3. Return "#", followed by this's url's fragment.
-    return TRY_OR_THROW_OOM(vm, String::formatted("#{}", url.fragment()));
+    return TRY_OR_THROW_OOM(vm, String::formatted("#{}", *url.fragment()));
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-location-hash
@@ -309,7 +327,7 @@ WebIDL::ExceptionOr<void> Location::set_hash(String const& value)
     auto input = value.bytes_as_string_view().trim("#"sv, TrimMode::Left);
 
     // 5. Set copyURL's fragment to the empty string.
-    copy_url.set_fragment("");
+    copy_url.set_fragment(String {});
 
     // 6. Basic URL parse input, with copyURL as url and fragment state as state override.
     auto result_url = URLParser::basic_parse(input, {}, copy_url, URLParser::State::Fragment);

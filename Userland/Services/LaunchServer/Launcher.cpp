@@ -146,8 +146,8 @@ Vector<DeprecatedString> Launcher::handlers_for_url(const URL& url)
             return true;
         });
     } else {
-        for_each_handler(url.scheme(), m_protocol_handlers, [&](auto const& handler) -> bool {
-            if (handler.handler_type != Handler::Type::Default || handler.protocols.contains(url.scheme())) {
+        for_each_handler(url.scheme().to_deprecated_string(), m_protocol_handlers, [&](auto const& handler) -> bool {
+            if (handler.handler_type != Handler::Type::Default || handler.protocols.contains(url.scheme().to_deprecated_string())) {
                 handlers.append(handler.executable);
                 return true;
             }
@@ -166,8 +166,8 @@ Vector<DeprecatedString> Launcher::handlers_with_details_for_url(const URL& url)
             return true;
         });
     } else {
-        for_each_handler(url.scheme(), m_protocol_handlers, [&](auto const& handler) -> bool {
-            if (handler.handler_type != Handler::Type::Default || handler.protocols.contains(url.scheme())) {
+        for_each_handler(url.scheme().to_deprecated_string(), m_protocol_handlers, [&](auto const& handler) -> bool {
+            if (handler.handler_type != Handler::Type::Default || handler.protocols.contains(url.scheme().to_deprecated_string())) {
                 handlers.append(handler.to_details_str());
                 return true;
             }
@@ -194,7 +194,7 @@ bool Launcher::open_url(const URL& url, DeprecatedString const& handler_name)
     if (url.scheme() == "file")
         return open_file_url(url);
 
-    return open_with_user_preferences(m_protocol_handlers, url.scheme(), { url.to_deprecated_string() });
+    return open_with_user_preferences(m_protocol_handlers, url.scheme().to_deprecated_string(), { url.to_deprecated_string() });
 }
 
 bool Launcher::open_with_handler_name(const URL& url, DeprecatedString const& handler_name)
@@ -357,12 +357,12 @@ bool Launcher::open_file_url(const URL& url)
 
     if (S_ISDIR(st.st_mode)) {
         Vector<DeprecatedString> fm_arguments;
-        if (url.fragment().is_empty()) {
+        if (!url.fragment().has_value() || url.fragment()->is_empty()) {
             fm_arguments.append(file_path);
         } else {
             fm_arguments.append("-s");
             fm_arguments.append("-r");
-            fm_arguments.append(DeprecatedString::formatted("{}/{}", file_path, url.fragment()));
+            fm_arguments.append(DeprecatedString::formatted("{}/{}", file_path, *url.fragment()));
         }
 
         auto handler_optional = m_file_handlers.get("directory");
@@ -393,15 +393,16 @@ bool Launcher::open_file_url(const URL& url)
     Vector<DeprecatedString> additional_parameters;
     DeprecatedString filepath = url.serialize_path();
 
-    auto parameters = url.query().split('&');
-    for (auto const& parameter : parameters) {
-        auto pair = parameter.split('=');
-        if (pair.size() == 2 && pair[0] == "line_number") {
-            auto line = pair[1].to_int();
-            if (line.has_value())
-                // TextEditor uses file:line:col to open a file at a specific line number
-                filepath = DeprecatedString::formatted("{}:{}", filepath, line.value());
-        }
+    if (url.query().has_value()) {
+        url.query()->bytes_as_string_view().for_each_split_view('&', SplitBehavior::Nothing, [&](auto parameter) {
+            auto pair = parameter.split_view('=');
+            if (pair.size() == 2 && pair[0] == "line_number") {
+                auto line = pair[1].to_int();
+                if (line.has_value())
+                    // TextEditor uses file:line:col to open a file at a specific line number
+                    filepath = DeprecatedString::formatted("{}:{}", filepath, line.value());
+            }
+        });
     }
 
     additional_parameters.append(filepath);

@@ -2,7 +2,7 @@
  * Copyright (c) 2019-2020, Andrew Kaster <akaster@serenityos.org>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2022, Daniel Bertalan <dani@danielbertalan.dev>
+ * Copyright (c) 2022-2023, Daniel Bertalan <dani@danielbertalan.dev>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -33,6 +33,13 @@ static void* mmap_with_name(void* addr, size_t length, int prot, int flags, int 
 }
 
 #    define MAP_RANDOMIZED 0
+#endif
+
+#if ARCH(AARCH64)
+#    define HAS_TLSDESC_SUPPORT
+extern "C" {
+void* __tlsdesc_static(void*);
+}
 #endif
 
 namespace ELF {
@@ -202,8 +209,9 @@ void DynamicLoader::do_main_relocations()
 {
     do_relr_relocations();
 
+    Optional<DynamicLoader::CachedLookupResult> cached_result;
     m_dynamic_object->relocation_section().for_each_relocation([&](DynamicObject::Relocation const& relocation) {
-        switch (do_direct_relocation(relocation, ShouldInitializeWeak::No, ShouldCallIfuncResolver::No)) {
+        switch (do_direct_relocation(relocation, cached_result, ShouldInitializeWeak::No, ShouldCallIfuncResolver::No)) {
         case RelocationResult::Failed:
             dbgln("Loader.so: {} unresolved symbol '{}'", m_filepath, relocation.symbol().name());
             VERIFY_NOT_REACHED();
@@ -274,8 +282,9 @@ Result<NonnullRefPtr<DynamicObject>, DlErrorMessage> DynamicLoader::load_stage_3
         VERIFY(result == RelocationResult::Success);
     }
 
+    Optional<DynamicLoader::CachedLookupResult> cached_result;
     for (auto const& relocation : m_direct_ifunc_relocations) {
-        auto result = do_direct_relocation(relocation, ShouldInitializeWeak::No, ShouldCallIfuncResolver::Yes);
+        auto result = do_direct_relocation(relocation, cached_result, ShouldInitializeWeak::No, ShouldCallIfuncResolver::Yes);
         VERIFY(result == RelocationResult::Success);
     }
 
@@ -314,8 +323,9 @@ void DynamicLoader::load_stage_4()
 
 void DynamicLoader::do_lazy_relocations()
 {
+    Optional<DynamicLoader::CachedLookupResult> cached_result;
     for (auto const& relocation : m_unresolved_relocations) {
-        if (auto res = do_direct_relocation(relocation, ShouldInitializeWeak::Yes, ShouldCallIfuncResolver::Yes); res != RelocationResult::Success) {
+        if (auto res = do_direct_relocation(relocation, cached_result, ShouldInitializeWeak::Yes, ShouldCallIfuncResolver::Yes); res != RelocationResult::Success) {
             dbgln("Loader.so: {} unresolved symbol '{}'", m_filepath, relocation.symbol().name());
             VERIFY_NOT_REACHED();
         }
@@ -515,7 +525,10 @@ void DynamicLoader::load_program_headers()
     }
 }
 
-DynamicLoader::RelocationResult DynamicLoader::do_direct_relocation(DynamicObject::Relocation const& relocation, ShouldInitializeWeak should_initialize_weak, ShouldCallIfuncResolver should_call_ifunc_resolver)
+DynamicLoader::RelocationResult DynamicLoader::do_direct_relocation(DynamicObject::Relocation const& relocation,
+    Optional<DynamicLoader::CachedLookupResult>& cached_result,
+    ShouldInitializeWeak should_initialize_weak,
+    ShouldCallIfuncResolver should_call_ifunc_resolver)
 {
     FlatPtr* patch_ptr = nullptr;
     if (is_dynamic())
@@ -525,6 +538,32 @@ DynamicLoader::RelocationResult DynamicLoader::do_direct_relocation(DynamicObjec
 
     auto call_ifunc_resolver = [](VirtualAddress address) {
         return VirtualAddress { reinterpret_cast<DynamicObject::IfuncResolver>(address.get())() };
+    };
+
+    auto lookup_symbol = [&](DynamicObject::Symbol const& symbol) {
+        // The static linker sorts relocations by the referenced symbol. Especially when vtables
+        // in large inheritance hierarchies are involved, there might be tens of references to
+        // the same symbol. We can avoid redundant lookups by keeping track of the previous result.
+        if (!cached_result.has_value() || !cached_result.value().symbol.definitely_equals(symbol))
+            cached_result = DynamicLoader::CachedLookupResult { symbol, DynamicLoader::lookup_symbol(symbol) };
+        return cached_result.value().result;
+    };
+
+    struct ResolvedTLSSymbol {
+        DynamicObject const& dynamic_object;
+        FlatPtr value;
+    };
+
+    auto resolve_tls_symbol = [&](DynamicObject::Relocation const& relocation) -> Optional<ResolvedTLSSymbol> {
+        if (relocation.symbol_index() == 0)
+            return ResolvedTLSSymbol { relocation.dynamic_object(), 0 };
+
+        auto res = lookup_symbol(relocation.symbol());
+        if (!res.has_value())
+            return {};
+        VERIFY(relocation.symbol().type() != STT_GNU_IFUNC);
+        VERIFY(res.value().dynamic_object != nullptr);
+        return ResolvedTLSSymbol { *res.value().dynamic_object, res.value().value };
     };
 
     switch (relocation.type()) {
@@ -599,32 +638,53 @@ DynamicLoader::RelocationResult DynamicLoader::do_direct_relocation(DynamicObjec
             *patch_ptr += m_dynamic_object->base_address().get();
         break;
     }
-    case R_AARCH64_TLS_TPREL64:
+    case R_AARCH64_TLS_TPREL:
     case R_X86_64_TPOFF64: {
-        auto symbol = relocation.symbol();
-        FlatPtr symbol_value;
-        DynamicObject const* dynamic_object_of_symbol;
-        if (relocation.symbol_index() != 0) {
-            auto res = lookup_symbol(symbol);
-            if (!res.has_value())
-                break;
-            VERIFY(symbol.type() != STT_GNU_IFUNC);
-            symbol_value = res.value().value;
-            dynamic_object_of_symbol = res.value().dynamic_object;
-        } else {
-            symbol_value = 0;
-            dynamic_object_of_symbol = &relocation.dynamic_object();
-        }
-        VERIFY(dynamic_object_of_symbol);
-        size_t addend = relocation.addend_used() ? relocation.addend() : *patch_ptr;
+        auto maybe_resolution = resolve_tls_symbol(relocation);
+        if (!maybe_resolution.has_value())
+            break;
+        auto [dynamic_object_of_symbol, symbol_value] = maybe_resolution.value();
 
-        *patch_ptr = addend + dynamic_object_of_symbol->tls_offset().value() + symbol_value;
+        size_t addend = relocation.addend_used() ? relocation.addend() : *patch_ptr;
+        *patch_ptr = addend + dynamic_object_of_symbol.tls_offset().value() + symbol_value;
 
         // At offset 0 there's the thread's ThreadSpecificData structure, we don't want to collide with it.
         VERIFY(static_cast<ssize_t>(*patch_ptr) < 0);
-
         break;
     }
+    case R_X86_64_DTPMOD64: {
+        auto maybe_resolution = resolve_tls_symbol(relocation);
+        if (!maybe_resolution.has_value())
+            break;
+
+        // We repurpose the module index to store the TLS block's TP offset. This is fine
+        // because we currently only support a single static TLS block.
+        *patch_ptr = maybe_resolution->dynamic_object.tls_offset().value();
+        break;
+    }
+    case R_X86_64_DTPOFF64: {
+        auto maybe_resolution = resolve_tls_symbol(relocation);
+        if (!maybe_resolution.has_value())
+            break;
+
+        size_t addend = relocation.addend_used() ? relocation.addend() : *patch_ptr;
+        *patch_ptr = addend + maybe_resolution->value;
+        break;
+    }
+#ifdef HAS_TLSDESC_SUPPORT
+    case R_AARCH64_TLSDESC: {
+        auto maybe_resolution = resolve_tls_symbol(relocation);
+        if (!maybe_resolution.has_value())
+            break;
+        auto [dynamic_object_of_symbol, symbol_value] = maybe_resolution.value();
+
+        size_t addend = relocation.addend_used() ? relocation.addend() : *patch_ptr;
+
+        patch_ptr[0] = (FlatPtr)__tlsdesc_static;
+        patch_ptr[1] = addend + dynamic_object_of_symbol.tls_offset().value() + symbol_value;
+        break;
+    }
+#endif
     case R_AARCH64_IRELATIVE:
     case R_X86_64_IRELATIVE: {
         if (should_call_ifunc_resolver == ShouldCallIfuncResolver::No)

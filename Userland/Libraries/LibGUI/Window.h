@@ -13,9 +13,9 @@
 #include <AK/OwnPtr.h>
 #include <AK/Variant.h>
 #include <AK/WeakPtr.h>
-#include <LibCore/Object.h>
 #include <LibGUI/FocusSource.h>
 #include <LibGUI/Forward.h>
+#include <LibGUI/Object.h>
 #include <LibGUI/ResizeDirection.h>
 #include <LibGUI/WindowMode.h>
 #include <LibGUI/WindowType.h>
@@ -27,7 +27,7 @@ namespace GUI {
 
 class WindowBackingStore;
 
-class Window : public Core::Object {
+class Window : public GUI::Object {
     C_OBJECT(Window)
 public:
     virtual ~Window() override;
@@ -219,9 +219,8 @@ public:
 
     void did_disable_focused_widget(Badge<Widget>);
 
-    Menu& add_menu(String name);
-    ErrorOr<NonnullRefPtr<Menu>> try_add_menu(String name);
-    ErrorOr<void> try_add_menu(NonnullRefPtr<Menu> menu);
+    [[nodiscard]] NonnullRefPtr<Menu> add_menu(String name);
+    void add_menu(NonnullRefPtr<Menu> menu);
     void flash_menubar_menu_for(MenuItem const&);
 
     void flush_pending_paints_immediately();
@@ -242,7 +241,7 @@ public:
     void propagate_shortcuts(KeyEvent& event, Widget* widget, ShortcutPropagationBoundary = ShortcutPropagationBoundary::Application);
 
 protected:
-    Window(Core::Object* parent = nullptr);
+    Window(Core::EventReceiver* parent = nullptr);
     virtual void wm_event(WMEvent&);
     virtual void screen_rects_change_event(ScreenRectsChangeEvent&);
     virtual void applet_area_rect_change_event(AppletAreaRectChangeEvent&);
@@ -329,5 +328,5 @@ private:
 }
 
 template<>
-struct AK::Formatter<GUI::Window> : Formatter<Core::Object> {
+struct AK::Formatter<GUI::Window> : Formatter<Core::EventReceiver> {
 };

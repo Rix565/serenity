@@ -202,12 +202,12 @@ ErrorOr<GUI::Widget*> GradientTool::get_properties_widget()
 {
     if (!m_properties_widget) {
         auto properties_widget = TRY(GUI::Widget::try_create());
-        (void)TRY(properties_widget->try_set_layout<GUI::VerticalBoxLayout>());
+        properties_widget->set_layout<GUI::VerticalBoxLayout>();
 
         auto mode_container = TRY(properties_widget->try_add<GUI::Widget>());
         mode_container->set_fixed_height(20);
-        (void)TRY(mode_container->try_set_layout<GUI::HorizontalBoxLayout>());
-        auto mode_label = TRY(mode_container->try_add<GUI::Label>(TRY("Gradient Type:"_string)));
+        mode_container->set_layout<GUI::HorizontalBoxLayout>();
+        auto mode_label = TRY(mode_container->try_add<GUI::Label>("Gradient Type:"_string));
         mode_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
         mode_label->set_fixed_size(80, 20);
 
@@ -235,9 +235,9 @@ ErrorOr<GUI::Widget*> GradientTool::get_properties_widget()
 
         auto opacity_container = TRY(properties_widget->try_add<GUI::Widget>());
         opacity_container->set_fixed_height(20);
-        (void)TRY(opacity_container->try_set_layout<GUI::HorizontalBoxLayout>());
+        opacity_container->set_layout<GUI::HorizontalBoxLayout>();
 
-        auto opacity_label = TRY(opacity_container->try_add<GUI::Label>(TRY("Opacity:"_string)));
+        auto opacity_label = TRY(opacity_container->try_add<GUI::Label>("Opacity:"_string));
         opacity_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
         opacity_label->set_fixed_size(80, 20);
 
@@ -253,7 +253,7 @@ ErrorOr<GUI::Widget*> GradientTool::get_properties_widget()
         set_primary_slider(opacity_slider);
 
         auto hardness_container = TRY(properties_widget->try_add<GUI::Widget>());
-        (void)TRY(hardness_container->try_set_layout<GUI::HorizontalBoxLayout>());
+        hardness_container->set_layout<GUI::HorizontalBoxLayout>();
         hardness_container->set_fixed_height(20);
         hardness_container->set_visible(m_mode == GradientMode::Radial);
 
@@ -271,11 +271,11 @@ ErrorOr<GUI::Widget*> GradientTool::get_properties_widget()
             hardness_container->set_visible(m_mode == GradientMode::Radial);
         };
 
-        auto hardness_label = TRY(hardness_container->try_add<GUI::Label>(TRY("Hardness:"_string)));
+        auto hardness_label = TRY(hardness_container->try_add<GUI::Label>("Hardness:"_string));
         hardness_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
         hardness_label->set_fixed_size(80, 20);
 
-        auto hardness_slider = TRY(hardness_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "%"_short_string));
+        auto hardness_slider = TRY(hardness_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "%"_string));
         hardness_slider->set_range(1, 99);
         hardness_slider->set_value(m_hardness);
         hardness_slider->on_change = [this](int value) {
@@ -286,7 +286,7 @@ ErrorOr<GUI::Widget*> GradientTool::get_properties_widget()
         };
         set_secondary_slider(hardness_slider);
 
-        auto use_secondary_color_checkbox = TRY(properties_widget->try_add<GUI::CheckBox>(TRY("Use secondary color"_string)));
+        auto use_secondary_color_checkbox = TRY(properties_widget->try_add<GUI::CheckBox>("Use secondary color"_string));
         use_secondary_color_checkbox->on_checked = [this](bool checked) {
             m_use_secondary_color = checked;
             m_editor->update();
@@ -294,10 +294,10 @@ ErrorOr<GUI::Widget*> GradientTool::get_properties_widget()
 
         auto button_container = TRY(properties_widget->try_add<GUI::Widget>());
         button_container->set_fixed_height(22);
-        TRY(button_container->try_set_layout<GUI::HorizontalBoxLayout>());
-        button_container->add_spacer().release_value_but_fixme_should_propagate_errors();
+        button_container->set_layout<GUI::HorizontalBoxLayout>();
+        button_container->add_spacer();
 
-        auto apply_button = TRY(button_container->try_add<GUI::DialogButton>("Apply"_short_string));
+        auto apply_button = TRY(button_container->try_add<GUI::DialogButton>("Apply"_string));
         apply_button->on_click = [this](auto) {
             rasterize_gradient();
         };

@@ -9,9 +9,9 @@
 
 namespace Web::HTML {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<ErrorEvent>> ErrorEvent::create(JS::Realm& realm, FlyString const& event_name, ErrorEventInit const& event_init)
+JS::NonnullGCPtr<ErrorEvent> ErrorEvent::create(JS::Realm& realm, FlyString const& event_name, ErrorEventInit const& event_init)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<ErrorEvent>(realm, realm, event_name, event_init));
+    return realm.heap().allocate<ErrorEvent>(realm, realm, event_name, event_init);
 }
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<ErrorEvent>> ErrorEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, ErrorEventInit const& event_init)
@@ -31,12 +31,10 @@ ErrorEvent::ErrorEvent(JS::Realm& realm, FlyString const& event_name, ErrorEvent
 
 ErrorEvent::~ErrorEvent() = default;
 
-JS::ThrowCompletionOr<void> ErrorEvent::initialize(JS::Realm& realm)
+void ErrorEvent::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::ErrorEventPrototype>(realm, "ErrorEvent"));
-
-    return {};
 }
 
 void ErrorEvent::visit_edges(Cell::Visitor& visitor)

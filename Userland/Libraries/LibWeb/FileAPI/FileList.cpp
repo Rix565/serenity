@@ -11,9 +11,9 @@
 
 namespace Web::FileAPI {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<FileList>> FileList::create(JS::Realm& realm, Vector<JS::NonnullGCPtr<File>>&& files)
+JS::NonnullGCPtr<FileList> FileList::create(JS::Realm& realm, Vector<JS::NonnullGCPtr<File>>&& files)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<FileList>(realm, realm, move(files)));
+    return realm.heap().allocate<FileList>(realm, realm, move(files));
 }
 
 FileList::FileList(JS::Realm& realm, Vector<JS::NonnullGCPtr<File>>&& files)
@@ -24,12 +24,10 @@ FileList::FileList(JS::Realm& realm, Vector<JS::NonnullGCPtr<File>>&& files)
 
 FileList::~FileList() = default;
 
-JS::ThrowCompletionOr<void> FileList::initialize(JS::Realm& realm)
+void FileList::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::FileListPrototype>(realm, "FileList"));
-
-    return {};
 }
 
 // https://w3c.github.io/FileAPI/#dfn-item

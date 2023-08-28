@@ -22,10 +22,10 @@ Lagom is used by the Serenity project in the following ways:
 ## Using Lagom in an External Project
 It is possible to use Lagom for your own projects outside of Serenity too!
 
-An example of this in use can be found in [Linus's LibJS test262 runner](https://github.com/linusg/libjs-test262).
+An example of this in use can be found in the [LibJS test262 runner](https://github.com/SerenityOS/libjs-test262).
 
 To implement this yourself:
-- Download a copy of [linusg/libjs-test262/cmake/FetchLagom.cmake](https://github.com/linusg/libjs-test262/blob/7832c333c1504eecf1c5f9e4247aa6b34a52a3be/cmake/FetchLagom.cmake) and place it wherever you wish
+- Download a copy of [SerenityOS/libjs-test262/cmake/FetchLagom.cmake](https://github.com/SerenityOS/libjs-test262/blob/7832c333c1504eecf1c5f9e4247aa6b34a52a3be/cmake/FetchLagom.cmake) and place it wherever you wish
 - In your root `CMakeLists.txt`, add the following commands:
   ```cmake
   include(FetchContent)
@@ -33,7 +33,7 @@ To implement this yourself:
   ```
 - In addition, you will need to also add some compile options that Serenity uses to ensure no warnings or errors:
   ```cmake
-  add_compile_options(-Wno-literal-suffix) # AK::StringView defines operator"" sv, which GCC complains does not have an underscore.
+  add_compile_options(-Wno-literal-suffix) # AK::StringView defines operator""sv, which GCC complains does not have an underscore.
   add_compile_options(-fno-gnu-keywords)   # JS::Value has a method named typeof, which also happens to be a GNU keyword.
   ```
 

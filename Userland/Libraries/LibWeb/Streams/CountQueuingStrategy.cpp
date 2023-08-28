@@ -18,7 +18,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<CountQueuingStrategy>> CountQueuingStrategy
 {
     // The new CountQueuingStrategy(init) constructor steps are:
     // 1. Set this.[[highWaterMark]] to init["highWaterMark"].
-    return MUST_OR_THROW_OOM(realm.heap().allocate<CountQueuingStrategy>(realm, realm, init.high_water_mark));
+    return realm.heap().allocate<CountQueuingStrategy>(realm, realm, init.high_water_mark);
 }
 
 CountQueuingStrategy::CountQueuingStrategy(JS::Realm& realm, double high_water_mark)
@@ -36,12 +36,10 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::CallbackType>> CountQueuingStrategy
     return global_object().count_queuing_strategy_size_function();
 }
 
-JS::ThrowCompletionOr<void> CountQueuingStrategy::initialize(JS::Realm& realm)
+void CountQueuingStrategy::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::CountQueuingStrategyPrototype>(realm, "CountQueuingStrategy"));
-
-    return {};
 }
 
 }

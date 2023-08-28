@@ -45,10 +45,12 @@ public:
     // https://html.spec.whatwg.org/multipage/forms.html#category-listed
     virtual bool is_listed() const override { return true; }
 
+    virtual void visit_edges(Cell::Visitor&) override;
+
 private:
     HTMLObjectElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     virtual JS::GCPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::StyleProperties>) override;
 
@@ -80,7 +82,7 @@ private:
 
     RefPtr<DecodedImageData const> image_data() const;
 
-    RefPtr<SharedImageRequest> m_image_request;
+    JS::GCPtr<SharedImageRequest> m_image_request;
 };
 
 }

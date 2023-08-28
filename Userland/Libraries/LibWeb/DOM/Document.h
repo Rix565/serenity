@@ -91,7 +91,7 @@ public:
 
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> create_and_initialize(Type, DeprecatedString content_type, HTML::NavigationParams);
 
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> create(JS::Realm&, AK::URL const& url = "about:blank"sv);
+    [[nodiscard]] static JS::NonnullGCPtr<Document> create(JS::Realm&, AK::URL const& url = "about:blank"sv);
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> construct_impl(JS::Realm&);
     virtual ~Document() override;
 
@@ -210,6 +210,9 @@ public:
     Layout::Viewport const* layout_node() const;
     Layout::Viewport* layout_node();
 
+    Painting::ViewportPaintable const* paintable() const;
+    Painting::ViewportPaintable* paintable();
+
     void schedule_style_update();
     void schedule_layout_update();
 
@@ -229,7 +232,7 @@ public:
     DeprecatedString const& source() const { return m_source; }
     void set_source(DeprecatedString source) { m_source = move(source); }
 
-    HTML::EnvironmentSettingsObject& relevant_settings_object();
+    HTML::EnvironmentSettingsObject& relevant_settings_object() const;
 
     void navigate_to_javascript_url(StringView url);
     void evaluate_javascript_url(StringView url);
@@ -295,6 +298,12 @@ public:
 
     void set_active_element(Element*);
 
+    Element const* target_element() const { return m_target_element.ptr(); }
+    void set_target_element(Element*);
+
+    void scroll_to_the_fragment();
+    void scroll_to_the_beginning_of_the_document();
+
     bool created_for_appropriate_template_contents() const { return m_created_for_appropriate_template_contents; }
 
     JS::NonnullGCPtr<Document> appropriate_template_contents_owner_document();
@@ -356,7 +365,7 @@ public:
     JS::NonnullGCPtr<HTML::History> history();
     JS::NonnullGCPtr<HTML::History> history() const;
 
-    WebIDL::ExceptionOr<JS::GCPtr<HTML::Location>> location();
+    [[nodiscard]] JS::GCPtr<HTML::Location> location();
 
     size_t number_of_things_delaying_the_load_event() { return m_number_of_things_delaying_the_load_event; }
     void increment_number_of_things_delaying_the_load_event(Badge<DocumentLoadEventDelayer>);
@@ -380,10 +389,25 @@ public:
     void evaluate_media_queries_and_report_changes();
     void add_media_query_list(JS::NonnullGCPtr<CSS::MediaQueryList>);
 
+    JS::NonnullGCPtr<CSS::VisualViewport> visual_viewport();
+    [[nodiscard]] CSSPixelRect viewport_rect() const;
+
+    class ViewportClient {
+    public:
+        virtual ~ViewportClient() = default;
+        virtual void did_set_viewport_rect(CSSPixelRect const&) = 0;
+    };
+    void register_viewport_client(ViewportClient&);
+    void unregister_viewport_client(ViewportClient&);
+    void inform_all_viewport_clients_about_the_current_viewport_rect();
+
     bool has_focus() const;
 
     void set_parser(Badge<HTML::HTMLParser>, HTML::HTMLParser&);
     void detach_parser(Badge<HTML::HTMLParser>);
+
+    void set_is_temporary_document_for_fragment_parsing(Badge<HTML::HTMLParser>) { m_temporary_document_for_fragment_parsing = true; }
+    [[nodiscard]] bool is_temporary_document_for_fragment_parsing() const { return m_temporary_document_for_fragment_parsing; }
 
     static bool is_valid_name(DeprecatedString const&);
 
@@ -448,6 +472,9 @@ public:
 
     Vector<JS::Handle<HTML::Navigable>> descendant_navigables();
     Vector<JS::Handle<HTML::Navigable>> inclusive_descendant_navigables();
+    Vector<JS::Handle<HTML::Navigable>> ancestor_navigables();
+    Vector<JS::Handle<HTML::Navigable>> inclusive_ancestor_navigables();
+    Vector<JS::Handle<HTML::Navigable>> document_tree_child_navigables();
 
     void destroy();
 
@@ -497,8 +524,16 @@ public:
 
     void shared_declarative_refresh_steps(StringView input, JS::GCPtr<HTML::HTMLMetaElement const> meta_element = nullptr);
 
+    struct TopOfTheDocument { };
+    using IndicatedPart = Variant<Element*, TopOfTheDocument>;
+    IndicatedPart determine_the_indicated_part() const;
+
+    u32 unload_counter() const { return m_unload_counter; }
+
+    HTML::SourceSnapshotParams snapshot_source_snapshot_params() const;
+
 protected:
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     Document(JS::Realm&, AK::URL const&);
@@ -515,6 +550,8 @@ private:
 
     void queue_intersection_observer_task();
     void queue_an_intersection_observer_entry(IntersectionObserver::IntersectionObserver&, HighResolutionTime::DOMHighResTimeStamp time, JS::NonnullGCPtr<Geometry::DOMRectReadOnly> root_bounds, JS::NonnullGCPtr<Geometry::DOMRectReadOnly> bounding_client_rect, JS::NonnullGCPtr<Geometry::DOMRectReadOnly> intersection_rect, bool is_intersecting, double intersection_ratio, JS::NonnullGCPtr<Element> target);
+
+    Element* find_a_potential_indicated_element(DeprecatedString fragment) const;
 
     OwnPtr<CSS::StyleComputer> m_style_computer;
     JS::GCPtr<CSS::StyleSheetList> m_style_sheets;
@@ -560,6 +597,7 @@ private:
 
     JS::GCPtr<Element> m_focused_element;
     JS::GCPtr<Element> m_active_element;
+    JS::GCPtr<Element> m_target_element;
 
     bool m_created_for_appropriate_template_contents { false };
     JS::GCPtr<Document> m_associated_inert_template_document;
@@ -599,6 +637,8 @@ private:
 
     // Used by run_the_resize_steps().
     Gfx::IntSize m_last_viewport_size;
+
+    HashTable<ViewportClient*> m_viewport_clients;
 
     // https://w3c.github.io/csswg-drafts/cssom-view-1/#document-pending-scroll-event-targets
     Vector<JS::NonnullGCPtr<EventTarget>> m_pending_scroll_event_targets;
@@ -668,6 +708,8 @@ private:
     // https://html.spec.whatwg.org/multipage/images.html#list-of-available-images
     OwnPtr<HTML::ListOfAvailableImages> m_list_of_available_images;
 
+    JS::GCPtr<CSS::VisualViewport> m_visual_viewport;
+
     // NOTE: Not in the spec per say, but Document must be able to access all IntersectionObservers whose root is in the document.
     OrderedHashTable<JS::NonnullGCPtr<IntersectionObserver::IntersectionObserver>> m_intersection_observers;
 
@@ -684,6 +726,8 @@ private:
     bool m_will_declaratively_refresh { false };
 
     RefPtr<Core::Timer> m_active_refresh_timer;
+
+    bool m_temporary_document_for_fragment_parsing { false };
 };
 
 template<>

@@ -4,15 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include "../AudioCodecPluginLadybird.h"
-#include "../EventLoopImplementationQt.h"
-#include "../FontPluginLadybird.h"
-#include "../HelperProcess.h"
-#include "../ImageCodecPluginLadybird.h"
-#include "../RequestManagerQt.h"
-#include "../Utilities.h"
-#include "../WebSocketClientManagerLadybird.h"
 #include <AK/LexicalPath.h>
+#include <Ladybird/FontPlugin.h>
+#include <Ladybird/HelperProcess.h>
+#include <Ladybird/ImageCodecPlugin.h>
+#include <Ladybird/Utilities.h>
 #include <LibAudio/Loader.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/EventLoop.h>
@@ -23,70 +19,88 @@
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibMain/Main.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Loader/ContentFilter.h>
 #include <LibWeb/Loader/FrameLoader.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/PermissionsPolicy/AutoplayAllowlist.h>
+#include <LibWeb/Platform/AudioCodecPluginAgnostic.h>
 #include <LibWeb/Platform/EventLoopPluginSerenity.h>
 #include <LibWeb/WebSockets/WebSocket.h>
 #include <LibWebView/RequestServerAdapter.h>
-#include <QCoreApplication>
+#include <LibWebView/WebSocketClientAdapter.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/PageHost.h>
 #include <WebContent/WebDriverConnection.h>
 
+#if defined(HAVE_QT)
+#    include <Ladybird/Qt/AudioCodecPluginQt.h>
+#    include <Ladybird/Qt/EventLoopImplementationQt.h>
+#    include <Ladybird/Qt/RequestManagerQt.h>
+#    include <Ladybird/Qt/WebSocketClientManagerQt.h>
+#    include <QCoreApplication>
+#endif
+
 static ErrorOr<void> load_content_filters();
 static ErrorOr<void> load_autoplay_allowlist();
-
-extern DeprecatedString s_serenity_resource_root;
+static ErrorOr<void> initialize_lagom_networking();
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
+#if defined(HAVE_QT)
     QCoreApplication app(arguments.argc, arguments.argv);
 
     Core::EventLoopManager::install(*new Ladybird::EventLoopManagerQt);
+#endif
     Core::EventLoop event_loop;
 
     platform_init();
 
     Web::Platform::EventLoopPlugin::install(*new Web::Platform::EventLoopPluginSerenity);
-    Web::Platform::ImageCodecPlugin::install(*new Ladybird::ImageCodecPluginLadybird);
+    Web::Platform::ImageCodecPlugin::install(*new Ladybird::ImageCodecPlugin);
 
     Web::Platform::AudioCodecPlugin::install_creation_hook([](auto loader) {
-        return Ladybird::AudioCodecPluginLadybird::create(move(loader));
+#if defined(HAVE_PULSEAUDIO)
+        return Web::Platform::AudioCodecPluginAgnostic::create(move(loader));
+#elif defined(HAVE_QT)
+        return Ladybird::AudioCodecPluginQt::create(move(loader));
+#else
+        (void)loader;
+        return Error::from_string_literal("Don't know how to initialize audio in this configuration!");
+#endif
     });
-
-    Web::WebSockets::WebSocketClientManager::initialize(Ladybird::WebSocketClientManagerLadybird::create());
 
     Web::FrameLoader::set_default_favicon_path(DeprecatedString::formatted("{}/res/icons/16x16/app-browser.png", s_serenity_resource_root));
 
     int webcontent_fd_passing_socket { -1 };
     bool is_layout_test_mode = false;
-    bool use_javascript_bytecode = false;
     bool use_lagom_networking = false;
 
     Core::ArgsParser args_parser;
     args_parser.add_option(webcontent_fd_passing_socket, "File descriptor of the passing socket for the WebContent connection", "webcontent-fd-passing-socket", 'c', "webcontent_fd_passing_socket");
     args_parser.add_option(is_layout_test_mode, "Is layout test mode", "layout-test-mode", 0);
-    args_parser.add_option(use_javascript_bytecode, "Enable JavaScript bytecode VM", "use-bytecode", 0);
     args_parser.add_option(use_lagom_networking, "Enable Lagom servers for networking", "use-lagom-networking", 0);
     args_parser.parse(arguments);
 
-    if (use_lagom_networking) {
-        auto candidate_request_server_paths = TRY(get_paths_for_helper_process("RequestServer"sv));
-        auto protocol_client = TRY(launch_request_server_process(candidate_request_server_paths));
-        Web::ResourceLoader::initialize(TRY(WebView::RequestServerAdapter::try_create(move(protocol_client))));
-    } else {
-        Web::ResourceLoader::initialize(RequestManagerQt::create());
+#if defined(HAVE_QT)
+    if (!use_lagom_networking) {
+        Web::ResourceLoader::initialize(Ladybird::RequestManagerQt::create());
+        Web::WebSockets::WebSocketClientManager::initialize(Ladybird::WebSocketClientManagerQt::create());
+    } else
+#endif
+    {
+        TRY(initialize_lagom_networking());
     }
 
-    JS::Bytecode::Interpreter::set_enabled(use_javascript_bytecode);
+    Web::HTML::Window::set_internals_object_exposed(is_layout_test_mode);
 
     VERIFY(webcontent_fd_passing_socket >= 0);
 
-    Web::Platform::FontPlugin::install(*new Ladybird::FontPluginLadybird(is_layout_test_mode));
+    Web::Platform::FontPlugin::install(*new Ladybird::FontPlugin(is_layout_test_mode));
 
+    Web::FrameLoader::set_resource_directory_url(DeprecatedString::formatted("file://{}/res", s_serenity_resource_root));
     Web::FrameLoader::set_error_page_url(DeprecatedString::formatted("file://{}/res/html/error.html", s_serenity_resource_root));
+    Web::FrameLoader::set_directory_page_url(DeprecatedString::formatted("file://{}/res/html/directory.html", s_serenity_resource_root));
 
     TRY(Web::Bindings::initialize_main_thread_vm());
 
@@ -159,6 +173,19 @@ static ErrorOr<void> load_autoplay_allowlist()
 
     auto& autoplay_allowlist = Web::PermissionsPolicy::AutoplayAllowlist::the();
     TRY(autoplay_allowlist.enable_for_origins(origins));
+
+    return {};
+}
+
+static ErrorOr<void> initialize_lagom_networking()
+{
+    auto candidate_request_server_paths = TRY(get_paths_for_helper_process("RequestServer"sv));
+    auto request_server_client = TRY(launch_request_server_process(candidate_request_server_paths, s_serenity_resource_root));
+    Web::ResourceLoader::initialize(TRY(WebView::RequestServerAdapter::try_create(move(request_server_client))));
+
+    auto candidate_web_socket_paths = TRY(get_paths_for_helper_process("WebSocket"sv));
+    auto web_socket_client = TRY(launch_web_socket_process(candidate_web_socket_paths, s_serenity_resource_root));
+    Web::WebSockets::WebSocketClientManager::initialize(TRY(WebView::WebSocketClientManagerAdapter::try_create(move(web_socket_client))));
 
     return {};
 }

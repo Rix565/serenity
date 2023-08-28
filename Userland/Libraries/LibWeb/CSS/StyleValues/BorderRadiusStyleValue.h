@@ -17,9 +17,9 @@ namespace Web::CSS {
 
 class BorderRadiusStyleValue final : public StyleValueWithDefaultOperators<BorderRadiusStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<BorderRadiusStyleValue>> create(LengthPercentage const& horizontal_radius, LengthPercentage const& vertical_radius)
+    static ValueComparingNonnullRefPtr<BorderRadiusStyleValue> create(LengthPercentage const& horizontal_radius, LengthPercentage const& vertical_radius)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) BorderRadiusStyleValue(horizontal_radius, vertical_radius));
+        return adopt_ref(*new (nothrow) BorderRadiusStyleValue(horizontal_radius, vertical_radius));
     }
     virtual ~BorderRadiusStyleValue() override = default;
 
@@ -27,7 +27,7 @@ public:
     LengthPercentage const& vertical_radius() const { return m_properties.vertical_radius; }
     bool is_elliptical() const { return m_properties.is_elliptical; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(BorderRadiusStyleValue const& other) const { return m_properties == other.m_properties; }
 
@@ -38,7 +38,7 @@ private:
     {
     }
 
-    virtual ErrorOr<ValueComparingNonnullRefPtr<StyleValue const>> absolutized(CSSPixelRect const& viewport_rect, Length::FontMetrics const& font_metrics, Length::FontMetrics const& root_font_metrics) const override;
+    virtual ValueComparingNonnullRefPtr<StyleValue const> absolutized(CSSPixelRect const& viewport_rect, Length::FontMetrics const& font_metrics, Length::FontMetrics const& root_font_metrics) const override;
 
     struct Properties {
         bool is_elliptical;

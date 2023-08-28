@@ -8,7 +8,6 @@
 
 #include <AK/RefCounted.h>
 #include <AK/URLParser.h>
-#include <LibJS/Interpreter.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/MessageEvent.h>
@@ -26,8 +25,8 @@
 namespace Web::HTML {
 
 struct WorkerOptions {
-    String type { "classic"_string.release_value_but_fixme_should_propagate_errors() };
-    String credentials { "same-origin"_string.release_value_but_fixme_should_propagate_errors() };
+    String type { "classic"_string };
+    String credentials { "same-origin"_string };
     String name { String {} };
 };
 
@@ -68,7 +67,7 @@ private:
         return static_cast<Bindings::WebEngineCustomData*>(target_vm.custom_data())->event_loop;
     }
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     String m_script_url;
@@ -79,9 +78,7 @@ private:
     Bindings::WebEngineCustomData m_custom_data;
 
     NonnullRefPtr<JS::VM> m_worker_vm;
-    NonnullOwnPtr<JS::Interpreter> m_interpreter;
     JS::GCPtr<WorkerEnvironmentSettingsObject> m_inner_settings;
-    JS::VM::InterpreterExecutionScope m_interpreter_scope;
     RefPtr<WorkerDebugConsoleClient> m_console;
 
     JS::NonnullGCPtr<MessagePort> m_implicit_port;

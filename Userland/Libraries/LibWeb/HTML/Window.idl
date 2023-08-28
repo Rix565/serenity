@@ -1,12 +1,14 @@
 #import <Crypto/Crypto.idl>
 #import <CSS/MediaQueryList.idl>
 #import <CSS/Screen.idl>
+#import <CSS/VisualViewport.idl>
 #import <DOM/Document.idl>
 #import <DOM/EventHandler.idl>
 #import <DOM/EventTarget.idl>
 #import <HighResolutionTime/Performance.idl>
 #import <HTML/AnimationFrameProvider.idl>
 #import <HTML/CustomElements/CustomElementRegistry.idl>
+#import <HTML/Navigation.idl>
 #import <HTML/Navigator.idl>
 #import <HTML/WindowLocalStorage.idl>
 #import <HTML/WindowOrWorkerGlobalScope.idl>
@@ -23,6 +25,7 @@ interface Window : EventTarget {
     attribute DOMString name;
     [PutForwards=href, LegacyUnforgeable] readonly attribute Location location;
     readonly attribute History history;
+    readonly attribute Navigation navigation;
     readonly attribute CustomElementRegistry customElements;
     undefined focus();
 
@@ -57,6 +60,7 @@ interface Window : EventTarget {
     // https://w3c.github.io/csswg-drafts/cssom-view/#extensions-to-the-window-interface
     [NewObject] MediaQueryList matchMedia(CSSOMString query);
     [SameObject, Replaceable] readonly attribute Screen screen;
+    [SameObject, Replaceable] readonly attribute VisualViewport? visualViewport;
 
     // viewport
     [Replaceable] readonly attribute long innerWidth;

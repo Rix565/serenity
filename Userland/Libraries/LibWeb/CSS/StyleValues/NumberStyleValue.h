@@ -15,14 +15,14 @@ namespace Web::CSS {
 
 class NumberStyleValue : public StyleValueWithDefaultOperators<NumberStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<NumberStyleValue>> create(double value)
+    static ValueComparingNonnullRefPtr<NumberStyleValue> create(double value)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) NumberStyleValue(value));
+        return adopt_ref(*new (nothrow) NumberStyleValue(value));
     }
 
     double number() const { return m_value; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(NumberStyleValue const& other) const { return m_value == other.m_value; }
 

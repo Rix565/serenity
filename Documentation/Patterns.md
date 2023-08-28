@@ -27,7 +27,7 @@ Example from LibGUI:
 
 ErrorOr<NonnullRefPtr<Menu>> Window::try_add_menu(String name)
 {
-    auto menu = TRY(m_menubar->try_add_menu({}, move(name)));
+    auto menu = m_menubar->add_menu({}, move(name));
     if (m_window_id) {
         menu->realize_menu_if_needed();
         ConnectionToWindowServer::the().async_add_menu(m_window_id, menu->menu_id());
@@ -242,11 +242,11 @@ static_assert(AssertSize<Empty, 1>());
 
 ## String View Literals
 
-`AK::StringView` support for `operator"" sv` which is a special string literal operator that was added as of
+`AK::StringView` support for `operator""sv` which is a special string literal operator that was added as of
 [C++17 to enable `std::string_view` literals](https://en.cppreference.com/w/cpp/string/basic_string_view/operator%22%22sv).
 
 ```cpp
-[[nodiscard]] ALWAYS_INLINE constexpr AK::StringView operator"" sv(const char* cstring, size_t length)
+[[nodiscard]] ALWAYS_INLINE constexpr AK::StringView operator""sv(const char* cstring, size_t length)
 {
     return AK::StringView(cstring, length);
 }

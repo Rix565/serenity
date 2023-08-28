@@ -8,11 +8,7 @@
 #include <LibGfx/Font/Font.h>
 #include <LibWeb/FontCache.h>
 
-FontCache& FontCache::the()
-{
-    static FontCache cache;
-    return cache;
-}
+namespace Web {
 
 RefPtr<Gfx::Font const> FontCache::get(FontSelector const& font_selector) const
 {
@@ -26,7 +22,7 @@ NonnullRefPtr<Gfx::Font const> FontCache::scaled_font(Gfx::Font const& font, flo
 {
     auto device_font_pt_size = font.point_size() * scale_factor;
     FontSelector font_selector = { FlyString::from_deprecated_fly_string(font.family()).release_value_but_fixme_should_propagate_errors(), device_font_pt_size, font.weight(), font.width(), font.slope() };
-    if (auto cached_font = FontCache::the().get(font_selector)) {
+    if (auto cached_font = get(font_selector)) {
         return *cached_font;
     }
 
@@ -41,4 +37,13 @@ NonnullRefPtr<Gfx::Font const> FontCache::scaled_font(Gfx::Font const& font, flo
 void FontCache::set(FontSelector const& font_selector, NonnullRefPtr<Gfx::Font const> font)
 {
     m_fonts.set(font_selector, move(font));
+}
+
+void FontCache::did_load_font(Badge<CSS::StyleComputer>, FlyString const& family_name)
+{
+    m_fonts.remove_all_matching([&family_name](auto& key, auto&) -> bool {
+        return key.family == family_name;
+    });
+}
+
 }

@@ -18,8 +18,8 @@ public:
     virtual ~Plugin() override;
 
     String const& name() const;
-    JS::ThrowCompletionOr<String> description() const;
-    JS::ThrowCompletionOr<String> filename() const;
+    String description() const;
+    String filename() const;
     size_t length() const;
     JS::GCPtr<MimeType> item(u32 index) const;
     JS::GCPtr<MimeType> named_item(String const& name) const;
@@ -30,7 +30,7 @@ private:
     // https://html.spec.whatwg.org/multipage/system-state.html#concept-plugin-name
     String m_name;
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     // ^Bindings::LegacyPlatformObject
     virtual Vector<DeprecatedString> supported_property_names() const override;

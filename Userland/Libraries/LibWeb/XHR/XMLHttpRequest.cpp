@@ -51,11 +51,11 @@ namespace Web::XHR {
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<XMLHttpRequest>> XMLHttpRequest::construct_impl(JS::Realm& realm)
 {
-    auto upload_object = MUST_OR_THROW_OOM(realm.heap().allocate<XMLHttpRequestUpload>(realm, realm));
+    auto upload_object = realm.heap().allocate<XMLHttpRequestUpload>(realm, realm);
     auto author_request_headers = Fetch::Infrastructure::HeaderList::create(realm.vm());
     auto response = Fetch::Infrastructure::Response::network_error(realm.vm(), "Not sent yet"sv);
     auto fetch_controller = Fetch::Infrastructure::FetchController::create(realm.vm());
-    return MUST_OR_THROW_OOM(realm.heap().allocate<XMLHttpRequest>(realm, realm, *upload_object, *author_request_headers, *response, *fetch_controller));
+    return realm.heap().allocate<XMLHttpRequest>(realm, realm, *upload_object, *author_request_headers, *response, *fetch_controller);
 }
 
 XMLHttpRequest::XMLHttpRequest(JS::Realm& realm, XMLHttpRequestUpload& upload_object, Fetch::Infrastructure::HeaderList& author_request_headers, Fetch::Infrastructure::Response& response, Fetch::Infrastructure::FetchController& fetch_controller)
@@ -71,12 +71,10 @@ XMLHttpRequest::XMLHttpRequest(JS::Realm& realm, XMLHttpRequestUpload& upload_ob
 
 XMLHttpRequest::~XMLHttpRequest() = default;
 
-JS::ThrowCompletionOr<void> XMLHttpRequest::initialize(JS::Realm& realm)
+void XMLHttpRequest::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::XMLHttpRequestPrototype>(realm, "XMLHttpRequest"));
-
-    return {};
 }
 
 void XMLHttpRequest::visit_edges(Cell::Visitor& visitor)
@@ -84,6 +82,7 @@ void XMLHttpRequest::visit_edges(Cell::Visitor& visitor)
     Base::visit_edges(visitor);
     visitor.visit(m_upload_object);
     visitor.visit(m_author_request_headers);
+    visitor.visit(m_request_body);
     visitor.visit(m_response);
     visitor.visit(m_fetch_controller);
 
@@ -102,7 +101,7 @@ static void fire_progress_event(XMLHttpRequestEventTarget& target, FlyString con
     event_init.loaded = transmitted;
     event_init.total = length;
     // FIXME: If we're in an async context, this will propagate to a callback context which can't propagate it anywhere else and does not expect this to fail.
-    target.dispatch_event(*ProgressEvent::create(target.realm(), event_name, event_init).release_value_but_fixme_should_propagate_errors());
+    target.dispatch_event(*ProgressEvent::create(target.realm(), event_name, event_init));
 }
 
 // https://xhr.spec.whatwg.org/#dom-xmlhttprequest-responsetext
@@ -181,8 +180,8 @@ WebIDL::ExceptionOr<JS::Value> XMLHttpRequest::response()
     // 6. Otherwise, if this’s response type is "blob", set this’s response object to a new Blob object representing this’s received bytes with type set to the result of get a final MIME type for this.
     else if (m_response_type == Bindings::XMLHttpRequestResponseType::Blob) {
         auto mime_type_as_string = TRY_OR_THROW_OOM(vm, TRY_OR_THROW_OOM(vm, get_final_mime_type()).serialized());
-        auto blob_part = TRY(FileAPI::Blob::create(realm(), m_received_bytes, move(mime_type_as_string)));
-        auto blob = TRY(FileAPI::Blob::create(realm(), Vector<FileAPI::BlobPart> { JS::make_handle(*blob_part) }));
+        auto blob_part = FileAPI::Blob::create(realm(), m_received_bytes, move(mime_type_as_string));
+        auto blob = FileAPI::Blob::create(realm(), Vector<FileAPI::BlobPart> { JS::make_handle(*blob_part) });
         m_response_object = JS::Value(blob.ptr());
     }
     // 7. Otherwise, if this’s response type is "document", set a document response for this.
@@ -196,7 +195,7 @@ WebIDL::ExceptionOr<JS::Value> XMLHttpRequest::response()
         // Note: Automatically done by the layers above us.
 
         // 2. If this’s response’s body is null, then return null.
-        if (!m_response->body().has_value())
+        if (!m_response->body())
             return JS::js_null();
 
         // 3. Let jsonObject be the result of running parse JSON from bytes on this’s received bytes. If that threw an exception, then return null.
@@ -216,7 +215,7 @@ WebIDL::ExceptionOr<JS::Value> XMLHttpRequest::response()
 String XMLHttpRequest::get_text_response() const
 {
     // 1. If xhr’s response’s body is null, then return the empty string.
-    if (!m_response->body().has_value())
+    if (!m_response->body())
         return String {};
 
     // 2. Let charset be the result of get a final encoding for xhr.
@@ -267,7 +266,7 @@ ErrorOr<MimeSniff::MimeType> XMLHttpRequest::get_response_mime_type() const
 
     // 2. If mimeType is failure, then set mimeType to text/xml.
     if (!mime_type.has_value())
-        return MimeSniff::MimeType::create(TRY("text"_string), "xml"_short_string);
+        return MimeSniff::MimeType::create("text"_string, "xml"_string);
 
     // 3. Return mimeType.
     return mime_type.release_value();
@@ -391,10 +390,10 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::open(String const& method_string, Stri
     if (!parsed_url.host().has<Empty>()) {
         // 1. If the username argument is not null, set the username given parsedURL and username.
         if (username.has_value())
-            parsed_url.set_username(username.value().to_deprecated_string());
+            MUST(parsed_url.set_username(username.value()));
         // 2. If the password argument is not null, set the password given parsedURL and password.
         if (password.has_value())
-            parsed_url.set_password(password.value().to_deprecated_string());
+            MUST(parsed_url.set_password(password.value()));
     }
 
     // 9. If async is false, the current global object is a Window object, and either this’s timeout is
@@ -436,7 +435,7 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::open(String const& method_string, Stri
         m_state = State::Opened;
 
         // 2. Fire an event named readystatechange at this.
-        dispatch_event(TRY(DOM::Event::create(realm(), EventNames::readystatechange)));
+        dispatch_event(DOM::Event::create(realm(), EventNames::readystatechange));
     }
 
     return {};
@@ -498,7 +497,7 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::send(Optional<DocumentOrXMLHttpRequest
                     auto charset_parameter_iterator = content_type_record->parameters().find("charset"sv);
                     if (charset_parameter_iterator != content_type_record->parameters().end() && !Infra::is_ascii_case_insensitive_match(charset_parameter_iterator->value, "UTF-8"sv)) {
                         // 1. Set contentTypeRecord’s parameters["charset"] to "UTF-8".
-                        TRY_OR_THROW_OOM(vm, content_type_record->set_parameter(TRY_OR_THROW_OOM(vm, "charset"_string), TRY_OR_THROW_OOM(vm, "UTF-8"_string)));
+                        TRY_OR_THROW_OOM(vm, content_type_record->set_parameter("charset"_string, "UTF-8"_string));
 
                         // 2. Let newContentTypeSerialized be the result of serializing contentTypeRecord.
                         auto new_content_type_serialized = TRY_OR_THROW_OOM(vm, content_type_record->serialized());
@@ -561,8 +560,8 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::send(Optional<DocumentOrXMLHttpRequest
 
     // body
     //    This’s request body.
-    if (m_request_body.has_value())
-        request->set_body(m_request_body.value());
+    if (m_request_body)
+        request->set_body(JS::NonnullGCPtr { *m_request_body });
 
     // client
     //    This’s relevant settings object.
@@ -596,7 +595,7 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::send(Optional<DocumentOrXMLHttpRequest
 
     // 9. If req’s body is null, then set this’s upload complete flag.
     // NOTE: req's body is always m_request_body here, see step 6.
-    if (!m_request_body.has_value())
+    if (!m_request_body)
         m_upload_complete = true;
 
     // 10. Set this’s send() flag.
@@ -617,11 +616,11 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::send(Optional<DocumentOrXMLHttpRequest
         // NOTE: req's body is always m_request_body here, see step 6.
         // 4. Assert: requestBodyLength is an integer.
         // NOTE: This is done to provide a better assertion failure message, whereas below the message would be "m_has_value"
-        if (m_request_body.has_value())
+        if (m_request_body)
             VERIFY(m_request_body->length().has_value());
 
         // NOTE: This is const to allow the callback functions to take a copy of it and know it won't change.
-        auto const request_body_length = m_request_body.has_value() ? m_request_body->length().value() : 0;
+        auto const request_body_length = m_request_body ? m_request_body->length().value() : 0;
 
         // 5. If this’s upload complete flag is unset and this’s upload listener flag is set, then fire a progress event named loadstart at this’s upload object with requestBodyTransmitted and requestBodyLength.
         if (!m_upload_complete && m_upload_listener)
@@ -686,14 +685,14 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::send(Optional<DocumentOrXMLHttpRequest
 
             // 5. Fire an event named readystatechange at this.
             // FIXME: We're in an async context, so we can't propagate the error anywhere.
-            dispatch_event(*DOM::Event::create(this->realm(), EventNames::readystatechange).release_value_but_fixme_should_propagate_errors());
+            dispatch_event(*DOM::Event::create(this->realm(), EventNames::readystatechange));
 
             // 6. If this’s state is not headers received, then return.
             if (m_state != State::HeadersReceived)
                 return;
 
             // 7. If this’s response’s body is null, then run handle response end-of-body for this and return.
-            if (!m_response->body().has_value()) {
+            if (!m_response->body()) {
                 // NOTE: This cannot throw, as `handle_response_end_of_body` only throws in a synchronous context.
                 // FIXME: However, we can receive allocation failures, but we can't propagate them anywhere currently.
                 handle_response_end_of_body().release_value_but_fixme_should_propagate_errors();
@@ -925,7 +924,7 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::override_mime_type(String const& mime)
 
     // 3. If this’s override MIME type is failure, then set this’s override MIME type to application/octet-stream.
     if (!m_override_mime_type.has_value())
-        m_override_mime_type = TRY_OR_THROW_OOM(vm, MimeSniff::MimeType::create(TRY_OR_THROW_OOM(vm, "application"_string), TRY_OR_THROW_OOM(vm, "octet-stream"_string)));
+        m_override_mime_type = TRY_OR_THROW_OOM(vm, MimeSniff::MimeType::create("application"_string, "octet-stream"_string));
 
     return {};
 }
@@ -1088,7 +1087,7 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::handle_response_end_of_body()
 
     // 9. Fire an event named readystatechange at xhr.
     // FIXME: If we're in an async context, this will propagate to a callback context which can't propagate it anywhere else and does not expect this to fail.
-    dispatch_event(*DOM::Event::create(realm, EventNames::readystatechange).release_value_but_fixme_should_propagate_errors());
+    dispatch_event(*DOM::Event::create(realm, EventNames::readystatechange));
 
     // 10. Fire a progress event named load at xhr with transmitted and length.
     fire_progress_event(*this, EventNames::load, transmitted, length);
@@ -1140,7 +1139,7 @@ JS::ThrowCompletionOr<void> XMLHttpRequest::request_error_steps(FlyString const&
 
     // 5. Fire an event named readystatechange at xhr.
     // FIXME: Since we're in an async context, this will propagate to a callback context which can't propagate it anywhere else and does not expect this to fail.
-    dispatch_event(*DOM::Event::create(realm(), EventNames::readystatechange).release_value_but_fixme_should_propagate_errors());
+    dispatch_event(*DOM::Event::create(realm(), EventNames::readystatechange));
 
     // 6. If xhr’s upload complete flag is unset, then:
     if (!m_upload_complete) {

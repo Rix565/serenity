@@ -19,17 +19,15 @@ DataViewConstructor::DataViewConstructor(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> DataViewConstructor::initialize(Realm& realm)
+void DataViewConstructor::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
+    Base::initialize(realm);
 
     // 25.3.3.1 DataView.prototype, https://tc39.es/ecma262/#sec-dataview.prototype
     define_direct_property(vm.names.prototype, realm.intrinsics().data_view_prototype(), 0);
 
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
-
-    return {};
 }
 
 // 25.3.2.1 DataView ( buffer [ , byteOffset [ , byteLength ] ] ), https://tc39.es/ecma262/#sec-dataview-buffer-byteoffset-bytelength
@@ -52,7 +50,7 @@ ThrowCompletionOr<NonnullGCPtr<Object>> DataViewConstructor::construct(FunctionO
 
     // 2. Perform ? RequireInternalSlot(buffer, [[ArrayBufferData]]).
     if (!buffer.is_object() || !is<ArrayBuffer>(buffer.as_object()))
-        return vm.throw_completion<TypeError>(ErrorType::IsNotAn, TRY_OR_THROW_OOM(vm, buffer.to_string_without_side_effects()), vm.names.ArrayBuffer);
+        return vm.throw_completion<TypeError>(ErrorType::IsNotAn, buffer.to_string_without_side_effects(), vm.names.ArrayBuffer);
 
     auto& array_buffer = static_cast<ArrayBuffer&>(buffer.as_object());
 

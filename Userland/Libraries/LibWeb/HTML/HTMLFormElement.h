@@ -67,7 +67,7 @@ public:
 
     ErrorOr<Vector<JS::NonnullGCPtr<DOM::Element>>> get_submittable_elements();
 
-    JS::NonnullGCPtr<DOM::HTMLCollection> elements() const;
+    JS::NonnullGCPtr<DOM::HTMLFormControlsCollection> elements() const;
     unsigned length() const;
 
     WebIDL::ExceptionOr<bool> check_validity();
@@ -89,7 +89,7 @@ public:
 private:
     HTMLFormElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     ErrorOr<void> populate_vector_with_submittable_elements_in_tree_order(JS::NonnullGCPtr<DOM::Element> element, Vector<JS::NonnullGCPtr<DOM::Element>>& elements);
@@ -110,7 +110,7 @@ private:
 
     Vector<JS::GCPtr<HTMLElement>> m_associated_elements;
 
-    JS::GCPtr<DOM::HTMLCollection> mutable m_elements;
+    JS::GCPtr<DOM::HTMLFormControlsCollection> mutable m_elements;
 
     bool m_constructing_entry_list { false };
 

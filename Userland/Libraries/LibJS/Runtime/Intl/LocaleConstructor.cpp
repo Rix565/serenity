@@ -33,10 +33,10 @@ static ThrowCompletionOr<Optional<String>> get_string_option(VM& vm, Object cons
     if (option.is_undefined())
         return OptionalNone {};
 
-    if (validator && !validator(TRY(option.as_string().utf8_string_view())))
+    if (validator && !validator(option.as_string().utf8_string_view()))
         return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, option, property);
 
-    return TRY(option.as_string().utf8_string());
+    return option.as_string().utf8_string();
 }
 
 // 14.1.2 ApplyOptionsToTag ( tag, options ), https://tc39.es/ecma402/#sec-apply-options-to-tag
@@ -69,7 +69,7 @@ static ThrowCompletionOr<String> apply_options_to_tag(VM& vm, StringView tag, Ob
     auto canonicalized_tag = MUST_OR_THROW_OOM(canonicalize_unicode_locale_id(vm, *locale_id));
 
     // 11. Assert: tag matches the unicode_locale_id production.
-    locale_id = TRY_OR_THROW_OOM(vm, ::Locale::parse_unicode_locale_id(canonicalized_tag));
+    locale_id = ::Locale::parse_unicode_locale_id(canonicalized_tag);
     VERIFY(locale_id.has_value());
 
     // 12. Let languageId be the substring of tag corresponding to the unicode_language_id production.
@@ -109,7 +109,7 @@ static ThrowCompletionOr<LocaleAndKeys> apply_unicode_extension_to_tag(VM& vm, S
 {
     // 1. Assert: Type(tag) is String.
     // 2. Assert: tag matches the unicode_locale_id production.
-    auto locale_id = TRY_OR_THROW_OOM(vm, ::Locale::parse_unicode_locale_id(tag));
+    auto locale_id = ::Locale::parse_unicode_locale_id(tag);
     VERIFY(locale_id.has_value());
 
     Vector<String> attributes;
@@ -198,7 +198,7 @@ static ThrowCompletionOr<LocaleAndKeys> apply_unicode_extension_to_tag(VM& vm, S
 
     // 7. Let locale be the String value that is tag with any Unicode locale extension sequences removed.
     locale_id->remove_extension_type<::Locale::LocaleExtension>();
-    auto locale = TRY_OR_THROW_OOM(vm, locale_id->to_string());
+    auto locale = locale_id->to_string();
 
     // 8. Let newExtension be a Unicode BCP 47 U Extension based on attributes and keywords.
     ::Locale::LocaleExtension new_extension { move(attributes), move(keywords) };
@@ -222,17 +222,15 @@ LocaleConstructor::LocaleConstructor(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> LocaleConstructor::initialize(Realm& realm)
+void LocaleConstructor::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
     // 14.2.1 Intl.Locale.prototype, https://tc39.es/ecma402/#sec-Intl.Locale.prototype
     define_direct_property(vm.names.prototype, realm.intrinsics().intl_locale_prototype(), 0);
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
-
-    return {};
 }
 
 // 14.1.1 Intl.Locale ( tag [ , options ] ), https://tc39.es/ecma402/#sec-Intl.Locale

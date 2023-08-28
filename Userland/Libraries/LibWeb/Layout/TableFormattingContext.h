@@ -8,6 +8,7 @@
 
 #include <AK/Forward.h>
 #include <LibWeb/Layout/FormattingContext.h>
+#include <LibWeb/Layout/TableGrid.h>
 #include <LibWeb/Layout/TableWrapper.h>
 
 namespace Web::Layout {
@@ -37,9 +38,8 @@ public:
 private:
     CSSPixels run_caption_layout(LayoutMode, CSS::CaptionSide);
     CSSPixels compute_capmin();
-    void calculate_row_column_grid(Box const&);
     void compute_constrainedness();
-    void compute_cell_measures(AvailableSpace const& available_space);
+    void compute_cell_measures();
     void compute_outer_content_sizes();
     template<class RowOrColumn>
     void initialize_table_measures();
@@ -50,6 +50,7 @@ private:
     void compute_table_width();
     void distribute_width_to_columns();
     void distribute_excess_width_to_columns(CSSPixels available_width);
+    void distribute_excess_width_to_columns_fixed_mode(CSSPixels excess_width);
     void compute_table_height(LayoutMode layout_mode);
     void distribute_height_to_rows();
     void position_row_boxes();
@@ -57,17 +58,20 @@ private:
     void border_conflict_resolution();
     CSSPixels border_spacing_horizontal() const;
     CSSPixels border_spacing_vertical() const;
+    void finish_grid_initialization(TableGrid const&);
 
     CSSPixels compute_columns_total_used_width() const;
     void commit_candidate_column_widths(Vector<CSSPixels> const& candidate_widths);
     void assign_columns_width_linear_combination(Vector<CSSPixels> const& candidate_widths, CSSPixels available_width);
 
-    template<class ColumnFilter>
-    bool distribute_excess_width_proportionally_to_max_width(CSSPixels excess_width, ColumnFilter column_filter);
+    template<class ColumnFilter, class BaseWidthGetter>
+    bool distribute_excess_width_proportionally_to_base_width(CSSPixels excess_width, ColumnFilter column_filter, BaseWidthGetter base_width_getter);
     template<class ColumnFilter>
     bool distribute_excess_width_equally(CSSPixels excess_width, ColumnFilter column_filter);
     template<class ColumnFilter>
     bool distribute_excess_width_by_intrinsic_percentage(CSSPixels excess_width, ColumnFilter column_filter);
+
+    bool use_fixed_mode_layout() const;
 
     CSSPixels m_table_height { 0 };
     CSSPixels m_automatic_content_height { 0 };
@@ -87,32 +91,8 @@ private:
         bool has_originating_cells { false };
     };
 
-    struct Row {
-        JS::NonnullGCPtr<Box const> box;
-        CSSPixels base_height { 0 };
-        CSSPixels reference_height { 0 };
-        CSSPixels final_height { 0 };
-        CSSPixels baseline { 0 };
-        CSSPixels min_size { 0 };
-        CSSPixels max_size { 0 };
-        bool has_intrinsic_percentage { false };
-        double intrinsic_percentage { 0 };
-        // Store whether the row is constrained: https://www.w3.org/TR/css-tables-3/#constrainedness
-        bool is_constrained { false };
-    };
-
-    struct Cell {
-        JS::NonnullGCPtr<Box const> box;
-        size_t column_index;
-        size_t row_index;
-        size_t column_span;
-        size_t row_span;
-        CSSPixels baseline { 0 };
-        CSSPixels outer_min_width { 0 };
-        CSSPixels outer_max_width { 0 };
-        CSSPixels outer_min_height { 0 };
-        CSSPixels outer_max_height { 0 };
-    };
+    using Cell = TableGrid::Cell;
+    using Row = TableGrid::Row;
 
     // Accessors to enable direction-agnostic table measurement.
 

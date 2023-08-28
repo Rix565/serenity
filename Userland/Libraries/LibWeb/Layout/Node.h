@@ -13,7 +13,9 @@
 #include <LibJS/Heap/Cell.h>
 #include <LibJS/Heap/Handle.h>
 #include <LibWeb/CSS/ComputedValues.h>
+#include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/CSS/StyleProperties.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/FontCache.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Layout/BoxModelMetrics.h>
@@ -46,8 +48,22 @@ public:
     DOM::Node const* dom_node() const;
     DOM::Node* dom_node();
 
-    bool is_generated() const { return m_generated; }
-    void set_generated(bool b) { m_generated = b; }
+    DOM::Element const* pseudo_element_generator() const;
+    DOM::Element* pseudo_element_generator();
+
+    enum class GeneratedFor {
+        NotGenerated,
+        PseudoBefore,
+        PseudoAfter
+    };
+    bool is_generated() const { return m_generated_for != GeneratedFor::NotGenerated; }
+    bool is_generated_for_before_pseudo_element() const { return m_generated_for == GeneratedFor::PseudoBefore; }
+    bool is_generated_for_after_pseudo_element() const { return m_generated_for == GeneratedFor::PseudoAfter; }
+    void set_generated_for(GeneratedFor type, DOM::Element& element)
+    {
+        m_generated_for = type;
+        m_pseudo_element_generator = &element;
+    }
 
     Painting::Paintable* paintable() { return m_paintable; }
     Painting::Paintable const* paintable() const { return m_paintable; }
@@ -107,6 +123,9 @@ public:
 
     bool is_flex_item() const { return m_is_flex_item; }
     void set_flex_item(bool b) { m_is_flex_item = b; }
+
+    bool is_grid_item() const { return m_is_grid_item; }
+    void set_grid_item(bool b) { m_is_grid_item = b; }
 
     Box const* containing_block() const;
     Box* containing_block() { return const_cast<Box*>(const_cast<Node const*>(this)->containing_block()); }
@@ -169,6 +188,8 @@ private:
 
     JS::NonnullGCPtr<HTML::BrowsingContext> m_browsing_context;
 
+    JS::GCPtr<DOM::Element> m_pseudo_element_generator;
+
     bool m_anonymous { false };
     bool m_has_style { false };
     bool m_visible { true };
@@ -176,7 +197,9 @@ private:
     SelectionState m_selection_state { SelectionState::None };
 
     bool m_is_flex_item { false };
-    bool m_generated { false };
+    bool m_is_grid_item { false };
+
+    GeneratedFor m_generated_for { GeneratedFor::NotGenerated };
 };
 
 class NodeWithStyle : public Node {
@@ -191,6 +214,8 @@ public:
 
     Gfx::Font const& font() const { return *m_font; }
     CSSPixels line_height() const { return m_line_height; }
+    void set_line_height(CSSPixels line_height) { m_line_height = line_height; }
+    void set_font(Gfx::Font const& font) { m_font = font; }
     Vector<CSS::BackgroundLayerData> const& background_layers() const { return computed_values().background_layers(); }
     const CSS::AbstractImageStyleValue* list_style_image() const { return m_list_style_image; }
 
@@ -259,7 +284,7 @@ inline Gfx::Font const& Node::scaled_font(PaintContext& context) const
 
 inline Gfx::Font const& Node::scaled_font(float scale_factor) const
 {
-    return *FontCache::the().scaled_font(font(), scale_factor);
+    return document().style_computer().font_cache().scaled_font(font(), scale_factor);
 }
 
 inline const CSS::ImmutableComputedValues& Node::computed_values() const

@@ -56,7 +56,7 @@ public:
     static JS::ThrowCompletionOr<WebAssemblyModule*> create(JS::Realm& realm, Wasm::Module module, HashMap<Wasm::Linker::Name, Wasm::ExternValue> const& imports)
     {
         auto& vm = realm.vm();
-        auto instance = MUST_OR_THROW_OOM(realm.heap().allocate<WebAssemblyModule>(realm, realm.intrinsics().object_prototype()));
+        auto instance = realm.heap().allocate<WebAssemblyModule>(realm, realm.intrinsics().object_prototype());
         instance->m_module = move(module);
         Wasm::Linker linker(*instance->m_module);
         linker.link(imports);
@@ -70,7 +70,7 @@ public:
         instance->m_module_instance = result.release_value();
         return instance.ptr();
     }
-    JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    void initialize(JS::Realm&) override;
 
     ~WebAssemblyModule() override = default;
 
@@ -148,13 +148,11 @@ TESTJS_GLOBAL_FUNCTION(compare_typed_arrays, compareTypedArrays)
     return JS::Value(lhs_array.viewed_array_buffer()->buffer() == rhs_array.viewed_array_buffer()->buffer());
 }
 
-JS::ThrowCompletionOr<void> WebAssemblyModule::initialize(JS::Realm& realm)
+void WebAssemblyModule::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     define_native_function(realm, "getExport", get_export, 1, JS::default_attributes);
     define_native_function(realm, "invoke", wasm_invoke, 1, JS::default_attributes);
-
-    return {};
 }
 
 JS_DEFINE_NATIVE_FUNCTION(WebAssemblyModule::get_export)
@@ -175,6 +173,7 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyModule::get_export)
                     [&](auto const& value) -> JS::Value { return JS::Value(static_cast<double>(value)); },
                     [&](i32 value) { return JS::Value(static_cast<double>(value)); },
                     [&](i64 value) -> JS::Value { return JS::BigInt::create(vm, Crypto::SignedBigInteger { value }); },
+                    [&](u128 value) -> JS::Value { return JS::BigInt::create(vm, Crypto::SignedBigInteger::import_data(bit_cast<u8 const*>(&value), sizeof(value))); },
                     [&](Wasm::Reference const& reference) -> JS::Value {
                         return reference.ref().visit(
                             [&](const Wasm::Reference::Null&) -> JS::Value { return JS::js_null(); },
@@ -227,6 +226,21 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyModule::wasm_invoke)
         case Wasm::ValueType::Kind::F64:
             arguments.append(Wasm::Value(static_cast<double>(double_value)));
             break;
+        case Wasm::ValueType::Kind::V128: {
+            if (!argument.is_bigint()) {
+                if (argument.is_number())
+                    argument = JS::BigInt::create(vm, Crypto::SignedBigInteger { TRY(argument.to_double(vm)) });
+                else
+                    argument = TRY(argument.to_bigint(vm));
+            }
+
+            u128 bits;
+            (void)argument.as_bigint().big_integer().unsigned_value().export_data({ bit_cast<u8*>(&bits), sizeof(bits) });
+            VERIFY(!argument.as_bigint().big_integer().is_negative());
+
+            arguments.append(Wasm::Value(bits));
+            break;
+        }
         case Wasm::ValueType::Kind::FunctionReference:
             arguments.append(Wasm::Value(Wasm::Reference { Wasm::Reference::Func { static_cast<u64>(double_value) } }));
             break;
@@ -257,6 +271,10 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyModule::wasm_invoke)
             [](auto const& value) { return JS::Value(static_cast<double>(value)); },
             [](i32 value) { return JS::Value(static_cast<double>(value)); },
             [&](i64 value) { return JS::Value(JS::BigInt::create(vm, Crypto::SignedBigInteger { value })); },
+            [&](u128 value) {
+                auto unsigned_bigint_value = Crypto::UnsignedBigInteger::import_data(bit_cast<u8 const*>(&value), sizeof(value));
+                return JS::Value(JS::BigInt::create(vm, Crypto::SignedBigInteger(move(unsigned_bigint_value), false)));
+            },
             [](Wasm::Reference const& reference) {
                 return reference.ref().visit(
                     [](const Wasm::Reference::Null&) { return JS::js_null(); },

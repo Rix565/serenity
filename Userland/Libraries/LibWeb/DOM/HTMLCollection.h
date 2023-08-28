@@ -34,13 +34,13 @@ public:
         Children,
         Descendants,
     };
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<HTMLCollection>> create(ParentNode& root, Scope, Function<bool(Element const&)> filter);
+    [[nodiscard]] static JS::NonnullGCPtr<HTMLCollection> create(ParentNode& root, Scope, Function<bool(Element const&)> filter);
 
     virtual ~HTMLCollection() override;
 
-    size_t length();
+    size_t length() const;
     Element* item(size_t index) const;
-    Element* named_item(DeprecatedFlyString const& name) const;
+    Element* named_item(FlyString const& name) const;
 
     JS::MarkedVector<Element*> collect_matching_elements() const;
 
@@ -52,7 +52,7 @@ public:
 protected:
     HTMLCollection(ParentNode& root, Scope, Function<bool(Element const&)> filter);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     JS::NonnullGCPtr<ParentNode> root() { return *m_root; }
 

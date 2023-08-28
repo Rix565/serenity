@@ -34,11 +34,11 @@ public:
     {
         switch (column) {
         case Column::Address:
-            return "Address"_short_string;
+            return "Address"_string;
         case Column::Object:
-            return "Object"_short_string;
+            return "Object"_string;
         case Column::Symbol:
-            return "Symbol"_short_string;
+            return "Symbol"_string;
         default:
             VERIFY_NOT_REACHED();
         }
@@ -74,7 +74,7 @@ private:
 ErrorOr<NonnullRefPtr<ThreadStackWidget>> ThreadStackWidget::try_create()
 {
     auto widget = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) ThreadStackWidget()));
-    TRY(widget->try_set_layout<GUI::VerticalBoxLayout>(4));
+    widget->set_layout<GUI::VerticalBoxLayout>(4);
     widget->m_stack_table = TRY(widget->try_add<GUI::TableView>());
     widget->m_stack_table->set_model(TRY(try_make_ref_counted<ThreadStackModel>()));
     return widget;
@@ -126,7 +126,7 @@ void ThreadStackWidget::refresh()
         [weak_this = make_weak_ptr()](auto result) -> ErrorOr<void> {
             if (!weak_this)
                 return {};
-            Core::EventLoop::current().post_event(const_cast<Core::Object&>(*weak_this), make<CompletionEvent>(move(result)));
+            Core::EventLoop::current().post_event(const_cast<Core::EventReceiver&>(*weak_this), make<CompletionEvent>(move(result)));
             return {};
         });
 }

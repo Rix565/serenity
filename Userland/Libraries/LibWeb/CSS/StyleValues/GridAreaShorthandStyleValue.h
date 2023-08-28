@@ -15,12 +15,12 @@ namespace Web::CSS {
 
 class GridAreaShorthandStyleValue final : public StyleValueWithDefaultOperators<GridAreaShorthandStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<GridAreaShorthandStyleValue>> create(
+    static ValueComparingNonnullRefPtr<GridAreaShorthandStyleValue> create(
         ValueComparingNonnullRefPtr<GridTrackPlacementStyleValue const> row_start,
         ValueComparingNonnullRefPtr<GridTrackPlacementStyleValue const> column_start,
         ValueComparingNonnullRefPtr<GridTrackPlacementStyleValue const> row_end,
         ValueComparingNonnullRefPtr<GridTrackPlacementStyleValue const> column_end);
-    static ErrorOr<ValueComparingNonnullRefPtr<GridAreaShorthandStyleValue>> create(GridTrackPlacement row_start, GridTrackPlacement column_start, GridTrackPlacement row_end, GridTrackPlacement column_end);
+    static ValueComparingNonnullRefPtr<GridAreaShorthandStyleValue> create(GridTrackPlacement row_start, GridTrackPlacement column_start, GridTrackPlacement row_end, GridTrackPlacement column_end);
     virtual ~GridAreaShorthandStyleValue() override = default;
 
     auto row_start() const { return m_properties.row_start; }
@@ -28,7 +28,7 @@ public:
     auto row_end() const { return m_properties.row_end; }
     auto column_end() const { return m_properties.column_end; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(GridAreaShorthandStyleValue const& other) const { return m_properties == other.m_properties; }
 

@@ -7,7 +7,6 @@
 
 #include <AK/DeprecatedString.h>
 #include <AK/TypeCasts.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Accessor.h>
 #include <LibJS/Runtime/Array.h>
@@ -30,10 +29,10 @@ static HashMap<GCPtr<Object const>, HashMap<DeprecatedFlyString, Object::Intrins
 NonnullGCPtr<Object> Object::create(Realm& realm, Object* prototype)
 {
     if (!prototype)
-        return realm.heap().allocate<Object>(realm, realm.intrinsics().empty_object_shape()).release_allocated_value_but_fixme_should_propagate_errors();
+        return realm.heap().allocate<Object>(realm, realm.intrinsics().empty_object_shape());
     if (prototype == realm.intrinsics().object_prototype())
-        return realm.heap().allocate<Object>(realm, realm.intrinsics().new_object_shape()).release_allocated_value_but_fixme_should_propagate_errors();
-    return realm.heap().allocate<Object>(realm, ConstructWithPrototypeTag::Tag, *prototype).release_allocated_value_but_fixme_should_propagate_errors();
+        return realm.heap().allocate<Object>(realm, realm.intrinsics().new_object_shape());
+    return realm.heap().allocate<Object>(realm, ConstructWithPrototypeTag::Tag, *prototype);
 }
 
 Object::Object(GlobalObjectTag, Realm& realm)
@@ -74,9 +73,8 @@ Object::~Object()
         s_intrinsics.remove(this);
 }
 
-ThrowCompletionOr<void> Object::initialize(Realm&)
+void Object::initialize(Realm&)
 {
-    return {};
 }
 
 // 7.2 Testing and Comparison Operations, https://tc39.es/ecma262/#sec-testing-and-comparison-operations
@@ -1337,7 +1335,7 @@ Optional<Completion> Object::enumerate_object_properties(Function<Optional<Compl
         for (auto& key : own_keys) {
             if (!key.is_string())
                 continue;
-            DeprecatedFlyString property_key = TRY(key.as_string().deprecated_string());
+            DeprecatedFlyString property_key = key.as_string().deprecated_string();
             if (visited.contains(property_key))
                 continue;
             auto descriptor = TRY(target->internal_get_own_property(property_key));

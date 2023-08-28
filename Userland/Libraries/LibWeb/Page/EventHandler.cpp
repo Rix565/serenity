@@ -134,14 +134,14 @@ Painting::PaintableBox* EventHandler::paint_root()
 {
     if (!m_browsing_context->active_document())
         return nullptr;
-    return const_cast<Painting::PaintableBox*>(m_browsing_context->active_document()->paintable_box());
+    return m_browsing_context->active_document()->paintable_box();
 }
 
 Painting::PaintableBox const* EventHandler::paint_root() const
 {
     if (!m_browsing_context->active_document())
         return nullptr;
-    return const_cast<Painting::PaintableBox*>(m_browsing_context->active_document()->paintable_box());
+    return m_browsing_context->active_document()->paintable_box();
 }
 
 bool EventHandler::handle_mousewheel(CSSPixelPoint position, unsigned button, unsigned buttons, unsigned int modifiers, int wheel_delta_x, int wheel_delta_y)
@@ -162,6 +162,15 @@ bool EventHandler::handle_mousewheel(CSSPixelPoint position, unsigned button, un
         paintable = result->paintable;
 
     if (paintable) {
+        auto* containing_block = paintable->containing_block();
+        while (containing_block) {
+            if (containing_block->is_user_scrollable()) {
+                const_cast<Painting::PaintableBox*>(containing_block->paintable_box())->handle_mousewheel({}, position, buttons, modifiers, wheel_delta_x, wheel_delta_y);
+                break;
+            }
+            containing_block = containing_block->containing_block();
+        }
+
         paintable->handle_mousewheel({}, position, buttons, modifiers, wheel_delta_x, wheel_delta_y);
 
         auto node = dom_node_for_event_dispatch(*paintable);
@@ -181,7 +190,7 @@ bool EventHandler::handle_mousewheel(CSSPixelPoint position, unsigned button, un
             if (node->dispatch_event(UIEvents::WheelEvent::create_from_platform_event(node->realm(), UIEvents::EventNames::wheel, offset.x(), offset.y(), position.x(), position.y(), wheel_delta_x, wheel_delta_y, buttons, button).release_value_but_fixme_should_propagate_errors())) {
                 if (auto* page = m_browsing_context->page()) {
                     if (m_browsing_context == &page->top_level_browsing_context())
-                        page->client().page_did_request_scroll(wheel_delta_x * 20, wheel_delta_y * 20);
+                        page->client().page_did_request_scroll(wheel_delta_x, wheel_delta_y);
                 }
             }
 
@@ -273,8 +282,8 @@ bool EventHandler::handle_mouseup(CSSPixelPoint position, unsigned button, unsig
                     if (button == GUI::MouseButton::Primary) {
                         if (href.starts_with("javascript:"sv)) {
                             document->navigate_to_javascript_url(href);
-                        } else if (!url.fragment().is_null() && url.equals(document->url(), AK::URL::ExcludeFragment::Yes)) {
-                            m_browsing_context->scroll_to_anchor(url.fragment());
+                        } else if (url.fragment().has_value() && url.equals(document->url(), AK::URL::ExcludeFragment::Yes)) {
+                            m_browsing_context->scroll_to_anchor(url.fragment()->to_deprecated_string());
                         } else {
                             if (m_browsing_context->is_top_level()) {
                                 if (auto* page = m_browsing_context->page())
@@ -671,7 +680,7 @@ constexpr bool should_ignore_keydown_event(u32 code_point)
 
 bool EventHandler::fire_keyboard_event(FlyString const& event_name, HTML::BrowsingContext& browsing_context, KeyCode key, unsigned int modifiers, u32 code_point)
 {
-    JS::NonnullGCPtr<DOM::Document> document = *browsing_context.active_document();
+    JS::GCPtr<DOM::Document> document = browsing_context.active_document();
     if (!document)
         return false;
 
@@ -682,12 +691,12 @@ bool EventHandler::fire_keyboard_event(FlyString const& event_name, HTML::Browsi
                 return fire_keyboard_event(event_name, *navigable_container.nested_browsing_context(), key, modifiers, code_point);
         }
 
-        auto event = UIEvents::KeyboardEvent::create_from_platform_event(document->realm(), event_name, key, modifiers, code_point).release_value_but_fixme_should_propagate_errors();
+        auto event = UIEvents::KeyboardEvent::create_from_platform_event(document->realm(), event_name, key, modifiers, code_point);
         return !focused_element->dispatch_event(event);
     }
 
     // FIXME: De-duplicate this. This is just to prevent wasting a KeyboardEvent allocation when recursing into an (i)frame.
-    auto event = UIEvents::KeyboardEvent::create_from_platform_event(document->realm(), event_name, key, modifiers, code_point).release_value_but_fixme_should_propagate_errors();
+    auto event = UIEvents::KeyboardEvent::create_from_platform_event(document->realm(), event_name, key, modifiers, code_point);
 
     if (JS::GCPtr<HTML::HTMLElement> body = document->body())
         return !body->dispatch_event(event);

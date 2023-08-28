@@ -2,7 +2,7 @@
  * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021-2023, Luke Wilde <lukew@serenityos.org>
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,7 +13,6 @@
 #include <AK/StringBuilder.h>
 #include <AK/Utf8View.h>
 #include <LibCore/Timer.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/NativeFunction.h>
@@ -21,6 +20,8 @@
 #include <LibWeb/CSS/MediaQueryList.h>
 #include <LibWeb/CSS/MediaQueryListEvent.h>
 #include <LibWeb/CSS/StyleComputer.h>
+#include <LibWeb/CSS/SystemColor.h>
+#include <LibWeb/CSS/VisualViewport.h>
 #include <LibWeb/Cookie/ParsedCookie.h>
 #include <LibWeb/DOM/Attr.h>
 #include <LibWeb/DOM/Comment.h>
@@ -49,6 +50,7 @@
 #include <LibWeb/HTML/DocumentState.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/HTML/EventNames.h>
+#include <LibWeb/HTML/Focus.h>
 #include <LibWeb/HTML/HTMLAnchorElement.h>
 #include <LibWeb/HTML/HTMLAreaElement.h>
 #include <LibWeb/HTML/HTMLBaseElement.h>
@@ -86,6 +88,7 @@
 #include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Namespace.h>
 #include <LibWeb/Page/Page.h>
+#include <LibWeb/Painting/ViewportPaintable.h>
 #include <LibWeb/PermissionsPolicy/AutoplayAllowlist.h>
 #include <LibWeb/SVG/SVGElement.h>
 #include <LibWeb/SVG/SVGTitleElement.h>
@@ -199,7 +202,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> Document::create_and_initialize(
             Bindings::main_thread_vm(),
             [&](JS::Realm& realm) -> JS::Object* {
                 // - For the global object, create a new Window object.
-                window = HTML::Window::create(realm).release_value_but_fixme_should_propagate_errors();
+                window = HTML::Window::create(realm);
                 return window;
             },
             [&](JS::Realm&) -> JS::Object* {
@@ -231,12 +234,12 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> Document::create_and_initialize(
 
         // FIXME: Why do we assume `creation_url` is non-empty here? Is this a spec bug?
         // FIXME: Why do we assume `top_level_creation_url` is non-empty here? Is this a spec bug?
-        TRY(HTML::WindowEnvironmentSettingsObject::setup(
+        HTML::WindowEnvironmentSettingsObject::setup(
             creation_url.value(),
             move(realm_execution_context),
             navigation_params.reserved_environment,
             top_level_creation_url.value(),
-            top_level_origin));
+            top_level_origin);
     }
 
     // FIXME: 7. Let loadTimingInfo be a new document load timing info with its navigation start time set to response's timing info's start time.
@@ -251,7 +254,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> Document::create_and_initialize(
     //    FIXME: and cross-origin opener policy is navigationParams's cross-origin opener policy,
     //    FIXME: load timing info is loadTimingInfo,
     //    and navigation id is navigationParams's id.
-    auto document = TRY(HTML::HTMLDocument::create(window->realm()));
+    auto document = HTML::HTMLDocument::create(window->realm());
     document->m_type = type;
     document->m_content_type = move(content_type);
     document->set_origin(navigation_params.origin);
@@ -309,9 +312,9 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> Document::construct_impl(JS::Rea
     return Document::create(realm);
 }
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> Document::create(JS::Realm& realm, AK::URL const& url)
+JS::NonnullGCPtr<Document> Document::create(JS::Realm& realm, AK::URL const& url)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<Document>(realm, realm, url));
+    return realm.heap().allocate<Document>(realm, realm, url);
 }
 
 Document::Document(JS::Realm& realm, const AK::URL& url)
@@ -335,16 +338,14 @@ Document::~Document()
     HTML::main_thread_event_loop().unregister_document({}, *this);
 }
 
-JS::ThrowCompletionOr<void> Document::initialize(JS::Realm& realm)
+void Document::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::DocumentPrototype>(realm, "Document"));
 
-    m_selection = MUST_OR_THROW_OOM(heap().allocate<Selection::Selection>(realm, realm, *this));
+    m_selection = heap().allocate<Selection::Selection>(realm, realm, *this);
 
-    m_list_of_available_images = TRY_OR_THROW_OOM(realm.vm(), try_make<HTML::ListOfAvailableImages>());
-
-    return {};
+    m_list_of_available_images = make<HTML::ListOfAvailableImages>();
 }
 
 void Document::visit_edges(Cell::Visitor& visitor)
@@ -506,7 +507,7 @@ WebIDL::ExceptionOr<Document*> Document::open(DeprecatedString const&, Deprecate
         auto new_url = entry_document.url();
         // 2. If entryDocument is not document, then set newURL's fragment to null.
         if (&entry_document != this)
-            new_url.set_fragment("");
+            new_url.set_fragment({});
 
         // FIXME: 3. Run the URL and history update steps with document and newURL.
     }
@@ -917,6 +918,38 @@ void Document::invalidate_layout()
     schedule_layout_update();
 }
 
+static void propagate_overflow_to_viewport(Element& root_element, Layout::Viewport& viewport)
+{
+    // https://drafts.csswg.org/css-overflow-3/#overflow-propagation
+    // UAs must apply the overflow-* values set on the root element to the viewport
+    // when the root element’s display value is not none.
+    auto* overflow_origin_node = root_element.layout_node();
+    auto& viewport_computed_values = const_cast<CSS::MutableComputedValues&>(static_cast<CSS::MutableComputedValues const&>(static_cast<CSS::ComputedValues const&>(viewport.computed_values())));
+
+    // However, when the root element is an [HTML] html element (including XML syntax for HTML)
+    // whose overflow value is visible (in both axes), and that element has as a child
+    // a body element whose display value is also not none,
+    // user agents must instead apply the overflow-* values of the first such child element to the viewport.
+    if (root_element.is_html_html_element()) {
+        auto* root_element_layout_node = root_element.layout_node();
+        auto& root_element_computed_values = const_cast<CSS::MutableComputedValues&>(static_cast<CSS::MutableComputedValues const&>(static_cast<CSS::ComputedValues const&>(root_element_layout_node->computed_values())));
+        if (root_element_computed_values.overflow_x() == CSS::Overflow::Visible && root_element_computed_values.overflow_y() == CSS::Overflow::Visible) {
+            auto* body_element = root_element.first_child_of_type<HTML::HTMLBodyElement>();
+            if (body_element && body_element->layout_node())
+                overflow_origin_node = body_element->layout_node();
+        }
+    }
+
+    // NOTE: This is where we assign the chosen overflow values to the viewport.
+    auto& overflow_origin_computed_values = const_cast<CSS::MutableComputedValues&>(static_cast<CSS::MutableComputedValues const&>(static_cast<CSS::ComputedValues const&>(overflow_origin_node->computed_values())));
+    viewport_computed_values.set_overflow_x(overflow_origin_computed_values.overflow_x());
+    viewport_computed_values.set_overflow_y(overflow_origin_computed_values.overflow_y());
+
+    // The element from which the value is propagated must then have a used overflow value of visible.
+    overflow_origin_computed_values.set_overflow_x(CSS::Overflow::Visible);
+    overflow_origin_computed_values.set_overflow_y(CSS::Overflow::Visible);
+}
+
 void Document::update_layout()
 {
     // NOTE: If our parent document needs a relayout, we must do that *first*.
@@ -936,11 +969,15 @@ void Document::update_layout()
     if (!browsing_context())
         return;
 
-    auto viewport_rect = browsing_context()->viewport_rect();
+    auto viewport_rect = this->viewport_rect();
 
     if (!m_layout_root) {
         Layout::TreeBuilder tree_builder;
         m_layout_root = verify_cast<Layout::Viewport>(*tree_builder.build(*this));
+    }
+
+    if (auto* document_element = this->document_element()) {
+        propagate_overflow_to_viewport(*document_element, *m_layout_root);
     }
 
     Layout::LayoutState layout_state;
@@ -968,10 +1005,10 @@ void Document::update_layout()
                 Layout::AvailableSize::make_definite(viewport_rect.height())));
     }
 
-    layout_state.commit();
+    layout_state.commit(*m_layout_root);
 
     // Broadcast the current viewport rect to any new paintables, so they know whether they're visible or not.
-    browsing_context()->inform_all_viewport_clients_about_the_current_viewport_rect();
+    inform_all_viewport_clients_about_the_current_viewport_rect();
 
     browsing_context()->set_needs_display();
 
@@ -1129,7 +1166,7 @@ void Document::set_hovered_node(Node* node)
         // FIXME: Check if we need to dispatch these events in a specific order.
         for (auto target = old_hovered_node; target && target.ptr() != common_ancestor; target = target->parent()) {
             // FIXME: Populate the event with mouse coordinates, etc.
-            target->dispatch_event(UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseleave).release_value_but_fixme_should_propagate_errors());
+            target->dispatch_event(UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseleave));
         }
     }
 
@@ -1138,7 +1175,7 @@ void Document::set_hovered_node(Node* node)
         // FIXME: Check if we need to dispatch these events in a specific order.
         for (auto target = m_hovered_node; target && target.ptr() != common_ancestor; target = target->parent()) {
             // FIXME: Populate the event with mouse coordinates, etc.
-            target->dispatch_event(UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseenter).release_value_but_fixme_should_propagate_errors());
+            target->dispatch_event(UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseenter));
         }
     }
 }
@@ -1147,7 +1184,7 @@ JS::NonnullGCPtr<HTMLCollection> Document::get_elements_by_name(DeprecatedString
 {
     return HTMLCollection::create(*this, HTMLCollection::Scope::Descendants, [name](Element const& element) {
         return element.name() == name;
-    }).release_value_but_fixme_should_propagate_errors();
+    });
 }
 
 JS::NonnullGCPtr<HTMLCollection> Document::get_elements_by_class_name(DeprecatedFlyString const& class_names)
@@ -1162,14 +1199,14 @@ JS::NonnullGCPtr<HTMLCollection> Document::get_elements_by_class_name(Deprecated
                 return false;
         }
         return true;
-    }).release_value_but_fixme_should_propagate_errors();
+    });
 }
 
 // https://html.spec.whatwg.org/multipage/obsolete.html#dom-document-applets
 JS::NonnullGCPtr<HTMLCollection> Document::applets()
 {
     if (!m_applets)
-        m_applets = HTMLCollection::create(*this, HTMLCollection::Scope::Descendants, [](auto&) { return false; }).release_value_but_fixme_should_propagate_errors();
+        m_applets = HTMLCollection::create(*this, HTMLCollection::Scope::Descendants, [](auto&) { return false; });
     return *m_applets;
 }
 
@@ -1179,7 +1216,7 @@ JS::NonnullGCPtr<HTMLCollection> Document::anchors()
     if (!m_anchors) {
         m_anchors = HTMLCollection::create(*this, HTMLCollection::Scope::Descendants, [](Element const& element) {
             return is<HTML::HTMLAnchorElement>(element) && element.has_attribute(HTML::AttributeNames::name);
-        }).release_value_but_fixme_should_propagate_errors();
+        });
     }
     return *m_anchors;
 }
@@ -1190,7 +1227,7 @@ JS::NonnullGCPtr<HTMLCollection> Document::images()
     if (!m_images) {
         m_images = HTMLCollection::create(*this, HTMLCollection::Scope::Descendants, [](Element const& element) {
             return is<HTML::HTMLImageElement>(element);
-        }).release_value_but_fixme_should_propagate_errors();
+        });
     }
     return *m_images;
 }
@@ -1201,7 +1238,7 @@ JS::NonnullGCPtr<HTMLCollection> Document::embeds()
     if (!m_embeds) {
         m_embeds = HTMLCollection::create(*this, HTMLCollection::Scope::Descendants, [](Element const& element) {
             return is<HTML::HTMLEmbedElement>(element);
-        }).release_value_but_fixme_should_propagate_errors();
+        });
     }
     return *m_embeds;
 }
@@ -1218,7 +1255,7 @@ JS::NonnullGCPtr<HTMLCollection> Document::links()
     if (!m_links) {
         m_links = HTMLCollection::create(*this, HTMLCollection::Scope::Descendants, [](Element const& element) {
             return (is<HTML::HTMLAnchorElement>(element) || is<HTML::HTMLAreaElement>(element)) && element.has_attribute(HTML::AttributeNames::href);
-        }).release_value_but_fixme_should_propagate_errors();
+        });
     }
     return *m_links;
 }
@@ -1229,7 +1266,7 @@ JS::NonnullGCPtr<HTMLCollection> Document::forms()
     if (!m_forms) {
         m_forms = HTMLCollection::create(*this, HTMLCollection::Scope::Descendants, [](Element const& element) {
             return is<HTML::HTMLFormElement>(element);
-        }).release_value_but_fixme_should_propagate_errors();
+        });
     }
     return *m_forms;
 }
@@ -1240,7 +1277,7 @@ JS::NonnullGCPtr<HTMLCollection> Document::scripts()
     if (!m_scripts) {
         m_scripts = HTMLCollection::create(*this, HTMLCollection::Scope::Descendants, [](Element const& element) {
             return is<HTML::HTMLScriptElement>(element);
-        }).release_value_but_fixme_should_propagate_errors();
+        });
     }
     return *m_scripts;
 }
@@ -1251,7 +1288,7 @@ JS::NonnullGCPtr<HTMLCollection> Document::all()
     if (!m_all) {
         m_all = HTMLCollection::create(*this, HTMLCollection::Scope::Descendants, [](Element const&) {
             return true;
-        }).release_value_but_fixme_should_propagate_errors();
+        });
     }
     return *m_all;
 }
@@ -1260,31 +1297,25 @@ Color Document::link_color() const
 {
     if (m_link_color.has_value())
         return m_link_color.value();
-    if (!page())
-        return Color::Blue;
-    return page()->palette().link();
+    return CSS::SystemColor::link_text();
 }
 
 Color Document::active_link_color() const
 {
     if (m_active_link_color.has_value())
         return m_active_link_color.value();
-    if (!page())
-        return Color::Red;
-    return page()->palette().active_link();
+    return CSS::SystemColor::active_text();
 }
 
 Color Document::visited_link_color() const
 {
     if (m_visited_link_color.has_value())
         return m_visited_link_color.value();
-    if (!page())
-        return Color::Magenta;
-    return page()->palette().visited_link();
+    return CSS::SystemColor::visited_text();
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#relevant-settings-object
-HTML::EnvironmentSettingsObject& Document::relevant_settings_object()
+HTML::EnvironmentSettingsObject& Document::relevant_settings_object() const
 {
     // Then, the relevant settings object for a platform object o is the environment settings object of the relevant Realm for o.
     return Bindings::host_defined_environment_settings_object(realm());
@@ -1384,17 +1415,17 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Element>> Document::create_element_ns(Depre
 
 JS::NonnullGCPtr<DocumentFragment> Document::create_document_fragment()
 {
-    return heap().allocate<DocumentFragment>(realm(), *this).release_allocated_value_but_fixme_should_propagate_errors();
+    return heap().allocate<DocumentFragment>(realm(), *this);
 }
 
 JS::NonnullGCPtr<Text> Document::create_text_node(DeprecatedString const& data)
 {
-    return heap().allocate<Text>(realm(), *this, data).release_allocated_value_but_fixme_should_propagate_errors();
+    return heap().allocate<Text>(realm(), *this, data);
 }
 
 JS::NonnullGCPtr<Comment> Document::create_comment(DeprecatedString const& data)
 {
-    return heap().allocate<Comment>(realm(), *this, data).release_allocated_value_but_fixme_should_propagate_errors();
+    return heap().allocate<Comment>(realm(), *this, data);
 }
 
 // https://dom.spec.whatwg.org/#dom-document-createprocessinginstruction
@@ -1405,12 +1436,12 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<ProcessingInstruction>> Document::create_pr
     // FIXME: 2. If data contains the string "?>", then throw an "InvalidCharacterError" DOMException.
 
     // 3. Return a new ProcessingInstruction node, with target set to target, data set to data, and node document set to this.
-    return MUST_OR_THROW_OOM(heap().allocate<ProcessingInstruction>(realm(), *this, data, target));
+    return heap().allocate<ProcessingInstruction>(realm(), *this, data, target);
 }
 
 JS::NonnullGCPtr<Range> Document::create_range()
 {
-    return Range::create(*this).release_value_but_fixme_should_propagate_errors();
+    return Range::create(*this);
 }
 
 // https://dom.spec.whatwg.org/#dom-document-createevent
@@ -1425,44 +1456,44 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Event>> Document::create_event(DeprecatedSt
     // 2. If interface is an ASCII case-insensitive match for any of the strings in the first column in the following table,
     //      then set constructor to the interface in the second column on the same row as the matching string:
     if (Infra::is_ascii_case_insensitive_match(interface, "beforeunloadevent"sv)) {
-        event = TRY(Event::create(realm, FlyString {})); // FIXME: Create BeforeUnloadEvent
+        event = Event::create(realm, FlyString {}); // FIXME: Create BeforeUnloadEvent
     } else if (Infra::is_ascii_case_insensitive_match(interface, "compositionevent"sv)) {
-        event = TRY(Event::create(realm, FlyString {})); // FIXME: Create CompositionEvent
+        event = Event::create(realm, FlyString {}); // FIXME: Create CompositionEvent
     } else if (Infra::is_ascii_case_insensitive_match(interface, "customevent"sv)) {
-        event = TRY(CustomEvent::create(realm, FlyString {}));
+        event = CustomEvent::create(realm, FlyString {});
     } else if (Infra::is_ascii_case_insensitive_match(interface, "devicemotionevent"sv)) {
-        event = TRY(Event::create(realm, FlyString {})); // FIXME: Create DeviceMotionEvent
+        event = Event::create(realm, FlyString {}); // FIXME: Create DeviceMotionEvent
     } else if (Infra::is_ascii_case_insensitive_match(interface, "deviceorientationevent"sv)) {
-        event = TRY(Event::create(realm, FlyString {})); // FIXME: Create DeviceOrientationEvent
+        event = Event::create(realm, FlyString {}); // FIXME: Create DeviceOrientationEvent
     } else if (Infra::is_ascii_case_insensitive_match(interface, "dragevent"sv)) {
-        event = TRY(Event::create(realm, FlyString {})); // FIXME: Create DragEvent
+        event = Event::create(realm, FlyString {}); // FIXME: Create DragEvent
     } else if (Infra::is_ascii_case_insensitive_match(interface, "event"sv)
         || Infra::is_ascii_case_insensitive_match(interface, "events"sv)) {
-        event = TRY(Event::create(realm, FlyString {}));
+        event = Event::create(realm, FlyString {});
     } else if (Infra::is_ascii_case_insensitive_match(interface, "focusevent"sv)) {
-        event = TRY(UIEvents::FocusEvent::create(realm, FlyString {}));
+        event = UIEvents::FocusEvent::create(realm, FlyString {});
     } else if (Infra::is_ascii_case_insensitive_match(interface, "hashchangeevent"sv)) {
-        event = TRY(Event::create(realm, FlyString {})); // FIXME: Create HashChangeEvent
+        event = Event::create(realm, FlyString {}); // FIXME: Create HashChangeEvent
     } else if (Infra::is_ascii_case_insensitive_match(interface, "htmlevents"sv)) {
-        event = TRY(Event::create(realm, FlyString {}));
+        event = Event::create(realm, FlyString {});
     } else if (Infra::is_ascii_case_insensitive_match(interface, "keyboardevent"sv)) {
-        event = TRY(UIEvents::KeyboardEvent::create(realm, String {}));
+        event = UIEvents::KeyboardEvent::create(realm, String {});
     } else if (Infra::is_ascii_case_insensitive_match(interface, "messageevent"sv)) {
-        event = TRY(HTML::MessageEvent::create(realm, String {}));
+        event = HTML::MessageEvent::create(realm, String {});
     } else if (Infra::is_ascii_case_insensitive_match(interface, "mouseevent"sv)
         || Infra::is_ascii_case_insensitive_match(interface, "mouseevents"sv)) {
-        event = TRY(UIEvents::MouseEvent::create(realm, FlyString {}));
+        event = UIEvents::MouseEvent::create(realm, FlyString {});
     } else if (Infra::is_ascii_case_insensitive_match(interface, "storageevent"sv)) {
-        event = TRY(Event::create(realm, FlyString {})); // FIXME: Create StorageEvent
+        event = Event::create(realm, FlyString {}); // FIXME: Create StorageEvent
     } else if (Infra::is_ascii_case_insensitive_match(interface, "svgevents"sv)) {
-        event = TRY(Event::create(realm, FlyString {}));
+        event = Event::create(realm, FlyString {});
     } else if (Infra::is_ascii_case_insensitive_match(interface, "textevent"sv)) {
-        event = TRY(Event::create(realm, FlyString {})); // FIXME: Create CompositionEvent
+        event = Event::create(realm, FlyString {}); // FIXME: Create CompositionEvent
     } else if (Infra::is_ascii_case_insensitive_match(interface, "touchevent"sv)) {
-        event = TRY(Event::create(realm, FlyString {})); // FIXME: Create TouchEvent
+        event = Event::create(realm, FlyString {}); // FIXME: Create TouchEvent
     } else if (Infra::is_ascii_case_insensitive_match(interface, "uievent"sv)
         || Infra::is_ascii_case_insensitive_match(interface, "uievents"sv)) {
-        event = TRY(UIEvents::UIEvent::create(realm, FlyString {}));
+        event = UIEvents::UIEvent::create(realm, FlyString {});
     }
 
     // 3. If constructor is null, then throw a "NotSupportedError" DOMException.
@@ -1681,6 +1712,148 @@ void Document::set_active_element(Element* element)
         m_layout_root->set_needs_display();
 }
 
+void Document::set_target_element(Element* element)
+{
+    if (m_target_element.ptr() == element)
+        return;
+
+    if (m_target_element)
+        m_target_element->set_needs_style_update(true);
+
+    m_target_element = element;
+
+    if (m_target_element)
+        m_target_element->set_needs_style_update(true);
+
+    if (m_layout_root)
+        m_layout_root->set_needs_display();
+}
+
+// https://html.spec.whatwg.org/multipage/browsing-the-web.html#the-indicated-part-of-the-document
+Document::IndicatedPart Document::determine_the_indicated_part() const
+{
+    // For an HTML document document, the following processing model must be followed to determine its indicated part:
+
+    // 1. Let fragment be document's URL's fragment.
+    VERIFY(url().fragment().has_value());
+
+    auto fragment = url().fragment().value();
+
+    // 2. If fragment is the empty string, then return the special value top of the document.
+    if (fragment.is_empty())
+        return Document::TopOfTheDocument {};
+
+    // 3. Let potentialIndicatedElement be the result of finding a potential indicated element given document and fragment.
+    auto* potential_indicated_element = find_a_potential_indicated_element(fragment.to_deprecated_string());
+
+    // 4. If potentialIndicatedElement is not null, then return potentialIndicatedElement.
+    if (potential_indicated_element)
+        return potential_indicated_element;
+
+    // 5. Let fragmentBytes be the result of percent-decoding fragment.
+    // 6. Let decodedFragment be the result of running UTF-8 decode without BOM on fragmentBytes.
+    auto decoded_fragment = AK::URL::percent_decode(fragment);
+
+    // 7. Set potentialIndicatedElement to the result of finding a potential indicated element given document and decodedFragment.
+    potential_indicated_element = find_a_potential_indicated_element(decoded_fragment);
+
+    // 8. If potentialIndicatedElement is not null, then return potentialIndicatedElement.
+    if (potential_indicated_element)
+        return potential_indicated_element;
+
+    // 9. If decodedFragment is an ASCII case-insensitive match for the string top, then return the top of the document.
+    if (Infra::is_ascii_case_insensitive_match(decoded_fragment, "top"sv))
+        return Document::TopOfTheDocument {};
+
+    // 10. Return null.
+    return nullptr;
+}
+
+// https://html.spec.whatwg.org/multipage/browsing-the-web.html#find-a-potential-indicated-element
+Element* Document::find_a_potential_indicated_element(DeprecatedString fragment) const
+{
+    // To find a potential indicated element given a Document document and a string fragment, run these steps:
+
+    // 1. If there is an element in the document tree whose root is document and that has an ID equal to
+    //    fragment, then return the first such element in tree order.
+    if (auto element = get_element_by_id(fragment))
+        return const_cast<Element*>(element.ptr());
+
+    // 2. If there is an a element in the document tree whose root is document that has a name attribute
+    //    whose value is equal to fragment, then return the first such element in tree order.
+    Element* element_with_name;
+    root().for_each_in_subtree_of_type<Element>([&](Element const& element) {
+        if (element.name() == fragment) {
+            element_with_name = const_cast<Element*>(&element);
+            return IterationDecision::Break;
+        }
+        return IterationDecision::Continue;
+    });
+    if (element_with_name)
+        return element_with_name;
+
+    // 3. Return null.
+    return nullptr;
+}
+
+// https://html.spec.whatwg.org/multipage/browsing-the-web.html#scroll-to-the-fragment-identifier
+void Document::scroll_to_the_fragment()
+{
+    // To scroll to the fragment given a Document document:
+
+    // 1. If document's indicated part is null, then set document's target element to null.
+    auto indicated_part = determine_the_indicated_part();
+    if (indicated_part.has<Element*>() && indicated_part.get<Element*>() == nullptr) {
+        set_target_element(nullptr);
+    }
+
+    // 2. Otherwise, if document's indicated part is top of the document, then:
+    else if (indicated_part.has<TopOfTheDocument>()) {
+        // 1. Set document's target element to null.
+        set_target_element(nullptr);
+
+        // 2. Scroll to the beginning of the document for document. [CSSOMVIEW]
+        scroll_to_the_beginning_of_the_document();
+
+        // 3. Return.
+        return;
+    }
+
+    // 3. Otherwise:
+    else {
+        // 1. Assert: document's indicated part is an element.
+        VERIFY(indicated_part.has<Element*>());
+
+        // 2. Let target be document's indicated part.
+        auto target = indicated_part.get<Element*>();
+
+        // 3. Set document's target element to target.
+        set_target_element(target);
+
+        // FIXME: 4. Run the ancestor details revealing algorithm on target.
+
+        // FIXME: 5. Run the ancestor hidden-until-found revealing algorithm on target.
+
+        // 6. Scroll target into view, with behavior set to "auto", block set to "start", and inline set to "nearest". [CSSOMVIEW]
+        // FIXME: Do this properly!
+        (void)target->scroll_into_view();
+
+        // 7. Run the focusing steps for target, with the Document's viewport as the fallback target.
+        // FIXME: Pass the Document's viewport somehow.
+        HTML::run_focusing_steps(target);
+
+        // FIXME: 8. Move the sequential focus navigation starting point to target.
+    }
+}
+
+// https://drafts.csswg.org/cssom-view-1/#scroll-to-the-beginning-of-the-document
+void Document::scroll_to_the_beginning_of_the_document()
+{
+    // FIXME: Actually implement this algorithm
+    if (auto browsing_context = this->browsing_context())
+        browsing_context->scroll_to({ 0, 0 });
+}
+
 DeprecatedString Document::ready_state() const
 {
     switch (m_readiness) {
@@ -1722,7 +1895,7 @@ void Document::update_readiness(HTML::DocumentReadyState readiness_value)
     }
 
     // 4. Fire an event named readystatechange at document.
-    dispatch_event(Event::create(realm(), HTML::EventNames::readystatechange).release_value_but_fixme_should_propagate_errors());
+    dispatch_event(Event::create(realm(), HTML::EventNames::readystatechange));
 }
 
 Page* Document::page()
@@ -1774,7 +1947,7 @@ void Document::completely_finish_loading()
     // 5. Otherwise, if container is non-null, then queue an element task on the DOM manipulation task source given container to fire an event named load at container.
     else if (container) {
         container->queue_an_element_task(HTML::Task::Source::DOMManipulation, [container] {
-            container->dispatch_event(DOM::Event::create(container->realm(), HTML::EventNames::load).release_value_but_fixme_should_propagate_errors());
+            container->dispatch_event(DOM::Event::create(container->realm(), HTML::EventNames::load));
         });
     }
 
@@ -1863,7 +2036,7 @@ bool Document::is_active() const
 }
 
 // https://html.spec.whatwg.org/multipage/history.html#dom-document-location
-WebIDL::ExceptionOr<JS::GCPtr<HTML::Location>> Document::location()
+JS::GCPtr<HTML::Location> Document::location()
 {
     // The Document object's location attribute's getter must return this Document object's relevant global object's Location object,
     // if this Document object is fully active, and null otherwise.
@@ -1871,7 +2044,7 @@ WebIDL::ExceptionOr<JS::GCPtr<HTML::Location>> Document::location()
     if (!is_fully_active())
         return nullptr;
 
-    return TRY(window().location());
+    return window().location();
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-document-hidden
@@ -1910,7 +2083,7 @@ void Document::update_the_visibility_state(HTML::VisibilityState visibility_stat
     // FIXME: 3. Run any page visibility change steps which may be defined in other specifications, with visibility state and document.
 
     // 4. Fire an event named visibilitychange at document, with its bubbles attribute initialized to true.
-    auto event = DOM::Event::create(realm(), HTML::EventNames::visibilitychange).release_value_but_fixme_should_propagate_errors();
+    auto event = DOM::Event::create(realm(), HTML::EventNames::visibilitychange);
     event->set_bubbles(true);
     dispatch_event(event);
 }
@@ -1923,15 +2096,12 @@ void Document::run_the_resize_steps()
     //    or an iframe element’s dimensions are changed) since the last time these steps were run,
     //    fire an event named resize at the Window object associated with doc.
 
-    if (!browsing_context())
-        return;
-
-    auto viewport_size = browsing_context()->viewport_rect().size().to_type<double>().to_type<float>().to_type<int>();
+    auto viewport_size = viewport_rect().size().to_type<int>();
     if (m_last_viewport_size == viewport_size)
         return;
     m_last_viewport_size = viewport_size;
 
-    window().dispatch_event(DOM::Event::create(realm(), UIEvents::EventNames::resize).release_value_but_fixme_should_propagate_errors());
+    window().dispatch_event(DOM::Event::create(realm(), UIEvents::EventNames::resize));
 
     schedule_layout_update();
 }
@@ -1943,14 +2113,14 @@ void Document::run_the_scroll_steps()
     for (auto& target : m_pending_scroll_event_targets) {
         // 1. If target is a Document, fire an event named scroll that bubbles at target and fire an event named scroll at the VisualViewport that is associated with target.
         if (is<Document>(*target)) {
-            auto event = DOM::Event::create(realm(), HTML::EventNames::scroll).release_value_but_fixme_should_propagate_errors();
+            auto event = DOM::Event::create(realm(), HTML::EventNames::scroll);
             event->set_bubbles(true);
             target->dispatch_event(event);
             // FIXME: Fire at the associated VisualViewport
         }
         // 2. Otherwise, fire an event named scroll at target.
         else {
-            auto event = DOM::Event::create(realm(), HTML::EventNames::scroll).release_value_but_fixme_should_propagate_errors();
+            auto event = DOM::Event::create(realm(), HTML::EventNames::scroll);
             target->dispatch_event(event);
         }
     }
@@ -1990,7 +2160,7 @@ void Document::evaluate_media_queries_and_report_changes()
             CSS::MediaQueryListEventInit init;
             init.media = String::from_deprecated_string(media_query_list->media()).release_value_but_fixme_should_propagate_errors();
             init.matches = now_matches;
-            auto event = CSS::MediaQueryListEvent::create(realm(), HTML::EventNames::change, init).release_value_but_fixme_should_propagate_errors();
+            auto event = CSS::MediaQueryListEvent::create(realm(), HTML::EventNames::change, init);
             event->set_is_trusted(true);
             media_query_list->dispatch_event(*event);
         }
@@ -2017,7 +2187,7 @@ void Document::evaluate_media_rules()
 DOMImplementation* Document::implementation()
 {
     if (!m_implementation)
-        m_implementation = DOMImplementation::create(*this).release_value_but_fixme_should_propagate_errors();
+        m_implementation = DOMImplementation::create(*this);
     return m_implementation;
 }
 
@@ -2149,7 +2319,7 @@ JS::NonnullGCPtr<NodeIterator> Document::create_node_iterator(Node& root, unsign
 // https://dom.spec.whatwg.org/#dom-document-createtreewalker
 JS::NonnullGCPtr<TreeWalker> Document::create_tree_walker(Node& root, unsigned what_to_show, JS::GCPtr<NodeFilter> filter)
 {
-    return TreeWalker::create(root, what_to_show, filter).release_value_but_fixme_should_propagate_errors();
+    return TreeWalker::create(root, what_to_show, filter);
 }
 
 void Document::register_node_iterator(Badge<NodeIterator>, NodeIterator& node_iterator)
@@ -2196,7 +2366,7 @@ void Document::decrement_number_of_things_delaying_the_load_event(Badge<Document
 void Document::invalidate_stacking_context_tree()
 {
     if (auto* paintable_box = this->paintable_box())
-        const_cast<Painting::PaintableBox*>(paintable_box)->invalidate_stacking_context();
+        paintable_box->invalidate_stacking_context();
 }
 
 void Document::check_favicon_after_loading_link_resource()
@@ -2212,7 +2382,7 @@ void Document::check_favicon_after_loading_link_resource()
             return false;
 
         return static_cast<HTML::HTMLLinkElement const&>(element).has_loaded_icon();
-    }).release_value_but_fixme_should_propagate_errors();
+    });
 
     if (favicon_link_elements->length() == 0) {
         dbgln_if(SPAM_DEBUG, "No favicon found to be used");
@@ -2263,7 +2433,7 @@ JS::GCPtr<HTML::CustomElementDefinition> Document::lookup_custom_element_definit
         return nullptr;
 
     // 3. Let registry be document's relevant global object's CustomElementRegistry object.
-    auto registry = window().custom_elements().release_value_but_fixme_should_propagate_errors();
+    auto registry = window().custom_elements();
 
     // 4. If there is custom element definition in registry with name and local name both equal to localName, return that custom element definition.
     auto converted_local_name = String::from_deprecated_string(local_name).release_value_but_fixme_should_propagate_errors();
@@ -2284,7 +2454,7 @@ JS::GCPtr<HTML::CustomElementDefinition> Document::lookup_custom_element_definit
 CSS::StyleSheetList& Document::style_sheets()
 {
     if (!m_style_sheets)
-        m_style_sheets = CSS::StyleSheetList::create(*this).release_value_but_fixme_should_propagate_errors();
+        m_style_sheets = CSS::StyleSheetList::create(*this);
     return *m_style_sheets;
 }
 
@@ -2296,7 +2466,7 @@ CSS::StyleSheetList const& Document::style_sheets() const
 JS::NonnullGCPtr<HTML::History> Document::history()
 {
     if (!m_history)
-        m_history = HTML::History::create(realm(), *this).release_value_but_fixme_should_propagate_errors();
+        m_history = HTML::History::create(realm(), *this);
     return *m_history;
 }
 
@@ -2344,6 +2514,31 @@ HTML::PolicyContainer Document::policy_container() const
     return m_policy_container;
 }
 
+// https://html.spec.whatwg.org/multipage/browsing-the-web.html#snapshotting-source-snapshot-params
+HTML::SourceSnapshotParams Document::snapshot_source_snapshot_params() const
+{
+    // To snapshot source snapshot params given a Document sourceDocument, return a new source snapshot params with
+
+    // has transient activation
+    //    true if sourceDocument's relevant global object has transient activation; otherwise false
+    // sandboxing flags
+    //     sourceDocument's active sandboxing flag set
+    // allows downloading
+    //     false if sourceDocument's active sandboxing flag set has the sandboxed downloads browsing context flag set; otherwise true
+    // fetch client
+    //     sourceDocument's relevant settings object
+    // source policy container
+    //     sourceDocument's policy container
+
+    return HTML::SourceSnapshotParams {
+        .has_transient_activation = verify_cast<HTML::Window>(HTML::relevant_global_object(*this)).has_transient_activation(),
+        .sandboxing_flags = m_active_sandboxing_flag_set,
+        .allows_downloading = (m_active_sandboxing_flag_set.flags & HTML::SandboxingFlagSet::SandboxedDownloads) != HTML::SandboxingFlagSet::SandboxedDownloads,
+        .fetch_client = relevant_settings_object(),
+        .source_policy_container = m_policy_container
+    };
+}
+
 // https://html.spec.whatwg.org/multipage/document-sequences.html#descendant-navigables
 Vector<JS::Handle<HTML::Navigable>> Document::descendant_navigables()
 {
@@ -2380,6 +2575,67 @@ Vector<JS::Handle<HTML::Navigable>> Document::inclusive_descendant_navigables()
     navigables.extend(descendant_navigables());
 
     // 3. Return navigables.
+    return navigables;
+}
+
+// https://html.spec.whatwg.org/multipage/document-sequences.html#ancestor-navigables
+Vector<JS::Handle<HTML::Navigable>> Document::ancestor_navigables()
+{
+    // 1. Let navigable be document's node navigable's parent.
+    VERIFY(navigable());
+    auto navigable = this->navigable()->parent();
+
+    // 2. Let ancestors be an empty list.
+    Vector<JS::Handle<HTML::Navigable>> ancestors;
+
+    // 3. While navigable is not null:
+    while (navigable) {
+        // 1. Prepend navigable to ancestors.
+        ancestors.prepend(*navigable);
+
+        // 2. Set navigable to navigable's parent.
+        navigable = navigable->parent();
+    }
+
+    // 4. Return ancestors.
+    return ancestors;
+}
+
+// https://html.spec.whatwg.org/multipage/document-sequences.html#inclusive-ancestor-navigables
+Vector<JS::Handle<HTML::Navigable>> Document::inclusive_ancestor_navigables()
+{
+    // 1. Let navigables be document's ancestor navigables.
+    auto navigables = ancestor_navigables();
+
+    // 2. Append document's node navigable to navigables.
+    navigables.append(*navigable());
+
+    // 3. Return navigables.
+    return navigables;
+}
+
+// https://html.spec.whatwg.org/multipage/document-sequences.html#document-tree-child-navigables
+Vector<JS::Handle<HTML::Navigable>> Document::document_tree_child_navigables()
+{
+    // 1. If document's node navigable is null, then return the empty list.
+    if (!navigable())
+        return {};
+
+    // 2. Let navigables be new list.
+    Vector<JS::Handle<HTML::Navigable>> navigables;
+
+    // 3. Let navigableContainers be a list of all descendants of document that are navigable containers, in tree order.
+    // 4. For each navigableContainer of navigableContainers:
+    for_each_in_subtree_of_type<HTML::NavigableContainer>([&](HTML::NavigableContainer& navigable_container) {
+        // 1. If navigableContainer's content navigable is null, then continue.
+        if (!navigable_container.content_navigable())
+            return IterationDecision::Continue;
+        // 2. Append navigableContainer's content navigable to navigables.
+        navigables.append(*navigable_container.content_navigable());
+        return IterationDecision::Continue;
+    });
+
+    // 5. Return navigables.
     return navigables;
 }
 
@@ -2573,7 +2829,7 @@ void Document::unload(bool recursive_flag, Optional<DocumentUnloadTimingInfo> un
         // then fire an event named unload at document's relevant global object, with legacy target override flag set.
         // FIXME: The legacy target override flag is currently set by a virtual override of dispatch_event()
         //        We should reorganize this so that the flag appears explicitly here instead.
-        auto event = DOM::Event::create(realm(), HTML::EventNames::unload).release_value_but_fixme_should_propagate_errors();
+        auto event = DOM::Event::create(realm(), HTML::EventNames::unload);
         global_object().dispatch_event(event);
     }
 
@@ -2686,7 +2942,7 @@ JS::NonnullGCPtr<DOM::Document> Document::appropriate_template_contents_owner_do
         // 1. If doc does not yet have an associated inert template document, then:
         if (!m_associated_inert_template_document) {
             // 1. Let new doc be a new Document (whose browsing context is null). This is "a Document created by this algorithm" for the purposes of the step above.
-            auto new_document = HTML::HTMLDocument::create(realm()).release_value_but_fixme_should_propagate_errors();
+            auto new_document = HTML::HTMLDocument::create(realm());
             new_document->m_created_for_appropriate_template_contents = true;
 
             // 2. If doc is an HTML document, mark new doc as an HTML document also.
@@ -2706,7 +2962,7 @@ JS::NonnullGCPtr<DOM::Document> Document::appropriate_template_contents_owner_do
 DeprecatedString Document::dump_accessibility_tree_as_json()
 {
     StringBuilder builder;
-    auto accessibility_tree = AccessibilityTreeNode::create(this, nullptr).release_value_but_fixme_should_propagate_errors();
+    auto accessibility_tree = AccessibilityTreeNode::create(this, nullptr);
     build_accessibility_tree(*&accessibility_tree);
     auto json = MUST(JsonObjectSerializer<>::try_create(builder));
 
@@ -2771,6 +3027,38 @@ HTML::ListOfAvailableImages& Document::list_of_available_images()
 HTML::ListOfAvailableImages const& Document::list_of_available_images() const
 {
     return *m_list_of_available_images;
+}
+
+CSSPixelRect Document::viewport_rect() const
+{
+    if (auto* browsing_context = this->browsing_context())
+        return browsing_context->viewport_rect();
+    return CSSPixelRect {};
+}
+
+JS::NonnullGCPtr<CSS::VisualViewport> Document::visual_viewport()
+{
+    if (!m_visual_viewport)
+        m_visual_viewport = CSS::VisualViewport::create(*this);
+    return *m_visual_viewport;
+}
+
+void Document::register_viewport_client(ViewportClient& client)
+{
+    auto result = m_viewport_clients.set(&client);
+    VERIFY(result == AK::HashSetResult::InsertedNewEntry);
+}
+
+void Document::unregister_viewport_client(ViewportClient& client)
+{
+    bool was_removed = m_viewport_clients.remove(&client);
+    VERIFY(was_removed);
+}
+
+void Document::inform_all_viewport_clients_about_the_current_viewport_rect()
+{
+    for (auto* client : m_viewport_clients)
+        client->did_set_viewport_rect(viewport_rect());
 }
 
 void Document::register_intersection_observer(Badge<IntersectionObserver::IntersectionObserver>, IntersectionObserver::IntersectionObserver& observer)
@@ -2844,7 +3132,7 @@ void Document::queue_an_intersection_observer_entry(IntersectionObserver::Inters
     auto& realm = this->realm();
 
     // 1. Construct an IntersectionObserverEntry, passing in time, rootBounds, boundingClientRect, intersectionRect, isIntersecting, and target.
-    auto entry = realm.heap().allocate<IntersectionObserver::IntersectionObserverEntry>(realm, realm, time, root_bounds, bounding_client_rect, intersection_rect, is_intersecting, intersection_ratio, target).release_allocated_value_but_fixme_should_propagate_errors();
+    auto entry = realm.heap().allocate<IntersectionObserver::IntersectionObserverEntry>(realm, realm, time, root_bounds, bounding_client_rect, intersection_rect, is_intersecting, intersection_ratio, target);
 
     // 2. Append it to observer’s internal [[QueuedEntries]] slot.
     observer.queue_entry({}, entry);
@@ -3210,6 +3498,16 @@ void Document::shared_declarative_refresh_steps(StringView input, JS::GCPtr<HTML
     if (meta_element && m_completely_loaded_time.has_value()) {
         m_active_refresh_timer->start();
     }
+}
+
+Painting::ViewportPaintable const* Document::paintable() const
+{
+    return static_cast<Painting::ViewportPaintable const*>(Node::paintable());
+}
+
+Painting::ViewportPaintable* Document::paintable()
+{
+    return static_cast<Painting::ViewportPaintable*>(Node::paintable());
 }
 
 }

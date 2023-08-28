@@ -35,6 +35,7 @@
 #include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 #include <LibWeb/Infra/Strings.h>
+#include <LibWeb/MathML/TagNames.h>
 #include <LibWeb/Namespace.h>
 #include <LibWeb/SVG/TagNames.h>
 
@@ -275,12 +276,12 @@ void HTMLParser::the_end()
     }
 
     // 6. Queue a global task on the DOM manipulation task source given the Document's relevant global object to run the following substeps:
-    old_queue_global_task_with_document(HTML::Task::Source::DOMManipulation, *m_document, [document = m_document] {
+    queue_global_task(HTML::Task::Source::DOMManipulation, *m_document, [document = m_document] {
         // 1. Set the Document's load timing info's DOM content loaded event start time to the current high resolution time given the Document's relevant global object.
         document->load_timing_info().dom_content_loaded_event_start_time = HighResolutionTime::unsafe_shared_current_time();
 
         // 2. Fire an event named DOMContentLoaded at the Document object, with its bubbles attribute initialized to true.
-        auto content_loaded_event = DOM::Event::create(document->realm(), HTML::EventNames::DOMContentLoaded).release_value_but_fixme_should_propagate_errors();
+        auto content_loaded_event = DOM::Event::create(document->realm(), HTML::EventNames::DOMContentLoaded);
         content_loaded_event->set_bubbles(true);
         document->dispatch_event(content_loaded_event);
 
@@ -304,7 +305,7 @@ void HTMLParser::the_end()
     });
 
     // 9. Queue a global task on the DOM manipulation task source given the Document's relevant global object to run the following steps:
-    old_queue_global_task_with_document(HTML::Task::Source::DOMManipulation, *m_document, [document = m_document] {
+    queue_global_task(HTML::Task::Source::DOMManipulation, *m_document, [document = m_document] {
         // 1. Update the current document readiness to "complete".
         document->update_readiness(HTML::DocumentReadyState::Complete);
 
@@ -321,7 +322,7 @@ void HTMLParser::the_end()
         // 5. Fire an event named load at window, with legacy target override flag set.
         // FIXME: The legacy target override flag is currently set by a virtual override of dispatch_event()
         //        We should reorganize this so that the flag appears explicitly here instead.
-        window->dispatch_event(DOM::Event::create(document->realm(), HTML::EventNames::load).release_value_but_fixme_should_propagate_errors());
+        window->dispatch_event(DOM::Event::create(document->realm(), HTML::EventNames::load));
 
         // FIXME: 6. Invoke WebDriver BiDi load complete with the Document's browsing context, and a new WebDriver BiDi navigation status whose id is the Document object's navigation id, status is "complete", and url is the Document object's URL.
 
@@ -489,16 +490,16 @@ void HTMLParser::handle_initial(HTMLToken& token)
     }
 
     if (token.is_comment()) {
-        auto comment = realm().heap().allocate<DOM::Comment>(realm(), document(), token.comment()).release_allocated_value_but_fixme_should_propagate_errors();
+        auto comment = realm().heap().allocate<DOM::Comment>(realm(), document(), token.comment());
         MUST(document().append_child(*comment));
         return;
     }
 
     if (token.is_doctype()) {
-        auto doctype = realm().heap().allocate<DOM::DocumentType>(realm(), document()).release_allocated_value_but_fixme_should_propagate_errors();
-        doctype->set_name(token.doctype_data().name);
-        doctype->set_public_id(token.doctype_data().public_identifier);
-        doctype->set_system_id(token.doctype_data().system_identifier);
+        auto doctype = realm().heap().allocate<DOM::DocumentType>(realm(), document());
+        doctype->set_name(String::from_deprecated_string(token.doctype_data().name).release_value());
+        doctype->set_public_id(String::from_deprecated_string(token.doctype_data().public_identifier).release_value());
+        doctype->set_system_id(String::from_deprecated_string(token.doctype_data().system_identifier).release_value());
         MUST(document().append_child(*doctype));
         document().set_quirks_mode(which_quirks_mode(token));
         m_insertion_mode = InsertionMode::BeforeHTML;
@@ -524,7 +525,7 @@ void HTMLParser::handle_before_html(HTMLToken& token)
     // -> A comment token
     if (token.is_comment()) {
         // Insert a comment as the last child of the Document object.
-        auto comment = realm().heap().allocate<DOM::Comment>(realm(), document(), token.comment()).release_allocated_value_but_fixme_should_propagate_errors();
+        auto comment = realm().heap().allocate<DOM::Comment>(realm(), document(), token.comment());
         MUST(document().append_child(*comment));
         return;
     }
@@ -821,7 +822,7 @@ AnythingElse:
 void HTMLParser::insert_comment(HTMLToken& token)
 {
     auto adjusted_insertion_location = find_appropriate_place_for_inserting_node();
-    adjusted_insertion_location.parent->insert_before(realm().heap().allocate<DOM::Comment>(realm(), document(), token.comment()).release_allocated_value_but_fixme_should_propagate_errors(), adjusted_insertion_location.insert_before_sibling);
+    adjusted_insertion_location.parent->insert_before(realm().heap().allocate<DOM::Comment>(realm(), document(), token.comment()), adjusted_insertion_location.insert_before_sibling);
 }
 
 void HTMLParser::handle_in_head(HTMLToken& token)
@@ -997,21 +998,26 @@ void HTMLParser::parse_generic_raw_text_element(HTMLToken& token)
     m_insertion_mode = InsertionMode::Text;
 }
 
+static bool is_empty_text_node(DOM::Node const* node)
+{
+    return node && node->is_text() && static_cast<DOM::Text const*>(node)->data().is_empty();
+}
+
 DOM::Text* HTMLParser::find_character_insertion_node()
 {
     auto adjusted_insertion_location = find_appropriate_place_for_inserting_node();
     if (adjusted_insertion_location.insert_before_sibling) {
-        if (adjusted_insertion_location.insert_before_sibling->previous_sibling() && adjusted_insertion_location.insert_before_sibling->previous_sibling()->is_text())
+        if (is_empty_text_node(adjusted_insertion_location.insert_before_sibling->previous_sibling()))
             return static_cast<DOM::Text*>(adjusted_insertion_location.insert_before_sibling->previous_sibling());
-        auto new_text_node = realm().heap().allocate<DOM::Text>(realm(), document(), "").release_allocated_value_but_fixme_should_propagate_errors();
+        auto new_text_node = realm().heap().allocate<DOM::Text>(realm(), document(), "");
         adjusted_insertion_location.parent->insert_before(*new_text_node, *adjusted_insertion_location.insert_before_sibling);
         return new_text_node;
     }
     if (adjusted_insertion_location.parent->is_document())
         return nullptr;
-    if (adjusted_insertion_location.parent->last_child() && adjusted_insertion_location.parent->last_child()->is_text())
-        return verify_cast<DOM::Text>(adjusted_insertion_location.parent->last_child());
-    auto new_text_node = realm().heap().allocate<DOM::Text>(realm(), document(), "").release_allocated_value_but_fixme_should_propagate_errors();
+    if (is_empty_text_node(adjusted_insertion_location.parent->last_child()))
+        return static_cast<DOM::Text*>(adjusted_insertion_location.parent->last_child());
+    auto new_text_node = realm().heap().allocate<DOM::Text>(realm(), document(), "");
     MUST(adjusted_insertion_location.parent->append_child(*new_text_node));
     return new_text_node;
 }
@@ -1136,7 +1142,7 @@ void HTMLParser::handle_after_body(HTMLToken& token)
 
     if (token.is_comment()) {
         auto& insertion_location = m_stack_of_open_elements.first();
-        MUST(insertion_location.append_child(realm().heap().allocate<DOM::Comment>(realm(), document(), token.comment()).release_allocated_value_but_fixme_should_propagate_errors()));
+        MUST(insertion_location.append_child(realm().heap().allocate<DOM::Comment>(realm(), document(), token.comment())));
         return;
     }
 
@@ -1172,7 +1178,7 @@ void HTMLParser::handle_after_body(HTMLToken& token)
 void HTMLParser::handle_after_after_body(HTMLToken& token)
 {
     if (token.is_comment()) {
-        auto comment = realm().heap().allocate<DOM::Comment>(realm(), document(), token.comment()).release_allocated_value_but_fixme_should_propagate_errors();
+        auto comment = realm().heap().allocate<DOM::Comment>(realm(), document(), token.comment());
         MUST(document().append_child(*comment));
         return;
     }
@@ -1430,6 +1436,7 @@ HTMLParser::AdoptionAgencyAlgorithmOutcome HTMLParser::run_the_adoption_agency_a
     }
 }
 
+// https://html.spec.whatwg.org/multipage/parsing.html#special
 bool HTMLParser::is_special_tag(DeprecatedFlyString const& tag_name, DeprecatedFlyString const& namespace_)
 {
     if (namespace_ == Namespace::HTML) {
@@ -1522,7 +1529,12 @@ bool HTMLParser::is_special_tag(DeprecatedFlyString const& tag_name, DeprecatedF
             SVG::TagNames::foreignObject,
             SVG::TagNames::title);
     } else if (namespace_ == Namespace::MathML) {
-        TODO();
+        return tag_name.is_one_of(
+            MathML::TagNames::mi,
+            MathML::TagNames::mo,
+            MathML::TagNames::mn,
+            MathML::TagNames::mtext,
+            MathML::TagNames::annotation_xml);
     }
 
     return false;
@@ -3395,7 +3407,7 @@ void HTMLParser::handle_after_frameset(HTMLToken& token)
 void HTMLParser::handle_after_after_frameset(HTMLToken& token)
 {
     if (token.is_comment()) {
-        auto comment = document().heap().allocate<DOM::Comment>(document().realm(), document(), token.comment()).release_allocated_value_but_fixme_should_propagate_errors();
+        auto comment = document().heap().allocate<DOM::Comment>(document().realm(), document(), token.comment());
         MUST(document().append_child(comment));
         return;
     }
@@ -3662,8 +3674,10 @@ DOM::Document& HTMLParser::document()
 Vector<JS::Handle<DOM::Node>> HTMLParser::parse_html_fragment(DOM::Element& context_element, StringView markup)
 {
     // 1. Create a new Document node, and mark it as being an HTML document.
-    auto temp_document = DOM::Document::create(context_element.realm()).release_value_but_fixme_should_propagate_errors();
+    auto temp_document = DOM::Document::create(context_element.realm());
     temp_document->set_document_type(DOM::Document::Type::HTML);
+
+    temp_document->set_is_temporary_document_for_fragment_parsing({});
 
     // 2. If the node document of the context element is in quirks mode, then let the Document be in quirks mode.
     //    Otherwise, the node document of the context element is in limited-quirks mode, then let the Document be in limited-quirks mode.
@@ -3979,14 +3993,14 @@ static RefPtr<CSS::StyleValue> parse_current_dimension_value(float value, Utf8Vi
 {
     // 1. If position is past the end of input, then return value as a length.
     if (position == input.end())
-        return CSS::LengthStyleValue::create(CSS::Length::make_px(value)).release_value_but_fixme_should_propagate_errors();
+        return CSS::LengthStyleValue::create(CSS::Length::make_px(CSSPixels::nearest_value_for(value)));
 
     // 2. If the code point at position within input is U+0025 (%), then return value as a percentage.
     if (*position == '%')
-        return CSS::PercentageStyleValue::create(CSS::Percentage(value)).release_value_but_fixme_should_propagate_errors();
+        return CSS::PercentageStyleValue::create(CSS::Percentage(value));
 
     // 3. Return value as a length.
-    return CSS::LengthStyleValue::create(CSS::Length::make_px(value)).release_value_but_fixme_should_propagate_errors();
+    return CSS::LengthStyleValue::create(CSS::Length::make_px(CSSPixels::nearest_value_for(value)));
 }
 
 // https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-dimension-values
@@ -4020,7 +4034,7 @@ RefPtr<CSS::StyleValue> parse_dimension_value(StringView string)
 
     // 6. If position is past the end of input, then return value as a length.
     if (position == input.end())
-        return CSS::LengthStyleValue::create(CSS::Length::make_px(*integer_value)).release_value_but_fixme_should_propagate_errors();
+        return CSS::LengthStyleValue::create(CSS::Length::make_px(*integer_value));
 
     float value = *integer_value;
 
@@ -4051,7 +4065,7 @@ RefPtr<CSS::StyleValue> parse_dimension_value(StringView string)
 
             // 4. If position is past the end of input, then return value as a length.
             if (position == input.end())
-                return CSS::LengthStyleValue::create(CSS::Length::make_px(value)).release_value_but_fixme_should_propagate_errors();
+                return CSS::LengthStyleValue::create(CSS::Length::make_px(CSSPixels::nearest_value_for(value)));
 
             // 5. If the code point at position within input is not an ASCII digit, then break.
             if (!is_ascii_digit(*position))

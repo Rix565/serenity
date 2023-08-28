@@ -28,6 +28,8 @@
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/Clipboard.h>
+#include <LibGUI/Dialog.h>
+#include <LibGUI/InputBox.h>
 #include <LibGUI/Menu.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/Statusbar.h>
@@ -35,7 +37,7 @@
 #include <LibGUI/Toolbar.h>
 #include <LibGUI/ToolbarContainer.h>
 #include <LibGUI/Window.h>
-#include <LibJS/Interpreter.h>
+#include <LibPublicSuffix/URL.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/SyntaxHighlighter/SyntaxHighlighter.h>
 #include <LibWeb/Layout/BlockContainer.h>
@@ -52,9 +54,6 @@ Tab::~Tab()
 
 URL url_from_user_input(DeprecatedString const& input)
 {
-    if (input.starts_with('?') && !g_search_engine.is_empty())
-        return URL(g_search_engine.replace("{}"sv, URL::percent_encode(input.substring_view(1)), ReplaceMode::FirstOnly));
-
     URL url_with_http_schema = URL(DeprecatedString::formatted("https://{}", input));
     if (url_with_http_schema.is_valid() && url_with_http_schema.port().has_value())
         return url_with_http_schema;
@@ -84,6 +83,7 @@ void Tab::view_source(const URL& url, DeprecatedString const& source)
     editor->set_mode(GUI::TextEditor::ReadOnly);
     editor->set_syntax_highlighter(make<Web::HTML::SyntaxHighlighter>());
     editor->set_ruler_visible(true);
+    editor->set_visualize_trailing_whitespace(false);
     window->resize(640, 480);
     window->set_title(url.to_deprecated_string());
     window->set_icon(g_icon_bag.filetype_text);
@@ -114,7 +114,7 @@ void Tab::update_status(Optional<String> text_override, i32 count_waiting)
     }
 }
 
-Tab::Tab(BrowserWindow& window, WebView::UseJavaScriptBytecode use_javascript_bytecode)
+Tab::Tab(BrowserWindow& window)
 {
     load_from_gml(tab_gml).release_value_but_fixme_should_propagate_errors();
 
@@ -123,7 +123,7 @@ Tab::Tab(BrowserWindow& window, WebView::UseJavaScriptBytecode use_javascript_by
 
     auto& webview_container = *find_descendant_of_type_named<GUI::Widget>("webview_container");
 
-    m_web_content_view = webview_container.add<WebView::OutOfProcessWebView>(use_javascript_bytecode);
+    m_web_content_view = webview_container.add<WebView::OutOfProcessWebView>();
 
     auto preferred_color_scheme = Web::CSS::preferred_color_scheme_from_string(Config::read_string("Browser"sv, "Preferences"sv, "ColorScheme"sv, Browser::default_color_scheme));
     m_web_content_view->set_preferred_color_scheme(preferred_color_scheme);
@@ -170,7 +170,7 @@ Tab::Tab(BrowserWindow& window, WebView::UseJavaScriptBytecode use_javascript_by
     toolbar.add_action(window.reload_action());
 
     m_location_box = toolbar.add<GUI::UrlBox>();
-    m_location_box->set_placeholder("Address"sv);
+    m_location_box->set_placeholder("Search or enter address"sv);
 
     m_location_box->on_return_pressed = [this] {
         auto url = url_from_location_bar();
@@ -203,10 +203,11 @@ Tab::Tab(BrowserWindow& window, WebView::UseJavaScriptBytecode use_javascript_by
         this);
 
     m_reset_zoom_button = toolbar.add<GUI::Button>();
-    m_reset_zoom_button->set_tooltip("Reset zoom level");
+    m_reset_zoom_button->set_tooltip_deprecated("Reset zoom level");
     m_reset_zoom_button->on_click = [&](auto) {
         view().reset_zoom();
         update_reset_zoom_button();
+        window.update_zoom_menu();
     };
     m_reset_zoom_button->set_button_style(Gfx::ButtonStyle::Coolbar);
     m_reset_zoom_button->set_visible(false);
@@ -510,30 +511,85 @@ Tab::Tab(BrowserWindow& window, WebView::UseJavaScriptBytecode use_javascript_by
             on_update_cookie(cookie);
     };
 
-    view().on_get_source = [this](auto& url, auto& source) {
+    view().on_request_alert = [this](String const& message) {
+        auto& window = this->window();
+
+        m_dialog = GUI::MessageBox::create(&window, message, "Alert"sv, GUI::MessageBox::Type::Information, GUI::MessageBox::InputType::OK).release_value_but_fixme_should_propagate_errors();
+        m_dialog->set_icon(window.icon());
+        m_dialog->exec();
+
+        view().alert_closed();
+        m_dialog = nullptr;
+    };
+
+    view().on_request_confirm = [this](String const& message) {
+        auto& window = this->window();
+
+        m_dialog = GUI::MessageBox::create(&window, message, "Confirm"sv, GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::OKCancel).release_value_but_fixme_should_propagate_errors();
+        m_dialog->set_icon(window.icon());
+
+        view().confirm_closed(m_dialog->exec() == GUI::Dialog::ExecResult::OK);
+        m_dialog = nullptr;
+    };
+
+    view().on_request_prompt = [this](String const& message, String const& default_) {
+        auto& window = this->window();
+
+        String mutable_value = default_;
+        m_dialog = GUI::InputBox::create(&window, mutable_value, message, "Prompt"sv, GUI::InputType::Text).release_value_but_fixme_should_propagate_errors();
+        m_dialog->set_icon(window.icon());
+
+        if (m_dialog->exec() == GUI::InputBox::ExecResult::OK) {
+            auto const& dialog = static_cast<GUI::InputBox const&>(*m_dialog);
+            auto response = dialog.text_value();
+
+            view().prompt_closed(move(response));
+        } else {
+            view().prompt_closed({});
+        }
+
+        m_dialog = nullptr;
+    };
+
+    view().on_request_set_prompt_text = [this](String const& message) {
+        if (m_dialog && is<GUI::InputBox>(*m_dialog))
+            static_cast<GUI::InputBox&>(*m_dialog).set_text_value(message);
+    };
+
+    view().on_request_accept_dialog = [this]() {
+        if (m_dialog)
+            m_dialog->done(GUI::Dialog::ExecResult::OK);
+    };
+
+    view().on_request_dismiss_dialog = [this]() {
+        if (m_dialog)
+            m_dialog->done(GUI::Dialog::ExecResult::Cancel);
+    };
+
+    view().on_received_source = [this](auto& url, auto& source) {
         view_source(url, source);
     };
 
-    view().on_get_dom_tree = [this](auto& dom_tree) {
+    view().on_received_dom_tree = [this](auto& dom_tree) {
         if (m_dom_inspector_widget)
             m_dom_inspector_widget->set_dom_json(dom_tree);
     };
 
-    view().on_get_dom_node_properties = [this](auto node_id, auto& specified, auto& computed, auto& custom_properties, auto& node_box_sizing, auto& aria_properties_state) {
+    view().on_received_dom_node_properties = [this](auto node_id, auto& specified, auto& computed, auto& custom_properties, auto& node_box_sizing, auto& aria_properties_state) {
         m_dom_inspector_widget->set_dom_node_properties_json({ node_id }, specified, computed, custom_properties, node_box_sizing, aria_properties_state);
     };
 
-    view().on_get_accessibility_tree = [this](auto& accessibility_tree) {
+    view().on_received_accessibility_tree = [this](auto& accessibility_tree) {
         if (m_dom_inspector_widget)
             m_dom_inspector_widget->set_accessibility_json(accessibility_tree);
     };
 
-    view().on_js_console_new_message = [this](auto message_index) {
+    view().on_received_console_message = [this](auto message_index) {
         if (m_console_widget)
             m_console_widget->notify_about_new_console_message(message_index);
     };
 
-    view().on_get_js_console_messages = [this](auto start_index, auto& message_types, auto& messages) {
+    view().on_received_console_messages = [this](auto start_index, auto& message_types, auto& messages) {
         if (m_console_widget)
             m_console_widget->handle_console_messages(start_index, message_types, messages);
     };
@@ -554,16 +610,6 @@ Tab::Tab(BrowserWindow& window, WebView::UseJavaScriptBytecode use_javascript_by
     view().on_link_unhover = [this]() {
         view().set_override_cursor(Gfx::StandardCursor::None);
         update_status();
-    };
-
-    view().on_back_button = [this] {
-        if (m_history.can_go_back())
-            go_back();
-    };
-
-    view().on_forward_button = [this] {
-        if (m_history.can_go_forward())
-            go_forward();
     };
 
     view().on_new_tab = [this](auto activate_tab) {
@@ -601,7 +647,7 @@ Tab::Tab(BrowserWindow& window, WebView::UseJavaScriptBytecode use_javascript_by
             }
         },
         this);
-    take_visible_screenshot_action->set_status_tip("Save a screenshot of the visible portion of the current tab to the Downloads directory"_string.release_value_but_fixme_should_propagate_errors());
+    take_visible_screenshot_action->set_status_tip("Save a screenshot of the visible portion of the current tab to the Downloads directory"_string);
 
     auto take_full_screenshot_action = GUI::Action::create(
         "Take &Full Screenshot"sv, g_icon_bag.filetype_image, [this](auto&) {
@@ -611,7 +657,7 @@ Tab::Tab(BrowserWindow& window, WebView::UseJavaScriptBytecode use_javascript_by
             }
         },
         this);
-    take_full_screenshot_action->set_status_tip("Save a screenshot of the entirety of the current tab to the Downloads directory"_string.release_value_but_fixme_should_propagate_errors());
+    take_full_screenshot_action->set_status_tip("Save a screenshot of the entirety of the current tab to the Downloads directory"_string);
 
     m_page_context_menu = GUI::Menu::construct();
     m_page_context_menu->add_action(window.go_back_action());
@@ -647,11 +693,6 @@ void Tab::update_reset_zoom_button()
 
 Optional<URL> Tab::url_from_location_bar(MayAppendTLD may_append_tld)
 {
-    if (m_location_box->text().starts_with('?') && g_search_engine.is_empty()) {
-        GUI::MessageBox::show(&this->window(), "Select a search engine in the Settings menu before searching."sv, "No search engine selected"sv, GUI::MessageBox::Type::Information);
-        return {};
-    }
-
     DeprecatedString text = m_location_box->text();
 
     StringBuilder builder;
@@ -664,8 +705,17 @@ Optional<URL> Tab::url_from_location_bar(MayAppendTLD may_append_tld)
     }
     auto final_text = builder.to_deprecated_string();
 
-    auto url = url_from_user_input(final_text);
-    return url;
+    auto error_or_absolute_url = PublicSuffix::absolute_url(final_text);
+    if (error_or_absolute_url.is_error()) {
+        if (g_search_engine.is_empty()) {
+            GUI::MessageBox::show(&this->window(), "Select a search engine in the Settings menu before searching."sv, "No search engine selected"sv, GUI::MessageBox::Type::Information);
+            return {};
+        }
+
+        return URL(g_search_engine.replace("{}"sv, URL::percent_encode(final_text), ReplaceMode::FirstOnly));
+    }
+
+    return URL(error_or_absolute_url.release_value());
 }
 
 void Tab::load(const URL& url, LoadType load_type)
@@ -687,6 +737,9 @@ void Tab::reload()
 
 void Tab::go_back(int steps)
 {
+    if (!m_history.can_go_back(steps))
+        return;
+
     m_history.go_back(steps);
     update_actions();
     load(m_history.current().url, LoadType::HistoryNavigation);
@@ -694,6 +747,9 @@ void Tab::go_back(int steps)
 
 void Tab::go_forward(int steps)
 {
+    if (!m_history.can_go_forward(steps))
+        return;
+
     m_history.go_forward(steps);
     update_actions();
     load(m_history.current().url, LoadType::HistoryNavigation);
@@ -724,10 +780,10 @@ void Tab::update_bookmark_button(StringView url)
 {
     if (BookmarksBarWidget::the().contains_bookmark(url)) {
         m_bookmark_button->set_icon(g_icon_bag.bookmark_filled);
-        m_bookmark_button->set_tooltip("Remove Bookmark");
+        m_bookmark_button->set_tooltip_deprecated("Remove Bookmark");
     } else {
         m_bookmark_button->set_icon(g_icon_bag.bookmark_contour);
-        m_bookmark_button->set_tooltip("Add Bookmark");
+        m_bookmark_button->set_tooltip_deprecated("Add Bookmark");
     }
 }
 

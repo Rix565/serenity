@@ -7,7 +7,7 @@ print_help() {
     NAME=$(basename "$ARG0")
     cat <<EOF
 Usage: $NAME COMMAND [TARGET] [TOOLCHAIN] [ARGS...]
-  Supported TARGETs: aarch64, x86_64, lagom. Defaults to SERENITY_ARCH, or x86_64 if not set.
+  Supported TARGETs: aarch64, x86_64, riscv64, lagom. Defaults to SERENITY_ARCH, or x86_64 if not set.
   Supported TOOLCHAINs: GNU, Clang. Defaults to SERENITY_TOOLCHAIN, or GNU if not set.
   Supported COMMANDs:
     build:      Compiles the target binaries, [ARGS...] are passed through to ninja
@@ -109,6 +109,15 @@ CMAKE_ARGS+=( "-DSERENITY_TOOLCHAIN=$TOOLCHAIN_TYPE" )
 
 CMD_ARGS=( "$@" )
 
+LADYBIRD_ENABLE_QT=1
+
+if [ "$TARGET" = "lagom" ]; then
+    if [ "${CMD_ARGS[0]}" = "ladybird-appkit" ]; then
+        CMD_ARGS[0]="ladybird"
+        LADYBIRD_ENABLE_QT=0
+    fi
+fi
+
 get_top_dir() {
     git rev-parse --show-toplevel
 }
@@ -122,10 +131,14 @@ is_valid_target() {
         CMAKE_ARGS+=("-DSERENITY_ARCH=x86_64")
         return 0
     fi
+    if [ "$TARGET" = "riscv64" ]; then
+        CMAKE_ARGS+=("-DSERENITY_ARCH=riscv64")
+        return 0
+    fi
     if [ "$TARGET" = "lagom" ]; then
         CMAKE_ARGS+=("-DBUILD_LAGOM=ON")
         if [ "${CMD_ARGS[0]}" = "ladybird" ]; then
-            CMAKE_ARGS+=("-DENABLE_LAGOM_LADYBIRD=ON")
+            CMAKE_ARGS+=("-DENABLE_LAGOM_LADYBIRD=ON" "-DENABLE_QT=${LADYBIRD_ENABLE_QT}")
         fi
         return 0
     fi
@@ -252,23 +265,25 @@ ensure_target() {
 
 run_tests() {
     local TEST_NAME="$1"
-    export CTEST_OUTPUT_ON_FAILURE=1
+    local CTEST_ARGS=("--output-on-failure" "--test-dir" "$BUILD_DIR")
     if [ -n "$TEST_NAME" ]; then
-        ( cd "$BUILD_DIR" && ctest -R "$TEST_NAME" )
-    else
-        ( cd "$BUILD_DIR" && ctest )
+        if [ "$TEST_NAME" = "WPT" ]; then
+            CTEST_ARGS+=("-C" "Integration")
+        fi
+        CTEST_ARGS+=("-R" "$TEST_NAME")
     fi
+    ctest "${CTEST_ARGS[@]}"
 }
 
 build_target() {
     if [ "$TARGET" = "lagom" ]; then
         # Ensure that all lagom binaries get built, in case user first
         # invoked superbuild for serenity target that doesn't set -DBUILD_LAGOM=ON
-        local EXTRA_CMAKE_ARGS=""
+        local EXTRA_CMAKE_ARGS=()
         if [ "${CMD_ARGS[0]}" = "ladybird" ]; then
-            EXTRA_CMAKE_ARGS="-DENABLE_LAGOM_LADYBIRD=ON"
+            EXTRA_CMAKE_ARGS=("-DENABLE_LAGOM_LADYBIRD=ON" "-DENABLE_QT=${LADYBIRD_ENABLE_QT}")
         fi
-        cmake -S "$SERENITY_SOURCE_DIR/Meta/Lagom" -B "$BUILD_DIR" -DBUILD_LAGOM=ON ${EXTRA_CMAKE_ARGS}
+        cmake -S "$SERENITY_SOURCE_DIR/Meta/Lagom" -B "$BUILD_DIR" -DBUILD_LAGOM=ON "${EXTRA_CMAKE_ARGS[@]}"
     fi
 
     # Get either the environment MAKEJOBS or all processors via CMake
@@ -435,7 +450,7 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
     ensure_target
     case "$CMD" in
         build)
-            build_target "$@"
+            build_target "${CMD_ARGS[@]}"
             ;;
         install)
             build_target
@@ -474,7 +489,7 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
         gdb)
             if [ "$TARGET" = "lagom" ]; then
                 [ $# -ge 1 ] || usage
-                build_target "$@"
+                build_target "${CMD_ARGS[@]}"
                 run_gdb "${CMD_ARGS[@]}"
             else
                 command -v tmux >/dev/null 2>&1 || die "Please install tmux!"
@@ -499,7 +514,7 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
             fi
             ;;
         rebuild)
-            build_target "$@"
+            build_target "${CMD_ARGS[@]}"
             ;;
         recreate)
             ;;
@@ -534,7 +549,7 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
             fi
             ;;
         *)
-            build_target "$CMD" "$@"
+            build_target "$CMD" "${CMD_ARGS[@]}"
             ;;
     esac
 elif [ "$CMD" = "delete" ]; then

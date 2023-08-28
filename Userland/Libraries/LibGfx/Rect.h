@@ -177,6 +177,13 @@ public:
         return rect;
     }
 
+    [[nodiscard]] Rect<T> scaled(T dboth) const
+    {
+        Rect<T> rect = *this;
+        rect.scale_by(dboth);
+        return rect;
+    }
+
     [[nodiscard]] Rect<T> scaled(T sx, T sy) const
     {
         Rect<T> rect = *this;
@@ -976,6 +983,10 @@ public:
         return Rect<U>(*this);
     }
 
+    // For extern specialization, like CSSPixels
+    template<typename U>
+    [[nodiscard]] Rect<U> to_rounded() const = delete;
+
     template<FloatingPoint U>
     [[nodiscard]] ALWAYS_INLINE Rect<U> to_rounded() const
     {
@@ -1027,6 +1038,7 @@ private:
 
 using IntRect = Rect<int>;
 using FloatRect = Rect<float>;
+using DoubleRect = Rect<double>;
 
 [[nodiscard]] ALWAYS_INLINE IntRect enclosing_int_rect(FloatRect const& float_rect)
 {

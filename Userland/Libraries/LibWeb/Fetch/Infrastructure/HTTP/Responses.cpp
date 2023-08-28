@@ -26,6 +26,7 @@ void Response::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_header_list);
+    visitor.visit(m_body);
 }
 
 JS::NonnullGCPtr<Response> Response::create(JS::VM& vm)
@@ -50,7 +51,7 @@ JS::NonnullGCPtr<Response> Response::network_error(JS::VM& vm, Variant<String, S
     auto response = Response::create(vm);
     response->set_status(0);
     response->set_type(Type::Error);
-    VERIFY(!response->body().has_value());
+    VERIFY(!response->body());
     response->m_network_error_message = move(message);
     return response;
 }
@@ -118,8 +119,8 @@ ErrorOr<Optional<AK::URL>> Response::location_url(Optional<String> const& reques
         return Error::from_string_view("Invalid 'Location' header URL"sv);
 
     // 4. If location is a URL whose fragment is null, then set location’s fragment to requestFragment.
-    if (location.fragment().is_null())
-        location.set_fragment(request_fragment.has_value() ? request_fragment->to_deprecated_string() : DeprecatedString {});
+    if (!location.fragment().has_value())
+        location.set_fragment(request_fragment);
 
     // 5. Return location.
     return location;
@@ -163,8 +164,8 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> Response::clone(JS::Realm& realm
     // FIXME: service worker timing info
 
     // 3. If response’s body is non-null, then set newResponse’s body to the result of cloning response’s body.
-    if (m_body.has_value())
-        new_response->set_body(TRY(m_body->clone(realm)));
+    if (m_body)
+        new_response->set_body(m_body->clone(realm));
 
     // 4. Return newResponse.
     return new_response;
@@ -283,6 +284,7 @@ void OpaqueFilteredResponse::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_header_list);
+    visitor.visit(m_body);
 }
 
 JS::NonnullGCPtr<OpaqueRedirectFilteredResponse> OpaqueRedirectFilteredResponse::create(JS::VM& vm, JS::NonnullGCPtr<Response> internal_response)
@@ -302,6 +304,7 @@ void OpaqueRedirectFilteredResponse::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_header_list);
+    visitor.visit(m_body);
 }
 
 }

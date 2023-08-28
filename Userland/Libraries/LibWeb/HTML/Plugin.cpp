@@ -20,12 +20,10 @@ Plugin::Plugin(JS::Realm& realm, String name)
 
 Plugin::~Plugin() = default;
 
-JS::ThrowCompletionOr<void> Plugin::initialize(JS::Realm& realm)
+void Plugin::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::PluginPrototype>(realm, "Plugin"));
-
-    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/system-state.html#dom-plugin-name
@@ -36,18 +34,18 @@ String const& Plugin::name() const
 }
 
 // https://html.spec.whatwg.org/multipage/system-state.html#dom-plugin-description
-JS::ThrowCompletionOr<String> Plugin::description() const
+String Plugin::description() const
 {
     // The Plugin interface's description getter steps are to return "Portable Document Format".
-    static String description_string = TRY_OR_THROW_OOM(vm(), "Portable Document Format"_string);
+    static String description_string = "Portable Document Format"_string;
     return description_string;
 }
 
 // https://html.spec.whatwg.org/multipage/system-state.html#dom-plugin-filename
-JS::ThrowCompletionOr<String> Plugin::filename() const
+String Plugin::filename() const
 {
     // The Plugin interface's filename getter steps are to return "internal-pdf-viewer".
-    static String filename_string = TRY_OR_THROW_OOM(vm(), "internal-pdf-viewer"_string);
+    static String filename_string = "internal-pdf-viewer"_string;
     return filename_string;
 }
 

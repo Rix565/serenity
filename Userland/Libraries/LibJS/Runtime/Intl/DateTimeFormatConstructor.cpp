@@ -23,9 +23,9 @@ DateTimeFormatConstructor::DateTimeFormatConstructor(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> DateTimeFormatConstructor::initialize(Realm& realm)
+void DateTimeFormatConstructor::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
@@ -36,8 +36,6 @@ ThrowCompletionOr<void> DateTimeFormatConstructor::initialize(Realm& realm)
     define_native_function(realm, vm.names.supportedLocalesOf, supported_locales_of, 1, attr);
 
     define_direct_property(vm.names.length, Value(0), Attribute::Configurable);
-
-    return {};
 }
 
 // 11.1.1 Intl.DateTimeFormat ( [ locales [ , options ] ] ), https://tc39.es/ecma402/#sec-intl.datetimeformat
@@ -108,11 +106,11 @@ ThrowCompletionOr<NonnullGCPtr<DateTimeFormat>> create_date_time_format(VM& vm, 
     // 8. If calendar is not undefined, then
     if (!calendar.is_undefined()) {
         // a. If calendar cannot be matched by the type Unicode locale nonterminal, throw a RangeError exception.
-        if (!::Locale::is_type_identifier(TRY(calendar.as_string().utf8_string_view())))
+        if (!::Locale::is_type_identifier(calendar.as_string().utf8_string_view()))
             return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, calendar, "calendar"sv);
 
         // 9. Set opt.[[ca]] to calendar.
-        opt.ca = TRY(calendar.as_string().utf8_string());
+        opt.ca = calendar.as_string().utf8_string();
     }
 
     // 10. Let numberingSystem be ? GetOption(options, "numberingSystem", string, empty, undefined).
@@ -121,11 +119,11 @@ ThrowCompletionOr<NonnullGCPtr<DateTimeFormat>> create_date_time_format(VM& vm, 
     // 11. If numberingSystem is not undefined, then
     if (!numbering_system.is_undefined()) {
         // a. If numberingSystem cannot be matched by the type Unicode locale nonterminal, throw a RangeError exception.
-        if (!::Locale::is_type_identifier(TRY(numbering_system.as_string().utf8_string_view())))
+        if (!::Locale::is_type_identifier(numbering_system.as_string().utf8_string_view()))
             return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, numbering_system, "numberingSystem"sv);
 
         // 12. Set opt.[[nu]] to numberingSystem.
-        opt.nu = TRY(numbering_system.as_string().utf8_string());
+        opt.nu = numbering_system.as_string().utf8_string();
     }
 
     // 13. Let hour12 be ? GetOption(options, "hour12", boolean, empty, undefined).
@@ -142,7 +140,7 @@ ThrowCompletionOr<NonnullGCPtr<DateTimeFormat>> create_date_time_format(VM& vm, 
 
     // 16. Set opt.[[hc]] to hourCycle.
     if (!hour_cycle.is_nullish())
-        opt.hc = TRY(hour_cycle.as_string().utf8_string());
+        opt.hc = hour_cycle.as_string().utf8_string();
 
     // 17. Let localeData be %DateTimeFormat%.[[LocaleData]].
     // 18. Let r be ResolveLocale(%DateTimeFormat%.[[AvailableLocales]], requestedLocales, opt, %DateTimeFormat%.[[RelevantExtensionKeys]], localeData).
@@ -168,7 +166,7 @@ ThrowCompletionOr<NonnullGCPtr<DateTimeFormat>> create_date_time_format(VM& vm, 
 
     // 24. Let dataLocaleData be localeData.[[<dataLocale>]].
     // 25. Let hcDefault be dataLocaleData.[[hourCycle]].
-    auto default_hour_cycle = TRY_OR_THROW_OOM(vm, ::Locale::get_default_regional_hour_cycle(data_locale));
+    auto default_hour_cycle = ::Locale::get_default_regional_hour_cycle(data_locale);
 
     // Non-standard, default_hour_cycle will be empty if Unicode data generation is disabled.
     if (!default_hour_cycle.has_value()) {
@@ -277,7 +275,7 @@ ThrowCompletionOr<NonnullGCPtr<DateTimeFormat>> create_date_time_format(VM& vm, 
 
             // d. Set formatOptions.[[<prop>]] to value.
             if (!value.is_undefined()) {
-                option = ::Locale::calendar_pattern_style_from_string(TRY(value.as_string().utf8_string_view()));
+                option = ::Locale::calendar_pattern_style_from_string(value.as_string().utf8_string_view());
 
                 // e. If value is not undefined, then
                 //     i. Set hasExplicitFormatComponents to true.
@@ -296,14 +294,14 @@ ThrowCompletionOr<NonnullGCPtr<DateTimeFormat>> create_date_time_format(VM& vm, 
 
     // 40. Set dateTimeFormat.[[DateStyle]] to dateStyle.
     if (!date_style.is_undefined())
-        date_time_format->set_date_style(TRY(date_style.as_string().utf8_string_view()));
+        date_time_format->set_date_style(date_style.as_string().utf8_string_view());
 
     // 41. Let timeStyle be ? GetOption(options, "timeStyle", string, « "full", "long", "medium", "short" », undefined).
     auto time_style = TRY(get_option(vm, *options, vm.names.timeStyle, OptionType::String, AK::Array { "full"sv, "long"sv, "medium"sv, "short"sv }, Empty {}));
 
     // 42. Set dateTimeFormat.[[TimeStyle]] to timeStyle.
     if (!time_style.is_undefined())
-        date_time_format->set_time_style(TRY(time_style.as_string().utf8_string_view()));
+        date_time_format->set_time_style(time_style.as_string().utf8_string_view());
 
     Optional<::Locale::CalendarPattern> best_format {};
 
@@ -396,10 +394,10 @@ ThrowCompletionOr<NonnullGCPtr<DateTimeFormat>> create_date_time_format(VM& vm, 
         }
 
         // f. Let formats be dataLocaleData.[[formats]].[[<resolvedCalendar>]].
-        auto formats = TRY_OR_THROW_OOM(vm, ::Locale::get_calendar_available_formats(data_locale, date_time_format->calendar()));
+        auto formats = ::Locale::get_calendar_available_formats(data_locale, date_time_format->calendar());
 
         // g. If matcher is "basic", then
-        if (TRY(matcher.as_string().utf8_string_view()) == "basic"sv) {
+        if (matcher.as_string().utf8_string_view() == "basic"sv) {
             // i. Let bestFormat be BasicFormatMatcher(formatOptions, formats).
             best_format = basic_format_matcher(format_options, move(formats));
         }
@@ -442,7 +440,7 @@ ThrowCompletionOr<NonnullGCPtr<DateTimeFormat>> create_date_time_format(VM& vm, 
         }
 
         // b. Let rangePatterns be bestFormat.[[rangePatterns12]].
-        range_patterns = TRY_OR_THROW_OOM(vm, ::Locale::get_calendar_range12_formats(data_locale, date_time_format->calendar(), best_format->skeleton));
+        range_patterns = ::Locale::get_calendar_range12_formats(data_locale, date_time_format->calendar(), best_format->skeleton);
     }
     // 48. Else,
     else {
@@ -450,7 +448,7 @@ ThrowCompletionOr<NonnullGCPtr<DateTimeFormat>> create_date_time_format(VM& vm, 
         pattern = move(best_format->pattern);
 
         // b. Let rangePatterns be bestFormat.[[rangePatterns]].
-        range_patterns = TRY_OR_THROW_OOM(vm, ::Locale::get_calendar_range_formats(data_locale, date_time_format->calendar(), best_format->skeleton));
+        range_patterns = ::Locale::get_calendar_range_formats(data_locale, date_time_format->calendar(), best_format->skeleton);
     }
 
     // 49. Set dateTimeFormat.[[Pattern]] to pattern.

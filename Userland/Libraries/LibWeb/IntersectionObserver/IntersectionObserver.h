@@ -15,7 +15,7 @@ namespace Web::IntersectionObserver {
 
 struct IntersectionObserverInit {
     Optional<Variant<JS::Handle<DOM::Element>, JS::Handle<DOM::Document>>> root;
-    String root_margin { "0px"_short_string };
+    String root_margin { "0px"_string };
     Variant<double, Vector<double>> threshold { 0 };
 };
 
@@ -64,8 +64,9 @@ public:
 private:
     explicit IntersectionObserver(JS::Realm&, JS::GCPtr<WebIDL::CallbackType> callback, Optional<Variant<JS::Handle<DOM::Element>, JS::Handle<DOM::Document>>> const& root, Vector<double>&& thresholds);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(JS::Cell::Visitor&) override;
+    virtual void finalize() override;
 
     // https://www.w3.org/TR/intersection-observer/#dom-intersectionobserver-callback-slot
     JS::GCPtr<WebIDL::CallbackType> m_callback;

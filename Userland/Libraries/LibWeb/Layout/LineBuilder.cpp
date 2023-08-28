@@ -136,7 +136,7 @@ CSSPixels LineBuilder::y_for_float_to_be_inserted_here(Box const& box)
 
 bool LineBuilder::should_break(CSSPixels next_item_width)
 {
-    if (!isfinite(m_available_width_for_current_line.to_double()))
+    if (m_available_width_for_current_line.is_max_content())
         return false;
 
     auto const& line_boxes = m_containing_block_state.line_boxes;
@@ -169,7 +169,7 @@ void LineBuilder::update_last_line()
     CSSPixels x_offset_bottom = m_context.leftmost_x_offset_at(m_current_y + current_line_height - 1);
     CSSPixels x_offset = max(x_offset_top, x_offset_bottom);
 
-    CSSPixels excess_horizontal_space = m_available_width_for_current_line - line_box.width();
+    CSSPixels excess_horizontal_space = m_available_width_for_current_line.to_px_or_zero() - line_box.width();
 
     // If (after justification, if any) the inline contents of a line box are too long to fit within it,
     // then the contents are start-aligned: any content that doesn't fit overflows the line box’s end edge.
@@ -195,10 +195,10 @@ void LineBuilder::update_last_line()
         auto& font = m_context.containing_block().font();
         auto const line_height = m_context.containing_block().line_height();
         auto const font_metrics = font.pixel_metrics();
-        auto const typographic_height = font_metrics.ascent + font_metrics.descent;
+        auto const typographic_height = CSSPixels::nearest_value_for(font_metrics.ascent + font_metrics.descent);
         auto const leading = line_height - typographic_height;
         auto const half_leading = leading / 2;
-        return CSSPixels(font_metrics.ascent) + half_leading;
+        return CSSPixels::nearest_value_for(font_metrics.ascent) + half_leading;
     }();
 
     auto line_box_baseline = [&] {
@@ -207,7 +207,7 @@ void LineBuilder::update_last_line()
             auto const& font = fragment.layout_node().font();
             auto const line_height = fragment.layout_node().line_height();
             auto const font_metrics = font.pixel_metrics();
-            auto const typographic_height = CSSPixels(font_metrics.ascent + font_metrics.descent);
+            auto const typographic_height = CSSPixels::nearest_value_for(font_metrics.ascent + font_metrics.descent);
             auto const leading = line_height - typographic_height;
             auto const half_leading = leading / 2;
 
@@ -215,7 +215,7 @@ void LineBuilder::update_last_line()
 
             CSSPixels fragment_baseline = 0;
             if (fragment.layout_node().is_text_node()) {
-                fragment_baseline = CSSPixels(font_metrics.ascent) + half_leading;
+                fragment_baseline = CSSPixels::nearest_value_for(font_metrics.ascent) + half_leading;
             } else {
                 auto const& box = verify_cast<Layout::Box>(fragment.layout_node());
                 fragment_baseline = m_context.box_baseline(box);
@@ -230,7 +230,7 @@ void LineBuilder::update_last_line()
                 if (length_percentage->is_length())
                     fragment_baseline += length_percentage->length().to_px(fragment.layout_node());
                 else if (length_percentage->is_percentage())
-                    fragment_baseline += length_percentage->percentage().as_fraction() * line_height.to_double();
+                    fragment_baseline += line_height.scaled(length_percentage->percentage().as_fraction());
             }
 
             line_box_baseline = max(line_box_baseline, fragment_baseline);
@@ -284,7 +284,7 @@ void LineBuilder::update_last_line()
                     auto vertical_align_amount = length_percentage->length().to_px(fragment.layout_node());
                     new_fragment_y = y_value_for_alignment(CSS::VerticalAlign::Baseline) - vertical_align_amount;
                 } else if (length_percentage->is_percentage()) {
-                    auto vertical_align_amount = length_percentage->percentage().as_fraction() * m_context.containing_block().line_height().to_double();
+                    auto vertical_align_amount = m_context.containing_block().line_height().scaled(length_percentage->percentage().as_fraction());
                     new_fragment_y = y_value_for_alignment(CSS::VerticalAlign::Baseline) - vertical_align_amount;
                 }
             }
@@ -302,17 +302,17 @@ void LineBuilder::update_last_line()
                 bottom_of_inline_box = (fragment.offset().y() + fragment_box_state.content_height() + fragment_box_state.margin_box_bottom());
             } else {
                 auto font_metrics = fragment.layout_node().font().pixel_metrics();
-                auto typographic_height = font_metrics.ascent + font_metrics.descent;
+                auto typographic_height = CSSPixels::nearest_value_for(font_metrics.ascent + font_metrics.descent);
                 auto leading = fragment.layout_node().line_height() - typographic_height;
                 auto half_leading = leading / 2;
-                top_of_inline_box = (fragment.offset().y() + fragment.baseline() - font_metrics.ascent - half_leading);
-                bottom_of_inline_box = (fragment.offset().y() + fragment.baseline() + font_metrics.descent + half_leading);
+                top_of_inline_box = (fragment.offset().y() + fragment.baseline() - CSSPixels::nearest_value_for(font_metrics.ascent) - half_leading);
+                bottom_of_inline_box = (fragment.offset().y() + fragment.baseline() + CSSPixels::nearest_value_for(font_metrics.descent) + half_leading);
             }
             if (auto const* length_percentage = fragment.layout_node().computed_values().vertical_align().get_pointer<CSS::LengthPercentage>()) {
                 if (length_percentage->is_length())
                     bottom_of_inline_box += length_percentage->length().to_px(fragment.layout_node());
                 else if (length_percentage->is_percentage())
-                    bottom_of_inline_box += length_percentage->percentage().as_fraction() * m_context.containing_block().line_height().to_double();
+                    bottom_of_inline_box += m_context.containing_block().line_height().scaled(length_percentage->percentage().as_fraction());
             }
         }
 

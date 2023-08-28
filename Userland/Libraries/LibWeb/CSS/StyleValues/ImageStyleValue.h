@@ -10,6 +10,7 @@
 #pragma once
 
 #include <AK/URL.h>
+#include <LibJS/Heap/Handle.h>
 #include <LibWeb/CSS/Enums.h>
 #include <LibWeb/CSS/StyleValues/AbstractImageStyleValue.h>
 
@@ -19,13 +20,13 @@ class ImageStyleValue final
     : public AbstractImageStyleValue
     , public Weakable<ImageStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<ImageStyleValue>> create(AK::URL const& url)
+    static ValueComparingNonnullRefPtr<ImageStyleValue> create(AK::URL const& url)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) ImageStyleValue(url));
+        return adopt_ref(*new (nothrow) ImageStyleValue(url));
     }
     virtual ~ImageStyleValue() override = default;
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
     virtual bool equals(StyleValue const& other) const override;
 
     virtual void load_any_resources(DOM::Document&) override;
@@ -43,7 +44,7 @@ public:
 private:
     ImageStyleValue(AK::URL const&);
 
-    RefPtr<HTML::SharedImageRequest> m_image_request;
+    JS::Handle<HTML::SharedImageRequest> m_image_request;
 
     void animate();
     Gfx::Bitmap const* bitmap(size_t frame_index, Gfx::IntSize = {}) const;

@@ -129,9 +129,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         }
     };
 
-    statusbar.set_text(0, TRY("Score: 0"_string));
+    statusbar.set_text(0, "Score: 0"_string);
     reset_statistic_status();
-    statusbar.set_text(2, TRY("Time: 00:00:00"_string));
+    statusbar.set_text(2, "Time: 00:00:00"_string);
 
     app->on_action_enter = [&](GUI::Action& action) {
         statusbar.set_override_text(action.status_tip());
@@ -156,7 +156,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     game.on_game_start = [&]() {
         seconds_elapsed = 0;
         timer->start();
-        statusbar.set_text(2, "Time: 00:00:00"_string.release_value_but_fixme_should_propagate_errors());
+        statusbar.set_text(2, "Time: 00:00:00"_string);
     };
     game.on_game_end = [&](Spider::GameOverReason reason, uint32_t score) {
         auto game_was_in_progress = timer->is_active();
@@ -181,7 +181,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
             reset_statistic_status();
         }
-        statusbar.set_text(2, "Timer starts after your first move"_string.release_value_but_fixme_should_propagate_errors());
+        statusbar.set_text(2, "Timer starts after your first move"_string);
     };
 
     auto confirm_end_current_game = [&]() {
@@ -235,27 +235,27 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     two_suit_action->set_checked(mode == Spider::Mode::TwoSuit);
     suit_actions.add_action(two_suit_action);
 
-    auto game_menu = TRY(window->try_add_menu("&Game"_short_string));
-    TRY(game_menu->try_add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
+    auto game_menu = window->add_menu("&Game"_string);
+    game_menu->add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
         if (!confirm_end_current_game())
             return;
 
         game.setup(mode);
-    })));
-    TRY(game_menu->try_add_separator());
+    }));
+    game_menu->add_separator();
     auto undo_action = GUI::CommonActions::make_undo_action([&](auto&) {
         game.perform_undo();
     });
     undo_action->set_enabled(false);
-    TRY(game_menu->try_add_action(undo_action));
-    TRY(game_menu->try_add_separator());
-    TRY(game_menu->try_add_action(TRY(Cards::make_cards_settings_action(window))));
-    TRY(game_menu->try_add_action(single_suit_action));
-    TRY(game_menu->try_add_action(two_suit_action));
-    TRY(game_menu->try_add_separator());
-    TRY(game_menu->try_add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); })));
+    game_menu->add_action(undo_action);
+    game_menu->add_separator();
+    game_menu->add_action(TRY(Cards::make_cards_settings_action(window)));
+    game_menu->add_action(single_suit_action);
+    game_menu->add_action(two_suit_action);
+    game_menu->add_separator();
+    game_menu->add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); }));
 
-    auto view_menu = TRY(window->try_add_menu("&View"_short_string));
+    auto view_menu = window->add_menu("&View"_string);
 
     GUI::ActionGroup statistic_display_actions;
     statistic_display_actions.set_exclusive(true);
@@ -274,10 +274,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     best_time_actions->set_checked(statistic_display == StatisticDisplay::BestTime);
     statistic_display_actions.add_action(best_time_actions);
 
-    TRY(view_menu->try_add_action(high_score_action));
-    TRY(view_menu->try_add_action(best_time_actions));
+    view_menu->add_action(high_score_action);
+    view_menu->add_action(best_time_actions);
 
-    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
+    auto help_menu = window->add_menu("&Help"_string);
     help_menu->add_action(GUI::CommonActions::make_command_palette_action(window));
     help_menu->add_action(GUI::CommonActions::make_about_action("Spider", app_icon, window));
 

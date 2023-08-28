@@ -29,12 +29,10 @@ MouseEvent::MouseEvent(JS::Realm& realm, FlyString const& event_name, MouseEvent
 
 MouseEvent::~MouseEvent() = default;
 
-JS::ThrowCompletionOr<void> MouseEvent::initialize(JS::Realm& realm)
+void MouseEvent::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::MouseEventPrototype>(realm, "MouseEvent"));
-
-    return {};
 }
 
 // https://www.w3.org/TR/uievents/#dom-mouseevent-button
@@ -56,9 +54,9 @@ static i16 determine_button(unsigned mouse_button)
     }
 }
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<MouseEvent>> MouseEvent::create(JS::Realm& realm, FlyString const& event_name, MouseEventInit const& event_init)
+JS::NonnullGCPtr<MouseEvent> MouseEvent::create(JS::Realm& realm, FlyString const& event_name, MouseEventInit const& event_init)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<MouseEvent>(realm, realm, event_name, event_init));
+    return realm.heap().allocate<MouseEvent>(realm, realm, event_name, event_init);
 }
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<MouseEvent>> MouseEvent::create_from_platform_event(JS::Realm& realm, FlyString const& event_name, CSSPixelPoint offset, CSSPixelPoint client_offset, CSSPixelPoint page_offset, unsigned buttons, unsigned mouse_button)

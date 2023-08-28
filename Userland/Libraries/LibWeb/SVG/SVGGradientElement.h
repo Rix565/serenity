@@ -20,6 +20,20 @@ struct SVGPaintContext {
     Gfx::AffineTransform transform;
 };
 
+inline Gfx::SVGGradientPaintStyle::SpreadMethod to_gfx_spread_method(SpreadMethod spread_method)
+{
+    switch (spread_method) {
+    case SpreadMethod::Pad:
+        return Gfx::SVGGradientPaintStyle::SpreadMethod::Pad;
+    case SpreadMethod::Reflect:
+        return Gfx::SVGGradientPaintStyle::SpreadMethod::Reflect;
+    case SpreadMethod::Repeat:
+        return Gfx::SVGGradientPaintStyle::SpreadMethod::Repeat;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+}
+
 class SVGGradientElement : public SVGElement {
     WEB_PLATFORM_OBJECT(SVGGradientElement, SVGElement);
 
@@ -32,12 +46,14 @@ public:
 
     GradientUnits gradient_units() const;
 
+    SpreadMethod spread_method() const;
+
     Optional<Gfx::AffineTransform> gradient_transform() const;
 
 protected:
     SVGGradientElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     JS::GCPtr<SVGGradientElement const> linked_gradient() const;
 
@@ -61,6 +77,7 @@ protected:
 
 private:
     Optional<GradientUnits> m_gradient_units = {};
+    Optional<SpreadMethod> m_spread_method = {};
     Optional<Gfx::AffineTransform> m_gradient_transform = {};
 };
 

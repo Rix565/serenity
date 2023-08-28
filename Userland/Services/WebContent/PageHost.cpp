@@ -10,10 +10,12 @@
 #include <LibGfx/Painter.h>
 #include <LibGfx/ShareableBitmap.h>
 #include <LibGfx/SystemTheme.h>
+#include <LibWeb/CSS/SystemColor.h>
 #include <LibWeb/Cookie/ParsedCookie.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Painting/PaintableBox.h>
+#include <LibWeb/Painting/ViewportPaintable.h>
 #include <LibWeb/Platform/Timer.h>
 #include <WebContent/WebContentClientEndpoint.h>
 #include <WebContent/WebDriverConnection.h>
@@ -121,25 +123,25 @@ void PageHost::paint(Web::DevicePixelRect const& content_rect, Gfx::Bitmap& targ
     Gfx::Painter painter(target);
     Gfx::IntRect bitmap_rect { {}, content_rect.size().to_type<int>() };
 
-    if (auto* document = page().top_level_browsing_context().active_document())
+    auto document = page().top_level_browsing_context().active_document();
+    if (document) {
         document->update_layout();
+    }
 
     auto background_color = this->background_color();
 
     if (background_color.alpha() < 255)
-        painter.clear_rect(bitmap_rect, palette().base());
+        painter.clear_rect(bitmap_rect, Web::CSS::SystemColor::canvas());
     painter.fill_rect(bitmap_rect, background_color);
 
-    auto* layout_root = this->layout_root();
-    if (!layout_root) {
+    if (!document->paintable())
         return;
-    }
 
     Web::PaintContext context(painter, palette(), device_pixels_per_css_pixel());
     context.set_should_show_line_box_borders(m_should_show_line_box_borders);
     context.set_device_viewport_rect(content_rect);
     context.set_has_focus(m_has_focus);
-    layout_root->paint_all_phases(context);
+    document->paintable()->paint_all_phases(context);
 }
 
 void PageHost::set_viewport_rect(Web::DevicePixelRect const& rect)
@@ -299,6 +301,17 @@ void PageHost::page_did_request_link_context_menu(Web::CSSPixelPoint content_pos
     m_client.async_did_request_link_context_menu(page().css_to_device_point(content_position).to_type<int>(), url, target, modifiers);
 }
 
+void PageHost::page_did_request_image_context_menu(Web::CSSPixelPoint content_position, URL const& url, DeprecatedString const& target, unsigned modifiers, Gfx::Bitmap const* bitmap_pointer)
+{
+    auto bitmap = bitmap_pointer ? bitmap_pointer->to_shareable_bitmap() : Gfx::ShareableBitmap();
+    m_client.async_did_request_image_context_menu(page().css_to_device_point(content_position).to_type<int>(), url, target, modifiers, bitmap);
+}
+
+void PageHost::page_did_request_media_context_menu(Web::CSSPixelPoint content_position, DeprecatedString const& target, unsigned modifiers, Web::Page::MediaContextMenu menu)
+{
+    m_client.async_did_request_media_context_menu(page().css_to_device_point(content_position).to_type<int>(), target, modifiers, move(menu));
+}
+
 void PageHost::page_did_request_alert(String const& message)
 {
     m_client.async_did_request_alert(message);
@@ -354,6 +367,11 @@ Web::WebIDL::ExceptionOr<void> PageHost::toggle_media_controls_state()
     return page().toggle_media_controls_state();
 }
 
+void PageHost::set_user_style(String source)
+{
+    page().set_user_style(source);
+}
+
 void PageHost::page_did_request_accept_dialog()
 {
     m_client.async_did_request_accept_dialog();
@@ -367,17 +385,6 @@ void PageHost::page_did_request_dismiss_dialog()
 void PageHost::page_did_change_favicon(Gfx::Bitmap const& favicon)
 {
     m_client.async_did_change_favicon(favicon.to_shareable_bitmap());
-}
-
-void PageHost::page_did_request_image_context_menu(Web::CSSPixelPoint content_position, URL const& url, DeprecatedString const& target, unsigned modifiers, Gfx::Bitmap const* bitmap_pointer)
-{
-    auto bitmap = bitmap_pointer ? bitmap_pointer->to_shareable_bitmap() : Gfx::ShareableBitmap();
-    m_client.async_did_request_image_context_menu({ content_position.x().to_int(), content_position.y().to_int() }, url, target, modifiers, bitmap);
-}
-
-void PageHost::page_did_request_media_context_menu(Web::CSSPixelPoint content_position, DeprecatedString const& target, unsigned modifiers, Web::Page::MediaContextMenu menu)
-{
-    m_client.async_did_request_media_context_menu({ content_position.x().to_int(), content_position.y().to_int() }, target, modifiers, move(menu));
 }
 
 Vector<Web::Cookie::Cookie> PageHost::page_did_request_all_cookies(URL const& url)

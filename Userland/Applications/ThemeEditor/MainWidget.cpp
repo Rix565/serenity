@@ -245,8 +245,8 @@ MainWidget::MainWidget(NonnullRefPtr<AlignmentModel> alignment_model)
 
 ErrorOr<void> MainWidget::initialize_menubar(GUI::Window& window)
 {
-    auto file_menu = TRY(window.try_add_menu("&File"_short_string));
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_open_action([&](auto&) {
+    auto file_menu = window.add_menu("&File"_string);
+    file_menu->add_action(GUI::CommonActions::make_open_action([&](auto&) {
         if (request_close() == GUI::Window::CloseRequestDecision::StayOpen)
             return;
         FileSystemAccessClient::OpenFileOptions options {
@@ -262,7 +262,7 @@ ErrorOr<void> MainWidget::initialize_menubar(GUI::Window& window)
             GUI::MessageBox::show_error(&window, DeprecatedString::formatted("Can't open file named {}: {}", response.value().filename(), load_from_file_result.error()));
             return;
         }
-    })));
+    }));
 
     m_save_action = GUI::CommonActions::make_save_action([&](auto&) {
         if (m_path.has_value()) {
@@ -277,17 +277,17 @@ ErrorOr<void> MainWidget::initialize_menubar(GUI::Window& window)
             save_to_file(result.value().filename(), result.value().release_stream());
         }
     });
-    TRY(file_menu->try_add_action(*m_save_action));
+    file_menu->add_action(*m_save_action);
 
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_save_as_action([&](auto&) {
+    file_menu->add_action(GUI::CommonActions::make_save_as_action([&](auto&) {
         auto result = FileSystemAccessClient::Client::the().save_file(&window, "Theme", "ini", Core::File::OpenMode::ReadWrite | Core::File::OpenMode::Truncate);
         if (result.is_error())
             return;
         save_to_file(result.value().filename(), result.value().release_stream());
-    })));
-    TRY(file_menu->try_add_separator());
+    }));
+    file_menu->add_separator();
 
-    TRY(file_menu->add_recent_files_list([&](auto& action) {
+    file_menu->add_recent_files_list([&](auto& action) {
         if (request_close() == GUI::Window::CloseRequestDecision::StayOpen)
             return;
         auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(&window, action.text());
@@ -298,18 +298,18 @@ ErrorOr<void> MainWidget::initialize_menubar(GUI::Window& window)
             GUI::MessageBox::show_error(&window, DeprecatedString::formatted("Can't open file named {}: {}", response.value().filename(), load_from_file_result.error()));
             return;
         }
-    }));
+    });
 
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([&](auto&) {
+    file_menu->add_action(GUI::CommonActions::make_quit_action([&](auto&) {
         if (request_close() == GUI::Window::CloseRequestDecision::Close)
             GUI::Application::the()->quit();
-    })));
+    }));
 
-    TRY(window.try_add_menu(TRY(GUI::CommonMenus::make_accessibility_menu(*m_preview_widget))));
+    window.add_menu(GUI::CommonMenus::make_accessibility_menu(*m_preview_widget));
 
-    auto help_menu = TRY(window.try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(&window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Theme Editor", GUI::Icon::default_icon("app-theme-editor"sv), &window)));
+    auto help_menu = window.add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(&window));
+    help_menu->add_action(GUI::CommonActions::make_about_action("Theme Editor", GUI::Icon::default_icon("app-theme-editor"sv), &window));
 
     return {};
 }
@@ -466,12 +466,12 @@ ErrorOr<void> MainWidget::add_property_tab(PropertyTab const& property_tab)
 
     auto properties_list = TRY(GUI::Widget::try_create());
     scrollable_container->set_widget(properties_list);
-    TRY(properties_list->try_set_layout<GUI::VerticalBoxLayout>(GUI::Margins { 8 }, 12));
+    properties_list->set_layout<GUI::VerticalBoxLayout>(GUI::Margins { 8 }, 12);
 
     for (auto const& group : property_tab.property_groups) {
         NonnullRefPtr<GUI::GroupBox> group_box = TRY(properties_list->try_add<GUI::GroupBox>(group.title));
         // 1px less on the left makes the text line up with the group title.
-        TRY(group_box->try_set_layout<GUI::VerticalBoxLayout>(GUI::Margins { 8, 8, 8, 7 }, 12));
+        group_box->set_layout<GUI::VerticalBoxLayout>(GUI::Margins { 8, 8, 8, 7 }, 12);
         group_box->set_preferred_height(GUI::SpecialDimension::Fit);
 
         for (auto const& property : group.properties) {

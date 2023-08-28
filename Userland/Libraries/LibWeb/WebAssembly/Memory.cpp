@@ -25,7 +25,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Memory>> Memory::construct_impl(JS::Realm& 
     if (!address.has_value())
         return vm.throw_completion<JS::TypeError>("Wasm Memory allocation failed"sv);
 
-    auto memory_object = MUST_OR_THROW_OOM(vm.heap().allocate<Memory>(realm, realm, *address));
+    auto memory_object = vm.heap().allocate<Memory>(realm, realm, *address);
     Detail::s_abstract_machine.store().get(*address)->successful_grow_hook = [memory_object] {
         MUST(memory_object->reset_the_memory_buffer());
     };
@@ -39,12 +39,10 @@ Memory::Memory(JS::Realm& realm, Wasm::MemoryAddress address)
 {
 }
 
-JS::ThrowCompletionOr<void> Memory::initialize(JS::Realm& realm)
+void Memory::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::MemoryPrototype>(realm, "WebAssembly.Memory"sv));
-
-    return {};
 }
 
 // https://webassembly.github.io/spec/js-api/#dom-memory-grow
@@ -74,7 +72,7 @@ WebIDL::ExceptionOr<void> Memory::reset_the_memory_buffer()
     auto& vm = this->vm();
     auto& realm = *vm.current_realm();
 
-    MUST(JS::detach_array_buffer(vm, *m_buffer, MUST_OR_THROW_OOM(JS::PrimitiveString::create(vm, "WebAssembly.Memory"sv))));
+    MUST(JS::detach_array_buffer(vm, *m_buffer, JS::PrimitiveString::create(vm, "WebAssembly.Memory"_string)));
 
     auto buffer = TRY(create_a_memory_buffer(vm, realm, m_address));
     m_buffer = buffer;
@@ -102,7 +100,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<JS::ArrayBuffer>> Memory::create_a_memory_b
         return vm.throw_completion<JS::RangeError>("Could not find the memory instance"sv);
 
     auto array_buffer = JS::ArrayBuffer::create(realm, &memory->data());
-    array_buffer->set_detach_key(MUST_OR_THROW_OOM(JS::PrimitiveString::create(vm, "WebAssembly.Memory"sv)));
+    array_buffer->set_detach_key(JS::PrimitiveString::create(vm, "WebAssembly.Memory"_string));
 
     return JS::NonnullGCPtr(*array_buffer);
 }

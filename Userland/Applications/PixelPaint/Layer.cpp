@@ -8,9 +8,11 @@
 
 #include "Layer.h"
 #include "Image.h"
+#include "ImageEditor.h"
 #include "Selection.h"
 #include <AK/RefPtr.h>
 #include <AK/Try.h>
+#include <LibGUI/Painter.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Painter.h>
 
@@ -45,6 +47,7 @@ ErrorOr<NonnullRefPtr<Layer>> Layer::create_snapshot(Image& image, Layer const& 
         snapshot->m_mask_bitmap = TRY(layer.mask_bitmap()->clone());
         snapshot->m_edit_mode = layer.m_edit_mode;
         snapshot->m_mask_type = layer.m_mask_type;
+        snapshot->m_visible_mask = layer.m_visible_mask;
     }
 
     /*
@@ -322,6 +325,7 @@ void Layer::delete_mask()
 {
     m_mask_bitmap = nullptr;
     m_mask_type = MaskType::None;
+    m_visible_mask = false;
     set_edit_mode(EditMode::Content);
     update_cached_bitmap();
 }
@@ -449,6 +453,39 @@ Optional<Gfx::IntRect> Layer::nonempty_content_bounding_rect() const
     };
 }
 
+Optional<Gfx::IntRect> Layer::editing_mask_bounding_rect() const
+{
+    if (mask_type() != MaskType::EditingMask)
+        return {};
+
+    Optional<int> min_content_y;
+    Optional<int> min_content_x;
+    Optional<int> max_content_y;
+    Optional<int> max_content_x;
+
+    for (int y = 0; y < m_mask_bitmap->height(); ++y) {
+        auto scanline = m_mask_bitmap->scanline(y);
+        for (int x = 0; x < m_mask_bitmap->width(); ++x) {
+            // Do we have any alpha values?
+            if (scanline[x] < 0x01000000)
+                continue;
+            min_content_x = min(min_content_x.value_or(x), x);
+            min_content_y = min(min_content_y.value_or(y), y);
+            max_content_x = max(max_content_x.value_or(x), x);
+            max_content_y = max(max_content_y.value_or(y), y);
+        }
+    }
+
+    if (!min_content_x.has_value())
+        return {};
+
+    return Gfx::IntRect {
+        *min_content_x,
+        *min_content_y,
+        *max_content_x - *min_content_x + 1,
+        *max_content_y - *min_content_y + 1
+    };
+}
 ErrorOr<NonnullRefPtr<Layer>> Layer::duplicate(DeprecatedString name)
 {
     auto duplicated_layer = TRY(Layer::create_snapshot(m_image, *this));
@@ -457,11 +494,42 @@ ErrorOr<NonnullRefPtr<Layer>> Layer::duplicate(DeprecatedString name)
     return duplicated_layer;
 }
 
-Layer::MaskType Layer::mask_type()
+Layer::MaskType Layer::mask_type() const
 {
     if (m_mask_bitmap.is_null())
         return MaskType::None;
     return m_mask_type;
+}
+
+void Layer::on_second_paint(ImageEditor& editor)
+{
+    if (!m_visible_mask || edit_mode() != EditMode::Mask)
+        return;
+
+    auto visible_rect = editor.active_layer_visible_rect();
+    if (visible_rect.width() == 0 || visible_rect.height() == 0)
+        return;
+
+    GUI::Painter painter(editor);
+    painter.translate(visible_rect.location());
+
+    auto content_offset = editor.content_to_frame_position(location());
+    auto drawing_cursor_offset = visible_rect.location() - content_offset.to_type<int>();
+
+    Gfx::Color editing_mask_color = editor.primary_color();
+    int mask_alpha;
+    Gfx::IntPoint mask_coordinates;
+
+    for (int y = 0; y < visible_rect.height(); y++) {
+        for (int x = 0; x < visible_rect.width(); x++) {
+            mask_coordinates = (Gfx::FloatPoint(drawing_cursor_offset.x() + x, drawing_cursor_offset.y() + y) / editor.scale()).to_type<int>();
+            mask_alpha = mask_bitmap()->get_pixel(mask_coordinates).alpha();
+            if (!mask_alpha)
+                continue;
+
+            painter.set_pixel(x, y, editing_mask_color.with_alpha(mask_alpha), true);
+        }
+    }
 }
 
 }

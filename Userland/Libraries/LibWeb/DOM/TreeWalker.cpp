@@ -22,12 +22,10 @@ TreeWalker::TreeWalker(Node& root)
 
 TreeWalker::~TreeWalker() = default;
 
-JS::ThrowCompletionOr<void> TreeWalker::initialize(JS::Realm& realm)
+void TreeWalker::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::TreeWalkerPrototype>(realm, "TreeWalker"));
-
-    return {};
 }
 
 void TreeWalker::visit_edges(Cell::Visitor& visitor)
@@ -39,12 +37,12 @@ void TreeWalker::visit_edges(Cell::Visitor& visitor)
 }
 
 // https://dom.spec.whatwg.org/#dom-document-createtreewalker
-WebIDL::ExceptionOr<JS::NonnullGCPtr<TreeWalker>> TreeWalker::create(Node& root, unsigned what_to_show, JS::GCPtr<NodeFilter> filter)
+JS::NonnullGCPtr<TreeWalker> TreeWalker::create(Node& root, unsigned what_to_show, JS::GCPtr<NodeFilter> filter)
 {
     // 1. Let walker be a new TreeWalker object.
     // 2. Set walker’s root and walker’s current to root.
     auto& realm = root.realm();
-    auto walker = MUST_OR_THROW_OOM(realm.heap().allocate<TreeWalker>(realm, root));
+    auto walker = realm.heap().allocate<TreeWalker>(realm, root);
 
     // 3. Set walker’s whatToShow to whatToShow.
     walker->m_what_to_show = what_to_show;

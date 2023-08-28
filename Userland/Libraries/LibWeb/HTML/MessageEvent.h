@@ -22,8 +22,8 @@ class MessageEvent : public DOM::Event {
     WEB_PLATFORM_OBJECT(MessageEvent, DOM::Event);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<MessageEvent>> create(JS::Realm&, FlyString const& event_name, MessageEventInit const& event_init = {});
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<MessageEvent>> construct_impl(JS::Realm&, FlyString const& event_name, MessageEventInit const& event_init);
+    [[nodiscard]] static JS::NonnullGCPtr<MessageEvent> create(JS::Realm&, FlyString const& event_name, MessageEventInit const& = {});
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<MessageEvent>> construct_impl(JS::Realm&, FlyString const& event_name, MessageEventInit const&);
 
     MessageEvent(JS::Realm&, FlyString const& event_name, MessageEventInit const& event_init);
     virtual ~MessageEvent() override;
@@ -33,7 +33,7 @@ public:
     String const& last_event_id() const { return m_last_event_id; }
 
 private:
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     JS::Value m_data;

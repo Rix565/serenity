@@ -32,11 +32,11 @@ GitWidget::GitWidget()
     auto& refresh_button = unstaged_header.add<GUI::Button>();
     refresh_button.set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv).release_value_but_fixme_should_propagate_errors());
     refresh_button.set_fixed_size(16, 16);
-    refresh_button.set_tooltip("refresh");
+    refresh_button.set_tooltip_deprecated("refresh");
     refresh_button.on_click = [this](int) { refresh(); };
 
     auto& unstaged_label = unstaged_header.add<GUI::Label>();
-    unstaged_label.set_text("Unstaged"_string.release_value_but_fixme_should_propagate_errors());
+    unstaged_label.set_text("Unstaged"_string);
 
     unstaged_header.set_fixed_height(20);
     m_unstaged_files = unstaged.add<GitFilesView>(
@@ -60,11 +60,11 @@ GitWidget::GitWidget()
     auto& commit_button = staged_header.add<GUI::Button>();
     commit_button.set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/commit.png"sv).release_value_but_fixme_should_propagate_errors());
     commit_button.set_fixed_size(16, 16);
-    commit_button.set_tooltip("commit");
+    commit_button.set_tooltip_deprecated("commit");
     commit_button.on_click = [this](int) { commit(); };
 
     auto& staged_label = staged_header.add<GUI::Label>();
-    staged_label.set_text("Staged"_short_string);
+    staged_label.set_text("Staged"_string);
 
     staged_header.set_fixed_height(20);
     m_staged_files = staged.add<GitFilesView>(

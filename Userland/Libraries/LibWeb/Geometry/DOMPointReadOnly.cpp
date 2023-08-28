@@ -13,7 +13,7 @@ namespace Web::Geometry {
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMPointReadOnly>> DOMPointReadOnly::construct_impl(JS::Realm& realm, double x, double y, double z, double w)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<DOMPointReadOnly>(realm, realm, x, y, z, w));
+    return realm.heap().allocate<DOMPointReadOnly>(realm, realm, x, y, z, w);
 }
 
 DOMPointReadOnly::DOMPointReadOnly(JS::Realm& realm, double x, double y, double z, double w)
@@ -34,12 +34,10 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMPointReadOnly>> DOMPointReadOnly::from_p
 
 DOMPointReadOnly::~DOMPointReadOnly() = default;
 
-JS::ThrowCompletionOr<void> DOMPointReadOnly::initialize(JS::Realm& realm)
+void DOMPointReadOnly::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::DOMPointReadOnlyPrototype>(realm, "DOMPointReadOnly"));
-
-    return {};
 }
 
 }

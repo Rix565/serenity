@@ -16,13 +16,13 @@ namespace Web::CSS {
 
 class BorderRadiusShorthandStyleValue final : public StyleValueWithDefaultOperators<BorderRadiusShorthandStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<BorderRadiusShorthandStyleValue>> create(
+    static ValueComparingNonnullRefPtr<BorderRadiusShorthandStyleValue> create(
         ValueComparingNonnullRefPtr<BorderRadiusStyleValue const> top_left,
         ValueComparingNonnullRefPtr<BorderRadiusStyleValue const> top_right,
         ValueComparingNonnullRefPtr<BorderRadiusStyleValue const> bottom_right,
         ValueComparingNonnullRefPtr<BorderRadiusStyleValue const> bottom_left)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) BorderRadiusShorthandStyleValue(move(top_left), move(top_right), move(bottom_right), move(bottom_left)));
+        return adopt_ref(*new (nothrow) BorderRadiusShorthandStyleValue(move(top_left), move(top_right), move(bottom_right), move(bottom_left)));
     }
     virtual ~BorderRadiusShorthandStyleValue() override = default;
 
@@ -31,7 +31,7 @@ public:
     auto bottom_right() const { return m_properties.bottom_right; }
     auto bottom_left() const { return m_properties.bottom_left; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(BorderRadiusShorthandStyleValue const& other) const { return m_properties == other.m_properties; }
 

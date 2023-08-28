@@ -117,7 +117,7 @@ BookmarksBarWidget::BookmarksBarWidget(DeprecatedString const& bookmarks_file, b
         set_visible(false);
 
     m_additional = GUI::Button::construct();
-    m_additional->set_tooltip("Show hidden bookmarks");
+    m_additional->set_tooltip_deprecated("Show hidden bookmarks");
     m_additional->set_menu(m_additional_menu);
     auto bitmap_or_error = Gfx::Bitmap::load_from_file("/res/icons/16x16/overflow-menu.png"sv);
     if (!bitmap_or_error.is_error())
@@ -165,8 +165,8 @@ BookmarksBarWidget::BookmarksBarWidget(DeprecatedString const& bookmarks_file, b
         this));
 
     Vector<GUI::JsonArrayModel::FieldSpec> fields;
-    fields.empend("title", "Title"_short_string, Gfx::TextAlignment::CenterLeft);
-    fields.empend("url", "Url"_short_string, Gfx::TextAlignment::CenterRight);
+    fields.empend("title", "Title"_string, Gfx::TextAlignment::CenterLeft);
+    fields.empend("url", "Url"_string, Gfx::TextAlignment::CenterRight);
     set_model(GUI::JsonArrayModel::create(bookmarks_file, move(fields)));
     model()->invalidate();
 }
@@ -216,7 +216,7 @@ void BookmarksBarWidget::model_did_update(unsigned)
         button.set_fixed_size(font().width(title) + 32, 20);
         button.set_relative_rect(rect);
         button.set_focus_policy(GUI::FocusPolicy::TabFocus);
-        button.set_tooltip(url);
+        button.set_tooltip_deprecated(url);
         button.set_allowed_mouse_buttons_for_pressing(GUI::MouseButton::Primary | GUI::MouseButton::Middle);
 
         button.on_click = [title, url, this](auto) {
@@ -265,7 +265,7 @@ void BookmarksBarWidget::update_content_size()
     } else {
         // hide all items > m_last_visible_index and create new bookmarks menu for them
         m_additional->set_visible(true);
-        m_additional_menu = GUI::Menu::construct("Additional Bookmarks"_string.release_value_but_fixme_should_propagate_errors());
+        m_additional_menu = GUI::Menu::construct("Additional Bookmarks"_string);
         m_additional->set_menu(m_additional_menu);
         for (size_t i = m_last_visible_index; i < m_bookmarks.size(); ++i) {
             auto& bookmark = m_bookmarks.at(i);

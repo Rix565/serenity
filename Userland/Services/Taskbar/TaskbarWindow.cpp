@@ -73,13 +73,13 @@ TaskbarWindow::TaskbarWindow()
 ErrorOr<void> TaskbarWindow::populate_taskbar()
 {
     auto main_widget = TRY(set_main_widget<TaskbarWidget>());
-    TRY(main_widget->try_set_layout<GUI::HorizontalBoxLayout>(GUI::Margins { 2, 3, 0, 3 }));
+    main_widget->set_layout<GUI::HorizontalBoxLayout>(GUI::Margins { 2, 3, 0, 3 });
 
     m_quick_launch = TRY(Taskbar::QuickLaunchWidget::create());
     TRY(main_widget->try_add_child(*m_quick_launch));
 
     m_task_button_container = TRY(main_widget->try_add<GUI::Widget>());
-    TRY(m_task_button_container->try_set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 3));
+    m_task_button_container->set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 3);
 
     m_default_icon = TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/window.png"sv));
 
@@ -89,7 +89,7 @@ ErrorOr<void> TaskbarWindow::populate_taskbar()
     m_clock_widget = TRY(main_widget->try_add<Taskbar::ClockWidget>());
 
     m_show_desktop_button = TRY(main_widget->try_add<GUI::Button>());
-    m_show_desktop_button->set_tooltip("Show Desktop");
+    m_show_desktop_button->set_tooltip_deprecated("Show Desktop");
     m_show_desktop_button->set_icon(TRY(GUI::Icon::try_create_default_icon("desktop"sv)).bitmap_for_size(16));
     m_show_desktop_button->set_button_style(Gfx::ButtonStyle::Coolbar);
     m_show_desktop_button->set_fixed_size(24, 24);
@@ -110,7 +110,7 @@ void TaskbarWindow::add_system_menu(NonnullRefPtr<GUI::Menu> system_menu)
 {
     m_system_menu = move(system_menu);
 
-    m_start_button = GUI::Button::construct("Serenity"_string.release_value_but_fixme_should_propagate_errors());
+    m_start_button = GUI::Button::construct("Serenity"_string);
     set_start_button_font(Gfx::FontDatabase::default_font().bold_variant());
     m_start_button->set_icon_spacing(0);
     auto app_icon = GUI::Icon::default_icon("ladyball"sv);
@@ -199,7 +199,7 @@ void TaskbarWindow::update_window_button(::Window& window, bool show_as_active)
     if (!button)
         return;
     button->set_text(String::from_deprecated_string(window.title()).release_value_but_fixme_should_propagate_errors());
-    button->set_tooltip(window.title());
+    button->set_tooltip_deprecated(window.title());
     button->set_checked(show_as_active);
     button->set_visible(is_window_on_current_workspace(window));
 }

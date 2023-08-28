@@ -21,7 +21,7 @@
 #include <LibConfig/Client.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/EventLoop.h>
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibCore/System.h>
 #include <LibCore/Timer.h>
 #include <LibGUI/Action.h>
@@ -123,11 +123,11 @@ public:
             auto& fs_table_view = *self.find_child_of_type_named<GUI::TableView>("storage_table");
 
             Vector<GUI::JsonArrayModel::FieldSpec> df_fields;
-            df_fields.empend("mount_point", "Mount point"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterLeft);
-            df_fields.empend("class_name", "Class"_short_string, Gfx::TextAlignment::CenterLeft);
-            df_fields.empend("source", "Source"_short_string, Gfx::TextAlignment::CenterLeft);
+            df_fields.empend("mount_point", "Mount point"_string, Gfx::TextAlignment::CenterLeft);
+            df_fields.empend("class_name", "Class"_string, Gfx::TextAlignment::CenterLeft);
+            df_fields.empend("source", "Source"_string, Gfx::TextAlignment::CenterLeft);
             df_fields.empend(
-                "Size"_short_string, Gfx::TextAlignment::CenterRight,
+                "Size"_string, Gfx::TextAlignment::CenterRight,
                 [](JsonObject const& object) {
                     StringBuilder size_builder;
                     size_builder.append(' ');
@@ -148,7 +148,7 @@ public:
                     return percentage;
                 });
             df_fields.empend(
-                "Used"_short_string, Gfx::TextAlignment::CenterRight,
+                "Used"_string, Gfx::TextAlignment::CenterRight,
                 [](JsonObject const& object) {
             auto total_blocks = object.get_u64("total_block_count"sv).value_or(0);
             auto free_blocks = object.get_u64("free_block_count"sv).value_or(0);
@@ -161,19 +161,19 @@ public:
                     return used_blocks * object.get_u64("block_size"sv).value_or(0);
                 });
             df_fields.empend(
-                "Available"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight,
+                "Available"_string, Gfx::TextAlignment::CenterRight,
                 [](JsonObject const& object) {
                     return human_readable_size(object.get_u64("free_block_count"sv).value_or(0) * object.get_u64("block_size"sv).value_or(0));
                 },
                 [](JsonObject const& object) {
                     return object.get_u64("free_block_count"sv).value_or(0) * object.get_u64("block_size"sv).value_or(0);
                 });
-            df_fields.empend("Access"_short_string, Gfx::TextAlignment::CenterLeft, [](JsonObject const& object) {
+            df_fields.empend("Access"_string, Gfx::TextAlignment::CenterLeft, [](JsonObject const& object) {
                 bool readonly = object.get_bool("readonly"sv).value_or(false);
                 int mount_flags = object.get_i32("mount_flags"sv).value_or(0);
                 return readonly || (mount_flags & MS_RDONLY) ? "Read-only" : "Read/Write";
             });
-            df_fields.empend("Mount flags"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterLeft, [](JsonObject const& object) {
+            df_fields.empend("Mount flags"_string, Gfx::TextAlignment::CenterLeft, [](JsonObject const& object) {
                 int mount_flags = object.get_i32("mount_flags"sv).value_or(0);
                 StringBuilder builder;
                 bool first = true;
@@ -197,11 +197,11 @@ public:
                     return DeprecatedString("defaults");
                 return builder.to_deprecated_string();
             });
-            df_fields.empend("free_block_count", "Free blocks"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight);
-            df_fields.empend("total_block_count", "Total blocks"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight);
-            df_fields.empend("free_inode_count", "Free inodes"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight);
-            df_fields.empend("total_inode_count", "Total inodes"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight);
-            df_fields.empend("block_size", "Block size"_string.release_value_but_fixme_should_propagate_errors(), Gfx::TextAlignment::CenterRight);
+            df_fields.empend("free_block_count", "Free blocks"_string, Gfx::TextAlignment::CenterRight);
+            df_fields.empend("total_block_count", "Total blocks"_string, Gfx::TextAlignment::CenterRight);
+            df_fields.empend("free_inode_count", "Free inodes"_string, Gfx::TextAlignment::CenterRight);
+            df_fields.empend("total_inode_count", "Total inodes"_string, Gfx::TextAlignment::CenterRight);
+            df_fields.empend("block_size", "Block size"_string, Gfx::TextAlignment::CenterRight);
 
             fs_table_view.set_model(MUST(GUI::SortingProxyModel::create(GUI::JsonArrayModel::create("/sys/kernel/df", move(df_fields)))));
 
@@ -427,26 +427,26 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         },
         &process_table_view);
 
-    auto file_menu = TRY(window->try_add_menu("&File"_short_string));
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    auto file_menu = window->add_menu("&File"_string);
+    file_menu->add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
-    })));
+    }));
 
     auto process_context_menu = TRY(GUI::Menu::try_create());
-    TRY(process_context_menu->try_add_action(kill_action));
-    TRY(process_context_menu->try_add_action(stop_action));
-    TRY(process_context_menu->try_add_action(continue_action));
-    TRY(process_context_menu->try_add_separator());
-    TRY(process_context_menu->try_add_action(profile_action));
-    TRY(process_context_menu->try_add_action(debug_action));
-    TRY(process_context_menu->try_add_separator());
-    TRY(process_context_menu->try_add_action(process_properties_action));
+    process_context_menu->add_action(kill_action);
+    process_context_menu->add_action(stop_action);
+    process_context_menu->add_action(continue_action);
+    process_context_menu->add_separator();
+    process_context_menu->add_action(profile_action);
+    process_context_menu->add_action(debug_action);
+    process_context_menu->add_separator();
+    process_context_menu->add_action(process_properties_action);
     process_table_view.on_context_menu_request = [&]([[maybe_unused]] const GUI::ModelIndex& index, const GUI::ContextMenuEvent& event) {
         if (index.is_valid())
             process_context_menu->popup(event.screen_position(), process_properties_action);
     };
 
-    auto frequency_menu = TRY(window->try_add_menu(TRY("F&requency"_string)));
+    auto frequency_menu = window->add_menu("F&requency"_string);
     GUI::ActionGroup frequency_action_group;
     frequency_action_group.set_exclusive(true);
 
@@ -458,7 +458,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         action->set_status_tip(TRY(String::formatted("Refresh every {} seconds", seconds)));
         action->set_checked(frequency == seconds);
         frequency_action_group.add_action(*action);
-        TRY(frequency_menu->try_add_action(*action));
+        frequency_menu->add_action(*action);
         return {};
     };
 
@@ -466,9 +466,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(make_frequency_action(3));
     TRY(make_frequency_action(5));
 
-    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("System Monitor", app_icon, window)));
+    auto help_menu = window->add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(window));
+    help_menu->add_action(GUI::CommonActions::make_about_action("System Monitor", app_icon, window));
 
     process_table_view.on_activation = [&](auto&) {
         if (process_properties_action->is_enabled())
@@ -578,7 +578,7 @@ ErrorOr<void> build_performance_tab(GUI::Widget& graphs_container)
     Vector<SystemMonitor::GraphWidget&> cpu_graphs;
     for (auto row = 0u; row < cpu_graph_rows; ++row) {
         auto cpu_graph_row = TRY(cpu_graph_group_box.try_add<GUI::Widget>());
-        TRY(cpu_graph_row->try_set_layout<GUI::HorizontalBoxLayout>(6));
+        cpu_graph_row->set_layout<GUI::HorizontalBoxLayout>(6);
         cpu_graph_row->set_fixed_height(108);
         for (auto i = 0u; i < cpu_graphs_per_row; ++i) {
             auto cpu_graph = TRY(cpu_graph_row->try_add<SystemMonitor::GraphWidget>());

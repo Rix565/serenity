@@ -5,11 +5,11 @@ serenity_component(
     DEPENDS BrowserSettings ImageDecoder RequestServer WebContent WebSocket
 )
 
-compile_gml(BrowserWindow.gml BrowserWindowGML.h browser_window_gml)
-compile_gml(EditBookmark.gml EditBookmarkGML.h edit_bookmark_gml)
-compile_gml(History/HistoryWidget.gml HistoryWidgetGML.h history_widget_gml)
-compile_gml(StorageWidget.gml StorageWidgetGML.h storage_widget_gml)
-compile_gml(Tab.gml TabGML.h tab_gml)
+stringify_gml(BrowserWindow.gml BrowserWindowGML.h browser_window_gml)
+stringify_gml(EditBookmark.gml EditBookmarkGML.h edit_bookmark_gml)
+stringify_gml(History/HistoryWidget.gml HistoryWidgetGML.h history_widget_gml)
+stringify_gml(StorageWidget.gml StorageWidgetGML.h storage_widget_gml)
+stringify_gml(Tab.gml TabGML.h tab_gml)
 
 set(SOURCES
     BookmarksBarWidget.cpp
@@ -41,5 +41,5 @@ set(GENERATED_SOURCES
 )
 
 serenity_app(Browser ICON app-browser)
-target_link_libraries(Browser PRIVATE LibCore LibFileSystem LibWebView LibWeb LibProtocol LibGUI LibDesktop LibConfig LibGfx LibIPC LibJS LibLocale LibMain LibSyntax LibSQL)
+target_link_libraries(Browser PRIVATE LibCore LibFileSystem LibWebView LibWeb LibProtocol LibPublicSuffix LibGUI LibDesktop LibConfig LibGfx LibIPC LibJS LibLocale LibMain LibSyntax LibSQL)
 link_with_locale_data(Browser)

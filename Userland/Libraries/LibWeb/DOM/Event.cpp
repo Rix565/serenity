@@ -14,9 +14,9 @@
 
 namespace Web::DOM {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Event>> Event::create(JS::Realm& realm, FlyString const& event_name, EventInit const& event_init)
+JS::NonnullGCPtr<Event> Event::create(JS::Realm& realm, FlyString const& event_name, EventInit const& event_init)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<Event>(realm, realm, event_name, event_init));
+    return realm.heap().allocate<Event>(realm, realm, event_name, event_init);
 }
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<Event>> Event::construct_impl(JS::Realm& realm, FlyString const& event_name, EventInit const& event_init)
@@ -41,12 +41,10 @@ Event::Event(JS::Realm& realm, FlyString const& type, EventInit const& event_ini
 {
 }
 
-JS::ThrowCompletionOr<void> Event::initialize(JS::Realm& realm)
+void Event::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::EventPrototype>(realm, "Event"));
-
-    return {};
 }
 
 void Event::visit_edges(Visitor& visitor)

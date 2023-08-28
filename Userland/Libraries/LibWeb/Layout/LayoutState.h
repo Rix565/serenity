@@ -51,8 +51,6 @@ struct LayoutState {
 
         void set_indefinite_content_width();
         void set_indefinite_content_height();
-        void set_min_content_width();
-        void set_max_content_width();
 
         // NOTE: These are used by FlexFormattingContext to assign a temporary main size to items
         //       early on, so that descendants have something to resolve percentages against.
@@ -150,7 +148,8 @@ struct LayoutState {
         Optional<Painting::PaintableBox::TableCellCoordinates> m_table_cell_coordinates;
     };
 
-    void commit();
+    // Commits the used values produced by layout and builds a paintable tree.
+    void commit(Box& root);
 
     // NOTE: get_mutable() will CoW the UsedValues if it's inherited from an ancestor state;
     UsedValues& get_mutable(NodeWithStyleAndBoxModelMetrics const&);
@@ -166,20 +165,17 @@ struct LayoutState {
         Optional<CSSPixels> min_content_width;
         Optional<CSSPixels> max_content_width;
 
-        // NOTE: Since intrinsic heights depend on the amount of available width, we have to cache
-        //       three separate kinds of results, depending on the available width at the time of calculation.
-        HashMap<CSSPixels, Optional<CSSPixels>> min_content_height_with_definite_available_width;
-        HashMap<CSSPixels, Optional<CSSPixels>> max_content_height_with_definite_available_width;
-        Optional<CSSPixels> min_content_height_with_min_content_available_width;
-        Optional<CSSPixels> max_content_height_with_min_content_available_width;
-        Optional<CSSPixels> min_content_height_with_max_content_available_width;
-        Optional<CSSPixels> max_content_height_with_max_content_available_width;
+        HashMap<CSSPixels, Optional<CSSPixels>> min_content_height;
+        HashMap<CSSPixels, Optional<CSSPixels>> max_content_height;
     };
 
     HashMap<JS::GCPtr<NodeWithStyleAndBoxModelMetrics const>, NonnullOwnPtr<IntrinsicSizes>> mutable intrinsic_sizes;
 
     LayoutState const* m_parent { nullptr };
     LayoutState const& m_root;
+
+private:
+    void resolve_relative_positions(Vector<Painting::PaintableWithLines&> const&);
 };
 
 }

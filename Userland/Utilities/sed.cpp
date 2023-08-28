@@ -690,10 +690,9 @@ public:
         VERIFY(m_output->is_open());
 
         TRY(m_output->seek(0, SeekMode::SetPosition));
-        auto source_stat = TRY(Core::System::stat(m_output_temp_file->path()));
+        auto source_stat = TRY(Core::System::stat(m_input_file_path.string()));
         return FileSystem::copy_file(
-            m_input_file_path.string(), m_output_temp_file->path(), source_stat, *m_output,
-            FileSystem::PreserveMode::Ownership | FileSystem::PreserveMode::Permissions);
+            m_input_file_path.string(), m_output_temp_file->path(), source_stat, *m_output);
     }
 
 private:
@@ -956,10 +955,10 @@ ErrorOr<int> serenity_main(Main::Arguments args)
     HashMap<String, String> paths_to_unveil;
 
     for (auto const& input_filename : TRY(script.input_filenames())) {
-        TRY(paths_to_unveil.try_set(TRY(FileSystem::absolute_path(input_filename)), edit_in_place ? "rwc"_short_string : "r"_short_string));
+        TRY(paths_to_unveil.try_set(TRY(FileSystem::absolute_path(input_filename)), edit_in_place ? "rwc"_string : "r"_string));
     }
     for (auto const& output_filename : TRY(script.output_filenames())) {
-        TRY(paths_to_unveil.try_set(TRY(FileSystem::absolute_path(output_filename)), "w"_short_string));
+        TRY(paths_to_unveil.try_set(TRY(FileSystem::absolute_path(output_filename)), "w"_string));
     }
 
     Vector<File> inputs;
@@ -967,7 +966,7 @@ ErrorOr<int> serenity_main(Main::Arguments args)
         if (filename == "-"sv) {
             inputs.empend(TRY(File::create_from_stdin()));
         } else {
-            TRY(paths_to_unveil.try_set(TRY(FileSystem::absolute_path(filename)), edit_in_place ? "rwc"_short_string : "r"_short_string));
+            TRY(paths_to_unveil.try_set(TRY(FileSystem::absolute_path(filename)), edit_in_place ? "rwc"_string : "r"_string));
             auto file = TRY(Core::File::open(filename, Core::File::OpenMode::Read));
             if (edit_in_place)
                 inputs.empend(TRY(File::create_with_output_file(LexicalPath { filename }, move(file))));

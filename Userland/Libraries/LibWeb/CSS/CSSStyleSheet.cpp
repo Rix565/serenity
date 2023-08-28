@@ -15,9 +15,9 @@
 
 namespace Web::CSS {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSStyleSheet>> CSSStyleSheet::create(JS::Realm& realm, CSSRuleList& rules, MediaList& media, Optional<AK::URL> location)
+JS::NonnullGCPtr<CSSStyleSheet> CSSStyleSheet::create(JS::Realm& realm, CSSRuleList& rules, MediaList& media, Optional<AK::URL> location)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<CSSStyleSheet>(realm, realm, rules, media, move(location)));
+    return realm.heap().allocate<CSSStyleSheet>(realm, realm, rules, media, move(location));
 }
 
 CSSStyleSheet::CSSStyleSheet(JS::Realm& realm, CSSRuleList& rules, MediaList& media, Optional<AK::URL> location)
@@ -37,12 +37,10 @@ CSSStyleSheet::CSSStyleSheet(JS::Realm& realm, CSSRuleList& rules, MediaList& me
     };
 }
 
-JS::ThrowCompletionOr<void> CSSStyleSheet::initialize(JS::Realm& realm)
+void CSSStyleSheet::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::CSSStyleSheetPrototype>(realm, "CSSStyleSheet"));
-
-    return {};
 }
 
 void CSSStyleSheet::visit_edges(Cell::Visitor& visitor)
@@ -51,6 +49,9 @@ void CSSStyleSheet::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_style_sheet_list.ptr());
     visitor.visit(m_rules);
     visitor.visit(m_owner_css_rule);
+    visitor.visit(m_default_namespace_rule);
+    for (auto& [key, namespace_rule] : m_namespace_rules)
+        visitor.visit(namespace_rule);
 }
 
 // https://www.w3.org/TR/cssom/#dom-cssstylesheet-insertrule
@@ -151,8 +152,19 @@ Optional<StringView> CSSStyleSheet::default_namespace() const
     return {};
 }
 
+Optional<StringView> CSSStyleSheet::namespace_uri(StringView namespace_prefix) const
+{
+    return m_namespace_rules.get(namespace_prefix)
+        .map([](JS::GCPtr<CSSNamespaceRule> namespace_) {
+            return namespace_->namespace_uri().view();
+        });
+}
+
 void CSSStyleSheet::recalculate_namespaces()
 {
+    m_default_namespace_rule = nullptr;
+    m_namespace_rules.clear();
+
     for (JS::NonnullGCPtr<CSSRule> rule : *m_rules) {
         // "Any @namespace rules must follow all @charset and @import rules and precede all other
         // non-ignored at-rules and style rules in a style sheet.
@@ -175,7 +187,7 @@ void CSSStyleSheet::recalculate_namespaces()
         if (!namespace_rule.namespace_uri().is_empty() && namespace_rule.prefix().is_empty())
             m_default_namespace_rule = namespace_rule;
 
-        // FIXME: Store qualified namespace rules.
+        m_namespace_rules.set(FlyString::from_deprecated_fly_string(namespace_rule.prefix()).release_value_but_fixme_should_propagate_errors(), namespace_rule);
     }
 }
 

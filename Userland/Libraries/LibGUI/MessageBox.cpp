@@ -89,11 +89,11 @@ ErrorOr<Dialog::ExecResult> MessageBox::try_ask_about_unsaved_changes(Window* pa
         box->set_icon(parent_window->icon());
 
     if (path.is_empty())
-        box->m_yes_button->set_text(TRY("Save As..."_string));
+        box->m_yes_button->set_text("Save As..."_string);
     else
-        box->m_yes_button->set_text("Save"_short_string);
-    box->m_no_button->set_text("Discard"_short_string);
-    box->m_cancel_button->set_text("Cancel"_short_string);
+        box->m_yes_button->set_text("Save"_string);
+    box->m_no_button->set_text("Discard"_string);
+    box->m_cancel_button->set_text("Cancel"_string);
 
     return box->exec();
 }
@@ -152,11 +152,11 @@ ErrorOr<void> MessageBox::build()
 {
     auto main_widget = TRY(set_main_widget<Widget>());
     main_widget->set_fill_with_background_color(true);
-    TRY(main_widget->try_set_layout<VerticalBoxLayout>(8, 6));
+    main_widget->set_layout<VerticalBoxLayout>(8, 6);
 
     auto message_container = TRY(main_widget->try_add<Widget>());
     auto message_margins = Margins { 8, m_type != Type::None ? 8 : 0 };
-    TRY(message_container->try_set_layout<HorizontalBoxLayout>(message_margins, 8));
+    message_container->set_layout<HorizontalBoxLayout>(message_margins, 8);
 
     if (auto icon = TRY(this->icon()); icon && m_type != Type::None) {
         auto image_widget = TRY(message_container->try_add<ImageWidget>());
@@ -170,7 +170,7 @@ ErrorOr<void> MessageBox::build()
         m_text_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
 
     auto button_container = TRY(main_widget->try_add<Widget>());
-    TRY(button_container->try_set_layout<HorizontalBoxLayout>(Margins {}, 8));
+    button_container->set_layout<HorizontalBoxLayout>(Margins {}, 8);
 
     auto add_button = [&](String text, ExecResult result) -> ErrorOr<NonnullRefPtr<Button>> {
         auto button = TRY(button_container->try_add<DialogButton>());
@@ -179,16 +179,16 @@ ErrorOr<void> MessageBox::build()
         return button;
     };
 
-    TRY(button_container->add_spacer());
+    button_container->add_spacer();
     if (should_include_ok_button())
-        m_ok_button = TRY(add_button("OK"_short_string, ExecResult::OK));
+        m_ok_button = TRY(add_button("OK"_string, ExecResult::OK));
     if (should_include_yes_button())
-        m_yes_button = TRY(add_button("Yes"_short_string, ExecResult::Yes));
+        m_yes_button = TRY(add_button("Yes"_string, ExecResult::Yes));
     if (should_include_no_button())
-        m_no_button = TRY(add_button("No"_short_string, ExecResult::No));
+        m_no_button = TRY(add_button("No"_string, ExecResult::No));
     if (should_include_cancel_button())
-        m_cancel_button = TRY(add_button("Cancel"_short_string, ExecResult::Cancel));
-    TRY(button_container->add_spacer());
+        m_cancel_button = TRY(add_button("Cancel"_string, ExecResult::Cancel));
+    button_container->add_spacer();
 
     return {};
 }

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
- * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,7 +11,6 @@
 #include <AK/Optional.h>
 #include <AK/Utf16View.h>
 #include <LibJS/Bytecode/Interpreter.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Parser.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Accessor.h>
@@ -24,6 +23,7 @@
 #include <LibJS/Runtime/ErrorTypes.h>
 #include <LibJS/Runtime/FunctionEnvironment.h>
 #include <LibJS/Runtime/FunctionObject.h>
+#include <LibJS/Runtime/GlobalEnvironment.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Object.h>
 #include <LibJS/Runtime/ObjectEnvironment.h>
@@ -41,7 +41,7 @@ namespace JS {
 ThrowCompletionOr<Value> require_object_coercible(VM& vm, Value value)
 {
     if (value.is_nullish())
-        return vm.throw_completion<TypeError>(ErrorType::NotObjectCoercible, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotObjectCoercible, value.to_string_without_side_effects());
     return value;
 }
 
@@ -54,7 +54,7 @@ ThrowCompletionOr<Value> call_impl(VM& vm, Value function, Value this_value, Opt
 
     // 2. If IsCallable(F) is false, throw a TypeError exception.
     if (!function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, function.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, function.to_string_without_side_effects());
 
     // 3. Return ? F.[[Call]](V, argumentsList).
     return function.as_function().internal_call(this_value, move(*arguments_list));
@@ -102,7 +102,7 @@ ThrowCompletionOr<MarkedVector<Value>> create_list_from_array_like(VM& vm, Value
 
     // 2. If Type(obj) is not Object, throw a TypeError exception.
     if (!value.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, value.to_string_without_side_effects());
 
     auto& array_like = value.as_object();
 
@@ -146,7 +146,7 @@ ThrowCompletionOr<FunctionObject*> species_constructor(VM& vm, Object const& obj
 
     // 3. If Type(C) is not Object, throw a TypeError exception.
     if (!constructor.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, TRY_OR_THROW_OOM(vm, constructor.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, constructor.to_string_without_side_effects());
 
     // 4. Let S be ? Get(C, @@species).
     auto species = TRY(constructor.as_object().get(vm.well_known_symbol_species()));
@@ -160,7 +160,7 @@ ThrowCompletionOr<FunctionObject*> species_constructor(VM& vm, Object const& obj
         return &species.as_function();
 
     // 7. Throw a TypeError exception.
-    return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, TRY_OR_THROW_OOM(vm, species.to_string_without_side_effects()));
+    return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, species.to_string_without_side_effects());
 }
 
 // 7.3.25 GetFunctionRealm ( obj ), https://tc39.es/ecma262/#sec-getfunctionrealm
@@ -595,7 +595,7 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
         .in_class_field_initializer = in_class_field_initializer,
     };
 
-    Parser parser { Lexer { TRY(code_string.deprecated_string()) }, Program::Type::Script, move(initial_state) };
+    Parser parser { Lexer { code_string.deprecated_string() }, Program::Type::Script, move(initial_state) };
     auto program = parser.parse_program(strict_caller == CallerMode::Strict);
 
     //     b. If script is a List of errors, throw a SyntaxError exception.
@@ -700,26 +700,21 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
 
     // 29. If result.[[Type]] is normal, then
     //     a. Set result to the result of evaluating body.
-    if (auto* bytecode_interpreter = vm.bytecode_interpreter_if_exists()) {
-        auto executable_result = Bytecode::Generator::generate(program);
-        if (executable_result.is_error())
-            return vm.throw_completion<InternalError>(ErrorType::NotImplemented, TRY_OR_THROW_OOM(vm, executable_result.error().to_string()));
+    auto executable_result = Bytecode::Generator::generate(program);
+    if (executable_result.is_error())
+        return vm.throw_completion<InternalError>(ErrorType::NotImplemented, TRY_OR_THROW_OOM(vm, executable_result.error().to_string()));
 
-        auto executable = executable_result.release_value();
-        executable->name = "eval"sv;
-        if (Bytecode::g_dump_bytecode)
-            executable->dump();
-        auto result_or_error = bytecode_interpreter->run_and_return_frame(eval_realm, *executable, nullptr);
-        if (result_or_error.value.is_error())
-            return result_or_error.value.release_error();
+    auto executable = executable_result.release_value();
+    executable->name = "eval"sv;
+    if (Bytecode::g_dump_bytecode)
+        executable->dump();
+    auto result_or_error = vm.bytecode_interpreter().run_and_return_frame(eval_realm, *executable, nullptr);
+    if (result_or_error.value.is_error())
+        return result_or_error.value.release_error();
 
-        auto& result = result_or_error.frame->registers[0];
-        if (!result.is_empty())
-            eval_result = result;
-    } else {
-        auto& ast_interpreter = vm.interpreter();
-        eval_result = TRY(program->execute(ast_interpreter));
-    }
+    auto& result = result_or_error.frame->registers[0];
+    if (!result.is_empty())
+        eval_result = result;
 
     // 30. If result.[[Type]] is normal and result.[[Value]] is empty, then
     //     a. Set result to NormalCompletion(undefined).
@@ -1108,7 +1103,7 @@ Object* create_mapped_arguments_object(VM& vm, FunctionObject& function, Vector<
     // 7. Set obj.[[Set]] as specified in 10.4.4.4.
     // 8. Set obj.[[Delete]] as specified in 10.4.4.5.
     // 9. Set obj.[[Prototype]] to %Object.prototype%.
-    auto object = vm.heap().allocate<ArgumentsObject>(realm, realm, environment).release_allocated_value_but_fixme_should_propagate_errors();
+    auto object = vm.heap().allocate<ArgumentsObject>(realm, realm, environment);
 
     // 14. Let index be 0.
     // 15. Repeat, while index < len,
@@ -1173,7 +1168,7 @@ Object* create_mapped_arguments_object(VM& vm, FunctionObject& function, Vector<
 }
 
 // 7.1.21 CanonicalNumericIndexString ( argument ), https://tc39.es/ecma262/#sec-canonicalnumericindexstring
-ThrowCompletionOr<CanonicalIndex> canonical_numeric_index_string(VM& vm, PropertyKey const& property_key, CanonicalIndexMode mode)
+CanonicalIndex canonical_numeric_index_string(PropertyKey const& property_key, CanonicalIndexMode mode)
 {
     // NOTE: If the property name is a number type (An implementation-defined optimized
     // property key type), it can be treated as a string property that has already been
@@ -1226,7 +1221,7 @@ ThrowCompletionOr<CanonicalIndex> canonical_numeric_index_string(VM& vm, Propert
 
     // FIXME: We return 0 instead of n but it might not observable?
     // 3. If SameValue(! ToString(n), argument) is true, return n.
-    if (TRY_OR_THROW_OOM(vm, number_to_string(*maybe_double)) == argument.view())
+    if (number_to_string(*maybe_double) == argument.view())
         return CanonicalIndex(CanonicalIndex::Type::Numeric, 0);
 
     // 4. Return undefined.
@@ -1336,7 +1331,7 @@ ThrowCompletionOr<void> add_disposable_resource(VM& vm, Vector<DisposableResourc
 
         // b. If Type(V) is not Object, throw a TypeError exception.
         if (!value.is_object())
-            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
+            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, value.to_string_without_side_effects());
 
         // c. Let resource be ? CreateDisposableResource(V, hint).
         resource = TRY(create_disposable_resource(vm, value, hint));
@@ -1352,7 +1347,7 @@ ThrowCompletionOr<void> add_disposable_resource(VM& vm, Vector<DisposableResourc
         else {
             // i. If Type(V) is not Object, throw a TypeError exception.
             if (!value.is_object())
-                return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
+                return vm.throw_completion<TypeError>(ErrorType::NotAnObject, value.to_string_without_side_effects());
 
             // ii. Let resource be ? CreateDisposableResource(V, hint, method).
             resource = TRY(create_disposable_resource(vm, value, hint, method));
@@ -1381,7 +1376,7 @@ ThrowCompletionOr<DisposableResource> create_disposable_resource(VM& vm, Value v
 
         // c. If method is undefined, throw a TypeError exception.
         if (!method)
-            return vm.throw_completion<TypeError>(ErrorType::NoDisposeMethod, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
+            return vm.throw_completion<TypeError>(ErrorType::NoDisposeMethod, value.to_string_without_side_effects());
     }
     // 2. Else,
     // a. If IsCallable(method) is false, throw a TypeError exception.
@@ -1550,7 +1545,7 @@ ThrowCompletionOr<Value> perform_import_call(VM& vm, Value specifier, Value opti
                 // 4. If supportedAssertions contains key, then
                 if (supported_assertions.contains_slow(property_key.to_string())) {
                     // a. Append { [[Key]]: key, [[Value]]: value } to assertions.
-                    assertions.empend(property_key.to_string(), TRY(value.as_string().deprecated_string()));
+                    assertions.empend(property_key.to_string(), value.as_string().deprecated_string());
                 }
             }
         }

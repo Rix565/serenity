@@ -24,6 +24,7 @@ set(SOURCES
     Font/ScaledFont.cpp
     Font/Typeface.cpp
     Font/WOFF/Font.cpp
+    Font/WOFF2/Font.cpp
     GradientPainting.cpp
     ICC/BinaryWriter.cpp
     ICC/Profile.cpp
@@ -36,6 +37,7 @@ set(SOURCES
     ImageFormats/DDSLoader.cpp
     ImageFormats/GIFLoader.cpp
     ImageFormats/ICOLoader.cpp
+    ImageFormats/ILBMLoader.cpp
     ImageFormats/ImageDecoder.cpp
     ImageFormats/ISOBMFF/Boxes.cpp
     ImageFormats/ISOBMFF/Reader.cpp

@@ -13,17 +13,17 @@ namespace Web::HTML {
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<MessageChannel>> MessageChannel::construct_impl(JS::Realm& realm)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<MessageChannel>(realm, realm));
+    return realm.heap().allocate<MessageChannel>(realm, realm);
 }
 
 MessageChannel::MessageChannel(JS::Realm& realm)
     : PlatformObject(realm)
 {
     // 1. Set this's port 1 to a new MessagePort in this's relevant Realm.
-    m_port1 = MessagePort::create(realm).release_value_but_fixme_should_propagate_errors();
+    m_port1 = MessagePort::create(realm);
 
     // 2. Set this's port 2 to a new MessagePort in this's relevant Realm.
-    m_port2 = MessagePort::create(realm).release_value_but_fixme_should_propagate_errors();
+    m_port2 = MessagePort::create(realm);
 
     // 3. Entangle this's port 1 and this's port 2.
     m_port1->entangle_with(*m_port2);
@@ -38,12 +38,10 @@ void MessageChannel::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_port2.ptr());
 }
 
-JS::ThrowCompletionOr<void> MessageChannel::initialize(JS::Realm& realm)
+void MessageChannel::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::MessageChannelPrototype>(realm, "MessageChannel"));
-
-    return {};
 }
 
 MessagePort* MessageChannel::port1()

@@ -23,7 +23,7 @@ class CSSStyleSheet final
     WEB_PLATFORM_OBJECT(CSSStyleSheet, StyleSheet);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSStyleSheet>> create(JS::Realm&, CSSRuleList& rules, MediaList& media, Optional<AK::URL> location);
+    [[nodiscard]] static JS::NonnullGCPtr<CSSStyleSheet> create(JS::Realm&, CSSRuleList&, MediaList&, Optional<AK::URL> location);
 
     virtual ~CSSStyleSheet() override = default;
 
@@ -50,17 +50,19 @@ public:
     void set_style_sheet_list(Badge<StyleSheetList>, StyleSheetList*);
 
     Optional<StringView> default_namespace() const;
+    Optional<StringView> namespace_uri(StringView namespace_prefix) const;
 
 private:
     CSSStyleSheet(JS::Realm&, CSSRuleList&, MediaList&, Optional<AK::URL> location);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     void recalculate_namespaces();
 
     JS::GCPtr<CSSRuleList> m_rules;
     JS::GCPtr<CSSNamespaceRule> m_default_namespace_rule;
+    HashMap<FlyString, JS::GCPtr<CSSNamespaceRule>> m_namespace_rules;
 
     JS::GCPtr<StyleSheetList> m_style_sheet_list;
     JS::GCPtr<CSSRule> m_owner_css_rule;

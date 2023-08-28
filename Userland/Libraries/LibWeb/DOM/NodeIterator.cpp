@@ -21,12 +21,10 @@ NodeIterator::NodeIterator(Node& root)
 
 NodeIterator::~NodeIterator() = default;
 
-JS::ThrowCompletionOr<void> NodeIterator::initialize(JS::Realm& realm)
+void NodeIterator::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::NodeIteratorPrototype>(realm, "NodeIterator"));
-
-    return {};
 }
 
 void NodeIterator::finalize()
@@ -53,7 +51,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<NodeIterator>> NodeIterator::create(Node& r
     // 2. Set iterator’s root and iterator’s reference to root.
     // 3. Set iterator’s pointer before reference to true.
     auto& realm = root.realm();
-    auto iterator = MUST_OR_THROW_OOM(realm.heap().allocate<NodeIterator>(realm, root));
+    auto iterator = realm.heap().allocate<NodeIterator>(realm, root);
 
     // 4. Set iterator’s whatToShow to whatToShow.
     iterator->m_what_to_show = what_to_show;

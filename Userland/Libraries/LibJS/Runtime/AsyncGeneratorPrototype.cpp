@@ -18,19 +18,17 @@ AsyncGeneratorPrototype::AsyncGeneratorPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> AsyncGeneratorPrototype::initialize(Realm& realm)
+void AsyncGeneratorPrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.names.next, next, 1, attr);
     define_native_function(realm, vm.names.return_, return_, 1, attr);
     define_native_function(realm, vm.names.throw_, throw_, 1, attr);
 
     // 27.6.1.5 AsyncGenerator.prototype [ @@toStringTag ], https://tc39.es/ecma262/#sec-asyncgenerator-prototype-tostringtag
-    define_direct_property(vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(PrimitiveString::create(vm, "AsyncGenerator"sv)), Attribute::Configurable);
-
-    return {};
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "AsyncGenerator"_string), Attribute::Configurable);
 }
 
 // 27.6.3.3 AsyncGeneratorValidate ( generator, generatorBrand ), https://tc39.es/ecma262/#sec-asyncgeneratorvalidate
@@ -46,7 +44,7 @@ static ThrowCompletionOr<NonnullGCPtr<AsyncGenerator>> async_generator_validate(
 
     // 4. If generator.[[GeneratorBrand]] is not generatorBrand, throw a TypeError exception.
     if (async_generator.generator_brand() != generator_brand)
-        return vm.throw_completion<TypeError>(ErrorType::GeneratorBrandMismatch, async_generator.generator_brand().value_or("emp"_short_string), generator_brand.value_or("emp"_short_string));
+        return vm.throw_completion<TypeError>(ErrorType::GeneratorBrandMismatch, async_generator.generator_brand().value_or("emp"_string), generator_brand.value_or("emp"_string));
 
     // 5. Return unused.
     return async_generator;

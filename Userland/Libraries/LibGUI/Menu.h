@@ -8,7 +8,7 @@
 
 #include <AK/String.h>
 #include <AK/WeakPtr.h>
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/ColorFilterer.h>
 #include <LibGUI/Event.h>
@@ -19,11 +19,11 @@ namespace GUI {
 
 namespace CommonMenus {
 
-ErrorOr<NonnullRefPtr<Menu>> make_accessibility_menu(GUI::ColorFilterer&);
+[[nodiscard]] NonnullRefPtr<Menu> make_accessibility_menu(GUI::ColorFilterer&);
 
 };
 
-class Menu final : public Core::Object {
+class Menu final : public Core::EventReceiver {
     C_OBJECT(Menu)
 public:
     virtual ~Menu() override;
@@ -41,16 +41,12 @@ public:
 
     Action* action_at(size_t);
 
-    ErrorOr<void> try_add_action(NonnullRefPtr<Action>);
-    ErrorOr<void> try_add_separator();
-    ErrorOr<NonnullRefPtr<Menu>> try_add_submenu(String name);
-
     void add_action(NonnullRefPtr<Action>);
     void add_separator();
-    Menu& add_submenu(String name);
+    [[nodiscard]] NonnullRefPtr<Menu> add_submenu(String name);
     void remove_all_actions();
 
-    ErrorOr<void> add_recent_files_list(Function<void(Action&)>);
+    void add_recent_files_list(Function<void(Action&)>);
 
     void popup(Gfx::IntPoint screen_position, RefPtr<Action> const& default_action = nullptr, Gfx::IntRect const& button_rect = {});
     void dismiss();

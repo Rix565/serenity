@@ -62,7 +62,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto snake_skin_name = Config::read_string("Snake"sv, "Snake"sv, "SnakeSkin"sv, "Classic"sv);
 
     auto& statusbar = *widget->find_descendant_of_type_named<GUI::Statusbar>("statusbar"sv);
-    statusbar.set_text(0, TRY("Score: 0"_string));
+    statusbar.set_text(0, "Score: 0"_string);
     statusbar.set_text(1, TRY(String::formatted("High Score: {}", high_score)));
     GUI::Application::the()->on_action_enter = [&statusbar](GUI::Action& action) {
         statusbar.set_override_text(action.status_tip());
@@ -83,16 +83,16 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         return true;
     };
 
-    auto game_menu = TRY(window->try_add_menu("&Game"_short_string));
+    auto game_menu = window->add_menu("&Game"_string);
 
-    TRY(game_menu->try_add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
+    game_menu->add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
         game.reset();
-    })));
+    }));
     static DeprecatedString const pause_text = "&Pause Game"sv;
     auto const pause_icon = TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/pause.png"sv));
     static DeprecatedString const continue_text = "&Continue Game"sv;
     auto const continue_icon = TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/play.png"sv));
-    TRY(game_menu->try_add_action(GUI::Action::create(pause_text, { Mod_None, Key_Space }, pause_icon, [&](auto& action) {
+    game_menu->add_action(GUI::Action::create(pause_text, { Mod_None, Key_Space }, pause_icon, [&](auto& action) {
         if (game.has_timer()) {
             game.pause();
             action.set_text(continue_text);
@@ -102,7 +102,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             action.set_text(pause_text);
             action.set_icon(pause_icon);
         }
-    })));
+    }));
 
     auto change_snake_color = GUI::Action::create("&Change Snake Color", TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/color-chooser.png"sv)), [&](auto&) {
         auto was_paused = game.is_paused();
@@ -118,12 +118,12 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             game.start();
     });
     change_snake_color->set_enabled(snake_skin_name == "Classic"sv);
-    TRY(game_menu->try_add_action(change_snake_color));
+    game_menu->add_action(change_snake_color);
 
     GUI::ActionGroup skin_action_group;
     skin_action_group.set_exclusive(true);
 
-    auto skin_menu = TRY(game_menu->try_add_submenu("&Skin"_short_string));
+    auto skin_menu = game_menu->add_submenu("&Skin"_string);
     skin_menu->set_icon(app_icon.bitmap_for_size(16));
 
     auto add_skin_action = [&](StringView name, bool enable_color) -> ErrorOr<void> {
@@ -136,7 +136,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         skin_action_group.add_action(*action);
         if (snake_skin_name == name)
             action->set_checked(true);
-        TRY(skin_menu->try_add_action(*action));
+        skin_menu->add_action(*action);
         return {};
     };
 
@@ -146,17 +146,17 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     }));
     TRY(add_skin_action("Classic"sv, true));
 
-    TRY(game_menu->try_add_separator());
-    TRY(game_menu->try_add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    game_menu->add_separator();
+    game_menu->add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
-    })));
+    }));
 
-    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+    auto help_menu = window->add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(window));
+    help_menu->add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man6/Snake.md"), "/bin/Help");
-    })));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Snake", app_icon, window)));
+    }));
+    help_menu->add_action(GUI::CommonActions::make_about_action("Snake", app_icon, window));
 
     window->show();
 

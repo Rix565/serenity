@@ -42,8 +42,8 @@ static bool url_matches_about_blank(AK::URL const& url)
     // A URL matches about:blank if its scheme is "about", its path contains a single string "blank", its username and password are the empty string, and its host is null.
     return url.scheme() == "about"sv
         && url.serialize_path() == "blank"sv
-        && url.username().is_empty()
-        && url.password().is_empty()
+        && url.raw_username().is_empty()
+        && url.raw_password().is_empty()
         && url.host().has<Empty>();
 }
 
@@ -150,10 +150,10 @@ JS::NonnullGCPtr<BrowsingContext> BrowsingContext::create_a_new_browsing_context
     auto realm_execution_context = Bindings::create_a_new_javascript_realm(
         Bindings::main_thread_vm(),
         [&](JS::Realm& realm) -> JS::Object* {
-            browsing_context->m_window_proxy = realm.heap().allocate<WindowProxy>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
+            browsing_context->m_window_proxy = realm.heap().allocate<WindowProxy>(realm, realm);
 
             // - For the global object, create a new Window object.
-            window = HTML::Window::create(realm).release_value_but_fixme_should_propagate_errors();
+            window = HTML::Window::create(realm);
             return window.ptr();
         },
         [&](JS::Realm&) -> JS::Object* {
@@ -173,8 +173,7 @@ JS::NonnullGCPtr<BrowsingContext> BrowsingContext::create_a_new_browsing_context
         move(realm_execution_context),
         {},
         top_level_creation_url,
-        top_level_origin)
-        .release_value_but_fixme_should_propagate_errors();
+        top_level_origin);
 
     // 12. Let loadTimingInfo be a new document load timing info with its navigation start time set to the result of calling
     //     coarsen time with unsafeContextCreationTime and the new environment settings object's cross-origin isolated capability.
@@ -204,7 +203,7 @@ JS::NonnullGCPtr<BrowsingContext> BrowsingContext::create_a_new_browsing_context
     //     load timing info is loadTimingInfo,
     //     FIXME: navigation id is null,
     //     and which is ready for post-load tasks.
-    auto document = HTML::HTMLDocument::create(window->realm()).release_value_but_fixme_should_propagate_errors();
+    auto document = HTML::HTMLDocument::create(window->realm());
 
     // Non-standard
     document->set_window(*window);
@@ -243,7 +242,6 @@ JS::NonnullGCPtr<BrowsingContext> BrowsingContext::create_a_new_browsing_context
     auto new_entry = browsing_context->heap().allocate_without_realm<SessionHistoryEntry>();
     new_entry->url = AK::URL("about:blank");
     new_entry->document = document.ptr();
-    new_entry->serialized_state = {};
     new_entry->policy_container = {};
     new_entry->scroll_restoration_mode = {};
     new_entry->browsing_context_name = {};
@@ -329,10 +327,10 @@ WebIDL::ExceptionOr<BrowsingContext::BrowsingContextAndDocument> BrowsingContext
         Bindings::main_thread_vm(),
         [&](JS::Realm& realm) -> JS::Object* {
             auto window_proxy = realm.heap().allocate<WindowProxy>(realm, realm);
-            browsing_context->set_window_proxy(window_proxy.release_allocated_value_but_fixme_should_propagate_errors());
+            browsing_context->set_window_proxy(window_proxy);
 
             // - For the global object, create a new Window object.
-            window = Window::create(realm).release_value_but_fixme_should_propagate_errors();
+            window = Window::create(realm);
             return window.ptr();
         },
         [&](JS::Realm&) -> JS::Object* {
@@ -347,12 +345,12 @@ WebIDL::ExceptionOr<BrowsingContext::BrowsingContextAndDocument> BrowsingContext
     auto top_level_origin = !embedder ? origin : relevant_settings_object(*embedder).origin();
 
     // 12. Set up a window environment settings object with about:blank, realm execution context, null, topLevelCreationURL, and topLevelOrigin.
-    TRY(WindowEnvironmentSettingsObject::setup(
+    WindowEnvironmentSettingsObject::setup(
         AK::URL("about:blank"),
         move(realm_execution_context),
         {},
         top_level_creation_url,
-        top_level_origin));
+        top_level_origin);
 
     // 13. Let loadTimingInfo be a new document load timing info with its navigation start time set to the result of calling
     //     coarsen time with unsafeContextCreationTime and the new environment settings object's cross-origin isolated capability.
@@ -362,7 +360,7 @@ WebIDL::ExceptionOr<BrowsingContext::BrowsingContextAndDocument> BrowsingContext
         verify_cast<WindowEnvironmentSettingsObject>(Bindings::host_defined_environment_settings_object(window->realm())).cross_origin_isolated_capability() == CanUseCrossOriginIsolatedAPIs::Yes);
 
     // 14. Let document be a new Document, with:
-    auto document = TRY(HTML::HTMLDocument::create(window->realm()));
+    auto document = HTML::HTMLDocument::create(window->realm());
 
     // Non-standard
     document->set_window(*window);
@@ -440,14 +438,14 @@ BrowsingContext::BrowsingContext(Page& page, HTML::NavigableContainer* container
     , m_event_handler({}, *this)
     , m_container(container)
 {
-    m_cursor_blink_timer = Platform::Timer::create_repeating(500, [this] {
+    m_cursor_blink_timer = Core::Timer::create_repeating(500, [this] {
         if (!is_focused_context())
             return;
         if (m_cursor_position.node() && m_cursor_position.node()->layout_node()) {
             m_cursor_blink_state = !m_cursor_blink_state;
             m_cursor_position.node()->layout_node()->set_needs_display();
         }
-    });
+    }).release_value_but_fixme_should_propagate_errors();
 }
 
 BrowsingContext::~BrowsingContext() = default;
@@ -540,12 +538,6 @@ void BrowsingContext::set_active_document(JS::NonnullGCPtr<DOM::Document> docume
         previously_active_document->did_stop_being_active_document_in_browsing_context({});
 }
 
-void BrowsingContext::inform_all_viewport_clients_about_the_current_viewport_rect()
-{
-    for (auto* client : m_viewport_clients)
-        client->browsing_context_did_set_viewport_rect(viewport_rect());
-}
-
 void BrowsingContext::set_viewport_rect(CSSPixelRect const& rect)
 {
     bool did_change = false;
@@ -566,9 +558,8 @@ void BrowsingContext::set_viewport_rect(CSSPixelRect const& rect)
         did_change = true;
     }
 
-    if (did_change) {
-        for (auto* client : m_viewport_clients)
-            client->browsing_context_did_set_viewport_rect(rect);
+    if (did_change && active_document()) {
+        active_document()->inform_all_viewport_clients_about_the_current_viewport_rect();
     }
 
     // Schedule the HTML event loop to ensure that a `resize` event gets fired.
@@ -586,8 +577,9 @@ void BrowsingContext::set_size(CSSPixelSize size)
         document->set_needs_layout();
     }
 
-    for (auto* client : m_viewport_clients)
-        client->browsing_context_did_set_viewport_rect(viewport_rect());
+    if (auto* document = active_document()) {
+        document->inform_all_viewport_clients_about_the_current_viewport_rect();
+    }
 
     // Schedule the HTML event loop to ensure that a `resize` event gets fired.
     HTML::main_thread_event_loop().schedule();
@@ -751,18 +743,6 @@ void BrowsingContext::select_all()
     if (!selection)
         return;
     (void)selection->select_all_children(*document->body());
-}
-
-void BrowsingContext::register_viewport_client(ViewportClient& client)
-{
-    auto result = m_viewport_clients.set(&client);
-    VERIFY(result == AK::HashSetResult::InsertedNewEntry);
-}
-
-void BrowsingContext::unregister_viewport_client(ViewportClient& client)
-{
-    bool was_removed = m_viewport_clients.remove(&client);
-    VERIFY(was_removed);
 }
 
 void BrowsingContext::register_frame_nesting(AK::URL const& url)
@@ -1142,7 +1122,7 @@ WebIDL::ExceptionOr<void> BrowsingContext::navigate(
         } else {
             // Otherwise let navigation id be the result of generating a random UUID. [UUID]
             // FIXME: Generate a UUID.
-            navigation_id = String::from_utf8_short_string("FIXME"sv);
+            navigation_id = "FIXME"_string;
         }
     }
 
@@ -1168,7 +1148,7 @@ WebIDL::ExceptionOr<void> BrowsingContext::navigate(
     //    and resource's URL's fragment is non-null, then:
     if (history_handling != HistoryHandlingBehavior::Reload
         && resource->url().equals(active_document()->url(), AK::URL::ExcludeFragment::Yes)
-        && !resource->url().fragment().is_null()) {
+        && resource->url().fragment().has_value()) {
         // 1. Navigate to a fragment given browsingContext, resource's URL, historyHandling, and navigationId.
         TRY(navigate_to_a_fragment(resource->url(), history_handling, *navigation_id));
 
@@ -1263,7 +1243,6 @@ WebIDL::ExceptionOr<void> BrowsingContext::navigate_to_a_fragment(AK::URL const&
     auto new_entry = heap().allocate_without_realm<SessionHistoryEntry>();
     new_entry->url = url;
     new_entry->document = current_entry().document;
-    new_entry->serialized_state = {};
     new_entry->policy_container = current_entry().policy_container;
     new_entry->scroll_restoration_mode = current_entry().scroll_restoration_mode;
     new_entry->browsing_context_name = {};
@@ -1407,11 +1386,8 @@ WebIDL::ExceptionOr<void> BrowsingContext::traverse_the_history(size_t entry_ind
     }
 
     // 10. If entry's persisted user state is null, and its URL's fragment is non-null, then scroll to the fragment.
-    if (!entry->url.fragment().is_null()) {
-        // FIXME: Implement the full "scroll to the fragment" algorithm:
-        // https://html.spec.whatwg.org/multipage/browsing-the-web.html#scroll-to-the-fragment-identifier
-        scroll_to_anchor(entry->url.fragment());
-    }
+    if (entry->url.fragment().has_value())
+        active_document()->scroll_to_the_fragment();
 
     // 11. Set the current entry to entry.
     m_session_history_index = entry_index;
@@ -1438,7 +1414,7 @@ WebIDL::ExceptionOr<void> BrowsingContext::traverse_the_history(size_t entry_ind
             // and the newURL attribute initialized to newURL.
 
             // FIXME: Implement a proper HashChangeEvent class.
-            auto event = DOM::Event::create(verify_cast<HTML::Window>(relevant_global_object(*new_document)).realm(), HTML::EventNames::hashchange).release_value_but_fixme_should_propagate_errors();
+            auto event = DOM::Event::create(verify_cast<HTML::Window>(relevant_global_object(*new_document)).realm(), HTML::EventNames::hashchange);
             new_document->dispatch_event(event);
         });
     }

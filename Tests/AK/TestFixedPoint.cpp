@@ -26,6 +26,11 @@ TEST_CASE(arithmetic)
     EXPECT_EQ(
         Type((int)1) * Type(0.5),
         Type(0.5));
+    EXPECT_EQ(Type(0.125) * Type(3.75),
+        Type(0.125 * 3.75));
+    EXPECT_EQ(Type(0.125) * Type(-3.75),
+        Type(0.125 * -3.75));
+
     EXPECT_EQ(
         Type((int)1) / Type(0.5),
         Type(2));
@@ -33,45 +38,50 @@ TEST_CASE(arithmetic)
 
 TEST_CASE(rounding)
 {
-    EXPECT_EQ(Type(0.5).round(), Type(0));
+    EXPECT_EQ(Type(0.5).rint(), Type(0));
     EXPECT_EQ(Type(0.5).floor(), Type(0));
     EXPECT_EQ(Type(0.5).ceil(), Type(1));
-    EXPECT_EQ(Type(0.75).trunk(), Type(0));
+    EXPECT_EQ(Type(0.75).trunc(), Type(0));
 
-    EXPECT_EQ(Type(1.5).round(), Type(2));
+    EXPECT_EQ(Type(1.5).rint(), Type(2));
     EXPECT_EQ(Type(1.5).floor(), Type(1));
     EXPECT_EQ(Type(1.5).ceil(), Type(2));
-    EXPECT_EQ(Type(1.25).trunk(), Type(1));
+    EXPECT_EQ(Type(1.25).trunc(), Type(1));
 
-    EXPECT_EQ(Type(-0.5).round(), Type(0));
+    EXPECT_EQ(Type(-0.5).rint(), Type(0));
     EXPECT_EQ(Type(-0.5).floor(), Type(-1));
     EXPECT_EQ(Type(-0.5).ceil(), Type(0));
-    EXPECT_EQ(Type(-0.75).trunk(), Type(0));
+    EXPECT_EQ(Type(-0.75).trunc(), Type(0));
 
-    EXPECT_EQ(Type(-1.5).round(), Type(-2));
+    EXPECT_EQ(Type(-1.5).rint(), Type(-2));
     EXPECT_EQ(Type(-1.5).floor(), Type(-2));
     EXPECT_EQ(Type(-1.5).ceil(), Type(-1));
-    EXPECT_EQ(Type(-1.25).trunk(), Type(-1));
+    EXPECT_EQ(Type(-1.25).trunc(), Type(-1));
 
-    EXPECT_EQ(Type(0.5).lround(), 0);
+    EXPECT_EQ(Type(0.5).lrint(), 0);
     EXPECT_EQ(Type(0.5).lfloor(), 0);
     EXPECT_EQ(Type(0.5).lceil(), 1);
-    EXPECT_EQ(Type(0.5).ltrunk(), 0);
+    EXPECT_EQ(Type(0.5).ltrunc(), 0);
 
-    EXPECT_EQ(Type(1.5).lround(), 2);
+    EXPECT_EQ(Type(1.5).lrint(), 2);
     EXPECT_EQ(Type(1.5).lfloor(), 1);
     EXPECT_EQ(Type(1.5).lceil(), 2);
-    EXPECT_EQ(Type(1.5).ltrunk(), 1);
+    EXPECT_EQ(Type(1.5).ltrunc(), 1);
 
-    EXPECT_EQ(Type(-0.5).lround(), 0);
+    EXPECT_EQ(Type(-0.5).lrint(), 0);
     EXPECT_EQ(Type(-0.5).lfloor(), -1);
     EXPECT_EQ(Type(-0.5).lceil(), 0);
-    EXPECT_EQ(Type(-0.5).ltrunk(), 0);
+    EXPECT_EQ(Type(-0.5).ltrunc(), 0);
 
-    EXPECT_EQ(Type(-1.5).lround(), -2);
+    EXPECT_EQ(Type(-1.5).lrint(), -2);
     EXPECT_EQ(Type(-1.5).lfloor(), -2);
     EXPECT_EQ(Type(-1.5).lceil(), -1);
-    EXPECT_EQ(Type(-1.5).ltrunk(), -1);
+    EXPECT_EQ(Type(-1.5).ltrunc(), -1);
+
+    EXPECT_EQ(Type(-1.6).rint(), -2);
+    EXPECT_EQ(Type(-1.4).rint(), -1);
+    EXPECT_EQ(Type(1.6).rint(), 2);
+    EXPECT_EQ(Type(1.4).rint(), 1);
 
     // Check that sRGB TRC curve parameters match the s15fixed16 values stored in Gimp's built-in profile.
     // (This only requires that the FixedPoint<> constructor rounds before truncating to the fixed-point value,
@@ -168,4 +178,8 @@ TEST_CASE(formatter)
     EXPECT_EQ(DeprecatedString::formatted("{}", FixedPoint<16>(-0.1)), "-0.100007"sv);
     EXPECT_EQ(DeprecatedString::formatted("{}", FixedPoint<16>(-0.02)), "-0.020005"sv);
     EXPECT_EQ(DeprecatedString::formatted("{}", FixedPoint<16>(-0.0000000005)), "0"sv);
+
+    EXPECT_EQ(DeprecatedString::formatted("{}", Type(-1)), "-1"sv);
+    EXPECT_EQ(DeprecatedString::formatted("{}", Type(-2)), "-2"sv);
+    EXPECT_EQ(DeprecatedString::formatted("{}", Type(-3)), "-3"sv);
 }

@@ -16,6 +16,7 @@
 #include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/CSSSupportsRule.h>
 #include <LibWeb/CSS/PropertyID.h>
+#include <LibWeb/CSS/PseudoClass.h>
 #include <LibWeb/DOM/Comment.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
@@ -361,7 +362,7 @@ void dump_tree(StringBuilder& builder, Layout::Node const& layout_node, bool sho
         };
         Vector<NameAndValue> properties;
         verify_cast<DOM::Element>(*layout_node.dom_node()).computed_css_values()->for_each_property([&](auto property_id, auto& value) {
-            properties.append({ CSS::string_from_property_id(property_id), value.to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string() });
+            properties.append({ CSS::string_from_property_id(property_id), value.to_string().to_deprecated_string() });
         });
         quick_sort(properties, [](auto& a, auto& b) { return a.name < b.name; });
 
@@ -384,6 +385,26 @@ void dump_selector(CSS::Selector const& selector)
     StringBuilder builder;
     dump_selector(builder, selector);
     dbgln("{}", builder.string_view());
+}
+
+static void dump_qualified_name(StringBuilder& builder, CSS::Selector::SimpleSelector::QualifiedName const& qualified_name)
+{
+    StringView namespace_type;
+    switch (qualified_name.namespace_type) {
+    case CSS::Selector::SimpleSelector::QualifiedName::NamespaceType::Default:
+        namespace_type = "Default"sv;
+        break;
+    case CSS::Selector::SimpleSelector::QualifiedName::NamespaceType::None:
+        namespace_type = "None"sv;
+        break;
+    case CSS::Selector::SimpleSelector::QualifiedName::NamespaceType::Any:
+        namespace_type = "Any"sv;
+        break;
+    case CSS::Selector::SimpleSelector::QualifiedName::NamespaceType::Named:
+        namespace_type = "Named"sv;
+        break;
+    }
+    builder.appendff("NamespaceType={}, Namespace='{}', Name='{}'", namespace_type, qualified_name.namespace_, qualified_name.name.name);
 }
 
 void dump_selector(StringBuilder& builder, CSS::Selector const& selector)
@@ -438,7 +459,7 @@ void dump_selector(StringBuilder& builder, CSS::Selector const& selector)
                 type_description = "Attribute";
                 break;
             case CSS::Selector::SimpleSelector::Type::PseudoClass:
-                type_description = "PseudoClass";
+                type_description = "PseudoClassSelector";
                 break;
             case CSS::Selector::SimpleSelector::Type::PseudoElement:
                 type_description = "PseudoElement";
@@ -446,141 +467,25 @@ void dump_selector(StringBuilder& builder, CSS::Selector const& selector)
             }
 
             builder.appendff("{}:", type_description);
+
             // FIXME: This is goofy
-            if (simple_selector.value.has<CSS::Selector::SimpleSelector::Name>())
+            if (simple_selector.value.has<CSS::Selector::SimpleSelector::Name>()) {
                 builder.append(simple_selector.name());
+            } else if (simple_selector.value.has<CSS::Selector::SimpleSelector::QualifiedName>()) {
+                dump_qualified_name(builder, simple_selector.qualified_name());
+            }
 
             if (simple_selector.type == CSS::Selector::SimpleSelector::Type::PseudoClass) {
                 auto const& pseudo_class = simple_selector.pseudo_class();
 
-                char const* pseudo_class_description = "";
-                switch (pseudo_class.type) {
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Link:
-                    pseudo_class_description = "Link";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Visited:
-                    pseudo_class_description = "Visited";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Active:
-                    pseudo_class_description = "Active";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Root:
-                    pseudo_class_description = "Root";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Host:
-                    pseudo_class_description = "Host";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::FirstOfType:
-                    pseudo_class_description = "FirstOfType";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::LastOfType:
-                    pseudo_class_description = "LastOfType";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::OnlyOfType:
-                    pseudo_class_description = "OnlyOfType";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::NthOfType:
-                    pseudo_class_description = "NthOfType";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::NthLastOfType:
-                    pseudo_class_description = "NthLastOfType";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::NthChild:
-                    pseudo_class_description = "NthChild";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::NthLastChild:
-                    pseudo_class_description = "NthLastChild";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Focus:
-                    pseudo_class_description = "Focus";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::FocusWithin:
-                    pseudo_class_description = "FocusWithin";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Empty:
-                    pseudo_class_description = "Empty";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Hover:
-                    pseudo_class_description = "Hover";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::LastChild:
-                    pseudo_class_description = "LastChild";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::FirstChild:
-                    pseudo_class_description = "FirstChild";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::OnlyChild:
-                    pseudo_class_description = "OnlyChild";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Disabled:
-                    pseudo_class_description = "Disabled";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Enabled:
-                    pseudo_class_description = "Enabled";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Checked:
-                    pseudo_class_description = "Checked";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Indeterminate:
-                    pseudo_class_description = "Indeterminate";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Not:
-                    pseudo_class_description = "Not";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Is:
-                    pseudo_class_description = "Is";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Where:
-                    pseudo_class_description = "Where";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Lang:
-                    pseudo_class_description = "Lang";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Scope:
-                    pseudo_class_description = "Scope";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Defined:
-                    pseudo_class_description = "Defined";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Playing:
-                    pseudo_class_description = "Playing";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Paused:
-                    pseudo_class_description = "Paused";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Seeking:
-                    pseudo_class_description = "Seeking";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Muted:
-                    pseudo_class_description = "Muted";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::VolumeLocked:
-                    pseudo_class_description = "VolumeLocked";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Buffering:
-                    pseudo_class_description = "Buffering";
-                    break;
-                case CSS::Selector::SimpleSelector::PseudoClass::Type::Stalled:
-                    pseudo_class_description = "Stalled";
-                    break;
-                }
+                builder.appendff(" pseudo_class={}", CSS::pseudo_class_name(pseudo_class.type));
+                auto pseudo_class_metadata = CSS::pseudo_class_metadata(pseudo_class.type);
 
-                builder.appendff(" pseudo_class={}", pseudo_class_description);
-                if (pseudo_class.type == CSS::Selector::SimpleSelector::PseudoClass::Type::Lang) {
-                    builder.append('(');
-                    builder.join(',', pseudo_class.languages);
-                    builder.append(')');
-                } else if (pseudo_class.type == CSS::Selector::SimpleSelector::PseudoClass::Type::Not
-                    || pseudo_class.type == CSS::Selector::SimpleSelector::PseudoClass::Type::Is
-                    || pseudo_class.type == CSS::Selector::SimpleSelector::PseudoClass::Type::Where) {
-                    builder.append("(["sv);
-                    for (auto& selector : pseudo_class.argument_selector_list)
-                        dump_selector(builder, selector);
-                    builder.append("])"sv);
-                } else if ((pseudo_class.type == CSS::Selector::SimpleSelector::PseudoClass::Type::NthChild)
-                    || (pseudo_class.type == CSS::Selector::SimpleSelector::PseudoClass::Type::NthLastChild)
-                    || (pseudo_class.type == CSS::Selector::SimpleSelector::PseudoClass::Type::NthOfType)
-                    || (pseudo_class.type == CSS::Selector::SimpleSelector::PseudoClass::Type::NthLastOfType)) {
+                switch (pseudo_class_metadata.parameter_type) {
+                case CSS::PseudoClassMetadata::ParameterType::None:
+                    break;
+                case CSS::PseudoClassMetadata::ParameterType::ANPlusB:
+                case CSS::PseudoClassMetadata::ParameterType::ANPlusBOf: {
                     builder.appendff("(step={}, offset={}", pseudo_class.nth_child_pattern.step_size, pseudo_class.nth_child_pattern.offset);
                     if (!pseudo_class.argument_selector_list.is_empty()) {
                         builder.append(", selectors=["sv);
@@ -589,6 +494,26 @@ void dump_selector(StringBuilder& builder, CSS::Selector const& selector)
                         builder.append("]"sv);
                     }
                     builder.append(")"sv);
+                    break;
+                }
+                case CSS::PseudoClassMetadata::ParameterType::CompoundSelector:
+                case CSS::PseudoClassMetadata::ParameterType::ForgivingSelectorList:
+                case CSS::PseudoClassMetadata::ParameterType::SelectorList: {
+                    builder.append("(["sv);
+                    for (auto& selector : pseudo_class.argument_selector_list)
+                        dump_selector(builder, selector);
+                    builder.append("])"sv);
+                    break;
+                }
+                case CSS::PseudoClassMetadata::ParameterType::Ident:
+                    builder.appendff("(ident={})", string_from_value_id(pseudo_class.identifier.value()));
+                    break;
+                case CSS::PseudoClassMetadata::ParameterType::LanguageRanges: {
+                    builder.append('(');
+                    builder.join(',', pseudo_class.languages);
+                    builder.append(')');
+                    break;
+                }
                 }
             }
 
@@ -658,7 +583,9 @@ void dump_selector(StringBuilder& builder, CSS::Selector const& selector)
                     break;
                 }
 
-                builder.appendff(" [{}, name='{}', value='{}']", attribute_match_type_description, attribute.name, attribute.value);
+                builder.appendff(" [{}, ", attribute_match_type_description);
+                dump_qualified_name(builder, attribute.qualified_name);
+                builder.appendff(", value='{}']", attribute.value);
             }
 
             if (i != relative_selector.simple_selectors.size() - 1)
@@ -727,14 +654,17 @@ void dump_font_face_rule(StringBuilder& builder, CSS::CSSFontFaceRule const& rul
     builder.append("sources:\n"sv);
     for (auto const& source : font_face.sources()) {
         indent(builder, indent_levels + 2);
-        builder.appendff("url={}, format={}\n", source.url, source.format.value_or("???"_short_string));
+        if (source.local_or_url.has<AK::URL>())
+            builder.appendff("url={}, format={}\n", source.local_or_url.get<AK::URL>(), source.format.value_or("???"_string));
+        else
+            builder.appendff("local={}\n", source.local_or_url.get<AK::String>());
     }
 
     indent(builder, indent_levels + 1);
     builder.append("unicode-ranges:\n"sv);
     for (auto const& unicode_range : font_face.unicode_ranges()) {
         indent(builder, indent_levels + 2);
-        builder.appendff("{}\n", unicode_range.to_string().release_value_but_fixme_should_propagate_errors());
+        builder.appendff("{}\n", unicode_range.to_string());
     }
 }
 
@@ -774,14 +704,14 @@ ErrorOr<void> dump_style_rule(StringBuilder& builder, CSS::CSSStyleRule const& r
     auto& style_declaration = verify_cast<CSS::PropertyOwningCSSStyleDeclaration>(rule.declaration());
     for (auto& property : style_declaration.properties()) {
         indent(builder, indent_levels);
-        builder.appendff("    {}: '{}'", CSS::string_from_property_id(property.property_id), TRY(property.value->to_string()));
+        builder.appendff("    {}: '{}'", CSS::string_from_property_id(property.property_id), property.value->to_string());
         if (property.important == CSS::Important::Yes)
             builder.append(" \033[31;1m!important\033[0m"sv);
         builder.append('\n');
     }
     for (auto& property : style_declaration.custom_properties()) {
         indent(builder, indent_levels);
-        builder.appendff("    {}: '{}'", property.key, TRY(property.value.value->to_string()));
+        builder.appendff("    {}: '{}'", property.key, property.value.value->to_string());
         if (property.value.important == CSS::Important::Yes)
             builder.append(" \033[31;1m!important\033[0m"sv);
         builder.append('\n');
@@ -851,6 +781,10 @@ void dump_tree(StringBuilder& builder, Painting::Paintable const& paintable, boo
 
         if (paintable_box.has_scrollable_overflow()) {
             builder.appendff(" overflow: {}", paintable_box.scrollable_overflow_rect());
+        }
+
+        if (!paintable_box.scroll_offset().is_zero()) {
+            builder.appendff(" scroll-offset: {}", paintable_box.scroll_offset());
         }
     }
     builder.append("\n"sv);

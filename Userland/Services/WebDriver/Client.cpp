@@ -20,7 +20,7 @@ namespace WebDriver {
 Atomic<unsigned> Client::s_next_session_id;
 HashMap<unsigned, NonnullRefPtr<Session>> Client::s_sessions;
 
-ErrorOr<NonnullRefPtr<Client>> Client::try_create(NonnullOwnPtr<Core::BufferedTCPSocket> socket, LaunchBrowserCallbacks callbacks, Core::Object* parent)
+ErrorOr<NonnullRefPtr<Client>> Client::try_create(NonnullOwnPtr<Core::BufferedTCPSocket> socket, LaunchBrowserCallbacks callbacks, Core::EventReceiver* parent)
 {
     if (!callbacks.launch_browser || !callbacks.launch_headless_browser)
         return Error::from_string_view("All callbacks to launch a browser must be provided"sv);
@@ -29,7 +29,7 @@ ErrorOr<NonnullRefPtr<Client>> Client::try_create(NonnullOwnPtr<Core::BufferedTC
     return adopt_nonnull_ref_or_enomem(new (nothrow) Client(move(socket), move(callbacks), parent));
 }
 
-Client::Client(NonnullOwnPtr<Core::BufferedTCPSocket> socket, LaunchBrowserCallbacks callbacks, Core::Object* parent)
+Client::Client(NonnullOwnPtr<Core::BufferedTCPSocket> socket, LaunchBrowserCallbacks callbacks, Core::EventReceiver* parent)
     : Web::WebDriver::Client(move(socket), parent)
     , m_callbacks(move(callbacks))
 {
@@ -323,7 +323,7 @@ Web::WebDriver::Response Client::switch_to_window(Web::WebDriver::Parameters par
     if (!handle.has_value())
         return Web::WebDriver::Error::from_code(Web::WebDriver::ErrorCode::InvalidArgument, "No property called 'handle' present");
 
-    return session->switch_to_window(handle->as_string());
+    return session->switch_to_window(handle->to_deprecated_string());
 }
 
 // 11.4 Get Window Handles, https://w3c.github.io/webdriver/#dfn-get-window-handles
@@ -630,6 +630,15 @@ Web::WebDriver::Response Client::delete_all_cookies(Web::WebDriver::Parameters p
     dbgln_if(WEBDRIVER_DEBUG, "Handling DELETE /session/<session_id>/cookie");
     auto session = TRY(find_session_with_id(parameters[0]));
     return session->web_content_connection().delete_all_cookies();
+}
+
+// 15.8 Release Actions, https://w3c.github.io/webdriver/#release-actions
+// DELETE /session/{session id}/actions
+Web::WebDriver::Response Client::release_actions(Web::WebDriver::Parameters parameters, JsonValue)
+{
+    dbgln_if(WEBDRIVER_DEBUG, "Handling DELETE /session/<session_id>/actions");
+    auto session = TRY(find_session_with_id(parameters[0]));
+    return session->web_content_connection().release_actions();
 }
 
 // 16.1 Dismiss Alert, https://w3c.github.io/webdriver/#dismiss-alert

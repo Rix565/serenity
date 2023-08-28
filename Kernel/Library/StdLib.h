@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Liav A. <liavalb@hotmail.co.il>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,6 +9,7 @@
 
 #include <AK/Checked.h>
 #include <AK/Error.h>
+#include <AK/FixedStringBuffer.h>
 #include <AK/Forward.h>
 #include <AK/Time.h>
 #include <AK/Userspace.h>
@@ -16,6 +18,25 @@
 #include <stddef.h>
 
 ErrorOr<NonnullOwnPtr<Kernel::KString>> try_copy_kstring_from_user(Userspace<char const*>, size_t);
+
+template<size_t Size>
+ErrorOr<void> try_copy_string_from_user_into_fixed_string_buffer(Userspace<char const*> user_str, FixedStringBuffer<Size>& buffer, size_t user_str_size)
+{
+    if (user_str_size > Size)
+        return E2BIG;
+    TRY(buffer.copy_characters_from_user(user_str, user_str_size));
+    return {};
+}
+
+template<size_t Size>
+ErrorOr<void> try_copy_name_from_user_into_fixed_string_buffer(Userspace<char const*> user_str, FixedStringBuffer<Size>& buffer, size_t user_str_size)
+{
+    if (user_str_size > Size)
+        return ENAMETOOLONG;
+    TRY(buffer.copy_characters_from_user(user_str, user_str_size));
+    return {};
+}
+
 ErrorOr<Duration> copy_time_from_user(timespec const*);
 ErrorOr<Duration> copy_time_from_user(timeval const*);
 template<typename T>
@@ -179,4 +200,15 @@ inline ErrorOr<T> copy_typed_from_user(Userspace<T*> user_data)
     T data {};
     TRY(copy_from_user(&data, user_data));
     return data;
+}
+
+template<size_t Size>
+ErrorOr<void> copy_fixed_string_buffer_including_null_char_to_user(Userspace<char*> dest, size_t buffer_size, FixedStringBuffer<Size> const& buffer)
+{
+    FixedStringBuffer<Size + 1> name_with_null_char {};
+    name_with_null_char.store_characters(buffer.representable_view());
+    if (name_with_null_char.stored_length() + 1 > buffer_size)
+        return ENAMETOOLONG;
+    auto name_with_null_char_view = name_with_null_char.span_view_ensuring_ending_null_char();
+    return copy_to_user(dest, name_with_null_char_view.data(), name_with_null_char_view.size());
 }

@@ -12,13 +12,14 @@
 #include <AK/CircularQueue.h>
 #include <AK/DeprecatedString.h>
 #include <AK/HashMap.h>
+#include <AK/IntrusiveList.h>
 #include <AK/StackInfo.h>
 #include <AK/StringBuilder.h>
 #include <AK/StringView.h>
 #include <AK/Types.h>
 #include <AK/Vector.h>
+#include <LibCore/EventReceiver.h>
 #include <LibCore/Notifier.h>
-#include <LibCore/Object.h>
 #include <LibLine/Editor.h>
 #include <LibMain/Main.h>
 #include <termios.h>
@@ -53,6 +54,7 @@
     __ENUMERATE_SHELL_BUILTIN(wait, InAllModes)              \
     __ENUMERATE_SHELL_BUILTIN(dump, InAllModes)              \
     __ENUMERATE_SHELL_BUILTIN(kill, InAllModes)              \
+    __ENUMERATE_SHELL_BUILTIN(reset, InAllModes)             \
     __ENUMERATE_SHELL_BUILTIN(noop, InAllModes)              \
     __ENUMERATE_SHELL_BUILTIN(break, OnlyInPOSIXMode)        \
     __ENUMERATE_SHELL_BUILTIN(continue, OnlyInPOSIXMode)     \
@@ -96,7 +98,7 @@ enum class POSIXModeRequirement {
     InAllModes,
 };
 
-class Shell : public Core::Object {
+class Shell : public Core::EventReceiver {
     C_OBJECT(Shell);
 
 public:
@@ -412,6 +414,9 @@ private:
     Shell(Line::Editor&, bool attempt_interactive, bool posix_mode = false);
     Shell();
     virtual ~Shell() override;
+
+    void destroy();
+    void initialize(bool attempt_interactive);
 
     RefPtr<AST::Node> parse(StringView, bool interactive = false, bool as_command = true) const;
 

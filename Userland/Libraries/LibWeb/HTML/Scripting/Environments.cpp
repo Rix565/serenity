@@ -33,11 +33,10 @@ EnvironmentSettingsObject::~EnvironmentSettingsObject()
     responsible_event_loop().unregister_environment_settings_object({}, *this);
 }
 
-JS::ThrowCompletionOr<void> EnvironmentSettingsObject::initialize(JS::Realm& realm)
+void EnvironmentSettingsObject::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     m_module_map = realm.heap().allocate_without_realm<ModuleMap>();
-    return {};
 }
 
 void EnvironmentSettingsObject::visit_edges(Cell::Visitor& visitor)
@@ -260,7 +259,7 @@ void EnvironmentSettingsObject::notify_about_rejected_promises(Badge<EventLoop>)
             // FIXME: This currently assumes that global is a WindowObject.
             auto& window = verify_cast<HTML::Window>(global);
 
-            auto promise_rejection_event = PromiseRejectionEvent::create(window.realm(), HTML::EventNames::unhandledrejection, event_init).release_value_but_fixme_should_propagate_errors();
+            auto promise_rejection_event = PromiseRejectionEvent::create(window.realm(), HTML::EventNames::unhandledrejection, event_init);
 
             bool not_handled = window.dispatch_event(*promise_rejection_event);
 

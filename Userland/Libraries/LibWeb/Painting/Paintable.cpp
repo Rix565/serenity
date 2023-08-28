@@ -11,12 +11,55 @@
 
 namespace Web::Painting {
 
+Paintable::Paintable(Layout::Node const& layout_node)
+    : m_layout_node(layout_node)
+    , m_browsing_context(const_cast<HTML::BrowsingContext&>(layout_node.browsing_context()))
+{
+}
+
 void Paintable::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
+    visitor.visit(m_dom_node);
     visitor.visit(m_layout_node);
+    visitor.visit(m_browsing_context);
     if (m_containing_block.has_value())
         visitor.visit(m_containing_block.value());
+}
+
+bool Paintable::is_positioned() const
+{
+    if (layout_node().is_grid_item() && computed_values().z_index().has_value()) {
+        // https://www.w3.org/TR/css-grid-2/#z-order
+        // grid items with z_index should behave as if position were "relative"
+        return true;
+    }
+    return computed_values().position() != CSS::Position::Static;
+}
+
+void Paintable::set_dom_node(JS::GCPtr<DOM::Node> dom_node)
+{
+    m_dom_node = dom_node;
+}
+
+JS::GCPtr<DOM::Node> Paintable::dom_node()
+{
+    return m_dom_node;
+}
+
+JS::GCPtr<DOM::Node const> Paintable::dom_node() const
+{
+    return m_dom_node;
+}
+
+HTML::BrowsingContext const& Paintable::browsing_context() const
+{
+    return m_browsing_context;
+}
+
+HTML::BrowsingContext& Paintable::browsing_context()
+{
+    return m_browsing_context;
 }
 
 Paintable::DispatchEventOfSameName Paintable::handle_mousedown(Badge<EventHandler>, CSSPixelPoint, unsigned, unsigned)
@@ -34,19 +77,8 @@ Paintable::DispatchEventOfSameName Paintable::handle_mousemove(Badge<EventHandle
     return DispatchEventOfSameName::Yes;
 }
 
-bool Paintable::handle_mousewheel(Badge<EventHandler>, CSSPixelPoint, unsigned, unsigned, int wheel_delta_x, int wheel_delta_y)
+bool Paintable::handle_mousewheel(Badge<EventHandler>, CSSPixelPoint, unsigned, unsigned, int, int)
 {
-    if (auto const* containing_block = this->containing_block()) {
-        if (!containing_block->is_scrollable())
-            return false;
-        auto new_offset = containing_block->scroll_offset();
-        new_offset.translate_by(wheel_delta_x, wheel_delta_y);
-        // FIXME: This const_cast is gross.
-        // FIXME: Scroll offset shouldn't live in the layout tree.
-        const_cast<Layout::Box*>(containing_block)->set_scroll_offset(new_offset);
-        return true;
-    }
-
     return false;
 }
 
@@ -55,41 +87,9 @@ Optional<HitTestResult> Paintable::hit_test(CSSPixelPoint, HitTestType) const
     return {};
 }
 
-Paintable const* Paintable::first_child() const
-{
-    auto const* layout_child = m_layout_node->first_child();
-    for (; layout_child && !layout_child->paintable(); layout_child = layout_child->next_sibling())
-        ;
-    return layout_child ? layout_child->paintable() : nullptr;
-}
-
-Paintable const* Paintable::next_sibling() const
-{
-    auto const* layout_node = m_layout_node->next_sibling();
-    for (; layout_node && !layout_node->paintable(); layout_node = layout_node->next_sibling())
-        ;
-    return layout_node ? layout_node->paintable() : nullptr;
-}
-
-Paintable const* Paintable::last_child() const
-{
-    auto const* layout_child = m_layout_node->last_child();
-    for (; layout_child && !layout_child->paintable(); layout_child = layout_child->previous_sibling())
-        ;
-    return layout_child ? layout_child->paintable() : nullptr;
-}
-
-Paintable const* Paintable::previous_sibling() const
-{
-    auto const* layout_node = m_layout_node->previous_sibling();
-    for (; layout_node && !layout_node->paintable(); layout_node = layout_node->previous_sibling())
-        ;
-    return layout_node ? layout_node->paintable() : nullptr;
-}
-
 StackingContext const* Paintable::stacking_context_rooted_here() const
 {
-    if (!layout_node().is_box())
+    if (!is<PaintableBox>(*this))
         return nullptr;
     return static_cast<PaintableBox const&>(*this).stacking_context();
 }

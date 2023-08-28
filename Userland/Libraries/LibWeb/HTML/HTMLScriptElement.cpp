@@ -30,12 +30,10 @@ HTMLScriptElement::HTMLScriptElement(DOM::Document& document, DOM::QualifiedName
 
 HTMLScriptElement::~HTMLScriptElement() = default;
 
-JS::ThrowCompletionOr<void> HTMLScriptElement::initialize(JS::Realm& realm)
+void HTMLScriptElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLScriptElementPrototype>(realm, "HTMLScriptElement"));
-
-    return {};
 }
 
 void HTMLScriptElement::visit_edges(Cell::Visitor& visitor)
@@ -88,7 +86,7 @@ void HTMLScriptElement::execute_script()
     // 3. If el's result is null, then fire an event named error at el, and return.
     if (m_result.has<ResultState::Null>()) {
         dbgln("HTMLScriptElement: Refusing to run script because the element's result is null.");
-        dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error).release_value_but_fixme_should_propagate_errors());
+        dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error));
         return;
     }
 
@@ -139,7 +137,7 @@ void HTMLScriptElement::execute_script()
 
     // 8. If el's from an external file is true, then fire an event named load at el.
     if (m_from_an_external_file)
-        dispatch_event(DOM::Event::create(realm(), HTML::EventNames::load).release_value_but_fixme_should_propagate_errors());
+        dispatch_event(DOM::Event::create(realm(), HTML::EventNames::load));
 }
 
 // https://html.spec.whatwg.org/multipage/scripting.html#prepare-a-script
@@ -342,7 +340,7 @@ void HTMLScriptElement::prepare_script()
         if (m_script_type == ScriptType::ImportMap) {
             // then queue an element task on the DOM manipulation task source given el to fire an event named error at el, and return.
             queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
-                dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error).release_value_but_fixme_should_propagate_errors());
+                dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error));
             });
             return;
         }
@@ -354,7 +352,7 @@ void HTMLScriptElement::prepare_script()
         if (src.is_empty()) {
             dbgln("HTMLScriptElement: Refusing to run script because the src attribute is empty.");
             queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
-                dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error).release_value_but_fixme_should_propagate_errors());
+                dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error));
             });
             return;
         }
@@ -369,7 +367,7 @@ void HTMLScriptElement::prepare_script()
         if (!url.is_valid()) {
             dbgln("HTMLScriptElement: Refusing to run script because the src URL '{}' is invalid.", url);
             queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
-                dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error).release_value_but_fixme_should_propagate_errors());
+                dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error));
             });
             return;
         }
@@ -399,8 +397,7 @@ void HTMLScriptElement::prepare_script()
         // -> "module"
         else if (m_script_type == ScriptType::Module) {
             // Fetch an external module script graph given url, settings object, options, and onComplete.
-            // FIXME: Pass options.
-            fetch_external_module_script_graph(url, settings_object, move(on_complete));
+            fetch_external_module_script_graph(realm(), url, settings_object, options, move(on_complete));
         }
     }
 
@@ -426,7 +423,7 @@ void HTMLScriptElement::prepare_script()
 
             // 2. Fetch an inline module script graph, given source text, base URL, settings object, options, and with the following steps given result:
             // FIXME: Pass options
-            fetch_inline_module_script_graph(m_document->url().to_deprecated_string(), source_text, base_url, document().relevant_settings_object(), [this](auto result) {
+            fetch_inline_module_script_graph(realm(), m_document->url().to_deprecated_string(), source_text, base_url, document().relevant_settings_object(), [this](auto result) {
                 // 1. Mark as ready el given result.
                 if (!result)
                     mark_as_ready(ResultState::Null {});

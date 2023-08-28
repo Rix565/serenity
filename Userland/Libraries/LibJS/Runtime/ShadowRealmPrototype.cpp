@@ -16,10 +16,10 @@ ShadowRealmPrototype::ShadowRealmPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> ShadowRealmPrototype::initialize(Realm& realm)
+void ShadowRealmPrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.names.evaluate, evaluate, 1, attr);
@@ -27,8 +27,6 @@ ThrowCompletionOr<void> ShadowRealmPrototype::initialize(Realm& realm)
 
     // 3.4.3 ShadowRealm.prototype [ @@toStringTag ], https://tc39.es/proposal-shadowrealm/#sec-shadowrealm.prototype-@@tostringtag
     define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, vm.names.ShadowRealm.as_string()), Attribute::Configurable);
-
-    return {};
 }
 
 // 3.4.1 ShadowRealm.prototype.evaluate ( sourceText ), https://tc39.es/proposal-shadowrealm/#sec-shadowrealm.prototype.evaluate
@@ -51,7 +49,7 @@ JS_DEFINE_NATIVE_FUNCTION(ShadowRealmPrototype::evaluate)
     auto& eval_realm = object->shadow_realm();
 
     // 6. Return ? PerformShadowRealmEval(sourceText, callerRealm, evalRealm).
-    return perform_shadow_realm_eval(vm, TRY(source_text.as_string().deprecated_string()), *caller_realm, eval_realm);
+    return perform_shadow_realm_eval(vm, source_text.as_string().deprecated_string(), *caller_realm, eval_realm);
 }
 
 // 3.4.2 ShadowRealm.prototype.importValue ( specifier, exportName ), https://tc39.es/proposal-shadowrealm/#sec-shadowrealm.prototype.importvalue
@@ -69,7 +67,7 @@ JS_DEFINE_NATIVE_FUNCTION(ShadowRealmPrototype::import_value)
 
     // 4. If Type(exportName) is not String, throw a TypeError exception.
     if (!export_name.is_string())
-        return vm.throw_completion<TypeError>(ErrorType::NotAString, TRY_OR_THROW_OOM(vm, export_name.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAString, export_name.to_string_without_side_effects());
 
     // 5. Let callerRealm be the current Realm Record.
     auto* caller_realm = vm.current_realm();
@@ -81,7 +79,7 @@ JS_DEFINE_NATIVE_FUNCTION(ShadowRealmPrototype::import_value)
     auto& eval_context = object->execution_context();
 
     // 8. Return ? ShadowRealmImportValue(specifierString, exportNameString, callerRealm, evalRealm, evalContext).
-    return shadow_realm_import_value(vm, move(specifier_string), TRY(export_name.as_string().deprecated_string()), *caller_realm, eval_realm, eval_context);
+    return shadow_realm_import_value(vm, move(specifier_string), export_name.as_string().deprecated_string(), *caller_realm, eval_realm, eval_context);
 }
 
 }

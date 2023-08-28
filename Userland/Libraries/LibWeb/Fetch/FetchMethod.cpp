@@ -111,7 +111,7 @@ JS::NonnullGCPtr<JS::Promise> fetch(JS::VM& vm, RequestInfo const& input, Reques
 
         // 4. Set responseObject to the result of creating a Response object, given response, "immutable", and
         //    relevantRealm.
-        auto response_object = Response::create(relevant_realm, response, Headers::Guard::Immutable).release_value_but_fixme_should_propagate_errors();
+        auto response_object = Response::create(relevant_realm, response, Headers::Guard::Immutable);
         response_object_handle = JS::make_handle(response_object);
 
         // 5. Resolve p with responseObject.
@@ -165,7 +165,7 @@ void abort_fetch(JS::Realm& realm, WebIDL::Promise const& promise, JS::NonnullGC
     WebIDL::reject_promise(realm, promise, error);
 
     // 2. If request’s body is non-null and is readable, then cancel request’s body with error.
-    if (auto* body = request->body().get_pointer<Infrastructure::Body>(); body != nullptr && body->stream()->is_readable()) {
+    if (auto* body = request->body().get_pointer<JS::NonnullGCPtr<Infrastructure::Body>>(); body != nullptr && (*body)->stream()->is_readable()) {
         // TODO: Implement cancelling streams
         (void)error;
     }
@@ -178,7 +178,7 @@ void abort_fetch(JS::Realm& realm, WebIDL::Promise const& promise, JS::NonnullGC
     auto response = response_object->response();
 
     // 5. If response’s body is non-null and is readable, then error response’s body with error.
-    if (response->body().has_value()) {
+    if (response->body()) {
         auto stream = response->body()->stream();
         if (stream->is_readable()) {
             // TODO: Implement erroring streams

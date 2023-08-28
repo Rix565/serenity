@@ -9,9 +9,9 @@
 
 namespace Web::HTML {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<PromiseRejectionEvent>> PromiseRejectionEvent::create(JS::Realm& realm, FlyString const& event_name, PromiseRejectionEventInit const& event_init)
+JS::NonnullGCPtr<PromiseRejectionEvent> PromiseRejectionEvent::create(JS::Realm& realm, FlyString const& event_name, PromiseRejectionEventInit const& event_init)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<PromiseRejectionEvent>(realm, realm, event_name, event_init));
+    return realm.heap().allocate<PromiseRejectionEvent>(realm, realm, event_name, event_init);
 }
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<PromiseRejectionEvent>> PromiseRejectionEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, PromiseRejectionEventInit const& event_init)
@@ -35,12 +35,10 @@ void PromiseRejectionEvent::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_reason);
 }
 
-JS::ThrowCompletionOr<void> PromiseRejectionEvent::initialize(JS::Realm& realm)
+void PromiseRejectionEvent::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::PromiseRejectionEventPrototype>(realm, "PromiseRejectionEvent"));
-
-    return {};
 }
 
 }

@@ -23,7 +23,7 @@ TEST_CASE(construct_empty)
     EXPECT_EQ(empty.bytes().size(), 0u);
     EXPECT_EQ(empty, ""sv);
 
-    auto empty2 = MUST(""_string);
+    auto empty2 = ""_string;
     EXPECT(empty2.is_empty());
     EXPECT_EQ(empty, empty2);
 
@@ -34,8 +34,8 @@ TEST_CASE(construct_empty)
 
 TEST_CASE(move_assignment)
 {
-    String string1 = MUST("hello"_string);
-    string1 = MUST("friends!"_string);
+    String string1 = "hello"_string;
+    string1 = "friends!"_string;
     EXPECT_EQ(string1, "friends!"sv);
 }
 
@@ -47,40 +47,21 @@ TEST_CASE(short_strings)
     EXPECT_EQ(string1.bytes().size(), 7u);
     EXPECT_EQ(string1.bytes_as_string_view(), "abcdefg"sv);
 
-    constexpr auto string2 = String::from_utf8_short_string("abcdefg"sv);
+    auto string2 = "abcdefg"_string;
     EXPECT_EQ(string2.is_short_string(), true);
     EXPECT_EQ(string2.bytes().size(), 7u);
     EXPECT_EQ(string2, string1);
 
-    auto string3 = MUST("abcdefg"_string);
-    EXPECT_EQ(string3.is_short_string(), true);
-    EXPECT_EQ(string3.bytes().size(), 7u);
-    EXPECT_EQ(string3, string1);
-
-    constexpr auto string4 = "abcdefg"_short_string;
-    EXPECT_EQ(string4.is_short_string(), true);
-    EXPECT_EQ(string4.bytes().size(), 7u);
-    EXPECT_EQ(string4, string1);
 #else
     auto string1 = MUST(String::from_utf8("abc"sv));
     EXPECT_EQ(string1.is_short_string(), true);
     EXPECT_EQ(string1.bytes().size(), 3u);
     EXPECT_EQ(string1.bytes_as_string_view(), "abc"sv);
 
-    constexpr auto string2 = String::from_utf8_short_string("abc"sv);
+    auto string2 = "abc"_string;
     EXPECT_EQ(string2.is_short_string(), true);
     EXPECT_EQ(string2.bytes().size(), 3u);
     EXPECT_EQ(string2, string1);
-
-    auto string3 = MUST("abc"_string);
-    EXPECT_EQ(string3.is_short_string(), true);
-    EXPECT_EQ(string3.bytes().size(), 3u);
-    EXPECT_EQ(string3, string1);
-
-    constexpr auto string4 = "abc"_short_string;
-    EXPECT_EQ(string4.is_short_string(), true);
-    EXPECT_EQ(string4.bytes().size(), 3u);
-    EXPECT_EQ(string4, string1);
 #endif
 }
 
@@ -182,7 +163,7 @@ TEST_CASE(from_code_points)
 
 TEST_CASE(substring)
 {
-    auto superstring = MUST("Hello I am a long string"_string);
+    auto superstring = "Hello I am a long string"_string;
     auto short_substring = MUST(superstring.substring_from_byte_offset(0, 5));
     EXPECT_EQ(short_substring, "Hello"sv);
 
@@ -192,7 +173,7 @@ TEST_CASE(substring)
 
 TEST_CASE(substring_with_shared_superstring)
 {
-    auto superstring = MUST("Hello I am a long string"_string);
+    auto superstring = "Hello I am a long string"_string;
 
     auto substring1 = MUST(superstring.substring_from_byte_offset_with_shared_superstring(0, 5));
     EXPECT_EQ(substring1, "Hello"sv);
@@ -203,7 +184,7 @@ TEST_CASE(substring_with_shared_superstring)
 
 TEST_CASE(code_points)
 {
-    auto string = MUST("🦬🪒"_string);
+    auto string = "🦬🪒"_string;
 
     Vector<u32> code_points;
     for (auto code_point : string.code_points())
@@ -226,20 +207,20 @@ TEST_CASE(string_builder)
 
 TEST_CASE(ak_format)
 {
-    auto foo = MUST(String::formatted("Hello {}", MUST("friends"_string)));
+    auto foo = MUST(String::formatted("Hello {}", "friends"_string));
     EXPECT_EQ(foo, "Hello friends"sv);
 }
 
 TEST_CASE(replace)
 {
     {
-        auto haystack = MUST("Hello enemies"_string);
+        auto haystack = "Hello enemies"_string;
         auto result = MUST(haystack.replace("enemies"sv, "friends"sv, ReplaceMode::All));
         EXPECT_EQ(result, "Hello friends"sv);
     }
 
     {
-        auto base_title = MUST("anon@courage:~"_string);
+        auto base_title = "anon@courage:~"_string;
         auto result = MUST(base_title.replace("[*]"sv, "(*)"sv, ReplaceMode::FirstOnly));
         EXPECT_EQ(result, "anon@courage:~"sv);
     }
@@ -265,17 +246,17 @@ TEST_CASE(reverse)
 TEST_CASE(to_lowercase)
 {
     {
-        auto string = MUST("Aa"_string);
+        auto string = "Aa"_string;
         auto result = MUST(string.to_lowercase());
         EXPECT_EQ(result, "aa"sv);
     }
     {
-        auto string = MUST("Ωω"_string);
+        auto string = "Ωω"_string;
         auto result = MUST(string.to_lowercase());
         EXPECT_EQ(result, "ωω"sv);
     }
     {
-        auto string = MUST("İi̇"_string);
+        auto string = "İi̇"_string;
         auto result = MUST(string.to_lowercase());
         EXPECT_EQ(result, "i̇i̇"sv);
     }
@@ -284,17 +265,17 @@ TEST_CASE(to_lowercase)
 TEST_CASE(to_uppercase)
 {
     {
-        auto string = MUST("Aa"_string);
+        auto string = "Aa"_string;
         auto result = MUST(string.to_uppercase());
         EXPECT_EQ(result, "AA"sv);
     }
     {
-        auto string = MUST("Ωω"_string);
+        auto string = "Ωω"_string;
         auto result = MUST(string.to_uppercase());
         EXPECT_EQ(result, "ΩΩ"sv);
     }
     {
-        auto string = MUST("ŉ"_string);
+        auto string = "ŉ"_string;
         auto result = MUST(string.to_uppercase());
         EXPECT_EQ(result, "ʼN"sv);
     }
@@ -303,22 +284,22 @@ TEST_CASE(to_uppercase)
 TEST_CASE(to_titlecase)
 {
     {
-        auto string = MUST("foo bar baz"_string);
+        auto string = "foo bar baz"_string;
         auto result = MUST(string.to_titlecase());
         EXPECT_EQ(result, "Foo Bar Baz"sv);
     }
     {
-        auto string = MUST("foo \n \r bar \t baz"_string);
+        auto string = "foo \n \r bar \t baz"_string;
         auto result = MUST(string.to_titlecase());
         EXPECT_EQ(result, "Foo \n \r Bar \t Baz"sv);
     }
     {
-        auto string = MUST("f\"oo\" b'ar'"_string);
+        auto string = "f\"oo\" b'ar'"_string;
         auto result = MUST(string.to_titlecase());
         EXPECT_EQ(result, "F\"Oo\" B'ar'"sv);
     }
     {
-        auto string = MUST("123dollars"_string);
+        auto string = "123dollars"_string;
         auto result = MUST(string.to_titlecase());
         EXPECT_EQ(result, "123Dollars"sv);
     }
@@ -333,12 +314,12 @@ TEST_CASE(equals_ignoring_case)
         EXPECT(string1.equals_ignoring_case(string2));
     }
     {
-        auto string1 = MUST("abcd"_string);
-        auto string2 = MUST("ABCD"_string);
-        auto string3 = MUST("AbCd"_string);
-        auto string4 = MUST("dcba"_string);
-        auto string5 = MUST("abce"_string);
-        auto string6 = MUST("abc"_string);
+        auto string1 = "abcd"_string;
+        auto string2 = "ABCD"_string;
+        auto string3 = "AbCd"_string;
+        auto string4 = "dcba"_string;
+        auto string5 = "abce"_string;
+        auto string6 = "abc"_string;
 
         EXPECT(string1.equals_ignoring_case(string2));
         EXPECT(string1.equals_ignoring_case(string3));
@@ -359,12 +340,12 @@ TEST_CASE(equals_ignoring_case)
         EXPECT(!string3.equals_ignoring_case(string6));
     }
     {
-        auto string1 = MUST("\u00DF"_string); // LATIN SMALL LETTER SHARP S
-        auto string2 = MUST("SS"_string);
-        auto string3 = MUST("Ss"_string);
-        auto string4 = MUST("ss"_string);
-        auto string5 = MUST("S"_string);
-        auto string6 = MUST("s"_string);
+        auto string1 = "\u00DF"_string; // LATIN SMALL LETTER SHARP S
+        auto string2 = "SS"_string;
+        auto string3 = "Ss"_string;
+        auto string4 = "ss"_string;
+        auto string5 = "S"_string;
+        auto string6 = "s"_string;
 
         EXPECT(string1.equals_ignoring_case(string2));
         EXPECT(string1.equals_ignoring_case(string3));
@@ -392,12 +373,12 @@ TEST_CASE(equals_ignoring_case)
     }
     {
 
-        auto string1 = MUST("Ab\u00DFCd\u00DFeF"_string);
-        auto string2 = MUST("ABSSCDSSEF"_string);
-        auto string3 = MUST("absscdssef"_string);
-        auto string4 = MUST("aBSscDsSEf"_string);
-        auto string5 = MUST("Ab\u00DFCd\u00DFeg"_string);
-        auto string6 = MUST("Ab\u00DFCd\u00DFe"_string);
+        auto string1 = "Ab\u00DFCd\u00DFeF"_string;
+        auto string2 = "ABSSCDSSEF"_string;
+        auto string3 = "absscdssef"_string;
+        auto string4 = "aBSscDsSEf"_string;
+        auto string5 = "Ab\u00DFCd\u00DFeg"_string;
+        auto string6 = "Ab\u00DFCd\u00DFe"_string;
 
         EXPECT(string1.equals_ignoring_case(string1));
         EXPECT(string1.equals_ignoring_case(string2));
@@ -431,8 +412,8 @@ TEST_CASE(equals_ignoring_case)
 
 TEST_CASE(is_one_of)
 {
-    auto foo = MUST("foo"_string);
-    auto bar = MUST("bar"_string);
+    auto foo = "foo"_string;
+    auto bar = "bar"_string;
 
     EXPECT(foo.is_one_of(foo));
     EXPECT(foo.is_one_of(foo, bar));
@@ -448,7 +429,7 @@ TEST_CASE(is_one_of)
 TEST_CASE(split)
 {
     {
-        auto test = MUST("foo bar baz"_string);
+        auto test = "foo bar baz"_string;
         auto parts = MUST(test.split(' '));
         EXPECT_EQ(parts.size(), 3u);
         EXPECT_EQ(parts[0], "foo");
@@ -456,7 +437,7 @@ TEST_CASE(split)
         EXPECT_EQ(parts[2], "baz");
     }
     {
-        auto test = MUST("ωΣ2ωΣω"_string);
+        auto test = "ωΣ2ωΣω"_string;
         auto parts = MUST(test.split(0x03A3u));
         EXPECT_EQ(parts.size(), 3u);
         EXPECT_EQ(parts[0], "ω"sv);
@@ -476,7 +457,7 @@ TEST_CASE(find_byte_offset)
         EXPECT(!index2.has_value());
     }
     {
-        auto string = MUST("foo"_string);
+        auto string = "foo"_string;
 
         auto index1 = string.find_byte_offset('f');
         EXPECT_EQ(index1, 0u);
@@ -491,7 +472,7 @@ TEST_CASE(find_byte_offset)
         EXPECT(!index4.has_value());
     }
     {
-        auto string = MUST("foo"_string);
+        auto string = "foo"_string;
 
         auto index1 = string.find_byte_offset("fo"sv);
         EXPECT_EQ(index1, 0u);
@@ -506,7 +487,7 @@ TEST_CASE(find_byte_offset)
         EXPECT(!index4.has_value());
     }
     {
-        auto string = MUST("ωΣωΣω"_string);
+        auto string = "ωΣωΣω"_string;
 
         auto index1 = string.find_byte_offset(0x03C9U);
         EXPECT_EQ(index1, 0u);
@@ -524,7 +505,7 @@ TEST_CASE(find_byte_offset)
         EXPECT_EQ(index5, 8u);
     }
     {
-        auto string = MUST("ωΣωΣω"_string);
+        auto string = "ωΣωΣω"_string;
 
         auto index1 = string.find_byte_offset("ω"sv);
         EXPECT_EQ(index1, 0u);
@@ -638,7 +619,7 @@ TEST_CASE(join)
     auto string5 = MUST(String::join(',', Array { 1, 2, 3 }, "[{}]"sv));
     EXPECT_EQ(string5, "[1],[2],[3]"sv);
 
-    auto string6 = MUST(String::join("!!!"_short_string, Array { "foo"sv, "bar"sv, "baz"sv }));
+    auto string6 = MUST(String::join("!!!"_string, Array { "foo"sv, "bar"sv, "baz"sv }));
     EXPECT_EQ(string6, "foo!!!bar!!!baz"sv);
 
     auto string7 = MUST(String::join(" - "sv, Array { 1, 16, 256, 4096 }, "[{:#04x}]"sv));
@@ -660,7 +641,7 @@ TEST_CASE(trim)
         EXPECT(result.is_empty());
     }
     {
-        auto string = MUST("word"_string);
+        auto string = "word"_string;
 
         auto result = MUST(string.trim(" "sv, TrimMode::Both));
         EXPECT_EQ(result, "word"sv);
@@ -672,7 +653,7 @@ TEST_CASE(trim)
         EXPECT_EQ(result, "word"sv);
     }
     {
-        auto string = MUST("    word"_string);
+        auto string = "    word"_string;
 
         auto result = MUST(string.trim(" "sv, TrimMode::Both));
         EXPECT_EQ(result, "word"sv);
@@ -684,7 +665,7 @@ TEST_CASE(trim)
         EXPECT_EQ(result, "    word"sv);
     }
     {
-        auto string = MUST("word    "_string);
+        auto string = "word    "_string;
 
         auto result = MUST(string.trim(" "sv, TrimMode::Both));
         EXPECT_EQ(result, "word"sv);
@@ -696,7 +677,7 @@ TEST_CASE(trim)
         EXPECT_EQ(result, "word"sv);
     }
     {
-        auto string = MUST("    word    "_string);
+        auto string = "    word    "_string;
 
         auto result = MUST(string.trim(" "sv, TrimMode::Both));
         EXPECT_EQ(result, "word"sv);
@@ -708,7 +689,7 @@ TEST_CASE(trim)
         EXPECT_EQ(result, "    word"sv);
     }
     {
-        auto string = MUST("    word    "_string);
+        auto string = "    word    "_string;
 
         auto result = MUST(string.trim("\t"sv, TrimMode::Both));
         EXPECT_EQ(result, "    word    "sv);
@@ -720,7 +701,7 @@ TEST_CASE(trim)
         EXPECT_EQ(result, "    word    "sv);
     }
     {
-        auto string = MUST("ωΣωΣω"_string);
+        auto string = "ωΣωΣω"_string;
 
         auto result = MUST(string.trim("ω"sv, TrimMode::Both));
         EXPECT_EQ(result, "ΣωΣ"sv);
@@ -732,7 +713,7 @@ TEST_CASE(trim)
         EXPECT_EQ(result, "ωΣωΣ"sv);
     }
     {
-        auto string = MUST("ωΣωΣω"_string);
+        auto string = "ωΣωΣω"_string;
 
         auto result = MUST(string.trim("ωΣ"sv, TrimMode::Both));
         EXPECT(result.is_empty());
@@ -744,7 +725,7 @@ TEST_CASE(trim)
         EXPECT(result.is_empty());
     }
     {
-        auto string = MUST("ωΣωΣω"_string);
+        auto string = "ωΣωΣω"_string;
 
         auto result = MUST(string.trim("Σω"sv, TrimMode::Both));
         EXPECT(result.is_empty());
@@ -763,30 +744,30 @@ TEST_CASE(contains)
     EXPECT(!String {}.contains(" "sv));
     EXPECT(!String {}.contains(0));
 
-    EXPECT("a"_short_string.contains("a"sv));
-    EXPECT(!"a"_short_string.contains({}));
-    EXPECT(!"a"_short_string.contains("b"sv));
-    EXPECT(!"a"_short_string.contains("ab"sv));
+    EXPECT("a"_string.contains("a"sv));
+    EXPECT(!"a"_string.contains({}));
+    EXPECT(!"a"_string.contains("b"sv));
+    EXPECT(!"a"_string.contains("ab"sv));
 
-    EXPECT("a"_short_string.contains(0x0061));
-    EXPECT(!"a"_short_string.contains(0x0062));
+    EXPECT("a"_string.contains(0x0061));
+    EXPECT(!"a"_string.contains(0x0062));
 
-    EXPECT("abc"_short_string.contains("a"sv));
-    EXPECT("abc"_short_string.contains("b"sv));
-    EXPECT("abc"_short_string.contains("c"sv));
-    EXPECT("abc"_short_string.contains("ab"sv));
-    EXPECT("abc"_short_string.contains("bc"sv));
-    EXPECT("abc"_short_string.contains("abc"sv));
-    EXPECT(!"abc"_short_string.contains({}));
-    EXPECT(!"abc"_short_string.contains("ac"sv));
-    EXPECT(!"abc"_short_string.contains("abcd"sv));
+    EXPECT("abc"_string.contains("a"sv));
+    EXPECT("abc"_string.contains("b"sv));
+    EXPECT("abc"_string.contains("c"sv));
+    EXPECT("abc"_string.contains("ab"sv));
+    EXPECT("abc"_string.contains("bc"sv));
+    EXPECT("abc"_string.contains("abc"sv));
+    EXPECT(!"abc"_string.contains({}));
+    EXPECT(!"abc"_string.contains("ac"sv));
+    EXPECT(!"abc"_string.contains("abcd"sv));
 
-    EXPECT("abc"_short_string.contains(0x0061));
-    EXPECT("abc"_short_string.contains(0x0062));
-    EXPECT("abc"_short_string.contains(0x0063));
-    EXPECT(!"abc"_short_string.contains(0x0064));
+    EXPECT("abc"_string.contains(0x0061));
+    EXPECT("abc"_string.contains(0x0062));
+    EXPECT("abc"_string.contains(0x0063));
+    EXPECT(!"abc"_string.contains(0x0064));
 
-    auto emoji = MUST("😀"_string);
+    auto emoji = "😀"_string;
     EXPECT(emoji.contains("\xF0"sv));
     EXPECT(emoji.contains("\x9F"sv));
     EXPECT(emoji.contains("\x98"sv));
@@ -809,26 +790,26 @@ TEST_CASE(starts_with)
     EXPECT(!String {}.starts_with_bytes(" "sv));
     EXPECT(!String {}.starts_with(0));
 
-    EXPECT("a"_short_string.starts_with_bytes({}));
-    EXPECT("a"_short_string.starts_with_bytes("a"sv));
-    EXPECT(!"a"_short_string.starts_with_bytes("b"sv));
-    EXPECT(!"a"_short_string.starts_with_bytes("ab"sv));
+    EXPECT("a"_string.starts_with_bytes({}));
+    EXPECT("a"_string.starts_with_bytes("a"sv));
+    EXPECT(!"a"_string.starts_with_bytes("b"sv));
+    EXPECT(!"a"_string.starts_with_bytes("ab"sv));
 
-    EXPECT("a"_short_string.starts_with(0x0061));
-    EXPECT(!"a"_short_string.starts_with(0x0062));
+    EXPECT("a"_string.starts_with(0x0061));
+    EXPECT(!"a"_string.starts_with(0x0062));
 
-    EXPECT("abc"_short_string.starts_with_bytes({}));
-    EXPECT("abc"_short_string.starts_with_bytes("a"sv));
-    EXPECT("abc"_short_string.starts_with_bytes("ab"sv));
-    EXPECT("abc"_short_string.starts_with_bytes("abc"sv));
-    EXPECT(!"abc"_short_string.starts_with_bytes("b"sv));
-    EXPECT(!"abc"_short_string.starts_with_bytes("bc"sv));
+    EXPECT("abc"_string.starts_with_bytes({}));
+    EXPECT("abc"_string.starts_with_bytes("a"sv));
+    EXPECT("abc"_string.starts_with_bytes("ab"sv));
+    EXPECT("abc"_string.starts_with_bytes("abc"sv));
+    EXPECT(!"abc"_string.starts_with_bytes("b"sv));
+    EXPECT(!"abc"_string.starts_with_bytes("bc"sv));
 
-    EXPECT("abc"_short_string.starts_with(0x0061));
-    EXPECT(!"abc"_short_string.starts_with(0x0062));
-    EXPECT(!"abc"_short_string.starts_with(0x0063));
+    EXPECT("abc"_string.starts_with(0x0061));
+    EXPECT(!"abc"_string.starts_with(0x0062));
+    EXPECT(!"abc"_string.starts_with(0x0063));
 
-    auto emoji = MUST("😀🙃"_string);
+    auto emoji = "😀🙃"_string;
     EXPECT(emoji.starts_with_bytes("\xF0"sv));
     EXPECT(emoji.starts_with_bytes("\xF0\x9F"sv));
     EXPECT(emoji.starts_with_bytes("\xF0\x9F\x98"sv));
@@ -850,26 +831,26 @@ TEST_CASE(ends_with)
     EXPECT(!String {}.ends_with_bytes(" "sv));
     EXPECT(!String {}.ends_with(0));
 
-    EXPECT("a"_short_string.ends_with_bytes({}));
-    EXPECT("a"_short_string.ends_with_bytes("a"sv));
-    EXPECT(!"a"_short_string.ends_with_bytes("b"sv));
-    EXPECT(!"a"_short_string.ends_with_bytes("ba"sv));
+    EXPECT("a"_string.ends_with_bytes({}));
+    EXPECT("a"_string.ends_with_bytes("a"sv));
+    EXPECT(!"a"_string.ends_with_bytes("b"sv));
+    EXPECT(!"a"_string.ends_with_bytes("ba"sv));
 
-    EXPECT("a"_short_string.ends_with(0x0061));
-    EXPECT(!"a"_short_string.ends_with(0x0062));
+    EXPECT("a"_string.ends_with(0x0061));
+    EXPECT(!"a"_string.ends_with(0x0062));
 
-    EXPECT("abc"_short_string.ends_with_bytes({}));
-    EXPECT("abc"_short_string.ends_with_bytes("c"sv));
-    EXPECT("abc"_short_string.ends_with_bytes("bc"sv));
-    EXPECT("abc"_short_string.ends_with_bytes("abc"sv));
-    EXPECT(!"abc"_short_string.ends_with_bytes("b"sv));
-    EXPECT(!"abc"_short_string.ends_with_bytes("ab"sv));
+    EXPECT("abc"_string.ends_with_bytes({}));
+    EXPECT("abc"_string.ends_with_bytes("c"sv));
+    EXPECT("abc"_string.ends_with_bytes("bc"sv));
+    EXPECT("abc"_string.ends_with_bytes("abc"sv));
+    EXPECT(!"abc"_string.ends_with_bytes("b"sv));
+    EXPECT(!"abc"_string.ends_with_bytes("ab"sv));
 
-    EXPECT("abc"_short_string.ends_with(0x0063));
-    EXPECT(!"abc"_short_string.ends_with(0x0062));
-    EXPECT(!"abc"_short_string.ends_with(0x0061));
+    EXPECT("abc"_string.ends_with(0x0063));
+    EXPECT(!"abc"_string.ends_with(0x0062));
+    EXPECT(!"abc"_string.ends_with(0x0061));
 
-    auto emoji = MUST("😀🙃"_string);
+    auto emoji = "😀🙃"_string;
     EXPECT(emoji.ends_with_bytes("\x83"sv));
     EXPECT(emoji.ends_with_bytes("\x99\x83"sv));
     EXPECT(emoji.ends_with_bytes("\x9F\x99\x83"sv));

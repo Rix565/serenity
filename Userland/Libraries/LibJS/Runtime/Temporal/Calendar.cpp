@@ -99,7 +99,7 @@ ThrowCompletionOr<Calendar*> get_builtin_calendar(VM& vm, String const& identifi
 Calendar* get_iso8601_calendar(VM& vm)
 {
     // 1. Return ! GetBuiltinCalendar("iso8601").
-    return MUST(get_builtin_calendar(vm, "iso8601"_string.release_value_but_fixme_should_propagate_errors()));
+    return MUST(get_builtin_calendar(vm, "iso8601"_string));
 }
 
 // 12.2.4 CalendarFields ( calendar, fieldNames ), https://tc39.es/proposal-temporal/#sec-temporal-calendarfields
@@ -120,9 +120,9 @@ ThrowCompletionOr<Vector<String>> calendar_fields(VM& vm, Object& calendar, Vect
     }
 
     // 3. Let fieldsArray be ? Call(fields, calendar, « CreateArrayFromList(fieldNames) »).
-    auto field_names_array = MUST_OR_THROW_OOM(Array::try_create_from<StringView>(vm, realm, field_names, [&](auto value) {
+    auto field_names_array = Array::create_from<StringView>(realm, field_names, [&](auto value) {
         return PrimitiveString::create(vm, value);
-    }));
+    });
     auto fields_array = TRY(call(vm, *fields, &calendar, field_names_array));
 
     // 4. Return ? IterableToListOfType(fieldsArray, « String »).
@@ -131,7 +131,7 @@ ThrowCompletionOr<Vector<String>> calendar_fields(VM& vm, Object& calendar, Vect
     Vector<String> result;
     TRY_OR_THROW_OOM(vm, result.try_ensure_capacity(list.size()));
     for (auto& value : list)
-        result.unchecked_append(TRY(value.as_string().utf8_string()));
+        result.unchecked_append(value.as_string().utf8_string());
     return result;
 }
 
@@ -152,7 +152,7 @@ ThrowCompletionOr<Object*> calendar_merge_fields(VM& vm, Object& calendar, Objec
 
     // 4. If Type(result) is not Object, throw a TypeError exception.
     if (!result.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, result.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, result.to_string_without_side_effects());
 
     // 5. Return result.
     return &result.as_object();
@@ -784,7 +784,7 @@ ThrowCompletionOr<double> resolve_iso_month(VM& vm, Object const& fields)
 
     // 6. Assert: Type(monthCode) is String.
     VERIFY(month_code.is_string());
-    auto month_code_string = TRY(month_code.as_string().deprecated_string());
+    auto month_code_string = month_code.as_string().deprecated_string();
 
     // 7. If the length of monthCode is not 3, throw a RangeError exception.
     auto month_length = month_code_string.length();
@@ -824,10 +824,10 @@ ThrowCompletionOr<ISODateRecord> iso_date_from_fields(VM& vm, Object const& fiel
 
     // 2. Set fields to ? PrepareTemporalFields(fields, « "day", "month", "monthCode", "year" », « "year", "day" »).
     auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields,
-        { "day"_short_string,
-            TRY_OR_THROW_OOM(vm, "month"_string),
-            TRY_OR_THROW_OOM(vm, "monthCode"_string),
-            TRY_OR_THROW_OOM(vm, "year"_string) },
+        { "day"_string,
+            "month"_string,
+            "monthCode"_string,
+            "year"_string },
         Vector<StringView> { "year"sv, "day"sv }));
 
     // 3. Let overflow be ? ToTemporalOverflow(options).
@@ -859,9 +859,9 @@ ThrowCompletionOr<ISOYearMonth> iso_year_month_from_fields(VM& vm, Object const&
 
     // 2. Set fields to ? PrepareTemporalFields(fields, « "month", "monthCode", "year" », « "year" »).
     auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields,
-        { TRY_OR_THROW_OOM(vm, "month"_string),
-            TRY_OR_THROW_OOM(vm, "monthCode"_string),
-            TRY_OR_THROW_OOM(vm, "year"_string) },
+        { "month"_string,
+            "monthCode"_string,
+            "year"_string },
         Vector<StringView> { "year"sv }));
 
     // 3. Let overflow be ? ToTemporalOverflow(options).
@@ -890,10 +890,10 @@ ThrowCompletionOr<ISOMonthDay> iso_month_day_from_fields(VM& vm, Object const& f
 
     // 2. Set fields to ? PrepareTemporalFields(fields, « "day", "month", "monthCode", "year" », « "day" »).
     auto* prepared_fields = TRY(prepare_temporal_fields(vm, fields,
-        { "day"_short_string,
-            TRY_OR_THROW_OOM(vm, "month"_string),
-            TRY_OR_THROW_OOM(vm, "monthCode"_string),
-            TRY_OR_THROW_OOM(vm, "year"_string) },
+        { "day"_string,
+            "month"_string,
+            "monthCode"_string,
+            "year"_string },
         Vector<StringView> { "day"sv }));
 
     // 3. Let overflow be ? ToTemporalOverflow(options).
@@ -960,7 +960,7 @@ ThrowCompletionOr<Object*> default_merge_calendar_fields(VM& vm, Object const& f
     // 3. For each element key of fieldsKeys, do
     for (auto& key : fields_keys) {
         // a. If key is not "month" or "monthCode", then
-        if (!TRY(key.as_string().deprecated_string()).is_one_of(vm.names.month.as_string(), vm.names.monthCode.as_string())) {
+        if (!key.as_string().deprecated_string().is_one_of(vm.names.month.as_string(), vm.names.monthCode.as_string())) {
             auto property_key = MUST(PropertyKey::from_value(vm, key));
 
             // i. Let propValue be ? Get(fields, key).
@@ -994,7 +994,7 @@ ThrowCompletionOr<Object*> default_merge_calendar_fields(VM& vm, Object const& f
         }
 
         // See comment above.
-        additional_fields_keys_contains_month_or_month_code_property |= TRY(key.as_string().deprecated_string()) == vm.names.month.as_string() || TRY(key.as_string().deprecated_string()) == vm.names.monthCode.as_string();
+        additional_fields_keys_contains_month_or_month_code_property |= key.as_string().deprecated_string() == vm.names.month.as_string() || key.as_string().deprecated_string() == vm.names.monthCode.as_string();
     }
 
     // 6. If additionalFieldsKeys does not contain either "month" or "monthCode", then

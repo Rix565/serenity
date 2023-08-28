@@ -12,14 +12,14 @@ namespace Web::CSS {
 
 class InheritStyleValue final : public StyleValueWithDefaultOperators<InheritStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<InheritStyleValue>> the()
+    static ValueComparingNonnullRefPtr<InheritStyleValue> the()
     {
-        static ValueComparingNonnullRefPtr<InheritStyleValue> instance = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) InheritStyleValue));
+        static ValueComparingNonnullRefPtr<InheritStyleValue> instance = adopt_ref(*new (nothrow) InheritStyleValue);
         return instance;
     }
     virtual ~InheritStyleValue() override = default;
 
-    ErrorOr<String> to_string() const override { return "inherit"_string; }
+    String to_string() const override { return "inherit"_string; }
 
     bool properties_equal(InheritStyleValue const&) const { return true; }
 

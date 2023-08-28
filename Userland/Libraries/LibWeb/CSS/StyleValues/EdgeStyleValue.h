@@ -14,16 +14,16 @@ namespace Web::CSS {
 
 class EdgeStyleValue final : public StyleValueWithDefaultOperators<EdgeStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<EdgeStyleValue>> create(PositionEdge edge, LengthPercentage const& offset)
+    static ValueComparingNonnullRefPtr<EdgeStyleValue> create(PositionEdge edge, LengthPercentage const& offset)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) EdgeStyleValue(edge, offset));
+        return adopt_ref(*new (nothrow) EdgeStyleValue(edge, offset));
     }
     virtual ~EdgeStyleValue() override = default;
 
     PositionEdge edge() const { return m_properties.edge; }
     LengthPercentage const& offset() const { return m_properties.offset; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(EdgeStyleValue const& other) const { return m_properties == other.m_properties; }
 

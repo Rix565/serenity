@@ -12,23 +12,23 @@
 
 namespace Web::CSS {
 
-ErrorOr<ValueComparingNonnullRefPtr<GridTrackPlacementShorthandStyleValue>> GridTrackPlacementShorthandStyleValue::create(ValueComparingNonnullRefPtr<GridTrackPlacementStyleValue const> start, ValueComparingNonnullRefPtr<GridTrackPlacementStyleValue const> end)
+ValueComparingNonnullRefPtr<GridTrackPlacementShorthandStyleValue> GridTrackPlacementShorthandStyleValue::create(ValueComparingNonnullRefPtr<GridTrackPlacementStyleValue const> start, ValueComparingNonnullRefPtr<GridTrackPlacementStyleValue const> end)
 {
-    return adopt_nonnull_ref_or_enomem(new (nothrow) GridTrackPlacementShorthandStyleValue(move(start), move(end)));
+    return adopt_ref(*new (nothrow) GridTrackPlacementShorthandStyleValue(move(start), move(end)));
 }
 
-ErrorOr<ValueComparingNonnullRefPtr<GridTrackPlacementShorthandStyleValue>> GridTrackPlacementShorthandStyleValue::create(GridTrackPlacement start)
+ValueComparingNonnullRefPtr<GridTrackPlacementShorthandStyleValue> GridTrackPlacementShorthandStyleValue::create(GridTrackPlacement start)
 {
-    return adopt_nonnull_ref_or_enomem(new (nothrow) GridTrackPlacementShorthandStyleValue(
-        TRY(GridTrackPlacementStyleValue::create(start)),
-        TRY(GridTrackPlacementStyleValue::create(GridTrackPlacement::make_auto()))));
+    return adopt_ref(*new (nothrow) GridTrackPlacementShorthandStyleValue(
+        GridTrackPlacementStyleValue::create(start),
+        GridTrackPlacementStyleValue::create(GridTrackPlacement::make_auto())));
 }
 
-ErrorOr<String> GridTrackPlacementShorthandStyleValue::to_string() const
+String GridTrackPlacementShorthandStyleValue::to_string() const
 {
     if (m_properties.end->grid_track_placement().is_auto())
-        return String::formatted("{}", TRY(m_properties.start->grid_track_placement().to_string()));
-    return String::formatted("{} / {}", TRY(m_properties.start->grid_track_placement().to_string()), TRY(m_properties.end->grid_track_placement().to_string()));
+        return MUST(String::formatted("{}", m_properties.start->grid_track_placement().to_string()));
+    return MUST(String::formatted("{} / {}", m_properties.start->grid_track_placement().to_string(), m_properties.end->grid_track_placement().to_string()));
 }
 
 }

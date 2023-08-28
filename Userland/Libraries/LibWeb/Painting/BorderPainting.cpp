@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2022, MacDue <macdue@dueutil.tech>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -10,6 +10,8 @@
 #include <LibGfx/AntiAliasingPainter.h>
 #include <LibGfx/Painter.h>
 #include <LibGfx/Path.h>
+#include <LibWeb/DOM/Document.h>
+#include <LibWeb/Layout/Node.h>
 #include <LibWeb/Painting/BorderPainting.h>
 #include <LibWeb/Painting/PaintContext.h>
 
@@ -55,6 +57,24 @@ BorderRadiiData normalized_border_radii_data(Layout::Node const& node, CSSPixelR
     return BorderRadiiData { top_left_radius_px, top_right_radius_px, bottom_right_radius_px, bottom_left_radius_px };
 }
 
+static constexpr double dark_light_absolute_value_difference = 1. / 3;
+
+static Color light_color_for_inset_and_outset(Color const& color)
+{
+    auto hsv = color.to_hsv();
+    if (hsv.value >= dark_light_absolute_value_difference)
+        return Color::from_hsv(hsv);
+    return Color::from_hsv({ hsv.hue, hsv.saturation, hsv.value + dark_light_absolute_value_difference });
+}
+
+static Color dark_color_for_inset_and_outset(Color const& color)
+{
+    auto hsv = color.to_hsv();
+    if (hsv.value < dark_light_absolute_value_difference)
+        return Color::from_hsv(hsv);
+    return Color::from_hsv({ hsv.hue, hsv.saturation, hsv.value - dark_light_absolute_value_difference });
+}
+
 Gfx::Color border_color(BorderEdge edge, BordersData const& borders_data)
 {
     auto const& border_data = [&] {
@@ -73,12 +93,12 @@ Gfx::Color border_color(BorderEdge edge, BordersData const& borders_data)
     }();
 
     if (border_data.line_style == CSS::LineStyle::Inset) {
-        auto top_left_color = Color::from_rgb(0x5a5a5a);
-        auto bottom_right_color = Color::from_rgb(0x888888);
+        auto top_left_color = dark_color_for_inset_and_outset(border_data.color);
+        auto bottom_right_color = light_color_for_inset_and_outset(border_data.color);
         return (edge == BorderEdge::Left || edge == BorderEdge::Top) ? top_left_color : bottom_right_color;
     } else if (border_data.line_style == CSS::LineStyle::Outset) {
-        auto top_left_color = Color::from_rgb(0x888888);
-        auto bottom_right_color = Color::from_rgb(0x5a5a5a);
+        auto top_left_color = light_color_for_inset_and_outset(border_data.color);
+        auto bottom_right_color = dark_color_for_inset_and_outset(border_data.color);
         return (edge == BorderEdge::Left || edge == BorderEdge::Top) ? top_left_color : bottom_right_color;
     }
 
@@ -127,10 +147,27 @@ void paint_border(PaintContext& context, BorderEdge edge, DevicePixelRect const&
     };
 
     auto gfx_line_style = Gfx::Painter::LineStyle::Solid;
-    if (border_style == CSS::LineStyle::Dotted)
+    switch (border_style) {
+    case CSS::LineStyle::None:
+    case CSS::LineStyle::Hidden:
+        return;
+    case CSS::LineStyle::Dotted:
         gfx_line_style = Gfx::Painter::LineStyle::Dotted;
-    if (border_style == CSS::LineStyle::Dashed)
+        break;
+    case CSS::LineStyle::Dashed:
         gfx_line_style = Gfx::Painter::LineStyle::Dashed;
+        break;
+    case CSS::LineStyle::Solid:
+        gfx_line_style = Gfx::Painter::LineStyle::Solid;
+        break;
+    case CSS::LineStyle::Double:
+    case CSS::LineStyle::Groove:
+    case CSS::LineStyle::Ridge:
+    case CSS::LineStyle::Inset:
+    case CSS::LineStyle::Outset:
+        // FIXME: Implement these
+        break;
+    }
 
     if (gfx_line_style != Gfx::Painter::LineStyle::Solid) {
         auto [p1, p2] = points_for_edge(edge, rect);
@@ -525,12 +562,10 @@ RefPtr<Gfx::Bitmap> get_cached_corner_bitmap(DevicePixelSize corners_size)
     return corner_bitmap;
 }
 
-void paint_all_borders(PaintContext& context, CSSPixelRect const& bordered_rect, BorderRadiiData const& border_radii_data, BordersData const& borders_data)
+void paint_all_borders(PaintContext& context, DevicePixelRect const& border_rect, BorderRadiiData const& border_radii_data, BordersData const& borders_data)
 {
     if (borders_data.top.width <= 0 && borders_data.right.width <= 0 && borders_data.left.width <= 0 && borders_data.bottom.width <= 0)
         return;
-
-    auto border_rect = context.rounded_device_rect(bordered_rect);
 
     auto top_left = border_radii_data.top_left.as_corner(context);
     auto top_right = border_radii_data.top_right.as_corner(context);
@@ -608,6 +643,29 @@ void paint_all_borders(PaintContext& context, CSSPixelRect const& bordered_rect,
             VERIFY_NOT_REACHED();
         }
     }
+}
+
+Optional<BordersData> borders_data_for_outline(Layout::Node const& layout_node, Color outline_color, CSS::OutlineStyle outline_style, CSSPixels outline_width)
+{
+    CSS::LineStyle line_style;
+    if (outline_style == CSS::OutlineStyle::Auto) {
+        // `auto` lets us do whatever we want for the outline. 2px of the link colour seems reasonable.
+        line_style = CSS::LineStyle::Dotted;
+        outline_color = layout_node.document().link_color();
+        outline_width = 2;
+    } else {
+        line_style = CSS::value_id_to_line_style(CSS::to_value_id(outline_style)).value_or(CSS::LineStyle::None);
+    }
+
+    if (outline_color.alpha() == 0 || line_style == CSS::LineStyle::None || outline_width == 0)
+        return {};
+
+    CSS::BorderData border_data {
+        .color = outline_color,
+        .line_style = line_style,
+        .width = outline_width,
+    };
+    return BordersData { border_data, border_data, border_data, border_data };
 }
 
 }

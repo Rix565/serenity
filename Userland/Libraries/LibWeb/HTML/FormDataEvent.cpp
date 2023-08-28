@@ -12,7 +12,7 @@ namespace Web::HTML {
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<FormDataEvent>> FormDataEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, FormDataEventInit const& event_init)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<FormDataEvent>(realm, realm, event_name, event_init));
+    return realm.heap().allocate<FormDataEvent>(realm, realm, event_name, event_init);
 }
 
 FormDataEvent::FormDataEvent(JS::Realm& realm, FlyString const& event_name, FormDataEventInit const& event_init)
@@ -23,12 +23,10 @@ FormDataEvent::FormDataEvent(JS::Realm& realm, FlyString const& event_name, Form
 
 FormDataEvent::~FormDataEvent() = default;
 
-JS::ThrowCompletionOr<void> FormDataEvent::initialize(JS::Realm& realm)
+void FormDataEvent::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::FormDataEventPrototype>(realm, "FormDataEvent"));
-
-    return {};
 }
 
 void FormDataEvent::visit_edges(Cell::Visitor& visitor)

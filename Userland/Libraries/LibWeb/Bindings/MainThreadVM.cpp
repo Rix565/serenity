@@ -36,6 +36,7 @@
 #include <LibWeb/HTML/TagNames.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/WindowProxy.h>
+#include <LibWeb/MathML/TagNames.h>
 #include <LibWeb/Namespace.h>
 #include <LibWeb/NavigationTiming/EntryNames.h>
 #include <LibWeb/PerformanceTimeline/EntryTypes.h>
@@ -82,19 +83,20 @@ ErrorOr<void> initialize_main_thread_vm()
     s_main_thread_vm->ref();
 
     // These strings could potentially live on the VM similar to CommonPropertyNames.
-    TRY(DOM::MutationType::initialize_strings());
-    TRY(HTML::AttributeNames::initialize_strings());
-    TRY(HTML::CustomElementReactionNames::initialize_strings());
-    TRY(HTML::EventNames::initialize_strings());
-    TRY(HTML::TagNames::initialize_strings());
-    TRY(Namespace::initialize_strings());
-    TRY(NavigationTiming::EntryNames::initialize_strings());
-    TRY(PerformanceTimeline::EntryTypes::initialize_strings());
-    TRY(SVG::AttributeNames::initialize_strings());
-    TRY(SVG::TagNames::initialize_strings());
-    TRY(UIEvents::EventNames::initialize_strings());
-    TRY(WebGL::EventNames::initialize_strings());
-    TRY(XHR::EventNames::initialize_strings());
+    DOM::MutationType::initialize_strings();
+    HTML::AttributeNames::initialize_strings();
+    HTML::CustomElementReactionNames::initialize_strings();
+    HTML::EventNames::initialize_strings();
+    HTML::TagNames::initialize_strings();
+    MathML::TagNames::initialize_strings();
+    Namespace::initialize_strings();
+    NavigationTiming::EntryNames::initialize_strings();
+    PerformanceTimeline::EntryTypes::initialize_strings();
+    SVG::AttributeNames::initialize_strings();
+    SVG::TagNames::initialize_strings();
+    UIEvents::EventNames::initialize_strings();
+    WebGL::EventNames::initialize_strings();
+    XHR::EventNames::initialize_strings();
 
     static_cast<WebEngineCustomData*>(s_main_thread_vm->custom_data())->event_loop.set_vm(*s_main_thread_vm);
 
@@ -172,7 +174,7 @@ ErrorOr<void> initialize_main_thread_vm()
                     /* .promise = */ promise,
                     /* .reason = */ promise.result(),
                 };
-                auto promise_rejection_event = HTML::PromiseRejectionEvent::create(HTML::relevant_realm(global), HTML::EventNames::rejectionhandled, event_init).release_value_but_fixme_should_propagate_errors();
+                auto promise_rejection_event = HTML::PromiseRejectionEvent::create(HTML::relevant_realm(global), HTML::EventNames::rejectionhandled, event_init);
                 window.dispatch_event(promise_rejection_event);
             });
             break;

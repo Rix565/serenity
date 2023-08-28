@@ -40,7 +40,7 @@ Viewport <#document> at (0,0) content-size 800x600 children: not-inline
         line 11 width: 239.203125, height: 16, bottom: 180, baseline: 12.796875
           frag 0 from TextNode start: 57, length: 16, rect: [61,173 141.203125x16]
             "baz foo bar baz "
-          frag 1 from TextNode start: 1, length: 11, rect: [202.203125,173 98x16]
+          frag 1 from TextNode start: 1, length: 11, rect: [202,173 98x16]
             "foo bar baz"
         line 12 width: 204, height: 16, bottom: 196, baseline: 12.796875
           frag 0 from TextNode start: 13, length: 12, rect: [61,189 106x16]
@@ -75,3 +75,20 @@ Viewport <#document> at (0,0) content-size 800x600 children: not-inline
         TextNode <#text>
         BlockContainer <div.righty> at (278,190) content-size 30x30 floating [BFC] children: not-inline
         TextNode <#text>
+
+ViewportPaintable (Viewport<#document>) [0,0 800x600]
+  PaintableWithLines (BlockContainer<HTML>) [0,0 800x268] overflow: [0,0 800x285]
+    PaintableWithLines (BlockContainer<BODY>) [8,8 784x252] overflow: [8,8 784x277]
+      PaintableWithLines (BlockContainer(anonymous)) [8,8 784x0]
+      PaintableWithLines (BlockContainer<DIV>.outer) [8,8 302x252] overflow: [9,9 300x276]
+        TextPaintable (TextNode<#text>)
+        PaintableWithLines (BlockContainer<DIV>.lefty) [9,9 52x52]
+        PaintableWithLines (BlockContainer<DIV>.one) [61,25 202x52]
+        PaintableWithLines (BlockContainer<DIV>.two) [107,77 202x52]
+        TextPaintable (TextNode<#text>)
+        PaintableWithLines (BlockContainer<DIV>.righty) [277,141 32x32]
+        TextPaintable (TextNode<#text>)
+        PaintableWithLines (BlockContainer<DIV>.lefty.shwifty) [9,173 52x52]
+        TextPaintable (TextNode<#text>)
+        PaintableWithLines (BlockContainer<DIV>.righty) [277,189 32x32]
+        TextPaintable (TextNode<#text>)

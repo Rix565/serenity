@@ -153,7 +153,7 @@ public:
     // Members are implementation-defined
     struct Priority { };
 
-    using BodyType = Variant<Empty, ByteBuffer, Body>;
+    using BodyType = Variant<Empty, ByteBuffer, JS::NonnullGCPtr<Body>>;
     using OriginType = Variant<Origin, HTML::Origin>;
     using PolicyContainerType = Variant<PolicyContainer, HTML::PolicyContainer>;
     using ReferrerType = Variant<Referrer, AK::URL>;
@@ -297,7 +297,7 @@ public:
     [[nodiscard]] ErrorOr<String> serialize_origin() const;
     [[nodiscard]] ErrorOr<ByteBuffer> byte_serialize_origin() const;
 
-    [[nodiscard]] WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> clone(JS::Realm&) const;
+    [[nodiscard]] JS::NonnullGCPtr<Request> clone(JS::Realm&) const;
 
     [[nodiscard]] ErrorOr<void> add_range_header(u64 first, Optional<u64> const& last);
     [[nodiscard]] ErrorOr<void> add_origin_header();

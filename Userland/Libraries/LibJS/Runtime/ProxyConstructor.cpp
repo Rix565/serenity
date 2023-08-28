@@ -20,11 +20,11 @@ static ThrowCompletionOr<ProxyObject*> proxy_create(VM& vm, Value target, Value 
 
     // 1. If target is not an Object, throw a TypeError exception.
     if (!target.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::ProxyConstructorBadType, "target", TRY_OR_THROW_OOM(vm, target.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::ProxyConstructorBadType, "target", target.to_string_without_side_effects());
 
     // 2. If handler is not an Object, throw a TypeError exception.
     if (!handler.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::ProxyConstructorBadType, "handler", TRY_OR_THROW_OOM(vm, handler.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::ProxyConstructorBadType, "handler", handler.to_string_without_side_effects());
 
     // 3. Let P be MakeBasicObject(« [[ProxyHandler]], [[ProxyTarget]] »).
     // 4. Set P's essential internal methods, except for [[Call]] and [[Construct]], to the definitions specified in 10.5.
@@ -43,16 +43,14 @@ ProxyConstructor::ProxyConstructor(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> ProxyConstructor::initialize(Realm& realm)
+void ProxyConstructor::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
+    Base::initialize(realm);
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.names.revocable, revocable, 2, attr);
 
     define_direct_property(vm.names.length, Value(2), Attribute::Configurable);
-
-    return {};
 }
 
 // 28.2.1.1 Proxy ( target, handler ), https://tc39.es/ecma262/#sec-proxy-target-handler

@@ -10,6 +10,7 @@
 #include <LibWeb/CSS/StyleValues/IdentifierStyleValue.h>
 #include <LibWeb/CSS/StyleValues/OverflowStyleValue.h>
 #include <LibWeb/DOM/ShadowRoot.h>
+#include <LibWeb/Layout/Box.h>
 #include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/SVGSymbolElement.h>
 #include <LibWeb/SVG/SVGUseElement.h>
@@ -21,29 +22,29 @@ SVGSymbolElement::SVGSymbolElement(DOM::Document& document, DOM::QualifiedName q
 {
 }
 
-JS::ThrowCompletionOr<void> SVGSymbolElement::initialize(JS::Realm& realm)
+void SVGSymbolElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::SVGSymbolElementPrototype>(realm, "SVGSymbolElement"));
-
-    return {};
 }
 
 // https://svgwg.org/svg2-draft/struct.html#SymbolNotes
 void SVGSymbolElement::apply_presentational_hints(CSS::StyleProperties& style) const
 {
+    Base::apply_presentational_hints(style);
+
     // The user agent style sheet sets the overflow property for ‘symbol’ elements to hidden.
-    auto hidden = CSS::IdentifierStyleValue::create(CSS::ValueID::Hidden).release_value_but_fixme_should_propagate_errors();
-    style.set_property(CSS::PropertyID::Overflow, CSS::OverflowStyleValue::create(hidden, hidden).release_value_but_fixme_should_propagate_errors());
+    auto hidden = CSS::IdentifierStyleValue::create(CSS::ValueID::Hidden);
+    style.set_property(CSS::PropertyID::Overflow, CSS::OverflowStyleValue::create(hidden, hidden));
 
     if (is_direct_child_of_use_shadow_tree()) {
         // The generated instance of a ‘symbol’ that is the direct referenced element of a ‘use’ element must always have a computed value of inline for the display property.
-        style.set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::Inline)).release_value_but_fixme_should_propagate_errors());
+        style.set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::Inline)));
     } else {
         // FIXME: When we have a DefaultSVG.css then use https://svgwg.org/svg2-draft/styling.html#UAStyleSheet instead.
         // The user agent must set the display property on the ‘symbol’ element to none, as part of the user agent style sheet,
         // and this declaration must have importance over any other CSS rule or presentation attribute.
-        style.set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::None)).release_value_but_fixme_should_propagate_errors());
+        style.set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::None)));
     }
 }
 
@@ -62,6 +63,11 @@ bool SVGSymbolElement::is_direct_child_of_use_shadow_tree() const
 
     auto host = static_cast<const DOM::ShadowRoot&>(*maybe_shadow_root).host();
     return is<SVGUseElement>(host);
+}
+
+JS::GCPtr<Layout::Node> SVGSymbolElement::create_layout_node(NonnullRefPtr<CSS::StyleProperties> style)
+{
+    return heap().allocate_without_realm<Layout::Box>(document(), this, move(style));
 }
 
 }

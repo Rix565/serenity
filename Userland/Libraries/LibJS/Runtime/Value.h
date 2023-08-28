@@ -394,7 +394,7 @@ public:
     ThrowCompletionOr<Value> get(VM&, PropertyKey const&) const;
     ThrowCompletionOr<GCPtr<FunctionObject>> get_method(VM&, PropertyKey const&) const;
 
-    ErrorOr<String> to_string_without_side_effects() const;
+    [[nodiscard]] String to_string_without_side_effects() const;
 
     Value value_or(Value fallback) const
     {
@@ -561,8 +561,8 @@ enum class NumberToStringMode {
     WithExponent,
     WithoutExponent,
 };
-ErrorOr<String> number_to_string(double, NumberToStringMode = NumberToStringMode::WithExponent);
-DeprecatedString number_to_deprecated_string(double, NumberToStringMode = NumberToStringMode::WithExponent);
+[[nodiscard]] String number_to_string(double, NumberToStringMode = NumberToStringMode::WithExponent);
+[[nodiscard]] DeprecatedString number_to_deprecated_string(double, NumberToStringMode = NumberToStringMode::WithExponent);
 double string_to_number(StringView);
 
 inline bool Value::operator==(Value const& value) const { return same_value(*this, value); }
@@ -617,6 +617,18 @@ public:
             m_value = other.m_value;
         }
         return *this;
+    }
+
+    template<typename O>
+    ALWAYS_INLINE bool operator==(Optional<O> const& other) const
+    {
+        return has_value() == other.has_value() && (!has_value() || value() == other.value());
+    }
+
+    template<typename O>
+    ALWAYS_INLINE bool operator==(O const& other) const
+    {
+        return has_value() && value() == other;
     }
 
     void clear()
@@ -684,8 +696,13 @@ struct Formatter<JS::Value> : Formatter<StringView> {
     {
         if (value.is_empty())
             return Formatter<StringView>::format(builder, "<empty>"sv);
-        return Formatter<StringView>::format(builder, TRY(value.to_string_without_side_effects()));
+        return Formatter<StringView>::format(builder, value.to_string_without_side_effects());
     }
+};
+
+template<>
+struct Traits<JS::Value> : GenericTraits<JS::Value> {
+    static unsigned hash(JS::Value value) { return Traits<u64>::hash(value.encoded()); }
 };
 
 }

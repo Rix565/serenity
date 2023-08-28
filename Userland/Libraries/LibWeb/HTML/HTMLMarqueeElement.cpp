@@ -19,12 +19,10 @@ HTMLMarqueeElement::HTMLMarqueeElement(DOM::Document& document, DOM::QualifiedNa
 
 HTMLMarqueeElement::~HTMLMarqueeElement() = default;
 
-JS::ThrowCompletionOr<void> HTMLMarqueeElement::initialize(JS::Realm& realm)
+void HTMLMarqueeElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLMarqueeElementPrototype>(realm, "HTMLMarqueeElement"));
-
-    return {};
 }
 
 void HTMLMarqueeElement::apply_presentational_hints(CSS::StyleProperties& style) const
@@ -35,7 +33,7 @@ void HTMLMarqueeElement::apply_presentational_hints(CSS::StyleProperties& style)
             // https://html.spec.whatwg.org/multipage/rendering.html#the-marquee-element-2:rules-for-parsing-a-legacy-colour-value
             auto color = parse_legacy_color_value(value);
             if (color.has_value())
-                style.set_property(CSS::PropertyID::BackgroundColor, CSS::ColorStyleValue::create(color.value()).release_value_but_fixme_should_propagate_errors());
+                style.set_property(CSS::PropertyID::BackgroundColor, CSS::ColorStyleValue::create(color.value()));
         }
     });
 }

@@ -68,6 +68,7 @@ public:
     Optional<CSS::Cursor> cursor() const;
     Optional<CSS::WhiteSpace> white_space() const;
     Optional<CSS::LineStyle> line_style(CSS::PropertyID) const;
+    Optional<CSS::OutlineStyle> outline_style() const;
     Vector<CSS::TextDecorationLine> text_decoration_line() const;
     Optional<CSS::TextDecorationStyle> text_decoration_style() const;
     Optional<CSS::TextTransform> text_transform() const;
@@ -103,6 +104,7 @@ public:
     CSS::GridTrackSizeList grid_auto_rows() const;
     CSS::GridTrackSizeList grid_template_columns() const;
     CSS::GridTrackSizeList grid_template_rows() const;
+    [[nodiscard]] CSS::GridAutoFlow grid_auto_flow() const;
     CSS::GridTrackPlacement grid_column_end() const;
     CSS::GridTrackPlacement grid_column_start() const;
     CSS::GridTrackPlacement grid_row_end() const;
@@ -111,6 +113,7 @@ public:
     Vector<Vector<String>> grid_template_areas() const;
     String grid_area() const;
     Optional<CSS::ObjectFit> object_fit() const;
+    Optional<CSS::TableLayout> table_layout() const;
 
     Vector<CSS::Transformation> transformations() const;
     CSS::TransformOrigin transform_origin() const;

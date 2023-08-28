@@ -62,7 +62,7 @@ ThrowCompletionOr<MarkedVector<Value>> iterable_to_list_of_type(VM& vm, Value it
             // ii. If Type(nextValue) is not an element of elementTypes, then
             if (auto type = to_option_type(next_value); !type.has_value() || !element_types.contains_slow(*type)) {
                 // 1. Let completion be ThrowCompletion(a newly created TypeError object).
-                auto completion = vm.throw_completion<TypeError>(ErrorType::IterableToListOfTypeInvalidValue, TRY_OR_THROW_OOM(vm, next_value.to_string_without_side_effects()));
+                auto completion = vm.throw_completion<TypeError>(ErrorType::IterableToListOfTypeInvalidValue, next_value.to_string_without_side_effects());
                 // 2. Return ? IteratorClose(iteratorRecord, completion).
                 return iterator_close(vm, iterator_record, move(completion));
             }
@@ -116,7 +116,7 @@ ThrowCompletionOr<Value> get_option(VM& vm, Object const& options, PropertyKey c
             [](Empty) -> ThrowCompletionOr<Value> { return js_undefined(); },
             [](bool b) -> ThrowCompletionOr<Value> { return Value(b); },
             [](double d) -> ThrowCompletionOr<Value> { return Value(d); },
-            [&vm](StringView s) -> ThrowCompletionOr<Value> { return MUST_OR_THROW_OOM(PrimitiveString::create(vm, s)); });
+            [&vm](StringView s) -> ThrowCompletionOr<Value> { return PrimitiveString::create(vm, s); });
     }
 
     // 5. If type is "boolean", then
@@ -146,7 +146,7 @@ ThrowCompletionOr<Value> get_option(VM& vm, Object const& options, PropertyKey c
     if (!values.is_empty()) {
         // NOTE: Every location in the spec that invokes GetOption with type=boolean also has values=undefined.
         VERIFY(value.is_string());
-        if (auto value_string = TRY(value.as_string().utf8_string()); !values.contains_slow(value_string))
+        if (auto value_string = value.as_string().utf8_string(); !values.contains_slow(value_string))
             return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, value_string, property.as_string());
     }
 
@@ -159,7 +159,7 @@ ThrowCompletionOr<String> to_temporal_overflow(VM& vm, Object const* options)
 {
     // 1. If options is undefined, return "constrain".
     if (options == nullptr)
-        return TRY_OR_THROW_OOM(vm, "constrain"_string);
+        return "constrain"_string;
 
     // 2. Return ? GetOption(options, "overflow", "string", « "constrain", "reject" », "constrain").
     auto option = TRY(get_option(vm, *options, vm.names.overflow, OptionType::String, { "constrain"sv, "reject"sv }, "constrain"sv));
@@ -173,7 +173,7 @@ ThrowCompletionOr<String> to_temporal_disambiguation(VM& vm, Object const* optio
 {
     // 1. If options is undefined, return "compatible".
     if (options == nullptr)
-        return TRY_OR_THROW_OOM(vm, "compatible"_string);
+        return "compatible"_string;
 
     // 2. Return ? GetOption(options, "disambiguation", "string", « "compatible", "earlier", "later", "reject" », "compatible").
     auto option = TRY(get_option(vm, *options, vm.names.disambiguation, OptionType::String, { "compatible"sv, "earlier"sv, "later"sv, "reject"sv }, "compatible"sv));
@@ -530,7 +530,7 @@ ThrowCompletionOr<Optional<String>> get_temporal_unit(VM& vm, Object const& norm
 
     auto value = option_value.is_undefined()
         ? Optional<String> {}
-        : TRY(option_value.as_string().utf8_string());
+        : option_value.as_string().utf8_string();
 
     // 11. If value is listed in the Plural column of Table 13, then
     for (auto const& row : temporal_units) {
@@ -602,7 +602,7 @@ ThrowCompletionOr<Value> to_relative_temporal_object(VM& vm, Object const& optio
         auto date_options = Object::create(realm, nullptr);
 
         // g. Perform ! CreateDataPropertyOrThrow(dateOptions, "overflow", "constrain").
-        MUST(date_options->create_data_property_or_throw(vm.names.overflow, MUST_OR_THROW_OOM(PrimitiveString::create(vm, "constrain"sv))));
+        MUST(date_options->create_data_property_or_throw(vm.names.overflow, PrimitiveString::create(vm, "constrain"_string)));
 
         // h. Let result be ? InterpretTemporalDateTimeFields(calendar, fields, dateOptions).
         result = TRY(interpret_temporal_date_time_fields(vm, *calendar, *fields, date_options));
@@ -1269,7 +1269,7 @@ ThrowCompletionOr<ISODateTime> parse_iso_date_time(VM& vm, ParseResult const& pa
     }
 
     // 7. Let yearMV be ! ToIntegerOrInfinity(CodePointsToString(year)).
-    auto year_mv = *normalized_year.value_or("0"_short_string).to_number<i32>();
+    auto year_mv = *normalized_year.value_or("0"_string).to_number<i32>();
 
     // 8. If month is empty, then
     //    a. Let monthMV be 1.
@@ -1425,7 +1425,7 @@ ThrowCompletionOr<TemporalInstant> parse_temporal_instant_string(VM& vm, StringV
     // 4. If result.[[TimeZone]].[[Z]] is true, then
     if (result.time_zone.z) {
         // a. Set offsetString to "+00:00".
-        offset_string = TRY_OR_THROW_OOM(vm, "+00:00"_string);
+        offset_string = "+00:00"_string;
     }
 
     // 6. Assert: offsetString is not undefined.
@@ -1460,7 +1460,7 @@ ThrowCompletionOr<String> parse_temporal_calendar_string(VM& vm, StringView iso_
 
         // b. If calendar is undefined, return "iso8601".
         if (!calendar.has_value())
-            return TRY_OR_THROW_OOM(vm, "iso8601"_string);
+            return "iso8601"_string;
         // c. Else, return calendar.
         else
             return calendar.release_value();

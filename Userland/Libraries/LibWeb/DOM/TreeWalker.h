@@ -15,7 +15,7 @@ class TreeWalker final : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(TreeWalker, Bindings::PlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<TreeWalker>> create(Node& root, unsigned what_to_show, JS::GCPtr<NodeFilter>);
+    [[nodiscard]] static JS::NonnullGCPtr<TreeWalker> create(Node& root, unsigned what_to_show, JS::GCPtr<NodeFilter>);
 
     virtual ~TreeWalker() override;
 
@@ -39,7 +39,7 @@ public:
 private:
     explicit TreeWalker(Node& root);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     enum class ChildTraversalType {

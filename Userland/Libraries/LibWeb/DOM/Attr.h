@@ -18,8 +18,8 @@ class Attr final : public Node {
     WEB_PLATFORM_OBJECT(Attr, Node);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Attr>> create(Document&, QualifiedName, DeprecatedString value = "", Element* = nullptr);
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Attr>> create(Document&, DeprecatedFlyString local_name, DeprecatedString value = "", Element* = nullptr);
+    [[nodiscard]] static JS::NonnullGCPtr<Attr> create(Document&, QualifiedName, DeprecatedString value = "", Element* = nullptr);
+    [[nodiscard]] static JS::NonnullGCPtr<Attr> create(Document&, DeprecatedFlyString local_name, DeprecatedString value = "", Element* = nullptr);
     JS::NonnullGCPtr<Attr> clone(Document&);
 
     virtual ~Attr() override = default;
@@ -29,7 +29,7 @@ public:
     DeprecatedFlyString const& namespace_uri() const { return m_qualified_name.namespace_(); }
     DeprecatedFlyString const& prefix() const { return m_qualified_name.prefix(); }
     DeprecatedFlyString const& local_name() const { return m_qualified_name.local_name(); }
-    DeprecatedString const& name() const { return m_qualified_name.as_string(); }
+    DeprecatedFlyString const& name() const { return m_qualified_name.as_string(); }
 
     DeprecatedString const& value() const { return m_value; }
     void set_value(DeprecatedString value);
@@ -46,7 +46,7 @@ public:
 private:
     Attr(Document&, QualifiedName, DeprecatedString value, Element*);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     QualifiedName m_qualified_name;

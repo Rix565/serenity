@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <AK/String.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/ActivateTab.h>
@@ -86,7 +87,7 @@ public:
 
     Variant<Empty, Traversal, String> ongoing_navigation() const { return m_ongoing_navigation; }
 
-    WebIDL::ExceptionOr<void> populate_session_history_entry_document(JS::GCPtr<SessionHistoryEntry>, Optional<NavigationParams>, Optional<String> navigation_id, SourceSnapshotParams const&, Function<void()>);
+    WebIDL::ExceptionOr<void> populate_session_history_entry_document(JS::GCPtr<SessionHistoryEntry>, Optional<NavigationParams>, Optional<String> navigation_id, SourceSnapshotParams const&, bool allow_POST, Function<void()>);
 
     WebIDL::ExceptionOr<void> navigate(
         AK::URL const&,
@@ -134,5 +135,7 @@ private:
     // Implied link between navigable and its container.
     JS::GCPtr<NavigableContainer> m_container;
 };
+
+bool navigation_must_be_a_replace(AK::URL const& url, DOM::Document const& document);
 
 }

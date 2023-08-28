@@ -44,7 +44,7 @@ ErrorOr<void> generate_header_file(JsonObject& easing_data, Core::File& file)
     StringBuilder builder;
     SourceGenerator generator { builder };
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 #pragma once
 
 #include <AK/Optional.h>
@@ -53,21 +53,20 @@ ErrorOr<void> generate_header_file(JsonObject& easing_data, Core::File& file)
 
 namespace Web::CSS {
 
-)~~~"));
+)~~~");
 
-    TRY(generator.try_appendln("enum class EasingFunction {"));
-    TRY(easing_data.try_for_each_member([&](auto& name, auto&) -> ErrorOr<void> {
-        auto member_generator = TRY(generator.fork());
-        TRY(member_generator.set("name:titlecase", TRY(title_casify(name))));
-        TRY(member_generator.try_appendln("    @name:titlecase@,"));
-        return {};
-    }));
-    TRY(generator.try_appendln("};"));
+    generator.appendln("enum class EasingFunction {");
+    easing_data.for_each_member([&](auto& name, auto&) {
+        auto member_generator = generator.fork();
+        member_generator.set("name:titlecase", title_casify(name));
+        member_generator.appendln("    @name:titlecase@,");
+    });
+    generator.appendln("};");
 
-    TRY(generator.try_appendln("Optional<EasingFunction> easing_function_from_string(StringView);"));
-    TRY(generator.try_appendln("StringView to_string(EasingFunction);"));
+    generator.appendln("Optional<EasingFunction> easing_function_from_string(StringView);");
+    generator.appendln("StringView to_string(EasingFunction);");
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 enum class EasingFunctionParameterType {
     Integer,
     Number,
@@ -84,9 +83,9 @@ struct EasingFunctionMetadata {
     Vector<EasingFunctionParameter> parameters;
 };
 EasingFunctionMetadata easing_function_metadata(EasingFunction);
-)~~~"));
+)~~~");
 
-    TRY(generator.try_appendln("\n}"));
+    generator.appendln("\n}");
 
     TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
@@ -97,73 +96,71 @@ ErrorOr<void> generate_implementation_file(JsonObject& easing_data, Core::File& 
     StringBuilder builder;
     SourceGenerator generator { builder };
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 #include <LibWeb/CSS/EasingFunctions.h>
 #include <AK/Assertions.h>
 
 namespace Web::CSS {
-)~~~"));
+)~~~");
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 Optional<EasingFunction> easing_function_from_string(StringView name)
 {
-)~~~"));
-    TRY(easing_data.try_for_each_member([&](auto& name, auto&) -> ErrorOr<void> {
-        auto member_generator = TRY(generator.fork());
-        TRY(member_generator.set("name", TRY(String::from_deprecated_string(name))));
-        TRY(member_generator.set("name:titlecase", TRY(title_casify(name))));
-        TRY(member_generator.try_append(R"~~~(
+)~~~");
+    easing_data.for_each_member([&](auto& name, auto&) {
+        auto member_generator = generator.fork();
+        member_generator.set("name", name);
+        member_generator.set("name:titlecase", title_casify(name));
+        member_generator.append(R"~~~(
     if (name.equals_ignoring_ascii_case("@name@"sv))
         return EasingFunction::@name:titlecase@;
-)~~~"));
-        return {};
-    }));
-    TRY(generator.try_append(R"~~~(
+)~~~");
+    });
+    generator.append(R"~~~(
     return {};
 }
-)~~~"));
+)~~~");
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 StringView to_string(EasingFunction easing_function)
 {
     switch (easing_function) {
-)~~~"));
-    TRY(easing_data.try_for_each_member([&](auto& name, auto&) -> ErrorOr<void> {
-        auto member_generator = TRY(generator.fork());
-        TRY(member_generator.set("name", TRY(String::from_deprecated_string(name))));
-        TRY(member_generator.set("name:titlecase", TRY(title_casify(name))));
-        TRY(member_generator.try_append(R"~~~(
+)~~~");
+    easing_data.for_each_member([&](auto& name, auto&) {
+        auto member_generator = generator.fork();
+        member_generator.set("name", name);
+        member_generator.set("name:titlecase", title_casify(name));
+        member_generator.append(R"~~~(
     case EasingFunction::@name:titlecase@:
         return "@name@"sv;
-)~~~"));
-        return {};
-    }));
-    TRY(generator.try_append(R"~~~(
+)~~~");
+    });
+    generator.append(R"~~~(
     default:
         VERIFY_NOT_REACHED();
     }
 }
-)~~~"));
+)~~~");
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 EasingFunctionMetadata easing_function_metadata(EasingFunction easing_function)
 {
     switch (easing_function) {
-)~~~"));
-    TRY(easing_data.try_for_each_member([&](auto& name, auto& value) -> ErrorOr<void> {
+)~~~");
+    easing_data.for_each_member([&](auto& name, auto& value) {
         VERIFY(value.is_object());
 
-        auto member_generator = TRY(generator.fork());
-        TRY(member_generator.set("name:titlecase", TRY(title_casify(name))));
-        TRY(member_generator.try_append(R"~~~(
+        auto member_generator = generator.fork();
+        member_generator.set("name:titlecase", title_casify(name));
+        member_generator.append(R"~~~(
     case EasingFunction::@name:titlecase@:
         return EasingFunctionMetadata {
-            .parameters = {)~~~"));
+            .parameters = {)~~~");
 
         if (auto parameters = value.as_object().get_array("parameters"sv); parameters.has_value()) {
             bool first = true;
             // parameters: [ "<foo>", "<foo [0, 1]>" ]
-            TRY(parameters.value().try_for_each([&](JsonValue const& value) -> ErrorOr<void> {
+            parameters.value().for_each([&](JsonValue const& value) {
                 GenericLexer lexer { value.as_string() };
                 VERIFY(lexer.consume_specific('<'));
                 auto parameter_type_name = lexer.consume_until([](char ch) { return ch == ' ' || ch == '>'; });
@@ -189,30 +186,28 @@ EasingFunctionMetadata easing_function_metadata(EasingFunction easing_function)
                 else
                     VERIFY_NOT_REACHED();
 
-                TRY(member_generator.try_append(first ? " "sv : ", "sv));
+                member_generator.append(first ? " "sv : ", "sv);
                 first = false;
 
-                TRY(member_generator.try_append(TRY(String::formatted(
+                member_generator.append(MUST(String::formatted(
                     "{{ EasingFunctionParameterType::{}, {} }}",
                     parameter_type,
-                    is_optional ? "true"sv : "false"sv))));
-                return {};
-            }));
+                    is_optional ? "true"sv : "false"sv)));
+            });
         }
 
-        TRY(member_generator.try_append(R"~~~( }
+        member_generator.append(R"~~~( }
     };
-)~~~"));
-        return {};
-    }));
-    TRY(generator.try_append(R"~~~(
+)~~~");
+    });
+    generator.append(R"~~~(
     default:
         VERIFY_NOT_REACHED();
     }
 }
-)~~~"));
+)~~~");
 
-    TRY(generator.try_appendln("\n}"));
+    generator.appendln("\n}");
 
     TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};

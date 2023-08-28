@@ -26,10 +26,10 @@ ObjectPrototype::ObjectPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> ObjectPrototype::initialize(Realm& realm)
+void ObjectPrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     // This must be called after the constructor has returned, so that the below code
     // can find the ObjectPrototype through normal paths.
     u8 attr = Attribute::Writable | Attribute::Configurable;
@@ -46,8 +46,6 @@ ThrowCompletionOr<void> ObjectPrototype::initialize(Realm& realm)
     define_native_function(realm, vm.names.__lookupGetter__, lookup_getter, 1, attr);
     define_native_function(realm, vm.names.__lookupSetter__, lookup_setter, 1, attr);
     define_native_accessor(realm, vm.names.__proto__, proto_getter, proto_setter, Attribute::Configurable);
-
-    return {};
 }
 
 // 10.4.7.1 [[SetPrototypeOf]] ( V ), https://tc39.es/ecma262/#sec-immutable-prototype-exotic-objects-setprototypeof-v
@@ -135,11 +133,11 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectPrototype::to_string)
 
     // 1. If the this value is undefined, return "[object Undefined]".
     if (this_value.is_undefined())
-        return MUST_OR_THROW_OOM(PrimitiveString::create(vm, "[object Undefined]"sv));
+        return PrimitiveString::create(vm, "[object Undefined]"_string);
 
     // 2. If the this value is null, return "[object Null]".
     if (this_value.is_null())
-        return MUST_OR_THROW_OOM(PrimitiveString::create(vm, "[object Null]"sv));
+        return PrimitiveString::create(vm, "[object Null]"_string);
 
     // 3. Let O be ! ToObject(this value).
     auto object = MUST(this_value.to_object(vm));
@@ -190,7 +188,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectPrototype::to_string)
     if (!to_string_tag.is_string())
         tag = move(builtin_tag);
     else
-        tag = TRY(to_string_tag.as_string().deprecated_string());
+        tag = to_string_tag.as_string().deprecated_string();
 
     // 17. Return the string-concatenation of "[object ", tag, and "]".
     return PrimitiveString::create(vm, DeprecatedString::formatted("[object {}]", tag));
@@ -253,7 +251,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectPrototype::define_getter)
 
     // 2. If IsCallable(getter) is false, throw a TypeError exception.
     if (!getter.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, getter.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, getter.to_string_without_side_effects());
 
     // 3. Let desc be PropertyDescriptor { [[Get]]: getter, [[Enumerable]]: true, [[Configurable]]: true }.
     auto descriptor = PropertyDescriptor { .get = &getter.as_function(), .enumerable = true, .configurable = true };
@@ -279,7 +277,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectPrototype::define_setter)
 
     // 2. If IsCallable(setter) is false, throw a TypeError exception.
     if (!setter.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, setter.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, setter.to_string_without_side_effects());
 
     // 3. Let desc be PropertyDescriptor { [[Set]]: setter, [[Enumerable]]: true, [[Configurable]]: true }.
     auto descriptor = PropertyDescriptor { .set = &setter.as_function(), .enumerable = true, .configurable = true };

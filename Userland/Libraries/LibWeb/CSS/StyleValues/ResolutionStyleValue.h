@@ -13,15 +13,15 @@ namespace Web::CSS {
 
 class ResolutionStyleValue : public StyleValueWithDefaultOperators<ResolutionStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<ResolutionStyleValue>> create(Resolution resolution)
+    static ValueComparingNonnullRefPtr<ResolutionStyleValue> create(Resolution resolution)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) ResolutionStyleValue(move(resolution)));
+        return adopt_ref(*new (nothrow) ResolutionStyleValue(move(resolution)));
     }
     virtual ~ResolutionStyleValue() override = default;
 
     Resolution const& resolution() const { return m_resolution; }
 
-    virtual ErrorOr<String> to_string() const override { return m_resolution.to_string(); }
+    virtual String to_string() const override { return m_resolution.to_string(); }
 
     bool properties_equal(ResolutionStyleValue const& other) const { return m_resolution == other.m_resolution; }
 

@@ -18,9 +18,9 @@
 
 namespace Web::CSS {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSRuleList>> CSSRuleList::create(JS::Realm& realm, JS::MarkedVector<CSSRule*> const& rules)
+JS::NonnullGCPtr<CSSRuleList> CSSRuleList::create(JS::Realm& realm, JS::MarkedVector<CSSRule*> const& rules)
 {
-    auto rule_list = MUST_OR_THROW_OOM(realm.heap().allocate<CSSRuleList>(realm, realm));
+    auto rule_list = realm.heap().allocate<CSSRuleList>(realm, realm);
     for (auto* rule : rules)
         rule_list->m_rules.append(*rule);
     return rule_list;
@@ -31,17 +31,15 @@ CSSRuleList::CSSRuleList(JS::Realm& realm)
 {
 }
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSRuleList>> CSSRuleList::create_empty(JS::Realm& realm)
+JS::NonnullGCPtr<CSSRuleList> CSSRuleList::create_empty(JS::Realm& realm)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<CSSRuleList>(realm, realm));
+    return realm.heap().allocate<CSSRuleList>(realm, realm);
 }
 
-JS::ThrowCompletionOr<void> CSSRuleList::initialize(JS::Realm& realm)
+void CSSRuleList::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::CSSRuleListPrototype>(realm, "CSSRuleList"));
-
-    return {};
 }
 
 void CSSRuleList::visit_edges(Cell::Visitor& visitor)

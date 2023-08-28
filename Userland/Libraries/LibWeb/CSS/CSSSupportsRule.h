@@ -19,7 +19,7 @@ class CSSSupportsRule final : public CSSConditionRule {
     WEB_PLATFORM_OBJECT(CSSSupportsRule, CSSConditionRule);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSSupportsRule>> create(JS::Realm&, NonnullRefPtr<Supports>&&, CSSRuleList&);
+    static JS::NonnullGCPtr<CSSSupportsRule> create(JS::Realm&, NonnullRefPtr<Supports>&&, CSSRuleList&);
 
     virtual ~CSSSupportsRule() = default;
 
@@ -32,7 +32,7 @@ public:
 private:
     CSSSupportsRule(JS::Realm&, NonnullRefPtr<Supports>&&, CSSRuleList&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual DeprecatedString serialized() const override;
 
     NonnullRefPtr<Supports> m_supports;

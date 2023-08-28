@@ -12,9 +12,9 @@
 
 namespace Web::DOM {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<NodeList>> LiveNodeList::create(JS::Realm& realm, Node& root, Scope scope, Function<bool(Node const&)> filter)
+JS::NonnullGCPtr<NodeList> LiveNodeList::create(JS::Realm& realm, Node& root, Scope scope, Function<bool(Node const&)> filter)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<LiveNodeList>(realm, realm, root, scope, move(filter)));
+    return realm.heap().allocate<LiveNodeList>(realm, realm, root, scope, move(filter));
 }
 
 LiveNodeList::LiveNodeList(JS::Realm& realm, Node& root, Scope scope, Function<bool(Node const&)> filter)
@@ -50,6 +50,29 @@ JS::MarkedVector<Node*> LiveNodeList::collection() const
         });
     }
     return nodes;
+}
+
+Node* LiveNodeList::first_matching(Function<bool(Node const&)> const& filter) const
+{
+    Node* matched_node = nullptr;
+    if (m_scope == Scope::Descendants) {
+        m_root->for_each_in_subtree([&](auto& node) {
+            if (m_filter(node) && filter(node)) {
+                matched_node = const_cast<Node*>(&node);
+                return IterationDecision::Break;
+            }
+            return IterationDecision::Continue;
+        });
+    } else {
+        m_root->for_each_child([&](auto& node) {
+            if (m_filter(node) && filter(node)) {
+                matched_node = const_cast<Node*>(&node);
+                return IterationDecision::Break;
+            }
+            return IterationDecision::Continue;
+        });
+    }
+    return matched_node;
 }
 
 // https://dom.spec.whatwg.org/#dom-nodelist-length

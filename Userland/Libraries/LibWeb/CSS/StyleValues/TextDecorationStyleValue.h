@@ -15,13 +15,13 @@ namespace Web::CSS {
 
 class TextDecorationStyleValue final : public StyleValueWithDefaultOperators<TextDecorationStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<TextDecorationStyleValue>> create(
+    static ValueComparingNonnullRefPtr<TextDecorationStyleValue> create(
         ValueComparingNonnullRefPtr<StyleValue> line,
         ValueComparingNonnullRefPtr<StyleValue> thickness,
         ValueComparingNonnullRefPtr<StyleValue> style,
         ValueComparingNonnullRefPtr<StyleValue> color)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) TextDecorationStyleValue(move(line), move(thickness), move(style), move(color)));
+        return adopt_ref(*new (nothrow) TextDecorationStyleValue(move(line), move(thickness), move(style), move(color)));
     }
     virtual ~TextDecorationStyleValue() override = default;
 
@@ -30,7 +30,7 @@ public:
     ValueComparingNonnullRefPtr<StyleValue> style() const { return m_properties.style; }
     ValueComparingNonnullRefPtr<StyleValue> color() const { return m_properties.color; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(TextDecorationStyleValue const& other) const { return m_properties == other.m_properties; }
 

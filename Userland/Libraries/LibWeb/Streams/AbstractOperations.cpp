@@ -41,7 +41,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<ReadableStreamDefaultReader>> acquire_reada
     auto& realm = stream.realm();
 
     // 1. Let reader be a new ReadableStreamDefaultReader.
-    auto reader = TRY(realm.heap().allocate<ReadableStreamDefaultReader>(realm, realm));
+    auto reader = realm.heap().allocate<ReadableStreamDefaultReader>(realm, realm);
 
     // 2. Perform ? SetUpReadableStreamDefaultReader(reader, stream).
     TRY(set_up_readable_stream_default_reader(reader, stream));
@@ -56,7 +56,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<ReadableStreamBYOBReader>> acquire_readable
     auto& realm = stream.realm();
 
     // 1. Let reader be a new ReadableStreamBYOBReader.
-    auto reader = TRY(realm.heap().allocate<ReadableStreamBYOBReader>(realm, realm));
+    auto reader = realm.heap().allocate<ReadableStreamBYOBReader>(realm, realm);
 
     // 2. Perform ? SetUpReadableStreamBYOBReader(reader, stream).
     TRY(set_up_readable_stream_byob_reader(reader, stream));
@@ -320,7 +320,7 @@ void readable_stream_error(ReadableStream& stream, JS::Value error)
 }
 
 // https://streams.spec.whatwg.org/#readable-stream-add-read-request
-void readable_stream_add_read_request(ReadableStream& stream, ReadRequest const& read_request)
+void readable_stream_add_read_request(ReadableStream& stream, ReadRequest& read_request)
 {
     // 1. Assert: stream.[[reader]] implements ReadableStreamDefaultReader.
     VERIFY(stream.reader().has_value() && stream.reader()->has<JS::NonnullGCPtr<ReadableStreamDefaultReader>>());
@@ -834,7 +834,7 @@ WebIDL::ExceptionOr<void> set_up_readable_stream_default_controller_from_underly
     auto& realm = stream.realm();
 
     // 1. Let controller be a new ReadableStreamDefaultController.
-    auto controller = MUST_OR_THROW_OOM(stream.heap().allocate<ReadableStreamDefaultController>(realm, realm));
+    auto controller = stream.heap().allocate<ReadableStreamDefaultController>(realm, realm);
 
     // 2. Let startAlgorithm be an algorithm that returns undefined.
     StartAlgorithm start_algorithm = [] { return JS::js_undefined(); };
@@ -868,7 +868,7 @@ WebIDL::ExceptionOr<void> set_up_readable_stream_default_controller_from_underly
 
     // 7. If underlyingSourceDict["cancel"] exists, then set cancelAlgorithm to an algorithm which takes an argument reason and returns the result of invoking underlyingSourceDict["cancel"] with argument list « reason » and callback this value underlyingSource.
     if (underlying_source.cancel) {
-        cancel_algorithm = [&realm, controller, underlying_source_value, callback = underlying_source.cancel](auto const& reason) -> WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::Promise>> {
+        cancel_algorithm = [&realm, underlying_source_value, callback = underlying_source.cancel](auto const& reason) -> WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::Promise>> {
             // Note: callback return a promise, so invoke_callback will never return an abrupt completion
             auto result = MUST_OR_THROW_OOM(WebIDL::invoke_callback(*callback, underlying_source_value, reason)).release_value();
             return WebIDL::create_resolved_promise(realm, result);
@@ -1032,7 +1032,7 @@ void readable_byte_stream_controller_error(ReadableByteStreamController& control
 }
 
 // https://streams.spec.whatwg.org/#abstract-opdef-readablebytestreamcontrollerfillreadrequestfromqueue
-WebIDL::ExceptionOr<void> readable_byte_stream_controller_fill_read_request_from_queue(ReadableByteStreamController& controller, NonnullRefPtr<ReadRequest> read_request)
+WebIDL::ExceptionOr<void> readable_byte_stream_controller_fill_read_request_from_queue(ReadableByteStreamController& controller, JS::NonnullGCPtr<ReadRequest> read_request)
 {
     auto& vm = controller.vm();
     auto& realm = controller.realm();
@@ -1172,13 +1172,13 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<ReadableStream>> create_readable_stream(JS:
     VERIFY(is_non_negative_number(JS::Value { *high_water_mark }));
 
     // 4. Let stream be a new ReadableStream.
-    auto stream = MUST_OR_THROW_OOM(realm.heap().allocate<ReadableStream>(realm, realm));
+    auto stream = realm.heap().allocate<ReadableStream>(realm, realm);
 
     // 5. Perform ! InitializeReadableStream(stream).
     initialize_readable_stream(*stream);
 
     // 6. Let controller be a new ReadableStreamDefaultController.
-    auto controller = MUST_OR_THROW_OOM(realm.heap().allocate<ReadableStreamDefaultController>(realm, realm));
+    auto controller = realm.heap().allocate<ReadableStreamDefaultController>(realm, realm);
 
     // 7. Perform ? SetUpReadableStreamDefaultController(stream, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark, sizeAlgorithm).
     TRY(set_up_readable_stream_default_controller(*stream, *controller, move(start_algorithm), move(pull_algorithm), move(cancel_algorithm), *high_water_mark, move(*size_algorithm)));
@@ -1194,13 +1194,13 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<WritableStream>> create_writable_stream(JS:
     VERIFY(is_non_negative_number(JS::Value { high_water_mark }));
 
     // 2. Let stream be a new WritableStream.
-    auto stream = MUST_OR_THROW_OOM(realm.heap().allocate<WritableStream>(realm, realm));
+    auto stream = realm.heap().allocate<WritableStream>(realm, realm);
 
     // 3. Perform ! InitializeWritableStream(stream).
     initialize_writable_stream(*stream);
 
     // 4. Let controller be a new WritableStreamDefaultController.
-    auto controller = MUST_OR_THROW_OOM(realm.heap().allocate<WritableStreamDefaultController>(realm, realm));
+    auto controller = realm.heap().allocate<WritableStreamDefaultController>(realm, realm);
 
     // 5. Perform ? SetUpWritableStreamDefaultController(stream, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm).
     TRY(set_up_writable_stream_default_controller(*stream, *controller, move(start_algorithm), move(write_algorithm), move(close_algorithm), move(abort_algorithm), high_water_mark, move(size_algorithm)));
@@ -1252,7 +1252,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<WritableStreamDefaultWriter>> acquire_writa
     auto& realm = stream.realm();
 
     // 1. Let writer be a new WritableStreamDefaultWriter.
-    auto writer = MUST_OR_THROW_OOM(stream.heap().allocate<WritableStreamDefaultWriter>(realm, realm));
+    auto writer = stream.heap().allocate<WritableStreamDefaultWriter>(realm, realm);
 
     // 2. Perform ? SetUpWritableStreamDefaultWriter(writer, stream).
     TRY(set_up_writable_stream_default_writer(*writer, stream));
@@ -1730,7 +1730,7 @@ WebIDL::ExceptionOr<void> set_up_readable_stream_controller_with_byte_reading_su
 
     // 4. Perform ! InitializeReadableStream(stream).
     // 5. Let controller be a new ReadableByteStreamController.
-    auto controller = MUST_OR_THROW_OOM(stream.heap().allocate<ReadableByteStreamController>(realm, realm));
+    auto controller = stream.heap().allocate<ReadableByteStreamController>(realm, realm);
 
     // 6. Perform ! SetUpReadableByteStreamController(stream, controller, startAlgorithm, pullAlgorithmWrapper, cancelAlgorithmWrapper, highWaterMark, undefined).
     TRY(set_up_readable_byte_stream_controller(stream, controller, move(start_algorithm), move(pull_algorithm_wrapper), move(cancel_algorithm_wrapper), high_water_mark, JS::js_undefined()));
@@ -2418,7 +2418,7 @@ WebIDL::ExceptionOr<void> set_up_writable_stream_default_controller(WritableStre
     reset_queue(controller);
 
     // 6. Set controller.[[signal]] to a new AbortSignal.
-    controller.set_signal(MUST_OR_THROW_OOM(realm.heap().allocate<DOM::AbortSignal>(realm, realm)));
+    controller.set_signal(realm.heap().allocate<DOM::AbortSignal>(realm, realm));
 
     // 7. Set controller.[[started]] to false.
     controller.set_started(false);
@@ -2489,7 +2489,7 @@ WebIDL::ExceptionOr<void> set_up_writable_stream_default_controller_from_underly
     auto& realm = stream.realm();
 
     // 1. Let controller be a new WritableStreamDefaultController.
-    auto controller = MUST_OR_THROW_OOM(realm.heap().allocate<WritableStreamDefaultController>(realm, realm));
+    auto controller = realm.heap().allocate<WritableStreamDefaultController>(realm, realm);
 
     // 2. Let startAlgorithm be an algorithm that returns undefined.
     StartAlgorithm start_algorithm = [] { return JS::js_undefined(); };
@@ -2528,7 +2528,7 @@ WebIDL::ExceptionOr<void> set_up_writable_stream_default_controller_from_underly
 
     // 8. If underlyingSinkDict["close"] exists, then set closeAlgorithm to an algorithm which returns the result of invoking underlyingSinkDict["close"] with argument list «» and callback this value underlyingSink.
     if (underlying_sink.close) {
-        close_algorithm = [&realm, controller, underlying_sink_value, callback = underlying_sink.close]() -> WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::Promise>> {
+        close_algorithm = [&realm, underlying_sink_value, callback = underlying_sink.close]() -> WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::Promise>> {
             // Note: callback return a promise, so invoke_callback will never return an abrupt completion
             auto result = MUST_OR_THROW_OOM(WebIDL::invoke_callback(*callback, underlying_sink_value)).release_value();
             return WebIDL::create_resolved_promise(realm, result);
@@ -2537,7 +2537,7 @@ WebIDL::ExceptionOr<void> set_up_writable_stream_default_controller_from_underly
 
     // 9. If underlyingSinkDict["abort"] exists, then set abortAlgorithm to an algorithm which takes an argument reason and returns the result of invoking underlyingSinkDict["abort"] with argument list « reason » and callback this value underlyingSink.
     if (underlying_sink.abort) {
-        abort_algorithm = [&realm, controller, underlying_sink_value, callback = underlying_sink.abort](JS::Value reason) -> WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::Promise>> {
+        abort_algorithm = [&realm, underlying_sink_value, callback = underlying_sink.abort](JS::Value reason) -> WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::Promise>> {
             // Note: callback return a promise, so invoke_callback will never return an abrupt completion
             auto result = MUST_OR_THROW_OOM(WebIDL::invoke_callback(*callback, underlying_sink_value, reason)).release_value();
             return WebIDL::create_resolved_promise(realm, result);
@@ -2916,7 +2916,7 @@ WebIDL::ExceptionOr<void> set_up_transform_stream_default_controller_from_transf
     auto& vm = realm.vm();
 
     // 1. Let controller be a new TransformStreamDefaultController.
-    auto controller = MUST_OR_THROW_OOM(realm.heap().allocate<TransformStreamDefaultController>(realm, realm));
+    auto controller = realm.heap().allocate<TransformStreamDefaultController>(realm, realm);
 
     // 2. Let transformAlgorithm be the following steps, taking a chunk argument:
     TransformAlgorithm transform_algorithm = [controller, &realm, &vm](JS::Value chunk) {
@@ -3131,7 +3131,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::Promise>> transform_stream_default_
             TRY(transform_stream_error(stream, reason));
 
             // 2. Throw readable.[[storedError]].
-            return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, TRY(readable->stored_error().as_string().utf8_string_view()) };
+            return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, readable->stored_error().as_string().utf8_string() };
         });
 
     return WebIDL::create_resolved_promise(realm, react_result);
@@ -3297,7 +3297,7 @@ JS::ThrowCompletionOr<JS::Handle<WebIDL::CallbackType>> property_to_callback(JS:
         return JS::Handle<WebIDL::CallbackType> {};
 
     if (!property.is_function())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, property.to_string_without_side_effects()));
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, property.to_string_without_side_effects());
 
     return vm.heap().allocate_without_realm<WebIDL::CallbackType>(property.as_object(), HTML::incumbent_settings_object(), operation_returns_promise);
 }
@@ -3308,7 +3308,7 @@ WebIDL::ExceptionOr<void> set_up_readable_byte_stream_controller_from_underlying
     auto& realm = stream.realm();
 
     // 1. Let controller be a new ReadableByteStreamController.
-    auto controller = MUST_OR_THROW_OOM(stream.heap().allocate<ReadableByteStreamController>(realm, realm));
+    auto controller = stream.heap().allocate<ReadableByteStreamController>(realm, realm);
 
     // 2. Let startAlgorithm be an algorithm that returns undefined.
     StartAlgorithm start_algorithm = [] { return JS::js_undefined(); };
@@ -3342,7 +3342,7 @@ WebIDL::ExceptionOr<void> set_up_readable_byte_stream_controller_from_underlying
 
     // 7. If underlyingSourceDict["cancel"] exists, then set cancelAlgorithm to an algorithm which takes an argument reason and returns the result of invoking underlyingSourceDict["cancel"] with argument list « reason » and callback this value underlyingSource.
     if (underlying_source_dict.cancel) {
-        cancel_algorithm = [&realm, controller, underlying_source, callback = underlying_source_dict.cancel](auto const& reason) -> WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::Promise>> {
+        cancel_algorithm = [&realm, underlying_source, callback = underlying_source_dict.cancel](auto const& reason) -> WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::Promise>> {
             // Note: callback return a promise, so invoke_callback will never return an abrupt completion
             auto result = MUST_OR_THROW_OOM(WebIDL::invoke_callback(*callback, underlying_source, reason)).release_value();
             return WebIDL::create_resolved_promise(realm, result);

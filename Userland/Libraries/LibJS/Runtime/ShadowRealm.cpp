@@ -6,7 +6,6 @@
 
 #include <LibJS/Bytecode/Executable.h>
 #include <LibJS/Bytecode/Interpreter.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Lexer.h>
 #include <LibJS/Parser.h>
 #include <LibJS/Runtime/AbstractOperations.h>
@@ -88,7 +87,7 @@ ThrowCompletionOr<void> copy_name_and_length(VM& vm, FunctionObject& function, F
         target_name = PrimitiveString::create(vm, String {});
 
     // 8. Perform SetFunctionName(F, targetName, prefix).
-    function.set_function_name({ TRY(target_name.as_string().deprecated_string()) }, move(prefix));
+    function.set_function_name({ target_name.as_string().deprecated_string() }, move(prefix));
 
     return {};
 }
@@ -173,26 +172,19 @@ ThrowCompletionOr<Value> perform_shadow_realm_eval(VM& vm, StringView source_tex
     // 17. If result.[[Type]] is normal, then
     if (!eval_result.is_throw_completion()) {
         // a. Set result to the result of evaluating body.
-        if (auto* bytecode_interpreter = vm.bytecode_interpreter_if_exists()) {
-            auto maybe_executable = Bytecode::compile(vm, program, FunctionKind::Normal, "ShadowRealmEval"sv);
-            if (maybe_executable.is_error())
-                result = maybe_executable.release_error();
-            else {
-                auto executable = maybe_executable.release_value();
+        auto maybe_executable = Bytecode::compile(vm, program, FunctionKind::Normal, "ShadowRealmEval"sv);
+        if (maybe_executable.is_error())
+            result = maybe_executable.release_error();
+        else {
+            auto executable = maybe_executable.release_value();
 
-                auto value_and_frame = bytecode_interpreter->run_and_return_frame(eval_realm, *executable, nullptr);
-                if (value_and_frame.value.is_error()) {
-                    result = value_and_frame.value.release_error();
-                } else {
-                    // Resulting value is in the accumulator.
-                    result = value_and_frame.frame->registers.at(0).value_or(js_undefined());
-                }
+            auto value_and_frame = vm.bytecode_interpreter().run_and_return_frame(eval_realm, *executable, nullptr);
+            if (value_and_frame.value.is_error()) {
+                result = value_and_frame.value.release_error();
+            } else {
+                // Resulting value is in the accumulator.
+                result = value_and_frame.frame->registers.at(0).value_or(js_undefined());
             }
-        } else {
-            // FIXME: Remove once everything uses the VM's current realm.
-            auto eval_realm_interpreter = Interpreter::create_with_existing_realm(eval_realm);
-
-            result = program->execute(*eval_realm_interpreter);
         }
     }
 
@@ -290,7 +282,7 @@ ThrowCompletionOr<Value> shadow_realm_import_value(VM& vm, DeprecatedString spec
     // NOTE: Even though the spec tells us to use %ThrowTypeError%, it's not observable if we actually do.
     // Throw a nicer TypeError forwarding the import error message instead (we know the argument is an Error object).
     auto throw_type_error = NativeFunction::create(realm, {}, [](auto& vm) -> ThrowCompletionOr<Value> {
-        return vm.template throw_completion<TypeError>(TRY(vm.argument(0).as_object().get_without_side_effects(vm.names.message).as_string().utf8_string()));
+        return vm.template throw_completion<TypeError>(vm.argument(0).as_object().get_without_side_effects(vm.names.message).as_string().utf8_string());
     });
 
     // 13. Return PerformPromiseThen(innerCapability.[[Promise]], onFulfilled, callerRealm.[[Intrinsics]].[[%ThrowTypeError%]], promiseCapability).

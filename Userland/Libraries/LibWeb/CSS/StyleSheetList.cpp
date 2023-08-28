@@ -62,10 +62,10 @@ void StyleSheetList::remove_sheet(CSSStyleSheet& sheet)
     m_document->invalidate_style();
 }
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<StyleSheetList>> StyleSheetList::create(DOM::Document& document)
+JS::NonnullGCPtr<StyleSheetList> StyleSheetList::create(DOM::Document& document)
 {
     auto& realm = document.realm();
-    return MUST_OR_THROW_OOM(realm.heap().allocate<StyleSheetList>(realm, document));
+    return realm.heap().allocate<StyleSheetList>(realm, document);
 }
 
 StyleSheetList::StyleSheetList(DOM::Document& document)
@@ -74,12 +74,10 @@ StyleSheetList::StyleSheetList(DOM::Document& document)
 {
 }
 
-JS::ThrowCompletionOr<void> StyleSheetList::initialize(JS::Realm& realm)
+void StyleSheetList::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::StyleSheetListPrototype>(realm, "StyleSheetList"));
-
-    return {};
 }
 
 void StyleSheetList::visit_edges(Cell::Visitor& visitor)

@@ -124,6 +124,10 @@ A general guide for contributing can be found in [`CONTRIBUTING.md`](CONTRIBUTIN
 * **Gregory Bertilson** - [Zaggy1024](https://github.com/Zaggy1024)
 * **Erik Wouters** - [EWouters](https://github.com/EWouters)
 * **Rodrigo Tobar** - [rtobar](https://github.com/rtobar)
+* **Alexander Kalenik** - [kalenikaliaksandr](https://github.com/kalenikaliaksandr) 
+* **Tim Ledbetter** - [tcl3](https://github.com/tcl3)
+* **Steffen T. Larssen** - [stelar7](https://github.com/stelar7)
+* **Andi Gallo** - [axgallo](https://github.com/axgallo)
 
 And many more! [See here](https://github.com/SerenityOS/serenity/graphs/contributors) for a full contributor list. The people listed above have landed more than 100 commits in the project. :^)
 

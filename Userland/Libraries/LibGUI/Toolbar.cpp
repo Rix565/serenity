@@ -49,7 +49,7 @@ private:
         if (action.group() && action.group()->is_exclusive())
             set_exclusive(true);
         set_action(action);
-        set_tooltip(tooltip(action));
+        set_tooltip_deprecated(tooltip(action));
         set_focus_policy(FocusPolicy::NoFocus);
         if (action.icon())
             set_icon(action.icon());
@@ -63,7 +63,7 @@ private:
         auto const* action = this->action();
         VERIFY(action);
 
-        set_tooltip(tooltip(*action));
+        set_tooltip_deprecated(tooltip(*action));
         if (!action->icon())
             Button::set_text(move(text));
     }
@@ -97,44 +97,25 @@ private:
     }
 };
 
-ErrorOr<NonnullRefPtr<GUI::Button>> Toolbar::try_add_action(Action& action)
+Button& Toolbar::add_action(Action& action)
 {
-    auto item = TRY(adopt_nonnull_own_or_enomem(new (nothrow) Item));
+    auto item = make<Item>();
     item->type = Item::Type::Action;
     item->action = action;
 
-    // NOTE: Grow the m_items capacity before potentially adding a child widget.
-    //       This avoids having to untangle the child widget in case of allocation failure.
-    TRY(m_items.try_ensure_capacity(m_items.size() + 1));
-
-    item->widget = TRY(try_add<ToolbarButton>(action));
+    item->widget = add<ToolbarButton>(action);
     item->widget->set_fixed_size(m_button_size, m_button_size);
 
-    m_items.unchecked_append(move(item));
+    m_items.append(move(item));
     return *static_cast<Button*>(m_items.last()->widget.ptr());
-}
-
-GUI::Button& Toolbar::add_action(Action& action)
-{
-    auto button = MUST(try_add_action(action));
-    return *button;
-}
-
-ErrorOr<void> Toolbar::try_add_separator()
-{
-    // NOTE: Grow the m_items capacity before potentially adding a child widget.
-    TRY(m_items.try_ensure_capacity(m_items.size() + 1));
-
-    auto item = TRY(adopt_nonnull_own_or_enomem(new (nothrow) Item));
-    item->type = Item::Type::Separator;
-    item->widget = TRY(try_add<SeparatorWidget>(m_orientation == Gfx::Orientation::Horizontal ? Gfx::Orientation::Vertical : Gfx::Orientation::Horizontal));
-    m_items.unchecked_append(move(item));
-    return {};
 }
 
 void Toolbar::add_separator()
 {
-    MUST(try_add_separator());
+    auto item = make<Item>();
+    item->type = Item::Type::Separator;
+    item->widget = add<SeparatorWidget>(m_orientation == Gfx::Orientation::Horizontal ? Gfx::Orientation::Vertical : Gfx::Orientation::Horizontal);
+    m_items.append(move(item));
 }
 
 void Toolbar::paint_event(PaintEvent& event)
@@ -171,12 +152,12 @@ ErrorOr<void> Toolbar::create_overflow_objects()
     m_overflow_action = Action::create("Overflow Menu", { Mod_Ctrl | Mod_Shift, Key_O }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/overflow-menu.png"sv)), [&](auto&) {
         m_overflow_menu->popup(m_overflow_button->screen_relative_rect().bottom_left().moved_up(1), {}, m_overflow_button->rect());
     });
-    m_overflow_action->set_status_tip(TRY("Show hidden toolbar actions"_string));
+    m_overflow_action->set_status_tip("Show hidden toolbar actions"_string);
     m_overflow_action->set_enabled(false);
 
-    TRY(add_spacer());
+    add_spacer();
 
-    m_overflow_button = TRY(try_add_action(*m_overflow_action));
+    m_overflow_button = add_action(*m_overflow_action);
     m_overflow_button->set_visible(false);
 
     return {};
@@ -255,10 +236,10 @@ ErrorOr<void> Toolbar::update_overflow_menu()
             item->widget->set_visible(false);
             peek_item = m_items[i + 1];
             if (item->action)
-                TRY(m_overflow_menu->try_add_action(*item->action));
+                m_overflow_menu->add_action(*item->action);
         }
         if (item->action && peek_item->type == Item::Type::Separator)
-            TRY(m_overflow_menu->try_add_separator());
+            m_overflow_menu->add_separator();
     }
 
     return {};

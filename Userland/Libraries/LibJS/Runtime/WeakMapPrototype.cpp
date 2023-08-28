@@ -16,10 +16,10 @@ WeakMapPrototype::WeakMapPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> WeakMapPrototype::initialize(Realm& realm)
+void WeakMapPrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     u8 attr = Attribute::Writable | Attribute::Configurable;
 
     define_native_function(realm, vm.names.delete_, delete_, 1, attr);
@@ -29,8 +29,6 @@ ThrowCompletionOr<void> WeakMapPrototype::initialize(Realm& realm)
 
     // 24.3.3.6 WeakMap.prototype [ @@toStringTag ], https://tc39.es/ecma262/#sec-weakmap.prototype-@@tostringtag
     define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, vm.names.WeakMap.as_string()), Attribute::Configurable);
-
-    return {};
 }
 
 // 24.3.3.2 WeakMap.prototype.delete ( key ), https://tc39.es/ecma262/#sec-weakmap.prototype.delete
@@ -115,7 +113,7 @@ JS_DEFINE_NATIVE_FUNCTION(WeakMapPrototype::set)
 
     // 3. If CanBeHeldWeakly(key) is false, throw a TypeError exception.
     if (!can_be_held_weakly(key))
-        return vm.throw_completion<TypeError>(ErrorType::CannotBeHeldWeakly, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::CannotBeHeldWeakly, value.to_string_without_side_effects());
 
     // 4. For each Record { [[Key]], [[Value]] } p of M.[[WeakMapData]], do
     //    a. If p.[[Key]] is not empty and SameValue(p.[[Key]], key) is true, then

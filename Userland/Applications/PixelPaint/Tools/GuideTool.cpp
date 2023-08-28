@@ -180,18 +180,18 @@ ErrorOr<GUI::Widget*> GuideTool::get_properties_widget()
 {
     if (!m_properties_widget) {
         auto properties_widget = TRY(GUI::Widget::try_create());
-        (void)TRY(properties_widget->try_set_layout<GUI::VerticalBoxLayout>());
+        properties_widget->set_layout<GUI::VerticalBoxLayout>();
 
         auto snapping_container = TRY(properties_widget->try_add<GUI::Widget>());
         snapping_container->set_fixed_height(20);
-        (void)TRY(snapping_container->try_set_layout<GUI::HorizontalBoxLayout>());
+        snapping_container->set_layout<GUI::HorizontalBoxLayout>();
 
-        auto snapping_label = TRY(snapping_container->try_add<GUI::Label>(TRY("Snap offset:"_string)));
+        auto snapping_label = TRY(snapping_container->try_add<GUI::Label>("Snap offset:"_string));
         snapping_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
         snapping_label->set_fixed_size(80, 20);
-        snapping_label->set_tooltip("Press Shift to snap");
+        snapping_label->set_tooltip_deprecated("Press Shift to snap");
 
-        auto snapping_slider = TRY(snapping_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "px"_short_string));
+        auto snapping_slider = TRY(snapping_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "px"_string));
         snapping_slider->set_range(0, 50);
         snapping_slider->set_value(m_snap_size);
 

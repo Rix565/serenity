@@ -77,7 +77,7 @@ public:
     JS::NonnullGCPtr<XMLHttpRequestUpload> upload() const;
 
 private:
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
     virtual bool must_survive_garbage_collection() const override;
 
@@ -136,7 +136,7 @@ private:
     // https://xhr.spec.whatwg.org/#request-body
     // request body
     //     Initially null.
-    Optional<Fetch::Infrastructure::Body> m_request_body;
+    JS::GCPtr<Fetch::Infrastructure::Body> m_request_body;
 
     // https://xhr.spec.whatwg.org/#synchronous-flag
     // synchronous flag

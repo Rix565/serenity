@@ -69,6 +69,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     for (auto const& engine : engines)
         TRY(Core::System::unveil(engine.path, "x"sv));
 
+    TRY(Core::System::unveil("/etc/passwd", "r"));
     TRY(Core::System::unveil("/res", "r"));
     TRY(Core::System::unveil("/bin/GamesSettings", "x"));
     TRY(Core::System::unveil("/tmp/session/%sid/portal/launch", "rw"));
@@ -88,17 +89,17 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     widget->set_show_available_moves(Config::read_bool("Games"sv, "Chess"sv, "ShowAvailableMoves"sv, true));
     widget->set_highlight_checks(Config::read_bool("Games"sv, "Chess"sv, "HighlightChecks"sv, true));
 
-    auto game_menu = TRY(window->try_add_menu("&Game"_short_string));
+    auto game_menu = window->add_menu("&Game"_string);
 
-    TRY(game_menu->try_add_action(GUI::Action::create("&Resign", { Mod_None, Key_F3 }, [&](auto&) {
+    game_menu->add_action(GUI::Action::create("&Resign", { Mod_None, Key_F3 }, [&](auto&) {
         widget->resign();
-    })));
-    TRY(game_menu->try_add_action(GUI::Action::create("&Flip Board", { Mod_Ctrl, Key_F }, [&](auto&) {
+    }));
+    game_menu->add_action(GUI::Action::create("&Flip Board", { Mod_Ctrl, Key_F }, [&](auto&) {
         widget->flip_board();
-    })));
-    TRY(game_menu->try_add_separator());
+    }));
+    game_menu->add_separator();
 
-    TRY(game_menu->try_add_action(GUI::Action::create("&Import PGN...", { Mod_Ctrl, Key_O }, [&](auto&) {
+    game_menu->add_action(GUI::Action::create("&Import PGN...", { Mod_Ctrl, Key_O }, [&](auto&) {
         FileSystemAccessClient::OpenFileOptions options {
             .allowed_file_types = Vector {
                 GUI::FileTypeFilter { "PGN Files", { { "pgn" } } },
@@ -113,8 +114,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             dbgln("Failed to import PGN: {}", maybe_error.release_error());
         else
             dbgln("Imported PGN file from {}", result.value().filename());
-    })));
-    TRY(game_menu->try_add_action(GUI::Action::create("&Export PGN...", { Mod_Ctrl, Key_S }, [&](auto&) {
+    }));
+    game_menu->add_action(GUI::Action::create("&Export PGN...", { Mod_Ctrl, Key_S }, [&](auto&) {
         auto result = FileSystemAccessClient::Client::the().save_file(window, "Untitled", "pgn");
         if (result.is_error())
             return;
@@ -123,29 +124,29 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             dbgln("Failed to export PGN: {}", maybe_error.release_error());
         else
             dbgln("Exported PGN file to {}", result.value().filename());
-    })));
-    TRY(game_menu->try_add_action(GUI::Action::create("&Copy FEN", { Mod_Ctrl, Key_C }, [&](auto&) {
-        GUI::Clipboard::the().set_data(widget->get_fen().bytes());
+    }));
+    game_menu->add_action(GUI::Action::create("&Copy FEN", { Mod_Ctrl, Key_C }, [&](auto&) {
+        GUI::Clipboard::the().set_data(widget->get_fen().release_value_but_fixme_should_propagate_errors().bytes());
         GUI::MessageBox::show(window, "Board state copied to clipboard as FEN."sv, "Copy FEN"sv, GUI::MessageBox::Type::Information);
-    })));
-    TRY(game_menu->try_add_separator());
+    }));
+    game_menu->add_separator();
 
-    TRY(game_menu->try_add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
+    game_menu->add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
         if (widget->board().game_result() == Chess::Board::Result::NotFinished) {
             if (widget->resign() < 0)
                 return;
         }
         widget->reset();
-    })));
-    TRY(game_menu->try_add_separator());
+    }));
+    game_menu->add_separator();
 
     auto settings_action = GUI::Action::create(
         "Chess &Settings", {}, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/games.png"sv)), [window](auto&) {
             GUI::Process::spawn_or_show_error(window, "/bin/GamesSettings"sv, Array { "--open-tab", "chess" });
         },
         window);
-    settings_action->set_status_tip(TRY("Open the Game Settings for Chess"_string));
-    TRY(game_menu->try_add_action(settings_action));
+    settings_action->set_status_tip("Open the Game Settings for Chess"_string);
+    game_menu->add_action(settings_action);
 
     auto show_available_moves_action = GUI::Action::create_checkable("Show Available Moves", [&](auto& action) {
         widget->set_show_available_moves(action.is_checked());
@@ -153,24 +154,24 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         Config::write_bool("Games"sv, "Chess"sv, "ShowAvailableMoves"sv, action.is_checked());
     });
     show_available_moves_action->set_checked(widget->show_available_moves());
-    TRY(game_menu->try_add_action(show_available_moves_action));
-    TRY(game_menu->try_add_separator());
+    game_menu->add_action(show_available_moves_action);
+    game_menu->add_separator();
 
-    TRY(game_menu->try_add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    game_menu->add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
-    })));
+    }));
 
-    auto engine_menu = TRY(window->try_add_menu("&Engine"_short_string));
+    auto engine_menu = window->add_menu("&Engine"_string);
 
     GUI::ActionGroup engines_action_group;
     engines_action_group.set_exclusive(true);
-    auto engine_submenu = TRY(engine_menu->try_add_submenu("&Engine"_short_string));
+    auto engine_submenu = engine_menu->add_submenu("&Engine"_string);
     auto human_engine_checkbox = GUI::Action::create_checkable("Human", [&](auto&) {
         widget->set_engine(nullptr);
     });
     human_engine_checkbox->set_checked(true);
     engines_action_group.add_action(human_engine_checkbox);
-    TRY(engine_submenu->try_add_action(human_engine_checkbox));
+    engine_submenu->add_action(human_engine_checkbox);
 
     for (auto const& engine : engines) {
         auto action = GUI::Action::create_checkable(engine.name, [&](auto&) {
@@ -189,15 +190,15 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             widget->input_engine_move();
         });
         engines_action_group.add_action(*action);
-        TRY(engine_submenu->try_add_action(*action));
+        engine_submenu->add_action(*action);
     }
 
-    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+    auto help_menu = window->add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(window));
+    help_menu->add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man6/Chess.md"), "/bin/Help");
-    })));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Chess", app_icon, window)));
+    }));
+    help_menu->add_action(GUI::CommonActions::make_about_action("Chess", app_icon, window));
 
     window->show();
     widget->reset();

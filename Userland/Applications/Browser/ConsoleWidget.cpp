@@ -25,6 +25,7 @@ ConsoleWidget::ConsoleWidget()
     set_fill_with_background_color(true);
 
     m_output_view = add<WebView::OutOfProcessWebView>();
+    m_output_view->use_native_user_style_sheet();
     m_output_view->load("data:text/html,<html style=\"font: 10pt monospace;\"></html>"sv);
     // Wait until our output WebView is loaded, and then request any messages that occurred before we existed
     m_output_view->on_load_finish = [this](auto&) {
@@ -62,7 +63,7 @@ ConsoleWidget::ConsoleWidget()
     auto& clear_button = bottom_container.add<GUI::Button>();
     clear_button.set_fixed_size(22, 22);
     clear_button.set_icon(g_icon_bag.delete_icon);
-    clear_button.set_tooltip("Clear the console output");
+    clear_button.set_tooltip_deprecated("Clear the console output");
     clear_button.on_click = [this](auto) {
         clear_output();
     };

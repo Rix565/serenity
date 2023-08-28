@@ -14,7 +14,6 @@
 #include <LibJS/Contrib/Test262/GlobalObject.h>
 #include <LibJS/Contrib/Test262/IsHTMLDDA.h>
 #include <LibJS/Heap/Cell.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Object.h>
@@ -27,12 +26,12 @@ $262Object::$262Object(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> $262Object::initialize(Realm& realm)
+void $262Object::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
 
-    m_agent = MUST_OR_THROW_OOM(vm().heap().allocate<AgentObject>(realm, realm));
-    m_is_htmldda = MUST_OR_THROW_OOM(vm().heap().allocate<IsHTMLDDA>(realm, realm));
+    m_agent = vm().heap().allocate<AgentObject>(realm, realm);
+    m_is_htmldda = vm().heap().allocate<IsHTMLDDA>(realm, realm);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, "clearKeptObjects", clear_kept_objects, 0, attr);
@@ -44,8 +43,6 @@ ThrowCompletionOr<void> $262Object::initialize(Realm& realm)
     define_direct_property("gc", realm.global_object().get_without_side_effects("gc"), attr);
     define_direct_property("global", &realm.global_object(), attr);
     define_direct_property("IsHTMLDDA", m_is_htmldda, attr);
-
-    return {};
 }
 
 void $262Object::visit_edges(Cell::Visitor& visitor)
@@ -68,7 +65,7 @@ JS_DEFINE_NATIVE_FUNCTION($262Object::create_realm)
     VERIFY(realm_global_object);
     realm->set_global_object(realm_global_object, nullptr);
     set_default_global_bindings(*realm);
-    MUST_OR_THROW_OOM(realm_global_object->initialize(*realm));
+    realm_global_object->initialize(*realm);
     return Value(realm_global_object->$262());
 }
 
@@ -105,12 +102,7 @@ JS_DEFINE_NATIVE_FUNCTION($262Object::eval_script)
     }
 
     // 5. Let status be ScriptEvaluation(s).
-    auto status = [&] {
-        if (auto* bytecode_interpreter = vm.bytecode_interpreter_if_exists())
-            return bytecode_interpreter->run(script_or_error.value());
-        else
-            return vm.interpreter().run(script_or_error.value());
-    }();
+    auto status = vm.bytecode_interpreter().run(script_or_error.value());
 
     // 6. Return Completion(status).
     return status;

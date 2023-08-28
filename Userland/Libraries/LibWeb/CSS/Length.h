@@ -83,7 +83,6 @@ public:
 
     static Optional<Type> unit_from_name(StringView);
 
-    Length(int value, Type type);
     Length(double value, Type type);
     ~Length();
 
@@ -186,25 +185,25 @@ public:
         constexpr double centimeter_pixels = (inch_pixels / 2.54);
         switch (m_type) {
         case Type::Cm:
-            return m_value * centimeter_pixels; // 1cm = 96px/2.54
+            return CSSPixels::nearest_value_for(m_value * centimeter_pixels); // 1cm = 96px/2.54
         case Type::In:
-            return m_value * inch_pixels; // 1in = 2.54 cm = 96px
+            return CSSPixels::nearest_value_for(m_value * inch_pixels); // 1in = 2.54 cm = 96px
         case Type::Px:
-            return m_value; // 1px = 1/96th of 1in
+            return CSSPixels::nearest_value_for(m_value); // 1px = 1/96th of 1in
         case Type::Pt:
-            return m_value * ((1.0 / 72.0) * inch_pixels); // 1pt = 1/72th of 1in
+            return CSSPixels::nearest_value_for(m_value * ((1.0 / 72.0) * inch_pixels)); // 1pt = 1/72th of 1in
         case Type::Pc:
-            return m_value * ((1.0 / 6.0) * inch_pixels); // 1pc = 1/6th of 1in
+            return CSSPixels::nearest_value_for(m_value * ((1.0 / 6.0) * inch_pixels)); // 1pc = 1/6th of 1in
         case Type::Mm:
-            return m_value * ((1.0 / 10.0) * centimeter_pixels); // 1mm = 1/10th of 1cm
+            return CSSPixels::nearest_value_for(m_value * ((1.0 / 10.0) * centimeter_pixels)); // 1mm = 1/10th of 1cm
         case Type::Q:
-            return m_value * ((1.0 / 40.0) * centimeter_pixels); // 1Q = 1/40th of 1cm
+            return CSSPixels::nearest_value_for(m_value * ((1.0 / 40.0) * centimeter_pixels)); // 1Q = 1/40th of 1cm
         default:
             VERIFY_NOT_REACHED();
         }
     }
 
-    ErrorOr<String> to_string() const;
+    String to_string() const;
 
     bool operator==(Length const& other) const
     {
@@ -231,6 +230,6 @@ template<>
 struct AK::Formatter<Web::CSS::Length> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder& builder, Web::CSS::Length const& length)
     {
-        return Formatter<StringView>::format(builder, TRY(length.to_string()));
+        return Formatter<StringView>::format(builder, length.to_string());
     }
 };

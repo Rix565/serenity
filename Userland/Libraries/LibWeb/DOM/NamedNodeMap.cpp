@@ -13,10 +13,10 @@
 
 namespace Web::DOM {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<NamedNodeMap>> NamedNodeMap::create(Element& element)
+JS::NonnullGCPtr<NamedNodeMap> NamedNodeMap::create(Element& element)
 {
     auto& realm = element.realm();
-    return MUST_OR_THROW_OOM(realm.heap().allocate<NamedNodeMap>(realm, element));
+    return realm.heap().allocate<NamedNodeMap>(realm, element);
 }
 
 NamedNodeMap::NamedNodeMap(Element& element)
@@ -25,12 +25,10 @@ NamedNodeMap::NamedNodeMap(Element& element)
 {
 }
 
-JS::ThrowCompletionOr<void> NamedNodeMap::initialize(JS::Realm& realm)
+void NamedNodeMap::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::NamedNodeMapPrototype>(realm, "NamedNodeMap"));
-
-    return {};
 }
 
 void NamedNodeMap::visit_edges(Cell::Visitor& visitor)

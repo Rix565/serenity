@@ -316,7 +316,7 @@ static bool fire_an_event(FlyString name, Optional<Web::DOM::Element&> target)
     if (!target.has_value())
         return false;
 
-    auto event = T::create(target->realm(), name).release_value_but_fixme_should_propagate_errors();
+    auto event = T::create(target->realm(), name);
     return target->dispatch_event(event);
 }
 
@@ -1134,7 +1134,7 @@ Messages::WebDriverClient::GetElementCssValueResponse WebDriverConnection::get_e
         // computed value of parameter property name from element’s style declarations. property name is obtained from url variables.
         if (auto property = Web::CSS::property_id_from_string(name); property.has_value()) {
             if (auto* computed_values = element->computed_css_values())
-                computed_value = computed_values->property(property.value())->to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+                computed_value = computed_values->property(property.value())->to_string().to_deprecated_string();
         }
     }
     // -> Otherwise
@@ -1651,6 +1651,26 @@ Messages::WebDriverClient::DeleteAllCookiesResponse WebDriverConnection::delete_
     delete_cookies();
 
     // 4. Return success with data null.
+    return JsonValue {};
+}
+
+// 15.8 Release Actions, https://w3c.github.io/webdriver/#release-actions
+Messages::WebDriverClient::ReleaseActionsResponse WebDriverConnection::release_actions()
+{
+    // 1. If the current browsing context is no longer open, return error with error code no such window.
+    TRY(ensure_open_top_level_browsing_context());
+
+    // FIXME: 2. Let input state be the result of get the input state with current session and current top-level browsing context.
+
+    // FIXME: 3. Let actions options be a new actions options with the is element origin steps set to represents a web element, and the get element origin steps set to get a WebElement origin.
+
+    // FIXME: 4. Let undo actions be input state’s input cancel list in reverse order.
+
+    // FIXME: 5. Try to dispatch tick actions with arguments undo actions, 0, current browsing context, and actions options.
+
+    // FIXME: 6. Reset the input state with current session and current top-level browsing context.
+
+    // 7. Return success with data null.
     return JsonValue {};
 }
 

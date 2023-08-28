@@ -13,9 +13,9 @@
 
 namespace Web::DOM {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<HTMLCollection>> HTMLCollection::create(ParentNode& root, Scope scope, Function<bool(Element const&)> filter)
+JS::NonnullGCPtr<HTMLCollection> HTMLCollection::create(ParentNode& root, Scope scope, Function<bool(Element const&)> filter)
 {
-    return MUST_OR_THROW_OOM(root.heap().allocate<HTMLCollection>(root.realm(), root, scope, move(filter)));
+    return root.heap().allocate<HTMLCollection>(root.realm(), root, scope, move(filter));
 }
 
 HTMLCollection::HTMLCollection(ParentNode& root, Scope scope, Function<bool(Element const&)> filter)
@@ -28,12 +28,10 @@ HTMLCollection::HTMLCollection(ParentNode& root, Scope scope, Function<bool(Elem
 
 HTMLCollection::~HTMLCollection() = default;
 
-JS::ThrowCompletionOr<void> HTMLCollection::initialize(JS::Realm& realm)
+void HTMLCollection::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLCollectionPrototype>(realm, "HTMLCollection"));
-
-    return {};
 }
 
 void HTMLCollection::visit_edges(Cell::Visitor& visitor)
@@ -62,7 +60,7 @@ JS::MarkedVector<Element*> HTMLCollection::collect_matching_elements() const
 }
 
 // https://dom.spec.whatwg.org/#dom-htmlcollection-length
-size_t HTMLCollection::length()
+size_t HTMLCollection::length() const
 {
     // The length getter steps are to return the number of nodes represented by the collection.
     return collect_matching_elements().size();
@@ -79,8 +77,10 @@ Element* HTMLCollection::item(size_t index) const
 }
 
 // https://dom.spec.whatwg.org/#dom-htmlcollection-nameditem-key
-Element* HTMLCollection::named_item(DeprecatedFlyString const& name) const
+Element* HTMLCollection::named_item(FlyString const& name_) const
 {
+    auto name = name_.to_deprecated_fly_string();
+
     // 1. If key is the empty string, return null.
     if (name.is_empty())
         return nullptr;
@@ -149,7 +149,7 @@ WebIDL::ExceptionOr<JS::Value> HTMLCollection::item_value(size_t index) const
 
 WebIDL::ExceptionOr<JS::Value> HTMLCollection::named_item_value(DeprecatedFlyString const& index) const
 {
-    auto* element = named_item(index);
+    auto* element = named_item(FlyString::from_deprecated_fly_string(index).release_value());
     if (!element)
         return JS::js_undefined();
     return const_cast<Element*>(element);

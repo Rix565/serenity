@@ -39,7 +39,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<IntersectionObserver>> IntersectionObserver
     // 2. Set this’s internal [[callback]] slot to callback.
     // 8. The thresholds attribute getter will return this sorted thresholds list.
     // 9. Return this.
-    return MUST_OR_THROW_OOM(realm.heap().allocate<IntersectionObserver>(realm, realm, callback, options.root, move(thresholds)));
+    return realm.heap().allocate<IntersectionObserver>(realm, realm, callback, options.root, move(thresholds));
 }
 
 IntersectionObserver::IntersectionObserver(JS::Realm& realm, JS::GCPtr<WebIDL::CallbackType> callback, Optional<Variant<JS::Handle<DOM::Element>, JS::Handle<DOM::Document>>> const& root, Vector<double>&& thresholds)
@@ -53,19 +53,19 @@ IntersectionObserver::IntersectionObserver(JS::Realm& realm, JS::GCPtr<WebIDL::C
     });
 }
 
-IntersectionObserver::~IntersectionObserver()
+IntersectionObserver::~IntersectionObserver() = default;
+
+void IntersectionObserver::finalize()
 {
     intersection_root().visit([this](auto& node) {
         node->document().unregister_intersection_observer({}, *this);
     });
 }
 
-JS::ThrowCompletionOr<void> IntersectionObserver::initialize(JS::Realm& realm)
+void IntersectionObserver::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::IntersectionObserverPrototype>(realm, "IntersectionObserver"));
-
-    return {};
 }
 
 void IntersectionObserver::visit_edges(JS::Cell::Visitor& visitor)

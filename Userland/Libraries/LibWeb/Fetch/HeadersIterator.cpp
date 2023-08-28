@@ -15,7 +15,7 @@ namespace Web::Bindings {
 template<>
 void Intrinsics::create_web_prototype_and_constructor<HeadersIteratorPrototype>(JS::Realm& realm)
 {
-    auto prototype = heap().allocate<HeadersIteratorPrototype>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
+    auto prototype = heap().allocate<HeadersIteratorPrototype>(realm, realm);
     m_prototypes.set("HeadersIterator"sv, prototype);
 }
 
@@ -23,9 +23,9 @@ void Intrinsics::create_web_prototype_and_constructor<HeadersIteratorPrototype>(
 
 namespace Web::Fetch {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<HeadersIterator>> HeadersIterator::create(Headers const& headers, JS::Object::PropertyKind iteration_kind)
+JS::NonnullGCPtr<HeadersIterator> HeadersIterator::create(Headers const& headers, JS::Object::PropertyKind iteration_kind)
 {
-    return MUST_OR_THROW_OOM(headers.heap().allocate<HeadersIterator>(headers.realm(), headers, iteration_kind));
+    return headers.heap().allocate<HeadersIterator>(headers.realm(), headers, iteration_kind);
 }
 
 HeadersIterator::HeadersIterator(Headers const& headers, JS::Object::PropertyKind iteration_kind)
@@ -37,12 +37,10 @@ HeadersIterator::HeadersIterator(Headers const& headers, JS::Object::PropertyKin
 
 HeadersIterator::~HeadersIterator() = default;
 
-JS::ThrowCompletionOr<void> HeadersIterator::initialize(JS::Realm& realm)
+void HeadersIterator::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HeadersIteratorPrototype>(realm, "HeadersIterator"));
-
-    return {};
 }
 
 void HeadersIterator::visit_edges(JS::Cell::Visitor& visitor)
@@ -73,11 +71,11 @@ JS::ThrowCompletionOr<JS::Object*> HeadersIterator::next()
 
     switch (m_iteration_kind) {
     case JS::Object::PropertyKind::Key:
-        return create_iterator_result_object(vm(), MUST_OR_THROW_OOM(JS::PrimitiveString::create(vm(), pair_name)), false).ptr();
+        return create_iterator_result_object(vm(), JS::PrimitiveString::create(vm(), pair_name), false).ptr();
     case JS::Object::PropertyKind::Value:
-        return create_iterator_result_object(vm(), MUST_OR_THROW_OOM(JS::PrimitiveString::create(vm(), pair_value)), false).ptr();
+        return create_iterator_result_object(vm(), JS::PrimitiveString::create(vm(), pair_value), false).ptr();
     case JS::Object::PropertyKind::KeyAndValue: {
-        auto array = JS::Array::create_from(realm(), { MUST_OR_THROW_OOM(JS::PrimitiveString::create(vm(), pair_name)), MUST_OR_THROW_OOM(JS::PrimitiveString::create(vm(), pair_value)) });
+        auto array = JS::Array::create_from(realm(), { JS::PrimitiveString::create(vm(), pair_name), JS::PrimitiveString::create(vm(), pair_value) });
         return create_iterator_result_object(vm(), array, false).ptr();
     }
     default:

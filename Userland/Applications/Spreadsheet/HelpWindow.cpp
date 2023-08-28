@@ -66,6 +66,7 @@ HelpWindow::HelpWindow(GUI::Window* parent)
     resize(530, 365);
     set_title("Spreadsheet Functions Help");
     set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-help.png"sv).release_value_but_fixme_should_propagate_errors());
+    set_window_mode(GUI::WindowMode::Modeless);
 
     auto widget = set_main_widget<GUI::Widget>().release_value_but_fixme_should_propagate_errors();
     widget->set_layout<GUI::VerticalBoxLayout>();
@@ -81,6 +82,7 @@ HelpWindow::HelpWindow(GUI::Window* parent)
     m_listview->set_model(HelpListModel::create());
 
     m_webview = splitter.add<WebView::OutOfProcessWebView>();
+    m_webview->use_native_user_style_sheet();
     m_webview->on_link_click = [this](auto& url, auto&, auto&&) {
         VERIFY(url.scheme() == "spreadsheet");
         if (url.host().template has<String>() && url.host().template get<String>() == "example"sv) {
@@ -92,7 +94,7 @@ HelpWindow::HelpWindow(GUI::Window* parent)
                 return;
             }
             auto& doc = doc_option.value();
-            auto name = url.fragment();
+            auto name = url.fragment().value_or(String {});
 
             auto maybe_example_data = doc.get_object("example_data"sv);
             if (!maybe_example_data.has_value()) {
@@ -122,7 +124,7 @@ HelpWindow::HelpWindow(GUI::Window* parent)
 
             widget->add_sheet(sheet.release_nonnull());
             window->show();
-        } else if (url.host() == String::from_utf8_short_string("doc"sv)) {
+        } else if (url.host() == "doc"_string) {
             auto entry = LexicalPath::basename(url.serialize_path());
             m_webview->load(URL::create_with_data("text/html"sv, render(entry)));
         } else {

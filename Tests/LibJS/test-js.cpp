@@ -12,11 +12,6 @@ TEST_ROOT("Userland/Libraries/LibJS/Tests");
 
 TESTJS_PROGRAM_FLAG(test262_parser_tests, "Run test262 parser tests", "test262-parser-tests", 0);
 
-TESTJS_GLOBAL_FUNCTION(is_bytecode_interpreter_enabled, isBytecodeInterpreterEnabled, 0)
-{
-    return JS::Value(JS::Bytecode::Interpreter::enabled());
-}
-
 TESTJS_GLOBAL_FUNCTION(is_strict_mode, isStrictMode, 0)
 {
     return JS::Value(vm.in_strict_mode());
@@ -58,7 +53,7 @@ TESTJS_GLOBAL_FUNCTION(mark_as_garbage, markAsGarbage)
 {
     auto argument = vm.argument(0);
     if (!argument.is_string())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAString, TRY_OR_THROW_OOM(vm, argument.to_string_without_side_effects()));
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAString, argument.to_string_without_side_effects());
 
     auto& variable_name = argument.as_string();
 
@@ -67,14 +62,14 @@ TESTJS_GLOBAL_FUNCTION(mark_as_garbage, markAsGarbage)
         return execution_context->lexical_environment != nullptr;
     });
     if (!outer_environment.has_value())
-        return vm.throw_completion<JS::ReferenceError>(JS::ErrorType::UnknownIdentifier, TRY(variable_name.deprecated_string()));
+        return vm.throw_completion<JS::ReferenceError>(JS::ErrorType::UnknownIdentifier, variable_name.deprecated_string());
 
-    auto reference = TRY(vm.resolve_binding(TRY(variable_name.deprecated_string()), outer_environment.value()->lexical_environment));
+    auto reference = TRY(vm.resolve_binding(variable_name.deprecated_string(), outer_environment.value()->lexical_environment));
 
     auto value = TRY(reference.get_value(vm));
 
     if (!can_be_held_weakly(value))
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::CannotBeHeldWeakly, DeprecatedString::formatted("Variable with name {}", TRY(variable_name.deprecated_string())));
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::CannotBeHeldWeakly, DeprecatedString::formatted("Variable with name {}", variable_name.deprecated_string()));
 
     vm.heap().uproot_cell(&value.as_cell());
     TRY(reference.delete_(vm));
@@ -93,7 +88,7 @@ TESTJS_GLOBAL_FUNCTION(detach_array_buffer, detachArrayBuffer)
     return JS::js_null();
 }
 
-TESTJS_RUN_FILE_FUNCTION(DeprecatedString const& test_file, JS::Interpreter& interpreter, JS::ExecutionContext&)
+TESTJS_RUN_FILE_FUNCTION(DeprecatedString const& test_file, JS::Realm& realm, JS::ExecutionContext&)
 {
     if (!test262_parser_tests)
         return Test::JS::RunFileHookResult::RunAsNormal;
@@ -123,9 +118,9 @@ TESTJS_RUN_FILE_FUNCTION(DeprecatedString const& test_file, JS::Interpreter& int
     auto program_type = path.basename().ends_with(".module.js"sv) ? JS::Program::Type::Module : JS::Program::Type::Script;
     bool parse_succeeded = false;
     if (program_type == JS::Program::Type::Module)
-        parse_succeeded = !Test::JS::parse_module(test_file, interpreter.realm()).is_error();
+        parse_succeeded = !Test::JS::parse_module(test_file, realm).is_error();
     else
-        parse_succeeded = !Test::JS::parse_script(test_file, interpreter.realm()).is_error();
+        parse_succeeded = !Test::JS::parse_script(test_file, realm).is_error();
 
     bool test_passed = true;
     DeprecatedString message;

@@ -66,15 +66,15 @@ class Request final
     WEB_PLATFORM_OBJECT(Request, Bindings::PlatformObject);
 
 public:
-    [[nodiscard]] static WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> create(JS::Realm&, JS::NonnullGCPtr<Infrastructure::Request>, Headers::Guard);
+    [[nodiscard]] static JS::NonnullGCPtr<Request> create(JS::Realm&, JS::NonnullGCPtr<Infrastructure::Request>, Headers::Guard);
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> construct_impl(JS::Realm&, RequestInfo const& input, RequestInit const& init = {});
 
     virtual ~Request() override;
 
     // ^BodyMixin
     virtual ErrorOr<Optional<MimeSniff::MimeType>> mime_type_impl() const override;
-    virtual Optional<Infrastructure::Body&> body_impl() override;
-    virtual Optional<Infrastructure::Body const&> body_impl() const override;
+    virtual JS::GCPtr<Infrastructure::Body> body_impl() override;
+    virtual JS::GCPtr<Infrastructure::Body const> body_impl() const override;
     virtual Bindings::PlatformObject& as_platform_object() override { return *this; }
     virtual Bindings::PlatformObject const& as_platform_object() const override { return *this; }
 
@@ -102,7 +102,7 @@ public:
 private:
     Request(JS::Realm&, JS::NonnullGCPtr<Infrastructure::Request>);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     // https://fetch.spec.whatwg.org/#concept-request-request

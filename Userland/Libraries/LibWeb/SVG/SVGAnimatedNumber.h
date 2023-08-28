@@ -16,7 +16,7 @@ class SVGAnimatedNumber final : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(SVGAnimatedNumber, Bindings::PlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<SVGAnimatedNumber>> create(JS::Realm&, float base_val, float anim_val);
+    [[nodiscard]] static JS::NonnullGCPtr<SVGAnimatedNumber> create(JS::Realm&, float base_val, float anim_val);
     virtual ~SVGAnimatedNumber() override;
 
     float base_val() const { return m_base_val; }
@@ -28,7 +28,7 @@ public:
 private:
     SVGAnimatedNumber(JS::Realm&, float base_val, float anim_val);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     float m_base_val;
     float m_anim_val;

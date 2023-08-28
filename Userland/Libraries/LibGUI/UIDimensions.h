@@ -8,6 +8,7 @@
 
 #include <AK/JsonValue.h>
 #include <AK/Optional.h>
+#include <AK/String.h>
 #include <LibGfx/Rect.h>
 #include <LibGfx/Size.h>
 #include <initializer_list>
@@ -148,6 +149,23 @@ public:
         VERIFY_NOT_REACHED();
     }
 
+    /// The returned source code, if any, can be used to construct this UIDimension in C++.
+    ErrorOr<String> as_cpp_source() const
+    {
+        String value_source = {};
+        if (is_int())
+            value_source = TRY(String::number(m_value));
+        else if (is_shrink())
+            value_source = TRY(String::from_utf8("GUI::SpecialDimension::Shrink"sv));
+        else if (is_grow())
+            value_source = TRY(String::from_utf8("GUI::SpecialDimension::Grow"sv));
+        else if (is_opportunistic_grow())
+            value_source = TRY(String::from_utf8("GUI::SpecialDimension::OpportunisticGrow"sv));
+        else if (is_fit())
+            value_source = TRY(String::from_utf8("GUI::SpecialDimension::Fit"sv));
+        return String::formatted("GUI::UIDimension {{ {} }}", value_source);
+    }
+
     [[nodiscard]] static Optional<UIDimension> construct_from_json_value(AK::JsonValue const value)
     {
         if (value.is_string()) {
@@ -162,12 +180,13 @@ public:
                 return UIDimension { SpecialDimension::Fit };
             else
                 return {};
-        } else {
-            int value_int = value.to_i32();
+        } else if (value.is_integer<i32>()) {
+            auto value_int = value.as_integer<i32>();
             if (value_int < 0)
                 return {};
             return UIDimension(value_int);
         }
+        return {};
     }
 
 private:

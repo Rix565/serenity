@@ -23,18 +23,14 @@ Worker::Worker(String const& script_url, WorkerOptions const options, DOM::Docum
     , m_document(&document)
     , m_custom_data()
     , m_worker_vm(JS::VM::create(adopt_own(m_custom_data)).release_value_but_fixme_should_propagate_errors())
-    , m_interpreter(JS::Interpreter::create<JS::GlobalObject>(m_worker_vm))
-    , m_interpreter_scope(*m_interpreter)
-    , m_implicit_port(MessagePort::create(document.realm()).release_value_but_fixme_should_propagate_errors())
+    , m_implicit_port(MessagePort::create(document.realm()))
 {
 }
 
-JS::ThrowCompletionOr<void> Worker::initialize(JS::Realm& realm)
+void Worker::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::WorkerPrototype>(realm, "Worker"));
-
-    return {};
 }
 
 void Worker::visit_edges(Cell::Visitor& visitor)
@@ -53,6 +49,10 @@ void Worker::visit_edges(Cell::Visitor& visitor)
 // https://html.spec.whatwg.org/multipage/workers.html#dom-worker
 WebIDL::ExceptionOr<JS::NonnullGCPtr<Worker>> Worker::create(String const& script_url, WorkerOptions const options, DOM::Document& document)
 {
+    // NOTE: We don't start a worker because they're not properly implemented yet and would likely crash.
+    dbgln("FIXME: Implement web workers");
+    return WebIDL::NotSupportedError::create(document.realm(), "Web workers not supported yet");
+
     dbgln_if(WEB_WORKER_DEBUG, "WebWorker: Creating worker with script_url = {}", script_url);
 
     // Returns a new Worker object. scriptURL will be fetched and executed in the background,
@@ -81,10 +81,10 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Worker>> Worker::create(String const& scrip
     // 5. Let worker URL be the resulting URL record.
 
     // 6. Let worker be a new Worker object.
-    auto worker = MUST_OR_THROW_OOM(document.heap().allocate<Worker>(document.realm(), script_url, options, document));
+    auto worker = document.heap().allocate<Worker>(document.realm(), script_url, options, document);
 
     // 7. Let outside port be a new MessagePort in outside settings's Realm.
-    auto outside_port = TRY(MessagePort::create(outside_settings.realm()));
+    auto outside_port = MessagePort::create(outside_settings.realm());
 
     // 8. Associate the outside port with worker
     worker->m_outside_port = outside_port;
@@ -169,8 +169,8 @@ void Worker::run_a_worker(AK::URL& url, EnvironmentSettingsObject& outside_setti
             event_loop.task_queue().add(HTML::Task::create(HTML::Task::Source::PostedMessage, nullptr, [this, message] {
                 MessageEventInit event_init {};
                 event_init.data = message;
-                event_init.origin = "<origin>"_string.release_value_but_fixme_should_propagate_errors();
-                dispatch_event(MessageEvent::create(*m_worker_realm, HTML::EventNames::message, event_init).release_value_but_fixme_should_propagate_errors());
+                event_init.origin = "<origin>"_string;
+                dispatch_event(MessageEvent::create(*m_worker_realm, HTML::EventNames::message, event_init));
             }));
 
             return JS::js_undefined();
@@ -267,7 +267,7 @@ void Worker::run_a_worker(AK::URL& url, EnvironmentSettingsObject& outside_setti
             // FIXME: Global scope association
 
             // 16. Let inside port be a new MessagePort object in inside settings's Realm.
-            auto inside_port = MessagePort::create(m_inner_settings->realm()).release_value_but_fixme_should_propagate_errors();
+            auto inside_port = MessagePort::create(m_inner_settings->realm());
 
             // 17. Associate inside port with worker global scope.
             // FIXME: Global scope association
@@ -330,7 +330,7 @@ WebIDL::ExceptionOr<void> Worker::terminate()
 // https://html.spec.whatwg.org/multipage/workers.html#dom-worker-postmessage
 void Worker::post_message(JS::Value message, JS::Value)
 {
-    dbgln_if(WEB_WORKER_DEBUG, "WebWorker: Post Message: {}", MUST(message.to_string_without_side_effects()));
+    dbgln_if(WEB_WORKER_DEBUG, "WebWorker: Post Message: {}", message.to_string_without_side_effects());
 
     // 1. Let targetPort be the port with which this is entangled, if any; otherwise let it be null.
     auto& target_port = m_outside_port;

@@ -21,9 +21,9 @@ PluralRulesConstructor::PluralRulesConstructor(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> PluralRulesConstructor::initialize(Realm& realm)
+void PluralRulesConstructor::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
@@ -33,8 +33,6 @@ ThrowCompletionOr<void> PluralRulesConstructor::initialize(Realm& realm)
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.names.supportedLocalesOf, supported_locales_of, 1, attr);
-
-    return {};
 }
 
 // 16.1.1 Intl.PluralRules ( [ locales [ , options ] ] ), https://tc39.es/ecma402/#sec-intl.pluralrules
@@ -96,7 +94,7 @@ ThrowCompletionOr<PluralRules*> initialize_plural_rules(VM& vm, PluralRules& plu
     auto type = TRY(get_option(vm, *options, vm.names.type, OptionType::String, AK::Array { "cardinal"sv, "ordinal"sv }, "cardinal"sv));
 
     // 7. Set pluralRules.[[Type]] to t.
-    plural_rules.set_type(TRY(type.as_string().utf8_string_view()));
+    plural_rules.set_type(type.as_string().utf8_string_view());
 
     // 8. Perform ? SetNumberFormatDigitOptions(pluralRules, options, +0𝔽, 3𝔽, "standard").
     TRY(set_number_format_digit_options(vm, plural_rules, *options, 0, 3, NumberFormat::Notation::Standard));

@@ -44,15 +44,13 @@ AudioTrack::~AudioTrack()
     s_audio_track_id_allocator.deallocate(id.value());
 }
 
-JS::ThrowCompletionOr<void> AudioTrack::initialize(JS::Realm& realm)
+void AudioTrack::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::AudioTrackPrototype>(realm, "AudioTrack"));
 
     auto id = s_audio_track_id_allocator.allocate();
-    m_id = TRY_OR_THROW_OOM(realm.vm(), String::number(id));
-
-    return {};
+    m_id = MUST(String::number(id));
 }
 
 void AudioTrack::play(Badge<HTMLAudioElement>)
@@ -104,7 +102,7 @@ void AudioTrack::set_enabled(bool enabled)
         // is disabled, the user agent must queue a media element task given the media element to fire an event named
         // change at the AudioTrackList object.
         m_media_element->queue_a_media_element_task([this]() {
-            m_audio_track_list->dispatch_event(DOM::Event::create(realm(), HTML::EventNames::change).release_value_but_fixme_should_propagate_errors());
+            m_audio_track_list->dispatch_event(DOM::Event::create(realm(), HTML::EventNames::change));
         });
     }
 

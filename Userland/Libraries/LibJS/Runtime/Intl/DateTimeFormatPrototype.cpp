@@ -19,14 +19,14 @@ DateTimeFormatPrototype::DateTimeFormatPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> DateTimeFormatPrototype::initialize(Realm& realm)
+void DateTimeFormatPrototype::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
     // 11.3.2 Intl.DateTimeFormat.prototype [ @@toStringTag ], https://tc39.es/ecma402/#sec-intl.datetimeformat.prototype-@@tostringtag
-    define_direct_property(vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Intl.DateTimeFormat"sv)), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Intl.DateTimeFormat"_string), Attribute::Configurable);
 
     define_native_accessor(realm, vm.names.format, format, nullptr, Attribute::Configurable);
 
@@ -35,8 +35,6 @@ ThrowCompletionOr<void> DateTimeFormatPrototype::initialize(Realm& realm)
     define_native_function(realm, vm.names.formatRange, format_range, 2, attr);
     define_native_function(realm, vm.names.formatRangeToParts, format_range_to_parts, 2, attr);
     define_native_function(realm, vm.names.resolvedOptions, resolved_options, 0, attr);
-
-    return {};
 }
 
 // 11.3.3 get Intl.DateTimeFormat.prototype.format, https://tc39.es/ecma402/#sec-intl.datetimeformat.prototype.format
@@ -179,7 +177,7 @@ JS_DEFINE_NATIVE_FUNCTION(DateTimeFormatPrototype::resolved_options)
     MUST(options->create_data_property_or_throw(vm.names.timeZone, PrimitiveString::create(vm, date_time_format->time_zone())));
 
     if (date_time_format->has_hour_cycle()) {
-        MUST(options->create_data_property_or_throw(vm.names.hourCycle, MUST_OR_THROW_OOM(PrimitiveString::create(vm, date_time_format->hour_cycle_string()))));
+        MUST(options->create_data_property_or_throw(vm.names.hourCycle, PrimitiveString::create(vm, date_time_format->hour_cycle_string())));
 
         switch (date_time_format->hour_cycle()) {
         case ::Locale::HourCycle::H11:
@@ -204,7 +202,7 @@ JS_DEFINE_NATIVE_FUNCTION(DateTimeFormatPrototype::resolved_options)
                 MUST(options->create_data_property_or_throw(property, Value(*option)));
             } else {
                 auto name = ::Locale::calendar_pattern_style_to_string(*option);
-                MUST(options->create_data_property_or_throw(property, MUST_OR_THROW_OOM(PrimitiveString::create(vm, name))));
+                MUST(options->create_data_property_or_throw(property, PrimitiveString::create(vm, name)));
             }
 
             return {};
@@ -212,9 +210,9 @@ JS_DEFINE_NATIVE_FUNCTION(DateTimeFormatPrototype::resolved_options)
     }
 
     if (date_time_format->has_date_style())
-        MUST(options->create_data_property_or_throw(vm.names.dateStyle, MUST_OR_THROW_OOM(PrimitiveString::create(vm, date_time_format->date_style_string()))));
+        MUST(options->create_data_property_or_throw(vm.names.dateStyle, PrimitiveString::create(vm, date_time_format->date_style_string())));
     if (date_time_format->has_time_style())
-        MUST(options->create_data_property_or_throw(vm.names.timeStyle, MUST_OR_THROW_OOM(PrimitiveString::create(vm, date_time_format->time_style_string()))));
+        MUST(options->create_data_property_or_throw(vm.names.timeStyle, PrimitiveString::create(vm, date_time_format->time_style_string())));
 
     // 6. Return options.
     return options;

@@ -12,6 +12,7 @@
 #include <LibWeb/CSS/StyleValues/AngleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ContentStyleValue.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
+#include <LibWeb/CSS/StyleValues/GridAutoFlowStyleValue.h>
 #include <LibWeb/CSS/StyleValues/GridTemplateAreaStyleValue.h>
 #include <LibWeb/CSS/StyleValues/GridTrackPlacementStyleValue.h>
 #include <LibWeb/CSS/StyleValues/GridTrackSizeListStyleValue.h>
@@ -203,7 +204,7 @@ CSSPixels StyleProperties::line_height(Layout::Node const& layout_node) const
     auto line_height = property(CSS::PropertyID::LineHeight);
 
     if (line_height->is_identifier() && line_height->to_identifier() == ValueID::Normal)
-        return layout_node.font().pixel_metrics().line_spacing();
+        return CSSPixels::nearest_value_for(layout_node.font().pixel_metrics().line_spacing());
 
     if (line_height->is_length()) {
         auto line_height_length = line_height->as_length().length();
@@ -224,21 +225,21 @@ CSSPixels StyleProperties::line_height(Layout::Node const& layout_node) const
         if (line_height->as_calculated().resolves_to_number()) {
             auto resolved = line_height->as_calculated().resolve_number();
             if (!resolved.has_value()) {
-                dbgln("FIXME: Failed to resolve calc() line-height (number): {}", line_height->as_calculated().to_string().release_value_but_fixme_should_propagate_errors());
-                return layout_node.font().pixel_metrics().line_spacing();
+                dbgln("FIXME: Failed to resolve calc() line-height (number): {}", line_height->as_calculated().to_string());
+                return CSSPixels::nearest_value_for(layout_node.font().pixel_metrics().line_spacing());
             }
             return Length(resolved.value(), Length::Type::Em).to_px(layout_node);
         }
 
         auto resolved = line_height->as_calculated().resolve_length(layout_node);
         if (!resolved.has_value()) {
-            dbgln("FIXME: Failed to resolve calc() line-height: {}", line_height->as_calculated().to_string().release_value_but_fixme_should_propagate_errors());
-            return layout_node.font().pixel_metrics().line_spacing();
+            dbgln("FIXME: Failed to resolve calc() line-height: {}", line_height->as_calculated().to_string());
+            return CSSPixels::nearest_value_for(layout_node.font().pixel_metrics().line_spacing());
         }
         return resolved->to_px(layout_node);
     }
 
-    return layout_node.font().pixel_metrics().line_spacing();
+    return CSSPixels::nearest_value_for(layout_node.font().pixel_metrics().line_spacing());
 }
 
 Optional<int> StyleProperties::z_index() const
@@ -626,6 +627,12 @@ Optional<CSS::LineStyle> StyleProperties::line_style(CSS::PropertyID property_id
     return value_id_to_line_style(value->to_identifier());
 }
 
+Optional<CSS::OutlineStyle> StyleProperties::outline_style() const
+{
+    auto value = property(CSS::PropertyID::OutlineStyle);
+    return value_id_to_outline_style(value->to_identifier());
+}
+
 Optional<CSS::Float> StyleProperties::float_() const
 {
     auto value = property(CSS::PropertyID::Float);
@@ -652,7 +659,7 @@ CSS::ContentData StyleProperties::content() const
         StringBuilder builder;
         for (auto const& item : content_style_value.content().values()) {
             if (item->is_string()) {
-                builder.append(item->to_string().release_value_but_fixme_should_propagate_errors());
+                builder.append(item->to_string());
             } else {
                 // TODO: Implement quotes, counters, images, and other things.
             }
@@ -664,7 +671,7 @@ CSS::ContentData StyleProperties::content() const
             StringBuilder alt_text_builder;
             for (auto const& item : content_style_value.alt_text()->values()) {
                 if (item->is_string()) {
-                    alt_text_builder.append(item->to_string().release_value_but_fixme_should_propagate_errors());
+                    alt_text_builder.append(item->to_string());
                 } else {
                     // TODO: Implement counters
                 }
@@ -895,6 +902,15 @@ CSS::GridTrackSizeList StyleProperties::grid_template_rows() const
     return value->as_grid_track_size_list().grid_track_size_list();
 }
 
+CSS::GridAutoFlow StyleProperties::grid_auto_flow() const
+{
+    auto value = property(CSS::PropertyID::GridAutoFlow);
+    if (!value->is_grid_auto_flow())
+        return CSS::GridAutoFlow {};
+    auto& grid_auto_flow_value = value->as_grid_auto_flow();
+    return CSS::GridAutoFlow { .row = grid_auto_flow_value.is_row(), .dense = grid_auto_flow_value.is_dense() };
+}
+
 CSS::GridTrackPlacement StyleProperties::grid_column_end() const
 {
     auto value = property(CSS::PropertyID::GridColumnEnd);
@@ -934,13 +950,19 @@ Vector<Vector<String>> StyleProperties::grid_template_areas() const
 String StyleProperties::grid_area() const
 {
     auto value = property(CSS::PropertyID::GridArea);
-    return value->as_string().to_string().release_value_but_fixme_should_propagate_errors();
+    return value->as_string().to_string();
 }
 
 Optional<CSS::ObjectFit> StyleProperties::object_fit() const
 {
     auto value = property(CSS::PropertyID::ObjectFit);
     return value_id_to_object_fit(value->to_identifier());
+}
+
+Optional<CSS::TableLayout> StyleProperties::table_layout() const
+{
+    auto value = property(CSS::PropertyID::TableLayout);
+    return value_id_to_table_layout(value->to_identifier());
 }
 
 Color StyleProperties::stop_color() const

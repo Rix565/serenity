@@ -20,7 +20,7 @@ class CSSKeyframeRule final : public CSSRule {
     WEB_PLATFORM_OBJECT(CSSKeyframeRule, CSSRule);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSKeyframeRule>> create(JS::Realm& realm, CSS::Percentage key, CSSStyleDeclaration& declarations);
+    static JS::NonnullGCPtr<CSSKeyframeRule> create(JS::Realm&, CSS::Percentage key, CSSStyleDeclaration&);
 
     virtual ~CSSKeyframeRule() = default;
 
@@ -31,7 +31,7 @@ public:
 
     DeprecatedString key_text() const
     {
-        return m_key.to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+        return m_key.to_string().to_deprecated_string();
     }
 
     void set_key_text(DeprecatedString const& key_text)
@@ -48,7 +48,7 @@ private:
     }
 
     virtual void visit_edges(Visitor&) override;
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual DeprecatedString serialized() const override;
 
     CSS::Percentage m_key;

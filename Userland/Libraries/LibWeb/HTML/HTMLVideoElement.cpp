@@ -27,12 +27,10 @@ HTMLVideoElement::HTMLVideoElement(DOM::Document& document, DOM::QualifiedName q
 
 HTMLVideoElement::~HTMLVideoElement() = default;
 
-JS::ThrowCompletionOr<void> HTMLVideoElement::initialize(JS::Realm& realm)
+void HTMLVideoElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLVideoElementPrototype>(realm, "HTMLVideoElement"));
-
-    return {};
 }
 
 void HTMLVideoElement::visit_edges(Cell::Visitor& visitor)
@@ -191,7 +189,7 @@ WebIDL::ExceptionOr<void> HTMLVideoElement::determine_element_poster_frame(Optio
             m_poster_frame = move(image.release_value().frames[0].bitmap);
         };
 
-        VERIFY(response->body().has_value());
+        VERIFY(response->body());
         auto empty_algorithm = [](auto) {};
 
         response->body()->fully_read(realm, move(on_image_data_read), move(empty_algorithm), JS::NonnullGCPtr { global }).release_value_but_fixme_should_propagate_errors();

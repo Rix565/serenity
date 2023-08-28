@@ -14,8 +14,7 @@
 
 namespace WebView {
 
-ViewImplementation::ViewImplementation(UseJavaScriptBytecode use_javascript_bytecode)
-    : m_use_javascript_bytecode(use_javascript_bytecode)
+ViewImplementation::ViewImplementation()
 {
     m_backing_store_shrink_timer = Core::Timer::create_single_shot(3000, [this] {
         resize_backing_stores_if_needed(WindowResizeInProgress::No);
@@ -26,6 +25,15 @@ ViewImplementation::ViewImplementation(UseJavaScriptBytecode use_javascript_byte
         // happen to be visiting crashy websites a lot.
         this->m_crash_count = 0;
     }).release_value_but_fixme_should_propagate_errors();
+
+    on_request_file = [this](auto const& path, auto request_id) {
+        auto file = Core::File::open(path, Core::File::OpenMode::Read);
+
+        if (file.is_error())
+            client().async_handle_file_return(file.error().code(), {}, request_id);
+        else
+            client().async_handle_file_return(0, IPC::File(*file.value()), request_id);
+    };
 }
 
 WebContentClient& ViewImplementation::client()
@@ -38,6 +46,38 @@ WebContentClient const& ViewImplementation::client() const
 {
     VERIFY(m_client_state.client);
     return *m_client_state.client;
+}
+
+void ViewImplementation::server_did_paint(Badge<WebContentClient>, i32 bitmap_id, Gfx::IntSize size)
+{
+    if (m_client_state.back_bitmap.id != bitmap_id)
+        return;
+
+    m_client_state.has_usable_bitmap = true;
+    m_client_state.back_bitmap.pending_paints--;
+    m_client_state.back_bitmap.last_painted_size = size;
+    swap(m_client_state.back_bitmap, m_client_state.front_bitmap);
+
+    // We don't need the backup bitmap anymore, so drop it.
+    m_backup_bitmap = nullptr;
+
+    if (on_ready_to_paint)
+        on_ready_to_paint();
+
+    if (m_client_state.got_repaint_requests_while_painting) {
+        m_client_state.got_repaint_requests_while_painting = false;
+        request_repaint();
+    }
+}
+
+void ViewImplementation::server_did_invalidate_content_rect(Badge<WebContentClient>, Gfx::IntRect)
+{
+    request_repaint();
+}
+
+void ViewImplementation::server_did_change_selection(Badge<WebContentClient>)
+{
+    request_repaint();
 }
 
 void ViewImplementation::load(AK::URL const& url)
@@ -153,6 +193,21 @@ void ViewImplementation::js_console_request_messages(i32 start_index)
     client().async_js_console_request_messages(start_index);
 }
 
+void ViewImplementation::alert_closed()
+{
+    client().async_alert_closed();
+}
+
+void ViewImplementation::confirm_closed(bool accepted)
+{
+    client().async_confirm_closed(accepted);
+}
+
+void ViewImplementation::prompt_closed(Optional<String> response)
+{
+    client().async_prompt_closed(move(response));
+}
+
 void ViewImplementation::toggle_media_play_state()
 {
     client().async_toggle_media_play_state();
@@ -207,7 +262,7 @@ void ViewImplementation::resize_backing_stores_if_needed(WindowResizeInProgress 
 
     auto reallocate_backing_store_if_needed = [&](SharedBitmap& backing_store) {
         if (!backing_store.bitmap || !backing_store.bitmap->size().contains(minimum_needed_size)) {
-            if (auto new_bitmap_or_error = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::BGRx8888, minimum_needed_size); !new_bitmap_or_error.is_error()) {
+            if (auto new_bitmap_or_error = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::BGRA8888, minimum_needed_size); !new_bitmap_or_error.is_error()) {
                 if (backing_store.bitmap)
                     client().async_remove_backing_store(backing_store.id);
 
@@ -302,6 +357,17 @@ ErrorOr<void> ViewImplementation::take_screenshot(ScreenshotType type)
     TRY(screenshot_file->write_until_depleted(encoded));
 
     return {};
+}
+
+void ViewImplementation::set_user_style_sheet(String source)
+{
+    client().async_set_user_style(move(source));
+}
+
+void ViewImplementation::use_native_user_style_sheet()
+{
+    extern StringView native_stylesheet_source;
+    set_user_style_sheet(MUST(String::from_utf8(native_stylesheet_source)));
 }
 
 }

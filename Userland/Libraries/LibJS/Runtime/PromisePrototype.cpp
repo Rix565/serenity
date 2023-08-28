@@ -5,7 +5,6 @@
  */
 
 #include <AK/Function.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/GlobalObject.h>
@@ -21,10 +20,10 @@ PromisePrototype::PromisePrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> PromisePrototype::initialize(Realm& realm)
+void PromisePrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.names.then, then, 2, attr);
@@ -33,8 +32,6 @@ ThrowCompletionOr<void> PromisePrototype::initialize(Realm& realm)
 
     // 27.2.5.5 Promise.prototype [ @@toStringTag ], https://tc39.es/ecma262/#sec-promise.prototype-@@tostringtag
     define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, vm.names.Promise.as_string()), Attribute::Configurable);
-
-    return {};
 }
 
 // 27.2.5.4 Promise.prototype.then ( onFulfilled, onRejected ), https://tc39.es/ecma262/#sec-promise.prototype.then
@@ -83,7 +80,7 @@ JS_DEFINE_NATIVE_FUNCTION(PromisePrototype::finally)
 
     // 2. If Type(promise) is not Object, throw a TypeError exception.
     if (!promise.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, promise.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, promise.to_string_without_side_effects());
 
     // 3. Let C be ? SpeciesConstructor(promise, %Promise%).
     auto* constructor = TRY(species_constructor(vm, promise.as_object(), realm.intrinsics().promise_constructor()));

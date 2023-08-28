@@ -17,7 +17,7 @@ class DOMStringMap final : public Bindings::LegacyPlatformObject {
     WEB_PLATFORM_OBJECT(DOMStringMap, Bindings::LegacyPlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMStringMap>> create(DOM::Element&);
+    [[nodiscard]] static JS::NonnullGCPtr<DOMStringMap> create(DOM::Element&);
 
     virtual ~DOMStringMap() override;
 
@@ -31,7 +31,7 @@ public:
 private:
     explicit DOMStringMap(DOM::Element&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     // ^LegacyPlatformObject

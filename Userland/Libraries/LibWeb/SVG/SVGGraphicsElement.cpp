@@ -25,12 +25,10 @@ SVGGraphicsElement::SVGGraphicsElement(DOM::Document& document, DOM::QualifiedNa
 {
 }
 
-JS::ThrowCompletionOr<void> SVGGraphicsElement::initialize(JS::Realm& realm)
+void SVGGraphicsElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::SVGGraphicsElementPrototype>(realm, "SVGGraphicsElement"));
-
-    return {};
 }
 
 void SVGGraphicsElement::attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value)
@@ -48,8 +46,10 @@ Optional<Gfx::PaintStyle const&> SVGGraphicsElement::svg_paint_computed_value_to
     // FIXME: This entire function is an ad-hoc hack:
     if (!paint_value.has_value() || !paint_value->is_url())
         return {};
-    auto& url = paint_value->as_url();
-    auto gradient = document().get_element_by_id(url.fragment());
+    auto const& url = paint_value->as_url();
+    if (!url.fragment().has_value())
+        return {};
+    auto gradient = document().get_element_by_id(url.fragment()->to_deprecated_string());
     if (!gradient)
         return {};
     if (is<SVG::SVGGradientElement>(*gradient))
@@ -125,32 +125,32 @@ void SVGGraphicsElement::apply_presentational_hints(CSS::StyleProperties& style)
     for_each_attribute([&](auto& name, auto& value) {
         if (name.equals_ignoring_ascii_case("fill"sv)) {
             // FIXME: The `fill` attribute and CSS `fill` property are not the same! But our support is limited enough that they are equivalent for now.
-            if (auto fill_value = parse_css_value(parsing_context, value, CSS::PropertyID::Fill).release_value_but_fixme_should_propagate_errors())
+            if (auto fill_value = parse_css_value(parsing_context, value, CSS::PropertyID::Fill))
                 style.set_property(CSS::PropertyID::Fill, fill_value.release_nonnull());
         } else if (name.equals_ignoring_ascii_case("stroke"sv)) {
             // FIXME: The `stroke` attribute and CSS `stroke` property are not the same! But our support is limited enough that they are equivalent for now.
-            if (auto stroke_value = parse_css_value(parsing_context, value, CSS::PropertyID::Stroke).release_value_but_fixme_should_propagate_errors())
+            if (auto stroke_value = parse_css_value(parsing_context, value, CSS::PropertyID::Stroke))
                 style.set_property(CSS::PropertyID::Stroke, stroke_value.release_nonnull());
         } else if (name.equals_ignoring_ascii_case("stroke-width"sv)) {
-            if (auto stroke_width_value = parse_css_value(parsing_context, value, CSS::PropertyID::StrokeWidth).release_value_but_fixme_should_propagate_errors())
+            if (auto stroke_width_value = parse_css_value(parsing_context, value, CSS::PropertyID::StrokeWidth))
                 style.set_property(CSS::PropertyID::StrokeWidth, stroke_width_value.release_nonnull());
         } else if (name.equals_ignoring_ascii_case("fill-rule"sv)) {
-            if (auto fill_rule_value = parse_css_value(parsing_context, value, CSS::PropertyID::FillRule).release_value_but_fixme_should_propagate_errors())
+            if (auto fill_rule_value = parse_css_value(parsing_context, value, CSS::PropertyID::FillRule))
                 style.set_property(CSS::PropertyID::FillRule, fill_rule_value.release_nonnull());
         } else if (name.equals_ignoring_ascii_case("fill-opacity"sv)) {
-            if (auto fill_opacity_value = parse_css_value(parsing_context, value, CSS::PropertyID::FillOpacity).release_value_but_fixme_should_propagate_errors())
+            if (auto fill_opacity_value = parse_css_value(parsing_context, value, CSS::PropertyID::FillOpacity))
                 style.set_property(CSS::PropertyID::FillOpacity, fill_opacity_value.release_nonnull());
         } else if (name.equals_ignoring_ascii_case("stroke-opacity"sv)) {
-            if (auto stroke_opacity_value = parse_css_value(parsing_context, value, CSS::PropertyID::FillOpacity).release_value_but_fixme_should_propagate_errors())
+            if (auto stroke_opacity_value = parse_css_value(parsing_context, value, CSS::PropertyID::StrokeOpacity))
                 style.set_property(CSS::PropertyID::StrokeOpacity, stroke_opacity_value.release_nonnull());
         } else if (name.equals_ignoring_ascii_case(SVG::AttributeNames::opacity)) {
-            if (auto stroke_opacity_value = parse_css_value(parsing_context, value, CSS::PropertyID::Opacity).release_value_but_fixme_should_propagate_errors())
-                style.set_property(CSS::PropertyID::Opacity, stroke_opacity_value.release_nonnull());
+            if (auto opacity_value = parse_css_value(parsing_context, value, CSS::PropertyID::Opacity))
+                style.set_property(CSS::PropertyID::Opacity, opacity_value.release_nonnull());
         } else if (name.equals_ignoring_ascii_case("text-anchor"sv)) {
-            if (auto text_anchor_value = parse_css_value(parsing_context, value, CSS::PropertyID::TextAnchor).release_value_but_fixme_should_propagate_errors())
+            if (auto text_anchor_value = parse_css_value(parsing_context, value, CSS::PropertyID::TextAnchor))
                 style.set_property(CSS::PropertyID::TextAnchor, text_anchor_value.release_nonnull());
         } else if (name.equals_ignoring_ascii_case("font-size"sv)) {
-            if (auto font_size_value = parse_css_value(parsing_context, value, CSS::PropertyID::FontSize).release_value_but_fixme_should_propagate_errors())
+            if (auto font_size_value = parse_css_value(parsing_context, value, CSS::PropertyID::FontSize))
                 style.set_property(CSS::PropertyID::FontSize, font_size_value.release_nonnull());
         }
     });
@@ -227,7 +227,7 @@ Optional<float> SVGGraphicsElement::stroke_width() const
             viewport_height = svg_svg_layout_node->computed_values().height().to_px(*svg_svg_layout_node, 0);
         }
     }
-    auto scaled_viewport_size = (viewport_width + viewport_height) * 0.5;
+    auto scaled_viewport_size = (viewport_width + viewport_height) * CSSPixels(0.5);
     return width.to_px(*layout_node(), scaled_viewport_size).to_double();
 }
 

@@ -111,7 +111,7 @@ public:
         VERIFY(m_type == Type::Number || m_type == Type::Dimension || m_type == Type::Percentage);
         return m_number_value;
     }
-    float number_value() const
+    double number_value() const
     {
         VERIFY(m_type == Type::Number);
         return m_number_value.value();
@@ -127,14 +127,14 @@ public:
         VERIFY(m_type == Type::Dimension);
         return m_value.bytes_as_string_view();
     }
-    float dimension_value() const
+    double dimension_value() const
     {
         VERIFY(m_type == Type::Dimension);
         return m_number_value.value();
     }
     i64 dimension_value_int() const { return m_number_value.integer_value(); }
 
-    float percentage() const
+    double percentage() const
     {
         VERIFY(m_type == Type::Percentage);
         return m_number_value.value();
@@ -144,8 +144,8 @@ public:
     StringView bracket_string() const;
     StringView bracket_mirror_string() const;
 
-    ErrorOr<String> to_string() const;
-    ErrorOr<String> to_debug_string() const;
+    String to_string() const;
+    String to_debug_string() const;
 
     String const& representation() const { return m_representation; }
     Position const& start_position() const { return m_start_position; }
@@ -159,7 +159,7 @@ public:
         return token;
     }
 
-    static Token create_number(float value)
+    static Token create_number(double value)
     {
         Token token;
         token.m_type = Type::Number;
@@ -167,11 +167,20 @@ public:
         return token;
     }
 
-    static Token create_percentage(float value)
+    static Token create_percentage(double value)
     {
         Token token;
         token.m_type = Type::Percentage;
         token.m_number_value = Number(Number::Type::Number, value);
+        return token;
+    }
+
+    static Token create_dimension(double value, FlyString unit)
+    {
+        Token token;
+        token.m_type = Type::Dimension;
+        token.m_number_value = Number(Number::Type::Number, value);
+        token.m_value = move(unit);
         return token;
     }
 

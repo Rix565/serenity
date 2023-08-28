@@ -149,6 +149,17 @@ ErrorOr<int> Shell::builtin_where(Main::Arguments arguments)
     return at_least_one_succeded ? 0 : 1;
 }
 
+ErrorOr<int> Shell::builtin_reset(Main::Arguments)
+{
+    destroy();
+    initialize(m_is_interactive);
+
+    // NOTE: As the last step before returning, clear (flush) the shell text entirely.
+    fprintf(stderr, "\033[3J\033[H\033[2J");
+    fflush(stderr);
+    return 0;
+}
+
 ErrorOr<int> Shell::builtin_alias(Main::Arguments arguments)
 {
     Vector<DeprecatedString> aliases;
@@ -1418,7 +1429,7 @@ ErrorOr<int> Shell::builtin_argsparser_parse(Main::Arguments arguments)
     auto try_convert = [](StringView value, Type type) -> ErrorOr<Optional<RefPtr<AST::Value>>> {
         switch (type) {
         case Type::Bool:
-            return AST::make_ref_counted<AST::StringValue>(TRY("true"_string));
+            return AST::make_ref_counted<AST::StringValue>("true"_string);
         case Type::String:
             return AST::make_ref_counted<AST::StringValue>(TRY(String::from_utf8(value)));
         case Type::I32:
@@ -1602,7 +1613,7 @@ ErrorOr<int> Shell::builtin_argsparser_parse(Main::Arguments arguments)
             if (type == Type::Bool) {
                 set_local_variable(
                     current_variable,
-                    make_ref_counted<AST::StringValue>(MUST("false"_string)),
+                    make_ref_counted<AST::StringValue>("false"_string),
                     true);
             }
             return true;
@@ -1826,7 +1837,7 @@ ErrorOr<int> Shell::builtin_read(Main::Arguments arguments)
     if (!parser.parse(arguments, Core::ArgsParser::FailureBehavior::Ignore))
         return 1;
 
-    auto split_by_any_of = " \t\n"_short_string;
+    auto split_by_any_of = " \t\n"_string;
 
     if (auto const* value_from_env = getenv("IFS"); value_from_env)
         split_by_any_of = TRY(String::from_utf8({ value_from_env, strlen(value_from_env) }));

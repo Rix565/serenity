@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2022, Tobias Christiansen <tobyase@serenityos.org>
  * Copyright (c) 2022, Tim Flynn <trflynn89@serenityos.org>
@@ -31,8 +31,8 @@
 #include <LibWeb/Loader/ContentFilter.h>
 #include <LibWeb/Loader/ProxyMappings.h>
 #include <LibWeb/Loader/ResourceLoader.h>
-#include <LibWeb/Painting/PaintableBox.h>
 #include <LibWeb/Painting/StackingContext.h>
+#include <LibWeb/Painting/ViewportPaintable.h>
 #include <LibWeb/PermissionsPolicy/AutoplayAllowlist.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <WebContent/ConnectionFromClient.h>
@@ -63,11 +63,6 @@ Web::Page& ConnectionFromClient::page()
 Web::Page const& ConnectionFromClient::page() const
 {
     return m_page_host->page();
-}
-
-void ConnectionFromClient::set_use_javascript_bytecode(bool use_bytecode)
-{
-    JS::Bytecode::Interpreter::set_enabled(use_bytecode);
 }
 
 Messages::WebContentServer::GetWindowHandleResponse ConnectionFromClient::get_window_handle()
@@ -210,6 +205,9 @@ void ConnectionFromClient::process_next_input_event()
                     event.button, event.buttons, event.modifiers));
                 break;
             case QueuedMouseEvent::Type::MouseWheel:
+                for (size_t i = 0; i < event.coalesced_event_count; ++i) {
+                    report_finished_handling_input_event(false);
+                }
                 report_finished_handling_input_event(page().handle_mousewheel(
                     event.position.to_type<Web::DevicePixels>(),
                     event.button, event.buttons, event.modifiers, event.wheel_delta_x, event.wheel_delta_y));
@@ -279,16 +277,29 @@ void ConnectionFromClient::mouse_up(Gfx::IntPoint position, unsigned int button,
 
 void ConnectionFromClient::mouse_wheel(Gfx::IntPoint position, unsigned int button, unsigned int buttons, unsigned int modifiers, i32 wheel_delta_x, i32 wheel_delta_y)
 {
-    enqueue_input_event(
-        QueuedMouseEvent {
-            .type = QueuedMouseEvent::Type::MouseWheel,
-            .position = position,
-            .button = button,
-            .buttons = buttons,
-            .modifiers = modifiers,
-            .wheel_delta_x = wheel_delta_x,
-            .wheel_delta_y = wheel_delta_y,
-        });
+    auto event = QueuedMouseEvent {
+        .type = QueuedMouseEvent::Type::MouseWheel,
+        .position = position,
+        .button = button,
+        .buttons = buttons,
+        .modifiers = modifiers,
+        .wheel_delta_x = wheel_delta_x,
+        .wheel_delta_y = wheel_delta_y,
+    };
+
+    // OPTIMIZATION: Coalesce with previous unprocessed event if the previous event is also a MouseWheel event.
+    if (!m_input_event_queue.is_empty()
+        && m_input_event_queue.tail().has<QueuedMouseEvent>()
+        && m_input_event_queue.tail().get<QueuedMouseEvent>().type == QueuedMouseEvent::Type::MouseWheel) {
+        auto const& last_event = m_input_event_queue.tail().get<QueuedMouseEvent>();
+        event.coalesced_event_count = last_event.coalesced_event_count + 1;
+        event.wheel_delta_x += last_event.wheel_delta_x;
+        event.wheel_delta_y += last_event.wheel_delta_y;
+        m_input_event_queue.tail() = event;
+        return;
+    }
+
+    enqueue_input_event(move(event));
 }
 
 void ConnectionFromClient::doubleclick(Gfx::IntPoint position, unsigned int button, unsigned int buttons, unsigned int modifiers)
@@ -388,7 +399,7 @@ void ConnectionFromClient::debug_request(DeprecatedString const& request, Deprec
                     dbgln("+ Element {}", element->debug_description());
                     auto& properties = styles->properties();
                     for (size_t i = 0; i < properties.size(); ++i)
-                        dbgln("|  {} = {}", Web::CSS::string_from_property_id(static_cast<Web::CSS::PropertyID>(i)), properties[i].has_value() ? properties[i]->style->to_string() : ""_short_string);
+                        dbgln("|  {} = {}", Web::CSS::string_from_property_id(static_cast<Web::CSS::PropertyID>(i)), properties[i].has_value() ? properties[i]->style->to_string() : ""_string);
                     dbgln("---");
                 }
             }
@@ -397,6 +408,10 @@ void ConnectionFromClient::debug_request(DeprecatedString const& request, Deprec
 
     if (request == "collect-garbage") {
         Web::Bindings::main_thread_vm().heap().collect_garbage(JS::Heap::CollectionType::CollectGarbage, true);
+    }
+
+    if (request == "dump-gc-graph") {
+        Web::Bindings::main_thread_vm().heap().dump_graph();
     }
 
     if (request == "set-line-box-borders") {
@@ -474,7 +489,7 @@ Messages::WebContentServer::InspectDomNodeResponse ConnectionFromClient::inspect
 
             auto serializer = MUST(JsonObjectSerializer<>::try_create(builder));
             properties.for_each_property([&](auto property_id, auto& value) {
-                MUST(serializer.add(Web::CSS::string_from_property_id(property_id), value.to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string()));
+                MUST(serializer.add(Web::CSS::string_from_property_id(property_id), value.to_string().to_deprecated_string()));
             });
             MUST(serializer.finish());
 
@@ -491,7 +506,7 @@ Messages::WebContentServer::InspectDomNodeResponse ConnectionFromClient::inspect
                 for (auto const& property : element_to_check->custom_properties(pseudo_element)) {
                     if (!seen_properties.contains(property.key)) {
                         seen_properties.set(property.key);
-                        MUST(serializer.add(property.key, property.value.value->to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string()));
+                        MUST(serializer.add(property.key, property.value.value->to_string().to_deprecated_string()));
                     }
                 }
 
@@ -678,6 +693,22 @@ Messages::WebContentServer::DumpLayoutTreeResponse ConnectionFromClient::dump_la
     return builder.to_deprecated_string();
 }
 
+Messages::WebContentServer::DumpPaintTreeResponse ConnectionFromClient::dump_paint_tree()
+{
+    auto* document = page().top_level_browsing_context().active_document();
+    if (!document)
+        return DeprecatedString { "(no DOM tree)" };
+    document->update_layout();
+    auto* layout_root = document->layout_node();
+    if (!layout_root)
+        return DeprecatedString { "(no layout tree)" };
+    if (!layout_root->paintable())
+        return DeprecatedString { "(no paint tree)" };
+    StringBuilder builder;
+    Web::dump_tree(builder, *layout_root->paintable());
+    return builder.to_deprecated_string();
+}
+
 Messages::WebContentServer::DumpTextResponse ConnectionFromClient::dump_text()
 {
     auto* document = page().top_level_browsing_context().active_document();
@@ -826,6 +857,11 @@ void ConnectionFromClient::toggle_media_loop_state()
 void ConnectionFromClient::toggle_media_controls_state()
 {
     m_page_host->toggle_media_controls_state().release_value_but_fixme_should_propagate_errors();
+}
+
+void ConnectionFromClient::set_user_style(String const& source)
+{
+    m_page_host->set_user_style(source);
 }
 
 void ConnectionFromClient::inspect_accessibility_tree()

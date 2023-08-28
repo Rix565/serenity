@@ -12,16 +12,15 @@ set(SOURCES
     EventLoop.cpp
     EventLoopImplementation.cpp
     EventLoopImplementationUnix.cpp
+    EventReceiver.cpp
     File.cpp
     LockFile.cpp
     MappedFile.cpp
     MimeData.cpp
     NetworkJob.cpp
     Notifier.cpp
-    Object.cpp
     Process.cpp
     ProcessStatisticsReader.cpp
-    Property.cpp
     SecretString.cpp
     SessionManagement.cpp
     Socket.cpp

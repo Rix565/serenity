@@ -36,11 +36,11 @@ public:
     HighResolutionTime::DOMHighResTimeStamp duration() const { return m_duration; }
 
     // https://w3c.github.io/timing-entrytypes-registry/#dfn-should-add-entry
-    virtual PerformanceTimeline::ShouldAddEntry should_add_entry() const = 0;
+    virtual PerformanceTimeline::ShouldAddEntry should_add_entry(Optional<PerformanceObserverInit const&> = {}) const = 0;
 
 protected:
     PerformanceEntry(JS::Realm&, String const& name, HighResolutionTime::DOMHighResTimeStamp start_time, HighResolutionTime::DOMHighResTimeStamp duration);
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
 private:
     // https://www.w3.org/TR/performance-timeline/#dom-performanceentry-name

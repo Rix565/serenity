@@ -19,7 +19,7 @@ class URL : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(URL, Bindings::PlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<URL>> create(JS::Realm&, AK::URL url, JS::NonnullGCPtr<URLSearchParams> query);
+    [[nodiscard]] static JS::NonnullGCPtr<URL> create(JS::Realm&, AK::URL, JS::NonnullGCPtr<URLSearchParams> query);
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<URL>> construct_impl(JS::Realm&, String const& url, Optional<String> const& base = {});
 
     virtual ~URL() override;
@@ -65,12 +65,12 @@ public:
 
     WebIDL::ExceptionOr<String> to_json() const;
 
-    void set_query(Badge<URLSearchParams>, String query) { m_url.set_query(query.to_deprecated_string(), AK::URL::ApplyPercentEncoding::Yes); }
+    void set_query(Badge<URLSearchParams>, Optional<String> query) { m_url.set_query(move(query)); }
 
 private:
     URL(JS::Realm&, AK::URL, JS::NonnullGCPtr<URLSearchParams> query);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     AK::URL m_url;

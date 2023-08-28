@@ -36,7 +36,13 @@ public:
     };
 
     CSSPixelRect absolute_rect() const;
-    CSSPixelPoint effective_offset() const;
+
+    // Offset from the top left of the containing block's content edge.
+    [[nodiscard]] CSSPixelPoint offset() const;
+
+    CSSPixelPoint scroll_offset() const;
+    void set_scroll_offset(CSSPixelPoint);
+    void scroll_by(int delta_x, int delta_y);
 
     void set_offset(CSSPixelPoint);
     void set_offset(float x, float y) { set_offset({ x, y }); }
@@ -108,7 +114,6 @@ public:
     Optional<CSSPixelRect> calculate_overflow_clipped_rect() const;
 
     void set_overflow_data(OverflowData data) { m_overflow_data = move(data); }
-    void set_containing_line_box_fragment(Optional<Layout::LineBoxFragmentCoordinate>);
 
     StackingContext* stacking_context() { return m_stacking_context; }
     StackingContext const* stacking_context() const { return m_stacking_context; }
@@ -121,10 +126,15 @@ public:
     DOM::Document const& document() const { return layout_box().document(); }
     DOM::Document& document() { return layout_box().document(); }
 
+    virtual void before_children_paint(PaintContext&, PaintPhase) const override;
+    virtual void after_children_paint(PaintContext&, PaintPhase) const override;
+
     virtual void apply_clip_overflow_rect(PaintContext&, PaintPhase) const override;
     virtual void clear_clip_overflow_rect(PaintContext&, PaintPhase) const override;
 
     virtual Optional<HitTestResult> hit_test(CSSPixelPoint, HitTestType) const override;
+
+    virtual bool handle_mousewheel(Badge<EventHandler>, CSSPixelPoint, unsigned buttons, unsigned modifiers, int wheel_delta_x, int wheel_delta_y) override;
 
     void invalidate_stacking_context();
 
@@ -187,13 +197,12 @@ protected:
     Vector<ShadowData> resolve_box_shadow_data() const;
 
 private:
+    [[nodiscard]] virtual bool is_paintable_box() const final { return true; }
+
     Optional<OverflowData> m_overflow_data;
 
     CSSPixelPoint m_offset;
     CSSPixelSize m_content_size;
-
-    // Some boxes hang off of line box fragments. (inline-block, inline-table, replaced, etc)
-    Optional<Layout::LineBoxFragmentCoordinate> m_containing_line_box_fragment;
 
     OwnPtr<StackingContext> m_stacking_context;
 
@@ -209,7 +218,7 @@ private:
     Optional<TableCellCoordinates> m_table_cell_coordinates;
 };
 
-class PaintableWithLines final : public PaintableBox {
+class PaintableWithLines : public PaintableBox {
     JS_CELL(PaintableWithLines, PaintableBox);
 
 public:
@@ -235,7 +244,6 @@ public:
 
     virtual void paint(PaintContext&, PaintPhase) const override;
     virtual bool wants_mouse_events() const override { return false; }
-    virtual bool handle_mousewheel(Badge<EventHandler>, CSSPixelPoint, unsigned buttons, unsigned modifiers, int wheel_delta_x, int wheel_delta_y) override;
 
     virtual Optional<HitTestResult> hit_test(CSSPixelPoint, HitTestType) const override;
 
@@ -243,6 +251,8 @@ protected:
     PaintableWithLines(Layout::BlockContainer const&);
 
 private:
+    [[nodiscard]] virtual bool is_paintable_with_lines() const final { return true; }
+
     Vector<Layout::LineBox> m_line_boxes;
 };
 

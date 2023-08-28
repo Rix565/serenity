@@ -56,17 +56,17 @@ CharacterMapWidget::CharacterMapWidget()
         }
         GUI::Clipboard::the().set_plain_text(builder.to_deprecated_string());
     });
-    m_copy_selection_action->set_status_tip("Copy the highlighted characters to the clipboard"_string.release_value_but_fixme_should_propagate_errors());
+    m_copy_selection_action->set_status_tip("Copy the highlighted characters to the clipboard"_string);
 
     m_previous_glyph_action = GUI::Action::create("&Previous Glyph", { Mod_Alt, Key_Left }, Gfx::Bitmap::load_from_file("/res/icons/16x16/go-back.png"sv).release_value_but_fixme_should_propagate_errors(), [&](auto&) {
         m_glyph_map->select_previous_existing_glyph();
     });
-    m_previous_glyph_action->set_status_tip("Seek the previous visible glyph"_string.release_value_but_fixme_should_propagate_errors());
+    m_previous_glyph_action->set_status_tip("Seek the previous visible glyph"_string);
 
     m_next_glyph_action = GUI::Action::create("&Next Glyph", { Mod_Alt, Key_Right }, Gfx::Bitmap::load_from_file("/res/icons/16x16/go-forward.png"sv).release_value_but_fixme_should_propagate_errors(), [&](auto&) {
         m_glyph_map->select_next_existing_glyph();
     });
-    m_next_glyph_action->set_status_tip("Seek the next visible glyph"_string.release_value_but_fixme_should_propagate_errors());
+    m_next_glyph_action->set_status_tip("Seek the next visible glyph"_string);
 
     m_go_to_glyph_action = GUI::Action::create("&Go to Glyph...", { Mod_Ctrl, Key_G }, Gfx::Bitmap::load_from_file("/res/icons/16x16/go-to.png"sv).release_value_but_fixme_should_propagate_errors(), [&](auto&) {
         String input;
@@ -81,7 +81,7 @@ CharacterMapWidget::CharacterMapWidget()
             m_glyph_map->scroll_to_glyph(code_point);
         }
     });
-    m_go_to_glyph_action->set_status_tip("Go to the specified code point"_string.release_value_but_fixme_should_propagate_errors());
+    m_go_to_glyph_action->set_status_tip("Go to the specified code point"_string);
 
     m_find_glyphs_action = GUI::Action::create("&Find Glyphs...", { Mod_Ctrl, Key_F }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"sv).release_value_but_fixme_should_propagate_errors(), [&](auto&) {
         if (m_find_window.is_null()) {
@@ -159,17 +159,17 @@ CharacterMapWidget::CharacterMapWidget()
 
 ErrorOr<void> CharacterMapWidget::initialize_menubar(GUI::Window& window)
 {
-    auto file_menu = TRY(window.try_add_menu("&File"_short_string));
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([](GUI::Action&) {
+    auto file_menu = window.add_menu("&File"_string);
+    file_menu->add_action(GUI::CommonActions::make_quit_action([](GUI::Action&) {
         GUI::Application::the()->quit();
-    })));
+    }));
 
-    auto help_menu = TRY(window.try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(&window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([&](auto&) {
+    auto help_menu = window.add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(&window));
+    help_menu->add_action(GUI::CommonActions::make_help_action([&](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Applications/CharacterMap.md"), "/bin/Help");
-    })));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Character Map", GUI::Icon::default_icon("app-character-map"sv), &window)));
+    }));
+    help_menu->add_action(GUI::CommonActions::make_about_action("Character Map", GUI::Icon::default_icon("app-character-map"sv), &window));
     return {};
 }
 

@@ -12,10 +12,10 @@
 
 namespace Web::HTML {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMStringMap>> DOMStringMap::create(DOM::Element& element)
+JS::NonnullGCPtr<DOMStringMap> DOMStringMap::create(DOM::Element& element)
 {
     auto& realm = element.realm();
-    return MUST_OR_THROW_OOM(realm.heap().allocate<DOMStringMap>(realm, element));
+    return realm.heap().allocate<DOMStringMap>(realm, element);
 }
 
 DOMStringMap::DOMStringMap(DOM::Element& element)
@@ -26,12 +26,10 @@ DOMStringMap::DOMStringMap(DOM::Element& element)
 
 DOMStringMap::~DOMStringMap() = default;
 
-JS::ThrowCompletionOr<void> DOMStringMap::initialize(JS::Realm& realm)
+void DOMStringMap::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::DOMStringMapPrototype>(realm, "DOMStringMap"));
-
-    return {};
 }
 
 void DOMStringMap::visit_edges(Cell::Visitor& visitor)

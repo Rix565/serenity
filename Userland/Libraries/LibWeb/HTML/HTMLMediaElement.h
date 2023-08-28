@@ -56,7 +56,7 @@ public:
     };
     NetworkState network_state() const { return m_network_state; }
 
-    WebIDL::ExceptionOr<JS::NonnullGCPtr<TimeRanges>> buffered() const;
+    [[nodiscard]] JS::NonnullGCPtr<TimeRanges> buffered() const;
 
     WebIDL::ExceptionOr<Bindings::CanPlayTypeResult> can_play_type(DeprecatedString const& type) const;
 
@@ -124,13 +124,14 @@ public:
         Optional<CSSPixelRect> timeline_rect;
         Optional<CSSPixelRect> speaker_button_rect;
         Optional<CSSPixelRect> volume_rect;
+        Optional<CSSPixelRect> volume_scrub_rect;
     };
     CachedLayoutBoxes& cached_layout_boxes(Badge<Painting::MediaPaintable>) const { return m_layout_boxes; }
 
 protected:
     HTMLMediaElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     virtual void attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value) override;
@@ -176,9 +177,9 @@ private:
 
     bool is_eligible_for_autoplay() const;
     bool has_ended_playback() const;
-    WebIDL::ExceptionOr<void> reached_end_of_media_playback();
+    void reached_end_of_media_playback();
 
-    WebIDL::ExceptionOr<void> dispatch_time_update_event();
+    void dispatch_time_update_event();
 
     enum class TimeMarchesOnReason {
         NormalPlayback,

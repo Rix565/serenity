@@ -9,6 +9,7 @@
 #include <AK/FixedArray.h>
 #include <AK/String.h>
 #include <LibCompress/Brotli.h>
+#include <LibGfx/ImageFormats/ExifOrientedBitmap.h>
 #include <LibGfx/ImageFormats/JPEGXLLoader.h>
 
 namespace Gfx {
@@ -203,6 +204,22 @@ struct ColourEncoding {
         u32 uy {};
     };
 
+    enum class TransferFunction {
+        k709 = 1,
+        kUnknown = 2,
+        kLinear = 8,
+        kSRGB = 13,
+        kPQ = 16,
+        kDCI = 17,
+        kHLG = 18,
+    };
+
+    struct CustomTransferFunction {
+        bool have_gamma { false };
+        u32 gamma {};
+        TransferFunction transfer_function { TransferFunction::kSRGB };
+    };
+
     bool want_icc = false;
     ColourSpace colour_space { ColourSpace::kRGB };
     WhitePoint white_point { WhitePoint::kD65 };
@@ -212,6 +229,8 @@ struct ColourEncoding {
     Customxy red {};
     Customxy green {};
     Customxy blue {};
+
+    CustomTransferFunction tf {};
 
     RenderingIntent rendering_intent { RenderingIntent::kRelative };
 };
@@ -234,13 +253,53 @@ struct ColourEncoding {
     return custom_xy;
 }
 
+static ErrorOr<ColourEncoding::CustomTransferFunction> read_custom_transfer_function(LittleEndianInputBitStream& stream)
+{
+    ColourEncoding::CustomTransferFunction custom_transfer_function;
+
+    custom_transfer_function.have_gamma = TRY(stream.read_bit());
+
+    if (custom_transfer_function.have_gamma)
+        custom_transfer_function.gamma = TRY(stream.read_bits(24));
+    else
+        custom_transfer_function.transfer_function = TRY(read_enum<ColourEncoding::TransferFunction>(stream));
+
+    return custom_transfer_function;
+}
+
 static ErrorOr<ColourEncoding> read_colour_encoding(LittleEndianInputBitStream& stream)
 {
     ColourEncoding colour_encoding;
     bool const all_default = TRY(stream.read_bit());
 
     if (!all_default) {
-        TODO();
+        colour_encoding.want_icc = TRY(stream.read_bit());
+        colour_encoding.colour_space = TRY(read_enum<ColourEncoding::ColourSpace>(stream));
+
+        auto const use_desc = !all_default && !colour_encoding.want_icc;
+        auto const not_xyb = colour_encoding.colour_space != ColourEncoding::ColourSpace::kXYB;
+
+        if (use_desc && not_xyb)
+            colour_encoding.white_point = TRY(read_enum<ColourEncoding::WhitePoint>(stream));
+
+        if (colour_encoding.white_point == ColourEncoding::WhitePoint::kCustom)
+            colour_encoding.white = TRY(read_custom_xy(stream));
+
+        auto const has_primaries = use_desc && not_xyb && colour_encoding.colour_space != ColourEncoding::ColourSpace::kGrey;
+
+        if (has_primaries)
+            colour_encoding.primaries = TRY(read_enum<ColourEncoding::Primaries>(stream));
+
+        if (colour_encoding.primaries == ColourEncoding::Primaries::kCustom) {
+            colour_encoding.red = TRY(read_custom_xy(stream));
+            colour_encoding.green = TRY(read_custom_xy(stream));
+            colour_encoding.blue = TRY(read_custom_xy(stream));
+        }
+
+        if (use_desc) {
+            colour_encoding.tf = TRY(read_custom_transfer_function(stream));
+            colour_encoding.rendering_intent = TRY(read_enum<ColourEncoding::RenderingIntent>(stream));
+        }
     }
 
     return colour_encoding;
@@ -622,6 +681,10 @@ struct FrameHeader {
 
     u8 lf_level {};
     bool have_crop { false };
+    i32 x0 {};
+    i32 y0 {};
+    u32 width {};
+    u32 height {};
 
     BlendingInfo blending_info {};
     FixedArray<BlendingInfo> ec_blending_info {};
@@ -642,7 +705,9 @@ static int operator&(FrameHeader::Flags first, FrameHeader::Flags second)
     return static_cast<int>(first) & static_cast<int>(second);
 }
 
-static ErrorOr<FrameHeader> read_frame_header(LittleEndianInputBitStream& stream, ImageMetadata const& metadata)
+static ErrorOr<FrameHeader> read_frame_header(LittleEndianInputBitStream& stream,
+    SizeHeader size_header,
+    ImageMetadata const& metadata)
 {
     FrameHeader frame_header;
     bool const all_default = TRY(stream.read_bit());
@@ -685,15 +750,29 @@ static ErrorOr<FrameHeader> read_frame_header(LittleEndianInputBitStream& stream
         if (frame_header.frame_type != FrameHeader::FrameType::kLFFrame)
             frame_header.have_crop = TRY(stream.read_bit());
 
-        if (frame_header.have_crop)
-            TODO();
+        if (frame_header.have_crop) {
+            auto const read_crop_dimension = [&]() -> ErrorOr<u32> {
+                return U32(TRY(stream.read_bits(8)), 256 + TRY(stream.read_bits(11)), 2304 + TRY(stream.read_bits(14)), 18688 + TRY(stream.read_bits(30)));
+            };
+
+            if (frame_header.frame_type != FrameHeader::FrameType::kReferenceOnly) {
+                frame_header.x0 = unpack_signed(TRY(read_crop_dimension()));
+                frame_header.y0 = unpack_signed(TRY(read_crop_dimension()));
+            }
+
+            frame_header.width = TRY(read_crop_dimension());
+            frame_header.height = TRY(read_crop_dimension());
+        }
 
         bool const normal_frame = frame_header.frame_type == FrameHeader::FrameType::kRegularFrame
             || frame_header.frame_type == FrameHeader::FrameType::kSkipProgressive;
 
-        // FIXME: also consider "cropped" image of the dimension of the frame
-        VERIFY(!frame_header.have_crop);
-        bool const full_frame = !frame_header.have_crop;
+        // Let full_frame be true if and only if have_crop is false or if the frame area given
+        // by width and height and offsets x0 and y0 completely covers the image area.
+        bool const cover_image_area = frame_header.x0 <= 0 && frame_header.y0 <= 0
+            && (frame_header.width + frame_header.x0 >= size_header.width)
+            && (frame_header.height + frame_header.y0 == size_header.height);
+        bool const full_frame = !frame_header.have_crop || cover_image_area;
 
         if (normal_frame) {
             frame_header.blending_info = TRY(read_blending_info(stream, metadata, full_frame));
@@ -810,18 +889,309 @@ static ErrorOr<LfChannelDequantization> read_lf_channel_dequantization(LittleEnd
 ///
 
 /// C - Entropy decoding
+class ANSHistogram {
+public:
+    static ErrorOr<ANSHistogram> read_histogram(LittleEndianInputBitStream& stream, u8 log_alphabet_size)
+    {
+        ANSHistogram histogram;
+
+        auto const alphabet_size = TRY(histogram.read_ans_distribution(stream, log_alphabet_size));
+
+        // C.2.6 - Alias mapping
+
+        histogram.m_log_bucket_size = 12 - log_alphabet_size;
+        histogram.m_bucket_size = 1 << histogram.m_log_bucket_size;
+        auto const table_size = 1 << log_alphabet_size;
+
+        Optional<u64> index_of_unique_symbol {};
+        for (u64 i {}; i < histogram.m_distribution.size(); ++i) {
+            if (histogram.m_distribution[i] == 1 << 12)
+                index_of_unique_symbol = i;
+        }
+
+        TRY(histogram.m_symbols.try_resize(table_size));
+        TRY(histogram.m_offsets.try_resize(table_size));
+        TRY(histogram.m_cutoffs.try_resize(table_size));
+
+        if (index_of_unique_symbol.has_value()) {
+            auto const s = *index_of_unique_symbol;
+            for (i32 i = 0; i < table_size; i++) {
+                histogram.m_symbols[i] = s;
+                histogram.m_offsets[i] = histogram.m_bucket_size * i;
+                histogram.m_cutoffs[i] = 0;
+            }
+            return histogram;
+        }
+
+        Vector<u16> overfull;
+        Vector<u16> underfull;
+
+        for (u16 i {}; i < alphabet_size; i++) {
+            histogram.m_cutoffs[i] = histogram.m_distribution[i];
+            histogram.m_symbols[i] = i;
+            if (histogram.m_cutoffs[i] > histogram.m_bucket_size)
+                TRY(overfull.try_append(i));
+            else if (histogram.m_cutoffs[i] < histogram.m_bucket_size)
+                TRY(underfull.try_append(i));
+        }
+
+        for (u16 i = alphabet_size; i < table_size; i++) {
+            histogram.m_cutoffs[i] = 0;
+            TRY(underfull.try_append(i));
+        }
+
+        while (overfull.size() > 0) {
+            VERIFY(underfull.size() > 0);
+            auto const o = overfull.take_last();
+            auto const u = underfull.take_last();
+
+            auto const by = histogram.m_bucket_size - histogram.m_cutoffs[u];
+            histogram.m_cutoffs[o] -= by;
+            histogram.m_symbols[u] = o;
+            histogram.m_offsets[u] = histogram.m_cutoffs[o];
+            if (histogram.m_cutoffs[o] < histogram.m_bucket_size)
+                TRY(underfull.try_append(o));
+            else if (histogram.m_cutoffs[o] > histogram.m_bucket_size)
+                TRY(overfull.try_append(o));
+        }
+
+        for (u16 i {}; i < table_size; i++) {
+            if (histogram.m_cutoffs[i] == histogram.m_bucket_size) {
+                histogram.m_symbols[i] = i;
+                histogram.m_offsets[i] = 0;
+                histogram.m_cutoffs[i] = 0;
+            } else {
+                histogram.m_offsets[i] -= histogram.m_cutoffs[i];
+            }
+        }
+
+        return histogram;
+    }
+
+    ErrorOr<u16> read_symbol(LittleEndianInputBitStream& stream, Optional<u32>& state) const
+    {
+        if (!state.has_value())
+            state = TRY(stream.read_bits(32));
+
+        auto const index = *state & 0xFFF;
+        auto const symbol_and_offset = alias_mapping(index);
+        state = m_distribution[symbol_and_offset.symbol] * (*state >> 12) + symbol_and_offset.offset;
+        if (*state < (1 << 16))
+            state = (*state << 16) | TRY(stream.read_bits(16));
+        return symbol_and_offset.symbol;
+    }
+
+private:
+    static ErrorOr<u8> U8(LittleEndianInputBitStream& stream)
+    {
+        if (TRY(stream.read_bit()) == 0)
+            return 0;
+        auto const n = TRY(stream.read_bits(3));
+        return TRY(stream.read_bits(n)) + (1 << n);
+    }
+
+    struct SymbolAndOffset {
+        u16 symbol {};
+        u16 offset {};
+    };
+
+    SymbolAndOffset alias_mapping(u32 x) const
+    {
+        // C.2.6 - Alias mapping
+        auto const i = x >> m_log_bucket_size;
+        auto const pos = x & (m_bucket_size - 1);
+        u16 const symbol = pos >= m_cutoffs[i] ? m_symbols[i] : i;
+        u16 const offset = pos >= m_cutoffs[i] ? m_offsets[i] + pos : pos;
+
+        return { symbol, offset };
+    }
+
+    static ErrorOr<u16> read_with_prefix(LittleEndianInputBitStream& stream)
+    {
+        auto const prefix = TRY(stream.read_bits(3));
+
+        switch (prefix) {
+        case 0:
+            return 10;
+        case 1:
+            for (auto const possibility : { 4, 0, 11, 13 }) {
+                if (TRY(stream.read_bit()))
+                    return possibility;
+            }
+            return 12;
+        case 2:
+            return 7;
+        case 3:
+            return TRY(stream.read_bit()) ? 1 : 3;
+        case 4:
+            return 6;
+        case 5:
+            return 8;
+        case 6:
+            return 9;
+        case 7:
+            return TRY(stream.read_bit()) ? 2 : 5;
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }
+
+    ErrorOr<u16> read_ans_distribution(LittleEndianInputBitStream& stream, u8 log_alphabet_size)
+    {
+        // C.2.5  ANS distribution decoding
+        auto const table_size = 1 << log_alphabet_size;
+
+        m_distribution = TRY(FixedArray<i32>::create(table_size));
+
+        if (TRY(stream.read_bit())) {
+            u16 alphabet_size {};
+            if (TRY(stream.read_bit())) {
+                auto const v1 = TRY(U8(stream));
+                auto const v2 = TRY(U8(stream));
+                VERIFY(v1 != v2);
+                m_distribution[v1] = TRY(stream.read_bits(12));
+                m_distribution[v2] = (1 << 12) - m_distribution[v1];
+                alphabet_size = 1 + max(v1, v2);
+            } else {
+                auto const x = TRY(U8(stream));
+                m_distribution[x] = 1 << 12;
+                alphabet_size = 1 + x;
+            }
+            return alphabet_size;
+        }
+
+        if (TRY(stream.read_bit())) {
+            auto const alphabet_size = TRY(U8(stream)) + 1;
+            for (u16 i = 0; i < alphabet_size; i++)
+                m_distribution[i] = (1 << 12) / alphabet_size;
+            for (u16 i = 0; i < ((1 << 12) % alphabet_size); i++)
+                m_distribution[i]++;
+            return alphabet_size;
+        }
+
+        u8 len = 0;
+        while (len < 3) {
+            if (TRY(stream.read_bit()))
+                len++;
+            else
+                break;
+        }
+
+        u8 const shift = TRY(stream.read_bits(len)) + (1 << len) - 1;
+        VERIFY(shift <= 13);
+
+        auto const alphabet_size = TRY(U8(stream)) + 3;
+
+        i32 omit_log = -1;
+        i32 omit_pos = -1;
+
+        auto same = TRY(FixedArray<i32>::create(alphabet_size));
+        auto logcounts = TRY(FixedArray<i32>::create(alphabet_size));
+
+        u8 rle {};
+        for (u16 i = 0; i < alphabet_size; i++) {
+            logcounts[i] = TRY(read_with_prefix(stream));
+
+            if (logcounts[i] == 13) {
+                rle = TRY(U8(stream));
+                same[i] = rle + 5;
+                i += rle + 3;
+                continue;
+            }
+            if (logcounts[i] > omit_log) {
+                omit_log = logcounts[i];
+                omit_pos = i;
+            }
+        }
+
+        VERIFY(m_distribution[omit_pos] >= 0);
+        VERIFY(omit_pos + 1 >= alphabet_size || logcounts[omit_pos + 1] != 13);
+
+        i32 prev = 0;
+        i32 numsame = 0;
+        i64 total_count {};
+        for (u16 i = 0; i < alphabet_size; i++) {
+            if (same[i] != 0) {
+                numsame = same[i] - 1;
+                prev = i > 0 ? m_distribution[i - 1] : 0;
+            }
+            if (numsame > 0) {
+                m_distribution[i] = prev;
+                numsame--;
+            } else {
+                auto const code = logcounts[i];
+                if (i == omit_pos || code == 0)
+                    continue;
+
+                if (code == 1) {
+                    m_distribution[i] = 1;
+                } else {
+                    auto const bitcount = min(max(0, shift - ((12 - code + 1) >> 1)), code - 1);
+                    m_distribution[i] = (1 << (code - 1)) + (TRY(stream.read_bits(bitcount)) << (code - 1 - bitcount));
+                }
+            }
+            total_count += m_distribution[i];
+        }
+        m_distribution[omit_pos] = (1 << 12) - total_count;
+        VERIFY(m_distribution[omit_pos] >= 0);
+
+        return alphabet_size;
+    }
+
+    Vector<u16> m_symbols;
+    Vector<u16> m_offsets;
+    Vector<u16> m_cutoffs;
+
+    FixedArray<i32> m_distribution;
+
+    u16 m_log_bucket_size {};
+    u16 m_bucket_size {};
+};
+
+struct LZ77 {
+    bool lz77_enabled {};
+
+    u32 min_symbol {};
+    u32 min_length {};
+};
+
+static ErrorOr<LZ77> read_lz77(LittleEndianInputBitStream& stream)
+{
+    LZ77 lz77;
+
+    lz77.lz77_enabled = TRY(stream.read_bit());
+
+    if (lz77.lz77_enabled) {
+        lz77.min_symbol = U32(224, 512, 4096, 8 + TRY(stream.read_bits(15)));
+        lz77.min_length = U32(3, 4, 5 + TRY(stream.read_bits(2)), 9 + TRY(stream.read_bits(8)));
+    }
+
+    return lz77;
+}
+
 class EntropyDecoder {
-    using BrotliCanonicalCode = Compress::Brotli::CanonicalCode;
+    AK_MAKE_NONCOPYABLE(EntropyDecoder);
+    AK_MAKE_DEFAULT_MOVABLE(EntropyDecoder);
 
 public:
-    static ErrorOr<EntropyDecoder> create(LittleEndianInputBitStream& stream, u8 initial_num_distrib)
+    EntropyDecoder() = default;
+    ~EntropyDecoder()
+    {
+        if (m_state.has_value() && *m_state != 0x130000)
+            dbgln("JPEGXLLoader: ANS decoder left in invalid state");
+    }
+
+    static ErrorOr<EntropyDecoder> create(LittleEndianInputBitStream& stream, u32 initial_num_distrib)
     {
         EntropyDecoder entropy_decoder;
         // C.2 - Distribution decoding
-        entropy_decoder.m_lz77_enabled = TRY(stream.read_bit());
+        entropy_decoder.m_lz77 = TRY(read_lz77(stream));
 
-        if (entropy_decoder.m_lz77_enabled) {
-            TODO();
+        if (entropy_decoder.m_lz77.lz77_enabled) {
+            entropy_decoder.m_lz_dist_ctx = initial_num_distrib++;
+            entropy_decoder.m_lz_len_conf = TRY(read_config(stream, 8));
+
+            entropy_decoder.m_lz77_window = TRY(FixedArray<u32>::create(1 << 20));
         }
 
         TRY(entropy_decoder.read_pre_clustered_distributions(stream, initial_num_distrib));
@@ -832,13 +1202,16 @@ public:
             entropy_decoder.m_log_alphabet_size = 5 + TRY(stream.read_bits(2));
 
         for (auto& config : entropy_decoder.m_configs)
-            config = TRY(entropy_decoder.read_config(stream));
-
-        Vector<u16> counts;
-        TRY(counts.try_resize(entropy_decoder.m_configs.size()));
-        TRY(entropy_decoder.m_distributions.try_resize(entropy_decoder.m_configs.size()));
+            config = TRY(read_config(stream, entropy_decoder.m_log_alphabet_size));
 
         if (use_prefix_code) {
+            entropy_decoder.m_distributions = Vector<BrotliCanonicalCode> {};
+            auto& distributions = entropy_decoder.m_distributions.get<Vector<BrotliCanonicalCode>>();
+            TRY(distributions.try_resize(entropy_decoder.m_configs.size()));
+
+            Vector<u16> counts;
+            TRY(counts.try_resize(entropy_decoder.m_configs.size()));
+
             for (auto& count : counts) {
                 if (TRY(stream.read_bit())) {
                     auto const n = TRY(stream.read_bits(4));
@@ -850,38 +1223,90 @@ public:
 
             // After reading the counts, the decoder reads each D[i] (implicitly
             // described by a prefix code) as specified in C.2.4, with alphabet_size = count[i].
-            for (u32 i {}; i < entropy_decoder.m_distributions.size(); ++i) {
+            for (u32 i {}; i < distributions.size(); ++i) {
                 // The alphabet size mentioned in the [Brotli] RFC is explicitly specified as parameter alphabet_size
                 // when the histogram is being decoded, except in the special case of alphabet_size == 1, where no
                 // histogram is read, and all decoded symbols are zero without reading any bits at all.
-                if (counts[i] != 1) {
-                    entropy_decoder.m_distributions[i] = TRY(BrotliCanonicalCode::read_prefix_code(stream, counts[i]));
-                } else {
-                    entropy_decoder.m_distributions[i] = BrotliCanonicalCode { { 1 }, { 0 } };
-                }
+                if (counts[i] != 1)
+                    distributions[i] = TRY(BrotliCanonicalCode::read_prefix_code(stream, counts[i]));
+                else
+                    distributions[i] = BrotliCanonicalCode { { 1 }, { 0 } };
             }
         } else {
-            TODO();
+            entropy_decoder.m_distributions = Vector<ANSHistogram> {};
+            auto& distributions = entropy_decoder.m_distributions.get<Vector<ANSHistogram>>();
+            TRY(distributions.try_ensure_capacity(entropy_decoder.m_configs.size()));
+
+            for (u32 i = 0; i < entropy_decoder.m_configs.size(); ++i)
+                distributions.empend(TRY(ANSHistogram::read_histogram(stream, entropy_decoder.m_log_alphabet_size)));
         }
 
         return entropy_decoder;
     }
 
-    ErrorOr<u32> decode_hybrid_uint(LittleEndianInputBitStream& stream, u16 context)
+    ErrorOr<u32> decode_hybrid_uint(LittleEndianInputBitStream& stream, u32 context)
     {
         // C.3.3 - Hybrid integer decoding
 
-        if (m_lz77_enabled)
-            TODO();
+        static constexpr Array<Array<i8, 2>, 120> kSpecialDistances = {
+            Array<i8, 2> { 0, 1 }, { 1, 0 }, { 1, 1 }, { -1, 1 }, { 0, 2 }, { 2, 0 }, { 1, 2 }, { -1, 2 }, { 2, 1 }, { -2, 1 }, { 2, 2 },
+            { -2, 2 }, { 0, 3 }, { 3, 0 }, { 1, 3 }, { -1, 3 }, { 3, 1 }, { -3, 1 }, { 2, 3 }, { -2, 3 }, { 3, 2 },
+            { -3, 2 }, { 0, 4 }, { 4, 0 }, { 1, 4 }, { -1, 4 }, { 4, 1 }, { -4, 1 }, { 3, 3 }, { -3, 3 }, { 2, 4 },
+            { -2, 4 }, { 4, 2 }, { -4, 2 }, { 0, 5 }, { 3, 4 }, { -3, 4 }, { 4, 3 }, { -4, 3 }, { 5, 0 }, { 1, 5 },
+            { -1, 5 }, { 5, 1 }, { -5, 1 }, { 2, 5 }, { -2, 5 }, { 5, 2 }, { -5, 2 }, { 4, 4 }, { -4, 4 }, { 3, 5 },
+            { -3, 5 }, { 5, 3 }, { -5, 3 }, { 0, 6 }, { 6, 0 }, { 1, 6 }, { -1, 6 }, { 6, 1 }, { -6, 1 }, { 2, 6 },
+            { -2, 6 }, { 6, 2 }, { -6, 2 }, { 4, 5 }, { -4, 5 }, { 5, 4 }, { -5, 4 }, { 3, 6 }, { -3, 6 }, { 6, 3 },
+            { -6, 3 }, { 0, 7 }, { 7, 0 }, { 1, 7 }, { -1, 7 }, { 5, 5 }, { -5, 5 }, { 7, 1 }, { -7, 1 }, { 4, 6 },
+            { -4, 6 }, { 6, 4 }, { -6, 4 }, { 2, 7 }, { -2, 7 }, { 7, 2 }, { -7, 2 }, { 3, 7 }, { -3, 7 }, { 7, 3 },
+            { -7, 3 }, { 5, 6 }, { -5, 6 }, { 6, 5 }, { -6, 5 }, { 8, 0 }, { 4, 7 }, { -4, 7 }, { 7, 4 }, { -7, 4 },
+            { 8, 1 }, { 8, 2 }, { 6, 6 }, { -6, 6 }, { 8, 3 }, { 5, 7 }, { -5, 7 }, { 7, 5 }, { -7, 5 }, { 8, 4 }, { 6, 7 },
+            { -6, 7 }, { 7, 6 }, { -7, 6 }, { 8, 5 }, { 7, 7 }, { -7, 7 }, { 8, 6 }, { 8, 7 }
+        };
 
-        // Read symbol from entropy coded stream using D[clusters[ctx]]
-        auto const token = TRY(m_distributions[m_clusters[context]].read_symbol(stream));
+        u32 r {};
+        if (m_lz77_num_to_copy > 0) {
+            r = m_lz77_window[(m_lz77_copy_pos++) & 0xFFFFF];
+            m_lz77_num_to_copy--;
+        } else {
+            // Read symbol from entropy coded stream using D[clusters[ctx]]
+            auto token = TRY(read_symbol(stream, context));
 
-        auto r = TRY(read_uint(stream, m_configs[m_clusters[context]], token));
+            if (m_lz77.lz77_enabled && token >= m_lz77.min_symbol) {
+                m_lz77_num_to_copy = TRY(read_uint(stream, m_lz_len_conf, token - m_lz77.min_symbol)) + m_lz77.min_length;
+                // Read symbol using D[clusters[lz_dist_ctx]]
+                token = TRY(read_symbol(stream, m_lz_dist_ctx));
+                auto distance = TRY(read_uint(stream, m_configs[m_clusters[m_lz_dist_ctx]], token));
+                if (m_dist_multiplier == 0) {
+                    distance++;
+                } else if (distance < 120) {
+                    auto const offset = kSpecialDistances[distance][0];
+                    distance = offset + m_dist_multiplier * kSpecialDistances[distance][1];
+                    if (distance < 1)
+                        distance = 1;
+                } else {
+                    distance -= 119;
+                }
+                distance = min(distance, min(m_lz77_num_decoded, 1 << 20));
+                m_lz77_copy_pos = m_lz77_num_decoded - distance;
+                return decode_hybrid_uint(stream, m_clusters[context]);
+            }
+            r = TRY(read_uint(stream, m_configs[m_clusters[context]], token));
+        }
+
+        if (m_lz77.lz77_enabled)
+            m_lz77_window[(m_lz77_num_decoded++) & 0xFFFFF] = r;
+
         return r;
     }
 
+    void set_dist_multiplier(u32 dist_multiplier)
+    {
+        m_dist_multiplier = dist_multiplier;
+    }
+
 private:
+    using BrotliCanonicalCode = Compress::Brotli::CanonicalCode;
+
     struct HybridUint {
         u32 split_exponent {};
         u32 split {};
@@ -913,39 +1338,12 @@ private:
         return result;
     }
 
-    ErrorOr<void> read_pre_clustered_distributions(LittleEndianInputBitStream& stream, u8 num_distrib)
-    {
-        // C.2.2  Distribution clustering
-        if (num_distrib == 1)
-            TODO();
-
-        TRY(m_clusters.try_resize(num_distrib));
-
-        bool const is_simple = TRY(stream.read_bit());
-
-        u16 num_clusters = 0;
-
-        if (is_simple) {
-            u8 const nbits = TRY(stream.read_bits(2));
-            for (u8 i {}; i < num_distrib; ++i) {
-                m_clusters[i] = TRY(stream.read_bits(nbits));
-                if (m_clusters[i] >= num_clusters)
-                    num_clusters = m_clusters[i] + 1;
-            }
-
-        } else {
-            TODO();
-        }
-        TRY(m_configs.try_resize(num_clusters));
-        return {};
-    }
-
-    ErrorOr<HybridUint> read_config(LittleEndianInputBitStream& stream) const
+    static ErrorOr<HybridUint> read_config(LittleEndianInputBitStream& stream, u8 log_alphabet_size)
     {
         // C.2.3 - Hybrid integer configuration
         HybridUint config {};
-        config.split_exponent = TRY(stream.read_bits(ceil(log2(m_log_alphabet_size + 1))));
-        if (config.split_exponent != m_log_alphabet_size) {
+        config.split_exponent = TRY(stream.read_bits(ceil(log2(log_alphabet_size + 1))));
+        if (config.split_exponent != log_alphabet_size) {
             auto nbits = ceil(log2(config.split_exponent + 1));
             config.msb_in_token = TRY(stream.read_bits(nbits));
             nbits = ceil(log2(config.split_exponent - config.msb_in_token + 1));
@@ -959,13 +1357,81 @@ private:
         return config;
     }
 
-    bool m_lz77_enabled {};
+    ErrorOr<u32> read_symbol(LittleEndianInputBitStream& stream, u32 context)
+    {
+        u32 token {};
+        TRY(m_distributions.visit(
+            [&](Vector<BrotliCanonicalCode> const& distributions) -> ErrorOr<void> {
+                token = TRY(distributions[m_clusters[context]].read_symbol(stream));
+                return {};
+            },
+            [&](Vector<ANSHistogram> const& distributions) -> ErrorOr<void> {
+                token = TRY(distributions[m_clusters[context]].read_symbol(stream, m_state));
+                return {};
+            }));
+        return token;
+    }
+
+    ErrorOr<void> read_pre_clustered_distributions(LittleEndianInputBitStream& stream, u32 num_distrib)
+    {
+        // C.2.2  Distribution clustering
+        if (num_distrib == 1) {
+            // If num_dist == 1, then num_clusters = 1 and clusters[0] = 0, and the remainder of this subclause is skipped.
+            m_clusters = { 0 };
+            TRY(m_configs.try_resize(1));
+            return {};
+        };
+
+        TRY(m_clusters.try_resize(num_distrib));
+
+        bool const is_simple = TRY(stream.read_bit());
+
+        u16 num_clusters = 0;
+
+        auto const read_clusters = [&](auto&& reader) -> ErrorOr<void> {
+            for (u32 i {}; i < num_distrib; ++i) {
+                m_clusters[i] = TRY(reader());
+                if (m_clusters[i] >= num_clusters)
+                    num_clusters = m_clusters[i] + 1;
+            }
+            return {};
+        };
+
+        if (is_simple) {
+            u8 const nbits = TRY(stream.read_bits(2));
+            TRY(read_clusters([nbits, &stream]() { return stream.read_bits(nbits); }));
+        } else {
+            auto const use_mtf = TRY(stream.read_bit());
+            if (num_distrib == 2)
+                TODO();
+
+            auto decoder = TRY(EntropyDecoder::create(stream, 1));
+
+            TRY(read_clusters([&]() { return decoder.decode_hybrid_uint(stream, 0); }));
+
+            if (use_mtf)
+                TODO();
+        }
+        TRY(m_configs.try_resize(num_clusters));
+        return {};
+    }
+
+    LZ77 m_lz77 {};
+    u32 m_lz_dist_ctx {};
+    HybridUint m_lz_len_conf {};
+    FixedArray<u32> m_lz77_window {};
+    u32 m_lz77_num_to_copy {};
+    u32 m_lz77_copy_pos {};
+    u32 m_lz77_num_decoded {};
+    u32 m_dist_multiplier {};
+
     Vector<u32> m_clusters;
     Vector<HybridUint> m_configs;
 
     u8 m_log_alphabet_size { 15 };
 
-    Vector<BrotliCanonicalCode> m_distributions; // D in the spec
+    Variant<Vector<BrotliCanonicalCode>, Vector<ANSHistogram>> m_distributions { Vector<BrotliCanonicalCode> {} }; // D in the spec
+    Optional<u32> m_state {};
 };
 ///
 
@@ -973,7 +1439,7 @@ private:
 class MATree {
 public:
     struct LeafNode {
-        u8 ctx {};
+        u32 ctx {};
         u8 predictor {};
         i32 offset {};
         u32 multiplier {};
@@ -1071,10 +1537,7 @@ struct WPHeader {
     u8 wp_p3c { 7 };
     u8 wp_p3d { 0 };
     u8 wp_p3e { 0 };
-    u8 wp_w0 { 13 };
-    u8 wp_w1 { 12 };
-    u8 wp_w2 { 12 };
-    u8 wp_w3 { 12 };
+    Array<u8, 4> wp_w { 13, 12, 12, 12 };
 };
 
 static ErrorOr<WPHeader> read_self_correcting_predictor(LittleEndianInputBitStream& stream)
@@ -1150,12 +1613,12 @@ public:
 
     i32 get(u32 x, u32 y) const
     {
-        return m_pixels[x * m_width + y];
+        return m_pixels[y * m_width + x];
     }
 
     void set(u32 x, u32 y, i32 value)
     {
-        m_pixels[x * m_width + y] = value;
+        m_pixels[y * m_width + x] = value;
     }
 
     u32 width() const
@@ -1218,13 +1681,45 @@ public:
         return image;
     }
 
+    void blend_into(Image& image, FrameHeader const& frame_header) const
+    {
+        // FIXME: We should use ec_blending_info when appropriate
+
+        if (frame_header.blending_info.mode != BlendingInfo::BlendMode::kReplace)
+            TODO();
+
+        for (u16 i = 0; i < m_channels.size(); ++i) {
+            auto const& input_channel = m_channels[i];
+            auto& output_channel = image.channels()[i];
+
+            for (u32 y = 0; y < input_channel.height(); ++y) {
+                auto const corrected_y = static_cast<i64>(y) + frame_header.y0;
+                if (corrected_y < 0)
+                    continue;
+                if (corrected_y >= output_channel.height())
+                    break;
+
+                for (u32 x = 0; x < input_channel.width(); ++x) {
+                    auto const corrected_x = static_cast<i64>(x) + frame_header.x0;
+                    if (corrected_x < 0)
+                        continue;
+                    if (corrected_x >= output_channel.width())
+                        break;
+
+                    output_channel.set(corrected_x, corrected_y, input_channel.get(x, y));
+                }
+            }
+        };
+    }
+
     ErrorOr<NonnullRefPtr<Bitmap>> to_bitmap(ImageMetadata& metadata) const
     {
         // FIXME: which channel size should we use?
         auto const width = m_channels[0].width();
         auto const height = m_channels[0].height();
 
-        auto bitmap = TRY(Bitmap::create(BitmapFormat::BGRA8888, { width, height }));
+        auto const orientation = static_cast<ExifOrientedBitmap::Orientation>(metadata.orientation);
+        auto oriented_bitmap = TRY(ExifOrientedBitmap::create(BitmapFormat::BGRA8888, { width, height }, orientation));
 
         auto const alpha_channel = metadata.alpha_channel();
 
@@ -1255,11 +1750,11 @@ public:
                         to_u8(m_channels[*alpha_channel].get(x, y)),
                     };
                 }();
-                bitmap->set_pixel(x, y, color);
+                oriented_bitmap.set_pixel(x, y, color);
             }
         }
 
-        return bitmap;
+        return oriented_bitmap.bitmap();
     }
 
     Vector<Channel>& channels()
@@ -1272,6 +1767,177 @@ private:
 };
 ///
 
+/// H.5 - Self-correcting predictor
+struct Neighborhood {
+    i32 N {};
+    i32 NW {};
+    i32 NE {};
+    i32 W {};
+    i32 NN {};
+    i32 WW {};
+    i32 NEE {};
+};
+
+class SelfCorrectingData {
+public:
+    struct Predictions {
+        i32 prediction {};
+        Array<i32, 4> subpred {};
+
+        i32 max_error {};
+        i32 true_err {};
+        Array<i32, 4> err {};
+    };
+
+    static ErrorOr<SelfCorrectingData> create(WPHeader const& wp_params, u32 width)
+    {
+        SelfCorrectingData self_correcting_data { wp_params };
+        self_correcting_data.m_width = width;
+
+        self_correcting_data.m_previous = TRY(FixedArray<Predictions>::create(width));
+        self_correcting_data.m_current_row = TRY(FixedArray<Predictions>::create(width));
+        self_correcting_data.m_next_row = TRY(FixedArray<Predictions>::create(width));
+
+        return self_correcting_data;
+    }
+
+    void register_next_row()
+    {
+        auto tmp = move(m_previous);
+        m_previous = move(m_current_row);
+        m_current_row = move(m_next_row);
+        // We reuse m_previous to avoid an allocation, no values are kept
+        // everything will be overridden.
+        m_next_row = move(tmp);
+        m_current_row_index++;
+    }
+
+    Predictions compute_predictions(Neighborhood const& neighborhood, u32 x)
+    {
+        auto& current_predictions = m_next_row[x];
+
+        auto const N3 = neighborhood.N << 3;
+        auto const NW3 = neighborhood.NW << 3;
+        auto const NE3 = neighborhood.NE << 3;
+        auto const W3 = neighborhood.W << 3;
+        auto const NN3 = neighborhood.NN << 3;
+
+        auto const predictions_W = predictions_for(x, Direction::West);
+        auto const predictions_N = predictions_for(x, Direction::North);
+        auto const predictions_NE = predictions_for(x, Direction::NorthEast);
+        auto const predictions_NW = predictions_for(x, Direction::NorthWest);
+        auto const predictions_WW = predictions_for(x, Direction::WestWest);
+
+        current_predictions.subpred[0] = W3 + NE3 - N3;
+        current_predictions.subpred[1] = N3 - (((predictions_W.true_err + predictions_N.true_err + predictions_NE.true_err) * wp_params.wp_p1) >> 5);
+        current_predictions.subpred[2] = W3 - (((predictions_W.true_err + predictions_N.true_err + predictions_NW.true_err) * wp_params.wp_p2) >> 5);
+        current_predictions.subpred[3] = N3 - ((predictions_NW.true_err * wp_params.wp_p3a + predictions_N.true_err * wp_params.wp_p3b + predictions_NE.true_err * wp_params.wp_p3c + (NN3 - N3) * wp_params.wp_p3d + (NW3 - W3) * wp_params.wp_p3e) >> 5);
+
+        auto const error2weight = [](i32 err_sum, u8 maxweight) -> i32 {
+            i32 shift = floor(log2(err_sum + 1)) - 5;
+            if (shift < 0)
+                shift = 0;
+            return 4 + ((static_cast<u64>(maxweight) * ((1 << 24) / ((err_sum >> shift) + 1))) >> shift);
+        };
+
+        Array<i32, 4> weight {};
+        for (u8 i = 0; i < weight.size(); ++i) {
+            auto err_sum = predictions_N.err[i] + predictions_W.err[i] + predictions_NW.err[i] + predictions_WW.err[i] + predictions_NE.err[i];
+            if (x == m_width - 1)
+                err_sum += predictions_W.err[i];
+            weight[i] = error2weight(err_sum, wp_params.wp_w[i]);
+        }
+
+        auto sum_weights = weight[0] + weight[1] + weight[2] + weight[3];
+        i32 const log_weight = floor(log2(sum_weights)) + 1;
+        for (u8 i = 0; i < 4; i++)
+            weight[i] = weight[i] >> (log_weight - 5);
+        sum_weights = weight[0] + weight[1] + weight[2] + weight[3];
+
+        auto s = (sum_weights >> 1) - 1;
+        for (u8 i = 0; i < 4; i++)
+            s += current_predictions.subpred[i] * weight[i];
+
+        current_predictions.prediction = static_cast<u64>(s) * ((1 << 24) / sum_weights) >> 24;
+        // if true_err_N, true_err_W and true_err_NW don't have the same sign
+        if (((predictions_N.true_err ^ predictions_W.true_err) | (predictions_N.true_err ^ predictions_NW.true_err)) <= 0) {
+            current_predictions.prediction = clamp(current_predictions.prediction, min(W3, min(N3, NE3)), max(W3, max(N3, NE3)));
+        }
+
+        auto& max_error = current_predictions.max_error;
+        max_error = predictions_W.true_err;
+        if (abs(predictions_N.true_err) > abs(max_error))
+            max_error = predictions_N.true_err;
+        if (abs(predictions_NW.true_err) > abs(max_error))
+            max_error = predictions_NW.true_err;
+        if (abs(predictions_NE.true_err) > abs(max_error))
+            max_error = predictions_NE.true_err;
+
+        return current_predictions;
+    }
+
+    // H.5.1 - General
+    void compute_errors(u32 x, i32 true_value)
+    {
+        auto& current_predictions = m_next_row[x];
+
+        current_predictions.true_err = current_predictions.prediction - (true_value << 3);
+
+        for (u8 i = 0; i < 4; ++i)
+            current_predictions.err[i] = (abs(current_predictions.subpred[i] - (true_value << 3)) + 3) >> 3;
+    }
+
+private:
+    SelfCorrectingData(WPHeader const& wp)
+        : wp_params(wp)
+    {
+    }
+
+    enum class Direction {
+        North,
+        NorthWest,
+        NorthEast,
+        West,
+        NorthNorth,
+        WestWest
+    };
+
+    Predictions predictions_for(u32 x, Direction direction) const
+    {
+        // H.5.2 - Prediction
+        auto const north = [&]() {
+            return m_current_row_index < 1 ? Predictions {} : m_current_row[x];
+        };
+
+        switch (direction) {
+        case Direction::North:
+            return north();
+        case Direction::NorthWest:
+            return x < 1 ? north() : m_current_row[x - 1];
+        case Direction::NorthEast:
+            return x + 1 >= m_current_row.size() ? north() : m_current_row[x + 1];
+        case Direction::West:
+            return x < 1 ? Predictions {} : m_next_row[x - 1];
+        case Direction::NorthNorth:
+            return m_current_row_index < 2 ? Predictions {} : m_previous[x];
+        case Direction::WestWest:
+            return x < 2 ? Predictions {} : m_next_row[x - 2];
+        }
+        VERIFY_NOT_REACHED();
+    }
+
+    WPHeader const& wp_params {};
+
+    u32 m_width {};
+    u32 m_current_row_index {};
+
+    FixedArray<Predictions> m_previous {};
+    FixedArray<Predictions> m_current_row {};
+
+    FixedArray<Predictions> m_next_row {};
+};
+///
+
 /// H.2 - Image decoding
 struct ModularHeader {
     bool use_global_tree {};
@@ -1279,7 +1945,7 @@ struct ModularHeader {
     Vector<TransformInfo> transform {};
 };
 
-static ErrorOr<Vector<i32>> get_properties(Vector<Channel> const& channels, u16 i, u32 x, u32 y)
+static ErrorOr<Vector<i32>> get_properties(Vector<Channel> const& channels, u16 i, u32 x, u32 y, i32 max_error)
 {
     Vector<i32> properties;
 
@@ -1320,8 +1986,7 @@ static ErrorOr<Vector<i32>> get_properties(Vector<Channel> const& channels, u16 
     TRY(properties.try_append(N - NN));
     TRY(properties.try_append(W - WW));
 
-    // FIXME: Correctly compute max_error
-    TRY(properties.try_append(0));
+    TRY(properties.try_append(max_error));
 
     for (i16 j = i - 1; j >= 0; j--) {
         if (channels[j].width() != channels[i].width())
@@ -1345,52 +2010,67 @@ static ErrorOr<Vector<i32>> get_properties(Vector<Channel> const& channels, u16 
     return properties;
 }
 
-static i32 prediction(Channel const& channel, u32 x, u32 y, u32 predictor)
+static i32 prediction(Neighborhood const& neighborhood, i32 self_correcting, u32 predictor)
+{
+    switch (predictor) {
+    case 0:
+        return 0;
+    case 1:
+        return neighborhood.W;
+    case 2:
+        return neighborhood.N;
+    case 3:
+        return (neighborhood.W + neighborhood.N) / 2;
+    case 4:
+        return abs(neighborhood.N - neighborhood.NW) < abs(neighborhood.W - neighborhood.NW) ? neighborhood.W : neighborhood.N;
+    case 5:
+        return clamp(neighborhood.W + neighborhood.N - neighborhood.NW, min(neighborhood.W, neighborhood.N), max(neighborhood.W, neighborhood.N));
+    case 6:
+        return (self_correcting + 3) >> 3;
+    case 7:
+        return neighborhood.NE;
+    case 8:
+        return neighborhood.NW;
+    case 9:
+        return neighborhood.WW;
+    case 10:
+        return (neighborhood.W + neighborhood.NW) / 2;
+    case 11:
+        return (neighborhood.N + neighborhood.NW) / 2;
+    case 12:
+        return (neighborhood.N + neighborhood.NE) / 2;
+    case 13:
+        return (6 * neighborhood.N - 2 * neighborhood.NN + 7 * neighborhood.W + neighborhood.WW + neighborhood.NEE + 3 * neighborhood.NE + 8) / 16;
+    }
+    VERIFY_NOT_REACHED();
+}
+
+static Neighborhood retrieve_neighborhood(Channel const& channel, u32 x, u32 y)
 {
     i32 const W = x > 0 ? channel.get(x - 1, y) : (y > 0 ? channel.get(x, y - 1) : 0);
     i32 const N = y > 0 ? channel.get(x, y - 1) : W;
     i32 const NW = x > 0 && y > 0 ? channel.get(x - 1, y - 1) : W;
     i32 const NE = x + 1 < channel.width() && y > 0 ? channel.get(x + 1, y - 1) : N;
     i32 const NN = y > 1 ? channel.get(x, y - 2) : N;
-    i32 const NEE = x + 2 < channel.width() and y > 0 ? channel.get(x + 2, y - 1) : NE;
     i32 const WW = x > 1 ? channel.get(x - 2, y) : W;
+    i32 const NEE = x + 2 < channel.width() && y > 0 ? channel.get(x + 2, y - 1) : NE;
 
-    switch (predictor) {
-    case 0:
-        return 0;
-    case 1:
-        return W;
-    case 2:
-        return N;
-    case 3:
-        return (W + N) / 2;
-    case 4:
-        return abs(N - NW) < abs(W - NW) ? W : N;
-    case 5:
-        return clamp(W + N - NW, min(W, N), max(W, N));
-    case 6:
-        TODO();
-        return (0 + 3) >> 3;
-    case 7:
-        return NE;
-    case 8:
-        return NW;
-    case 9:
-        return WW;
-    case 10:
-        return (W + NW) / 2;
-    case 11:
-        return (N + NW) / 2;
-    case 12:
-        return (N + NE) / 2;
-    case 13:
-        return (6 * N - 2 * NN + 7 * W + WW + NEE + 3 * NE + 8) / 16;
-    }
-    VERIFY_NOT_REACHED();
+    Neighborhood const neighborhood {
+        .N = N,
+        .NW = NW,
+        .NE = NE,
+        .W = W,
+        .NN = NN,
+        .WW = WW,
+        .NEE = NEE,
+    };
+
+    return neighborhood;
 }
 
 static ErrorOr<ModularHeader> read_modular_header(LittleEndianInputBitStream& stream,
     Image& image,
+    ImageMetadata const& metadata,
     Optional<EntropyDecoder>& decoder,
     MATree const& global_tree,
     u16 num_channels)
@@ -1409,23 +2089,45 @@ static ErrorOr<ModularHeader> read_modular_header(LittleEndianInputBitStream& st
     if (!modular_header.use_global_tree)
         TODO();
 
+    // where dist_multiplier is set to the largest channel width amongst all channels
+    // that are to be decoded, excluding the meta-channels.
+    auto const dist_multiplier = [&]() {
+        u32 dist_multiplier {};
+        // FIXME: This should start at nb_meta_channels not 0
+        for (u16 i = 0; i < metadata.number_of_channels(); ++i) {
+            if (image.channels()[i].width() > dist_multiplier)
+                dist_multiplier = image.channels()[i].width();
+        }
+        return dist_multiplier;
+    }();
+    decoder->set_dist_multiplier(dist_multiplier);
+
     // The decoder then starts an entropy-coded stream (C.1) and decodes the data for each channel
     // (in ascending order of index) as specified in H.3, skipping any channels having width or height
     // zero. Finally, the inverse transformations are applied (from last to first) as described in H.6.
 
     auto const& tree = local_tree.has_value() ? *local_tree : global_tree;
     for (u16 i {}; i < num_channels; ++i) {
+
+        auto self_correcting_data = TRY(SelfCorrectingData::create(modular_header.wp_params, image.channels()[i].width()));
+
         for (u32 y {}; y < image.channels()[i].height(); y++) {
             for (u32 x {}; x < image.channels()[i].width(); x++) {
+                auto const neighborhood = retrieve_neighborhood(image.channels()[i], x, y);
 
-                auto const properties = TRY(get_properties(image.channels(), i, x, y));
+                auto const self_prediction = self_correcting_data.compute_predictions(neighborhood, x);
+
+                auto const properties = TRY(get_properties(image.channels(), i, x, y, self_prediction.max_error));
                 auto const leaf_node = tree.get_leaf(properties);
                 auto diff = unpack_signed(TRY(decoder->decode_hybrid_uint(stream, leaf_node.ctx)));
                 diff = (diff * leaf_node.multiplier) + leaf_node.offset;
-                auto const total = diff + prediction(image.channels()[i], x, y, leaf_node.predictor);
+                auto const total = diff + prediction(neighborhood, self_prediction.prediction, leaf_node.predictor);
 
+                self_correcting_data.compute_errors(x, total);
                 image.channels()[i].set(x, y, total);
             }
+
+            self_correcting_data.register_next_row();
         }
 
         image.channels()[i].set_decoded(true);
@@ -1471,7 +2173,7 @@ static ErrorOr<GlobalModular> read_global_modular(LittleEndianInputBitStream& st
     //        However, the decoder only decodes the first nb_meta_channels channels and any further channels
     //        that have a width and height that are both at most group_dim. At that point, it stops decoding.
     //        No inverse transforms are applied yet.
-    global_modular.modular_header = TRY(read_modular_header(stream, image, entropy_decoder, global_modular.ma_tree, num_channels));
+    global_modular.modular_header = TRY(read_modular_header(stream, image, metadata, entropy_decoder, global_modular.ma_tree, num_channels));
 
     return global_modular;
 }
@@ -1639,10 +2341,11 @@ struct Frame {
 
     u64 num_groups {};
     u64 num_lf_groups {};
+
+    Image image {};
 };
 
 static ErrorOr<Frame> read_frame(LittleEndianInputBitStream& stream,
-    Image& image,
     SizeHeader const& size_header,
     ImageMetadata const& metadata,
     Optional<EntropyDecoder>& entropy_decoder)
@@ -1653,13 +2356,14 @@ static ErrorOr<Frame> read_frame(LittleEndianInputBitStream& stream,
 
     Frame frame;
 
-    frame.frame_header = TRY(read_frame_header(stream, metadata));
+    frame.frame_header = TRY(read_frame_header(stream, size_header, metadata));
 
     if (!frame.frame_header.have_crop) {
         frame.width = size_header.width;
         frame.height = size_header.height;
     } else {
-        TODO();
+        frame.width = frame.frame_header.width;
+        frame.height = frame.frame_header.height;
     }
 
     if (frame.frame_header.upsampling > 1) {
@@ -1680,12 +2384,12 @@ static ErrorOr<Frame> read_frame(LittleEndianInputBitStream& stream,
 
     frame.toc = TRY(read_toc(stream, frame.frame_header, frame.num_groups, frame.num_lf_groups));
 
-    image = TRY(Image::create({ frame.width, frame.height }, metadata));
+    frame.image = TRY(Image::create({ frame.width, frame.height }, metadata));
 
-    frame.lf_global = TRY(read_lf_global(stream, image, frame.frame_header, metadata, entropy_decoder));
+    frame.lf_global = TRY(read_lf_global(stream, frame.image, frame.frame_header, metadata, entropy_decoder));
 
     for (u32 i {}; i < frame.num_lf_groups; ++i)
-        TRY(read_lf_group(stream, image, frame.frame_header));
+        TRY(read_lf_group(stream, frame.image, frame.frame_header));
 
     if (frame.frame_header.encoding == FrameHeader::Encoding::kVarDCT) {
         TODO();
@@ -1694,13 +2398,13 @@ static ErrorOr<Frame> read_frame(LittleEndianInputBitStream& stream,
     auto const num_pass_group = frame.num_groups * frame.frame_header.passes.num_passes;
     auto const& transform_infos = frame.lf_global.gmodular.modular_header.transform;
     for (u64 i {}; i < num_pass_group; ++i)
-        TRY(read_pass_group(stream, image, frame.frame_header, group_dim));
+        TRY(read_pass_group(stream, frame.image, frame.frame_header, group_dim));
 
     // G.4.2 - Modular group data
     // When all modular groups are decoded, the inverse transforms are applied to
     // the at that point fully decoded GlobalModular image, as specified in H.6.
     for (auto const& transformation : transform_infos.in_reverse())
-        apply_transformation(image, transformation);
+        apply_transformation(frame.image, transformation);
 
     return frame;
 }
@@ -1719,7 +2423,7 @@ static u32 mirror_1d(i32 coord, u32 size)
 ///
 
 /// K - Image features
-static ErrorOr<void> apply_upsampling(Image& image, ImageMetadata const& metadata, Frame const& frame)
+static ErrorOr<void> apply_upsampling(Frame& frame, ImageMetadata const& metadata)
 {
     Optional<u32> ec_max;
     for (auto upsampling : frame.frame_header.ec_upsampling) {
@@ -1742,7 +2446,7 @@ static ErrorOr<void> apply_upsampling(Image& image, ImageMetadata const& metadat
         };
 
         // FIXME: Use ec_upsampling for extra-channels
-        for (auto& channel : image.channels()) {
+        for (auto& channel : frame.image.channels()) {
             auto upsampled = TRY(Channel::create(k * channel.width(), k * channel.height()));
 
             // Loop over the original image
@@ -1792,13 +2496,49 @@ static ErrorOr<void> apply_upsampling(Image& image, ImageMetadata const& metadat
     return {};
 }
 
-static ErrorOr<void> apply_image_features(Image& image, ImageMetadata const& metadata, Frame const& frame)
+static ErrorOr<void> apply_image_features(Frame& frame, ImageMetadata const& metadata)
 {
-    TRY(apply_upsampling(image, metadata, frame));
+    TRY(apply_upsampling(frame, metadata));
 
     if (frame.frame_header.flags != FrameHeader::Flags::None)
         TODO();
     return {};
+}
+///
+
+/// L.2 - XYB + L.3 - YCbCr
+static void ycbcr_to_rgb(Image& image, u8 bits_per_sample)
+{
+    auto& channels = image.channels();
+    VERIFY(channels.size() >= 3);
+
+    VERIFY(channels[0].width() == channels[1].width() && channels[1].width() == channels[2].width());
+    VERIFY(channels[0].height() == channels[1].height() && channels[1].height() == channels[2].height());
+
+    auto const half_range_offset = (1 << bits_per_sample) / 2;
+    for (u32 y = 0; y < channels[0].height(); ++y) {
+        for (u32 x = 0; x < channels[0].width(); ++x) {
+            auto const cb = channels[0].get(x, y);
+            auto const luma = channels[1].get(x, y);
+            auto const cr = channels[2].get(x, y);
+
+            channels[0].set(x, y, luma + half_range_offset + 1.402 * cr);
+            channels[1].set(x, y, luma + half_range_offset - 0.344136 * cb - 0.714136 * cr);
+            channels[2].set(x, y, luma + half_range_offset + 1.772 * cb);
+        }
+    }
+}
+
+static void apply_colour_transformation(Frame& frame, ImageMetadata const& metadata)
+{
+    if (frame.frame_header.do_YCbCr)
+        ycbcr_to_rgb(frame.image, metadata.bit_depth.bits_per_sample);
+
+    if (metadata.xyb_encoded) {
+        TODO();
+    } else {
+        // FIXME: Do a proper color transformation with metadata.colour_encoding
+    }
 }
 ///
 
@@ -1840,22 +2580,21 @@ public:
 
     ErrorOr<void> decode_frame()
     {
-        Image image {};
-
-        auto const frame = TRY(read_frame(m_stream, image, m_header, m_metadata, m_entropy_decoder));
+        auto frame = TRY(read_frame(m_stream, m_header, m_metadata, m_entropy_decoder));
 
         if (frame.frame_header.restoration_filter.gab || frame.frame_header.restoration_filter.epf_iters != 0)
             TODO();
 
-        TRY(apply_image_features(image, m_metadata, frame));
+        TRY(apply_image_features(frame, m_metadata));
 
-        // FIXME: Do a proper color transformation with metadata.colour_encoding
-        if (m_metadata.xyb_encoded || frame.frame_header.do_YCbCr)
-            TODO();
+        apply_colour_transformation(frame, m_metadata);
 
-        TRY(render_extra_channels(image, m_metadata));
+        TRY(render_extra_channels(frame.image, m_metadata));
 
-        m_bitmap = TRY(image.to_bitmap(m_metadata));
+        if (!m_image.has_value())
+            m_image = TRY(Image::create({ m_header.width, m_header.height }, m_metadata));
+
+        frame.image.blend_into(*m_image, frame.frame_header);
 
         return {};
     }
@@ -1874,6 +2613,9 @@ public:
                 TODO();
 
             TRY(decode_frame());
+
+            m_bitmap = TRY(m_image->to_bitmap(m_metadata));
+            m_image.clear();
 
             return {};
         }();
@@ -1911,13 +2653,14 @@ private:
     LittleEndianInputBitStream m_stream;
     RefPtr<Gfx::Bitmap> m_bitmap;
 
+    // JPEG XL images can be composed of multiples sub-images, this variable is an internal
+    // representation of this blending before the final rendering (in m_bitmap)
+    Optional<Image> m_image;
+
     Optional<EntropyDecoder> m_entropy_decoder {};
 
     SizeHeader m_header;
     ImageMetadata m_metadata;
-
-    FrameHeader m_frame_header;
-    TOC m_toc;
 };
 
 JPEGXLImageDecoderPlugin::JPEGXLImageDecoderPlugin(NonnullOwnPtr<FixedMemoryStream> stream)

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/DeprecatedFlyString.h>
+#include <AK/String.h>
 #include <LibWeb/DOM/ChildNode.h>
 #include <LibWeb/DOM/Node.h>
 
@@ -18,29 +19,29 @@ class DocumentType final
     WEB_PLATFORM_OBJECT(DocumentType, Node);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentType>> create(Document&);
+    [[nodiscard]] static JS::NonnullGCPtr<DocumentType> create(Document&);
 
     virtual ~DocumentType() override = default;
 
     virtual DeprecatedFlyString node_name() const override { return "#doctype"; }
 
-    DeprecatedString const& name() const { return m_name; }
-    void set_name(DeprecatedString const& name) { m_name = name; }
+    String const& name() const { return m_name; }
+    void set_name(String const& name) { m_name = name; }
 
-    DeprecatedString const& public_id() const { return m_public_id; }
-    void set_public_id(DeprecatedString const& public_id) { m_public_id = public_id; }
+    String const& public_id() const { return m_public_id; }
+    void set_public_id(String const& public_id) { m_public_id = public_id; }
 
-    DeprecatedString const& system_id() const { return m_system_id; }
-    void set_system_id(DeprecatedString const& system_id) { m_system_id = system_id; }
+    String const& system_id() const { return m_system_id; }
+    void set_system_id(String const& system_id) { m_system_id = system_id; }
 
 private:
     explicit DocumentType(Document&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
-    DeprecatedString m_name;
-    DeprecatedString m_public_id;
-    DeprecatedString m_system_id;
+    String m_name;
+    String m_public_id;
+    String m_system_id;
 };
 
 template<>

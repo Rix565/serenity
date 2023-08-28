@@ -7,8 +7,7 @@
 #pragma once
 
 #include <AK/DeprecatedString.h>
-
-struct dirent;
+#include <dirent.h>
 
 namespace Core {
 
@@ -27,8 +26,10 @@ struct DirectoryEntry {
     Type type;
     // FIXME: Once we have a special Path string class, use that.
     DeprecatedString name;
+    ino_t inode_number;
 
     static DirectoryEntry from_dirent(dirent const&);
+    static DirectoryEntry from_stat(DIR*, dirent const&);
 };
 
 }

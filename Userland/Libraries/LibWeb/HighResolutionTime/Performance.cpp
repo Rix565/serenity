@@ -27,12 +27,10 @@ Performance::Performance(HTML::Window& window)
 
 Performance::~Performance() = default;
 
-JS::ThrowCompletionOr<void> Performance::initialize(JS::Realm& realm)
+void Performance::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::PerformancePrototype>(realm, "Performance"));
-
-    return {};
 }
 
 void Performance::visit_edges(Cell::Visitor& visitor)
@@ -45,7 +43,7 @@ void Performance::visit_edges(Cell::Visitor& visitor)
 JS::GCPtr<NavigationTiming::PerformanceTiming> Performance::timing()
 {
     if (!m_timing)
-        m_timing = heap().allocate<NavigationTiming::PerformanceTiming>(realm(), *m_window).release_allocated_value_but_fixme_should_propagate_errors();
+        m_timing = heap().allocate<NavigationTiming::PerformanceTiming>(realm(), *m_window);
     return m_timing;
 }
 
@@ -65,7 +63,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<UserTiming::PerformanceMark>> Performance::
     // 2. Queue entry.
     auto* window_or_worker = dynamic_cast<HTML::WindowOrWorkerGlobalScopeMixin*>(&realm.global_object());
     VERIFY(window_or_worker);
-    TRY(window_or_worker->queue_performance_entry(entry));
+    window_or_worker->queue_performance_entry(entry);
 
     // 3. Add entry to the performance entry buffer.
     // FIXME: This seems to be a holdover from moving to the `queue` structure for PerformanceObserver, as this would cause a double append.
@@ -292,10 +290,10 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<UserTiming::PerformanceMeasure>> Performanc
     // NOTE: Already the default value of `detail`.
 
     // 4. Create a new PerformanceMeasure object (entry) with this's relevant realm.
-    auto entry = MUST_OR_THROW_OOM(realm.heap().allocate<UserTiming::PerformanceMeasure>(realm, realm, measure_name, start_time, duration, detail));
+    auto entry = realm.heap().allocate<UserTiming::PerformanceMeasure>(realm, realm, measure_name, start_time, duration, detail);
 
     // 10. Queue entry.
-    TRY(window_or_worker->queue_performance_entry(entry));
+    window_or_worker->queue_performance_entry(entry);
 
     // 11. Add entry to the performance entry buffer.
     // FIXME: This seems to be a holdover from moving to the `queue` structure for PerformanceObserver, as this would cause a double append.

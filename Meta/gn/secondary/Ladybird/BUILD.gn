@@ -12,19 +12,21 @@ group("ladybird") {
 
 moc_qt_objects("generate_moc") {
   sources = [
-    "BrowserWindow.h",
-    "ConsoleWidget.h",
-    "InspectorWidget.h",
-    "LocationEdit.h",
-    "ModelTranslator.h",
-    "SettingsDialog.h",
-    "Tab.h",
-    "WebContentView.h",
+    "Qt/AutoComplete.h",
+    "Qt/BrowserWindow.h",
+    "Qt/ConsoleWidget.h",
+    "Qt/EventLoopImplementationQtEventTarget.h",
+    "Qt/InspectorWidget.h",
+    "Qt/LocationEdit.h",
+    "Qt/ModelTranslator.h",
+    "Qt/SettingsDialog.h",
+    "Qt/Tab.h",
+    "Qt/WebContentView.h",
   ]
 }
 
 compile_qt_resource_file("compile_resource_file") {
-  sources = [ "ladybird.qrc" ]
+  sources = [ "Qt/ladybird.qrc" ]
 }
 
 link_qt("ladybird_qt_components") {
@@ -56,6 +58,7 @@ executable("ladybird_executable") {
     "SQLServer",
     "WebContent",
     "WebDriver",
+    "WebSocket",
   ]
   deps = [
     ":compile_resource_file",
@@ -69,6 +72,7 @@ executable("ladybird_executable") {
     "//Userland/Libraries/LibJS",
     "//Userland/Libraries/LibMain",
     "//Userland/Libraries/LibProtocol",
+    "//Userland/Libraries/LibPublicSuffix",
     "//Userland/Libraries/LibSQL",
     "//Userland/Libraries/LibWeb",
     "//Userland/Libraries/LibWebView",
@@ -77,20 +81,23 @@ executable("ladybird_executable") {
     "//Userland/Applications/Browser/CookieJar.cpp",
     "//Userland/Applications/Browser/Database.cpp",
     "//Userland/Applications/Browser/History.cpp",
-    "BrowserWindow.cpp",
-    "ConsoleWidget.cpp",
-    "EventLoopImplementationQt.cpp",
     "HelperProcess.cpp",
-    "InspectorWidget.cpp",
-    "LocationEdit.cpp",
-    "ModelTranslator.cpp",
-    "Settings.cpp",
-    "SettingsDialog.cpp",
-    "TVGIconEngine.cpp",
-    "Tab.cpp",
+    "Qt/AutoComplete.cpp",
+    "Qt/BrowserWindow.cpp",
+    "Qt/ConsoleWidget.cpp",
+    "Qt/EventLoopImplementationQt.cpp",
+    "Qt/EventLoopImplementationQtEventTarget.cpp",
+    "Qt/InspectorWidget.cpp",
+    "Qt/LocationEdit.cpp",
+    "Qt/ModelTranslator.cpp",
+    "Qt/Settings.cpp",
+    "Qt/SettingsDialog.cpp",
+    "Qt/StringUtils.cpp",
+    "Qt/TVGIconEngine.cpp",
+    "Qt/Tab.cpp",
+    "Qt/WebContentView.cpp",
+    "Qt/main.cpp",
     "Utilities.cpp",
-    "WebContentView.cpp",
-    "main.cpp",
   ]
   sources += get_target_outputs(":generate_moc") +
              get_target_outputs(":compile_resource_file")
@@ -100,16 +107,9 @@ executable("ladybird_executable") {
   output_name = "ladybird"
 }
 
-link_qt("headless_browser_qt") {
-  qt_components = [ "Core" ]
-}
-
 executable("headless-browser") {
   include_dirs = [ "//Userland/Services" ]
-  configs += [
-    ":ladybird_config",
-    ":headless_browser_qt",
-  ]
+  configs += [ ":ladybird_config" ]
   deps = [
     "//Userland/Libraries/LibCore",
     "//Userland/Libraries/LibCrypto",
@@ -149,12 +149,14 @@ if (current_os == "mac") {
       "SQLServer",
       "WebContent",
       "WebDriver",
+      "WebSocket",
     ]
     sources = [
       "$root_out_dir/bin/RequestServer",
       "$root_out_dir/bin/SQLServer",
       "$root_out_dir/bin/WebContent",
       "$root_out_dir/bin/WebDriver",
+      "$root_out_dir/bin/WebSocket",
       "$root_out_dir/bin/headless-browser",
       "$root_out_dir/bin/ladybird",
     ]
@@ -182,6 +184,7 @@ if (current_os == "mac") {
       "//Userland/Libraries/LibLine",
       "//Userland/Libraries/LibMarkdown",
       "//Userland/Libraries/LibProtocol",
+      "//Userland/Libraries/LibPublicSuffix",
       "//Userland/Libraries/LibRegex",
       "//Userland/Libraries/LibSQL",
       "//Userland/Libraries/LibSoftGPU",
@@ -216,6 +219,7 @@ if (current_os == "mac") {
       "$root_out_dir/lib/liblagom-line.dylib",
       "$root_out_dir/lib/liblagom-markdown.dylib",
       "$root_out_dir/lib/liblagom-protocol.dylib",
+      "$root_out_dir/lib/liblagom-publicsuffix.dylib",
       "$root_out_dir/lib/liblagom-regex.dylib",
       "$root_out_dir/lib/liblagom-softgpu.dylib",
       "$root_out_dir/lib/liblagom-sql.dylib",
@@ -255,6 +259,38 @@ if (current_os == "mac") {
     outputs = [ "{{bundle_resources_dir}}/res/ladybird/{{source_file_part}}" ]
   }
 
+  action("ladybird_create_icon") {
+    script = "//Meta/gn/secondary/Ladybird/invoke_process_with_args.py"
+    icon_path = "//Ladybird/Icons/macos/app_icon.iconset"
+    sources = [
+      "$icon_path/icon_128x128.png",
+      "$icon_path/icon_128x128@2x.png",
+      "$icon_path/icon_16x16.png",
+      "$icon_path/icon_16x16@2x.png",
+      "$icon_path/icon_256x256.png",
+      "$icon_path/icon_256x256@2x.png",
+      "$icon_path/icon_32x32.png",
+      "$icon_path/icon_32x32@2x.png",
+      "$icon_path/icon_512x512.png",
+      "$icon_path/icon_512x512@2x.png",
+    ]
+    outputs = [ "$target_gen_dir/app_icon.icns" ]
+    args = [
+      "iconutil",
+      "--convert",
+      "icns",
+      rebase_path(icon_path, root_build_dir),
+      "--output",
+      rebase_path(outputs[0], root_build_dir),
+    ]
+  }
+
+  bundle_data("ladybird_icon") {
+    public_deps = [ ":ladybird_create_icon" ]
+    sources = get_target_outputs(public_deps[0])
+    outputs = [ "{{bundle_resources_dir}}/{{source_file_part}}" ]
+  }
+
   create_bundle("ladybird.app") {
     product_type = "com.apple.product-type.application"
 
@@ -268,6 +304,7 @@ if (current_os == "mac") {
       ":ladybird_bundle_info_plist",
       ":ladybird_bundle_libs",
       ":ladybird_config_resources",
+      ":ladybird_icon",
       ":ladybird_resources",
     ]
   }

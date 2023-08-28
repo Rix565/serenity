@@ -22,6 +22,8 @@ void SVGGradientElement::attribute_changed(DeprecatedFlyString const& name, Depr
     SVGElement::attribute_changed(name, value);
     if (name == AttributeNames::gradientUnits) {
         m_gradient_units = AttributeParser::parse_gradient_units(value);
+    } else if (name == AttributeNames::spreadMethod) {
+        m_spread_method = AttributeParser::parse_spread_method(value);
     } else if (name == AttributeNames::gradientTransform) {
         if (auto transform_list = AttributeParser::parse_transform(value); transform_list.has_value()) {
             m_gradient_transform = transform_from_transform_list(*transform_list);
@@ -38,6 +40,15 @@ GradientUnits SVGGradientElement::gradient_units() const
     if (auto gradient = linked_gradient())
         return gradient->gradient_units();
     return GradientUnits::ObjectBoundingBox;
+}
+
+SpreadMethod SVGGradientElement::spread_method() const
+{
+    if (m_spread_method.has_value())
+        return *m_spread_method;
+    if (auto gradient = linked_gradient())
+        return gradient->spread_method();
+    return SpreadMethod::Pad;
 }
 
 Optional<Gfx::AffineTransform> SVGGradientElement::gradient_transform() const
@@ -87,9 +98,9 @@ JS::GCPtr<SVGGradientElement const> SVGGradientElement::linked_gradient() const
     if (auto href = link; !href.is_empty()) {
         auto url = document().parse_url(href);
         auto id = url.fragment();
-        if (id.is_empty())
+        if (!id.has_value() || id->is_empty())
             return {};
-        auto element = document().get_element_by_id(id);
+        auto element = document().get_element_by_id(id->to_deprecated_string());
         if (!element)
             return {};
         if (!is<SVGGradientElement>(*element))
@@ -99,11 +110,10 @@ JS::GCPtr<SVGGradientElement const> SVGGradientElement::linked_gradient() const
     return {};
 }
 
-JS::ThrowCompletionOr<void> SVGGradientElement::initialize(JS::Realm& realm)
+void SVGGradientElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::SVGGradientElementPrototype>(realm, "SVGGradientElement"));
-    return {};
 }
 
 }

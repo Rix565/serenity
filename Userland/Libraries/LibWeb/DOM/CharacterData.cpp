@@ -10,6 +10,7 @@
 #include <LibWeb/DOM/MutationType.h>
 #include <LibWeb/DOM/Range.h>
 #include <LibWeb/DOM/StaticNodeList.h>
+#include <LibWeb/Layout/TextNode.h>
 
 namespace Web::DOM {
 
@@ -19,12 +20,10 @@ CharacterData::CharacterData(Document& document, NodeType type, DeprecatedString
 {
 }
 
-JS::ThrowCompletionOr<void> CharacterData::initialize(JS::Realm& realm)
+void CharacterData::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::CharacterDataPrototype>(realm, "CharacterData"));
-
-    return {};
 }
 
 // https://dom.spec.whatwg.org/#dom-characterdata-data
@@ -109,6 +108,12 @@ WebIDL::ExceptionOr<void> CharacterData::replace_data(size_t offset, size_t coun
     // 12. If node’s parent is non-null, then run the children changed steps for node’s parent.
     if (parent())
         parent()->children_changed();
+
+    // NOTE: Since the text node's data has changed, we need to invalidate the text for rendering.
+    //       This ensures that the new text is reflected in layout, even if we don't end up
+    //       doing a full layout tree rebuild.
+    if (auto* layout_node = this->layout_node(); layout_node && layout_node->is_text_node())
+        static_cast<Layout::TextNode&>(*layout_node).invalidate_text_for_rendering();
 
     set_needs_style_update(true);
     document().set_needs_layout();

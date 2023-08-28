@@ -164,7 +164,7 @@ ErrorOr<void> MainWidget::setup()
             return;
 
         m_run_script_action->set_enabled(false);
-        m_statusbar->set_text(1, "Disconnected"_string.release_value_but_fixme_should_propagate_errors());
+        m_statusbar->set_text(1, "Disconnected"_string);
 
         if (m_connection_id.has_value()) {
             m_sql_client->disconnect(*m_connection_id);
@@ -235,7 +235,7 @@ ErrorOr<void> MainWidget::setup()
 
     m_action_tab_widget = find_descendant_of_type_named<GUI::TabWidget>("action_tab_widget"sv);
 
-    m_query_results_widget = m_action_tab_widget->add_tab<GUI::Widget>("Results"_short_string);
+    m_query_results_widget = m_action_tab_widget->add_tab<GUI::Widget>("Results"_string);
     m_query_results_widget->set_layout<GUI::VerticalBoxLayout>(6);
     m_query_results_table_view = m_query_results_widget->add<GUI::TableView>();
 
@@ -245,7 +245,7 @@ ErrorOr<void> MainWidget::setup()
 
     m_statusbar = find_descendant_of_type_named<GUI::Statusbar>("statusbar"sv);
     m_statusbar->segment(1).set_mode(GUI::Statusbar::Segment::Mode::Auto);
-    m_statusbar->set_text(1, TRY("Disconnected"_string));
+    m_statusbar->set_text(1, "Disconnected"_string);
     m_statusbar->segment(2).set_mode(GUI::Statusbar::Segment::Mode::Fixed);
     m_statusbar->segment(2).set_fixed_width(font().width("Ln 0,000  Col 000"sv) + font().max_glyph_width());
 
@@ -301,33 +301,33 @@ ErrorOr<void> MainWidget::setup()
 
 ErrorOr<void> MainWidget::initialize_menu(GUI::Window* window)
 {
-    auto file_menu = TRY(window->try_add_menu("&File"_short_string));
-    TRY(file_menu->try_add_action(*m_new_action));
-    TRY(file_menu->try_add_action(*m_open_action));
-    TRY(file_menu->try_add_action(*m_save_action));
-    TRY(file_menu->try_add_action(*m_save_as_action));
-    TRY(file_menu->try_add_action(*m_save_all_action));
-    TRY(file_menu->try_add_separator());
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    auto file_menu = window->add_menu("&File"_string);
+    file_menu->add_action(*m_new_action);
+    file_menu->add_action(*m_open_action);
+    file_menu->add_action(*m_save_action);
+    file_menu->add_action(*m_save_as_action);
+    file_menu->add_action(*m_save_all_action);
+    file_menu->add_separator();
+    file_menu->add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
-    })));
+    }));
 
-    auto edit_menu = TRY(window->try_add_menu("&Edit"_short_string));
-    TRY(edit_menu->try_add_action(*m_copy_action));
-    TRY(edit_menu->try_add_action(*m_cut_action));
-    TRY(edit_menu->try_add_action(*m_paste_action));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(*m_undo_action));
-    TRY(edit_menu->try_add_action(*m_redo_action));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(*m_run_script_action));
+    auto edit_menu = window->add_menu("&Edit"_string);
+    edit_menu->add_action(*m_copy_action);
+    edit_menu->add_action(*m_cut_action);
+    edit_menu->add_action(*m_paste_action);
+    edit_menu->add_separator();
+    edit_menu->add_action(*m_undo_action);
+    edit_menu->add_action(*m_redo_action);
+    edit_menu->add_separator();
+    edit_menu->add_action(*m_run_script_action);
 
-    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+    auto help_menu = window->add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(window));
+    help_menu->add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Applications/SQLStudio.md"), "/bin/Help");
-    })));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("SQL Studio", GUI::Icon::default_icon("app-sql-studio"sv), window)));
+    }));
+    help_menu->add_action(GUI::CommonActions::make_about_action("SQL Studio", GUI::Icon::default_icon("app-sql-studio"sv), window));
     return {};
 }
 
@@ -486,7 +486,7 @@ void MainWidget::drop_event(GUI::DropEvent& drop_event)
 
         for (auto& url : urls) {
             auto& scheme = url.scheme();
-            if (!scheme.equals_ignoring_ascii_case("file"sv))
+            if (!scheme.bytes_as_string_view().equals_ignoring_ascii_case("file"sv))
                 continue;
 
             auto lexical_path = LexicalPath(url.serialize_path());

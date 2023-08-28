@@ -22,7 +22,7 @@ class CSSImportRule final
     WEB_PLATFORM_OBJECT(CSSImportRule, CSSRule);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSImportRule>> create(AK::URL, DOM::Document&);
+    [[nodiscard]] static JS::NonnullGCPtr<CSSImportRule> create(AK::URL, DOM::Document&);
 
     virtual ~CSSImportRule() = default;
 
@@ -40,7 +40,7 @@ public:
 private:
     CSSImportRule(AK::URL, DOM::Document&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     virtual DeprecatedString serialized() const override;

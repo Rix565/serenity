@@ -46,7 +46,8 @@ There are some optional features that can be enabled during compilation that are
 - `ENABLE_KERNEL_COVERAGE_COLLECTION`: enables the KCOV API and kernel coverage collection instrumentation. Only useful for coverage guided kernel fuzzing.
 - `ENABLE_USERSPACE_COVERAGE_COLLECTION`: enables coverage collection instrumentation for userspace. Currently only works with a Clang build.
 - `ENABLE_MEMORY_SANITIZER`: enables runtime checks for uninitialized memory accesses in Lagom test cases.
-- `ENABLE_UNDEFINED_SANITIZER`: builds in runtime checks for [undefined behavior](https://en.wikipedia.org/wiki/Undefined_behavior) (like null pointer dereferences and signed integer overflows) in Lagom test cases.
+- `ENABLE_UNDEFINED_SANITIZER`: builds in runtime checks for [undefined behavior](https://en.wikipedia.org/wiki/Undefined_behavior) (like null pointer dereferences and signed integer overflows) in Lagom and the SerenityOS userland.
+- `UNDEFINED_BEHAVIOR_IS_FATAL`: makes all undefined behavior sanitizer errors non-recoverable. This option reduces the performance overhead of `ENABLE_UNDEFINED_SANITIZER`.
 - `ENABLE_COMPILER_EXPLORER_BUILD`: Skip building non-library entities in Lagom (this only applies to Lagom).
 - `ENABLE_FUZZERS`: builds [fuzzers](../Meta/Lagom/ReadMe.md#fuzzing) for various parts of the system.
 - `ENABLE_FUZZERS_LIBFUZZER`: builds Clang libFuzzer-based [fuzzers](../Meta/Lagom/ReadMe.md#fuzzing) for various parts of the system.
@@ -64,9 +65,11 @@ There are some optional features that can be enabled during compilation that are
 - `INCLUDE_WASM_SPEC_TESTS`: downloads and includes the WebAssembly spec testsuite tests. In order to use this option, you will need to install `prettier` and `wabt`. wabt version 1.0.23 or higher is required to pre-process the WebAssembly spec testsuite.
 - `INCLUDE_FLAC_SPEC_TESTS`: downloads and includes the xiph.org FLAC test suite.
 - `SERENITY_TOOLCHAIN`: Specifies whether to use the established GNU toolchain, or the experimental Clang-based toolchain for building SerenityOS. See the [Clang-based toolchain](#clang-based-toolchain) section below.
-- `SERENITY_ARCH`: Specifies which architecture to build for. Currently supported options are `x86_64`.
+- `SERENITY_ARCH`: Specifies which architecture to build for. Currently supported options are `x86_64`, `aarch64`, `riscv64`.
 - `BUILD_<component>`: builds the specified component, e.g. `BUILD_HEARTS` (note: must be all caps). Check the components.ini file in your build directory for a list of available components. Make sure to run `ninja clean` and `rm -rf Build/x86_64/Root` after disabling components. These options can be easily configured by using the `ConfigureComponents` utility. See the [Component Configuration](#component-configuration) section below.
 - `BUILD_EVERYTHING`: builds all optional components, overrides other `BUILD_<component>` flags when enabled
+- `SERENITY_CACHE_DIR`: sets the location of a shared cache of downloaded files. Should not need to be set unless managing a distribution package.
+- `ENABLE_NETWORK_DOWNLOADS`: allows downloading files from the internet during the build. Default on, turning off enables offline builds. For offline builds, the structure of the SERENITY_CACHE_DIR must be set up the way that the build expects.
 
 Many parts of the SerenityOS codebase have debug functionality, mostly consisting of additional messages printed to the debug console. This is done via the `<component_name>_DEBUG` macros, which can be enabled individually at build time. They are listed in [this file](../Meta/CMake/all_the_debug_macros.cmake).
 

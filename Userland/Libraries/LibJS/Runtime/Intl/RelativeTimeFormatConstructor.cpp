@@ -24,9 +24,9 @@ RelativeTimeFormatConstructor::RelativeTimeFormatConstructor(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> RelativeTimeFormatConstructor::initialize(Realm& realm)
+void RelativeTimeFormatConstructor::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
@@ -36,8 +36,6 @@ ThrowCompletionOr<void> RelativeTimeFormatConstructor::initialize(Realm& realm)
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.names.supportedLocalesOf, supported_locales_of, 1, attr);
-
-    return {};
 }
 
 // 17.1.1 Intl.RelativeTimeFormat ( [ locales [ , options ] ] ), https://tc39.es/ecma402/#sec-Intl.RelativeTimeFormat
@@ -103,11 +101,11 @@ ThrowCompletionOr<RelativeTimeFormat*> initialize_relative_time_format(VM& vm, R
     // 7. If numberingSystem is not undefined, then
     if (!numbering_system.is_undefined()) {
         // a. If numberingSystem does not match the Unicode Locale Identifier type nonterminal, throw a RangeError exception.
-        if (!::Locale::is_type_identifier(TRY(numbering_system.as_string().utf8_string_view())))
+        if (!::Locale::is_type_identifier(numbering_system.as_string().utf8_string_view()))
             return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, numbering_system, "numberingSystem"sv);
 
         // 8. Set opt.[[nu]] to numberingSystem.
-        opt.nu = TRY(numbering_system.as_string().utf8_string());
+        opt.nu = numbering_system.as_string().utf8_string();
     }
 
     // 9. Let localeData be %RelativeTimeFormat%.[[LocaleData]].
@@ -131,13 +129,13 @@ ThrowCompletionOr<RelativeTimeFormat*> initialize_relative_time_format(VM& vm, R
     auto style = TRY(get_option(vm, *options, vm.names.style, OptionType::String, { "long"sv, "short"sv, "narrow"sv }, "long"sv));
 
     // 16. Set relativeTimeFormat.[[Style]] to style.
-    relative_time_format.set_style(TRY(style.as_string().utf8_string_view()));
+    relative_time_format.set_style(style.as_string().utf8_string_view());
 
     // 17. Let numeric be ? GetOption(options, "numeric", string, « "always", "auto" », "always").
     auto numeric = TRY(get_option(vm, *options, vm.names.numeric, OptionType::String, { "always"sv, "auto"sv }, "always"sv));
 
     // 18. Set relativeTimeFormat.[[Numeric]] to numeric.
-    relative_time_format.set_numeric(TRY(numeric.as_string().utf8_string_view()));
+    relative_time_format.set_numeric(numeric.as_string().utf8_string_view());
 
     // 19. Let relativeTimeFormat.[[NumberFormat]] be ! Construct(%NumberFormat%, « locale »).
     auto number_format = MUST(construct(vm, realm.intrinsics().intl_number_format_constructor(), PrimitiveString::create(vm, locale)));

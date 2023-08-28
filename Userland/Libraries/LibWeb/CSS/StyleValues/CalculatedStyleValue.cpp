@@ -77,7 +77,7 @@ static CalculatedStyleValue::CalculationResult to_resolved_type(CalculatedStyleV
     case CalculatedStyleValue::ResolvedType::Frequency:
         return { Frequency::make_hertz(value) };
     case CalculatedStyleValue::ResolvedType::Length:
-        return { Length::make_px(value) };
+        return { Length::make_px(CSSPixels::nearest_value_for(value)) };
     case CalculatedStyleValue::ResolvedType::Percentage:
         return { Percentage(value) };
     case CalculatedStyleValue::ResolvedType::Time:
@@ -114,9 +114,9 @@ CalculationNode::CalculationNode(Type type)
 
 CalculationNode::~CalculationNode() = default;
 
-ErrorOr<NonnullOwnPtr<NumericCalculationNode>> NumericCalculationNode::create(NumericValue value)
+NonnullOwnPtr<NumericCalculationNode> NumericCalculationNode::create(NumericValue value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) NumericCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) NumericCalculationNode(move(value)));
 }
 
 NumericCalculationNode::NumericCalculationNode(NumericValue value)
@@ -127,7 +127,7 @@ NumericCalculationNode::NumericCalculationNode(NumericValue value)
 
 NumericCalculationNode::~NumericCalculationNode() = default;
 
-ErrorOr<String> NumericCalculationNode::to_string() const
+String NumericCalculationNode::to_string() const
 {
     return m_value.visit([](auto& value) { return value.to_string(); });
 }
@@ -206,14 +206,14 @@ CalculatedStyleValue::CalculationResult NumericCalculationNode::resolve(Optional
     return m_value;
 }
 
-ErrorOr<void> NumericCalculationNode::dump(StringBuilder& builder, int indent) const
+void NumericCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    return builder.try_appendff("{: >{}}NUMERIC({})\n", "", indent, TRY(m_value.visit([](auto& it) { return it.to_string(); })));
+    builder.appendff("{: >{}}NUMERIC({})\n", "", indent, m_value.visit([](auto& it) { return it.to_string(); }));
 }
 
-ErrorOr<NonnullOwnPtr<SumCalculationNode>> SumCalculationNode::create(Vector<NonnullOwnPtr<CalculationNode>> values)
+NonnullOwnPtr<SumCalculationNode> SumCalculationNode::create(Vector<NonnullOwnPtr<CalculationNode>> values)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) SumCalculationNode(move(values)));
+    return adopt_own(*new (nothrow) SumCalculationNode(move(values)));
 }
 
 SumCalculationNode::SumCalculationNode(Vector<NonnullOwnPtr<CalculationNode>> values)
@@ -225,17 +225,17 @@ SumCalculationNode::SumCalculationNode(Vector<NonnullOwnPtr<CalculationNode>> va
 
 SumCalculationNode::~SumCalculationNode() = default;
 
-ErrorOr<String> SumCalculationNode::to_string() const
+String SumCalculationNode::to_string() const
 {
     bool first = true;
     StringBuilder builder;
     for (auto& value : m_values) {
         if (!first)
-            TRY(builder.try_append(" + "sv));
-        TRY(builder.try_append(TRY(value->to_string())));
+            builder.append(" + "sv);
+        builder.append(value->to_string());
         first = false;
     }
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> SumCalculationNode::resolved_type() const
@@ -314,27 +314,24 @@ CalculatedStyleValue::CalculationResult SumCalculationNode::resolve(Optional<Len
     return total.value();
 }
 
-ErrorOr<void> SumCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void SumCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
     for (auto& item : m_values) {
-        TRY(item->for_each_child_node(callback));
-        TRY(callback(item));
+        item->for_each_child_node(callback);
+        callback(item);
     }
-
-    return {};
 }
 
-ErrorOr<void> SumCalculationNode::dump(StringBuilder& builder, int indent) const
+void SumCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}SUM:\n", "", indent));
+    builder.appendff("{: >{}}SUM:\n", "", indent);
     for (auto const& item : m_values)
-        TRY(item->dump(builder, indent + 2));
-    return {};
+        item->dump(builder, indent + 2);
 }
 
-ErrorOr<NonnullOwnPtr<ProductCalculationNode>> ProductCalculationNode::create(Vector<NonnullOwnPtr<CalculationNode>> values)
+NonnullOwnPtr<ProductCalculationNode> ProductCalculationNode::create(Vector<NonnullOwnPtr<CalculationNode>> values)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) ProductCalculationNode(move(values)));
+    return adopt_own(*new (nothrow) ProductCalculationNode(move(values)));
 }
 
 ProductCalculationNode::ProductCalculationNode(Vector<NonnullOwnPtr<CalculationNode>> values)
@@ -346,17 +343,17 @@ ProductCalculationNode::ProductCalculationNode(Vector<NonnullOwnPtr<CalculationN
 
 ProductCalculationNode::~ProductCalculationNode() = default;
 
-ErrorOr<String> ProductCalculationNode::to_string() const
+String ProductCalculationNode::to_string() const
 {
     bool first = true;
     StringBuilder builder;
     for (auto& value : m_values) {
         if (!first)
-            TRY(builder.try_append(" * "sv));
-        TRY(builder.try_append(TRY(value->to_string())));
+            builder.append(" * "sv);
+        builder.append(value->to_string());
         first = false;
     }
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> ProductCalculationNode::resolved_type() const
@@ -440,27 +437,24 @@ CalculatedStyleValue::CalculationResult ProductCalculationNode::resolve(Optional
     return total.value();
 }
 
-ErrorOr<void> ProductCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void ProductCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
     for (auto& item : m_values) {
-        TRY(item->for_each_child_node(callback));
-        TRY(callback(item));
+        item->for_each_child_node(callback);
+        callback(item);
     }
-
-    return {};
 }
 
-ErrorOr<void> ProductCalculationNode::dump(StringBuilder& builder, int indent) const
+void ProductCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}PRODUCT:\n", "", indent));
+    builder.appendff("{: >{}}PRODUCT:\n", "", indent);
     for (auto const& item : m_values)
-        TRY(item->dump(builder, indent + 2));
-    return {};
+        item->dump(builder, indent + 2);
 }
 
-ErrorOr<NonnullOwnPtr<NegateCalculationNode>> NegateCalculationNode::create(NonnullOwnPtr<Web::CSS::CalculationNode> value)
+NonnullOwnPtr<NegateCalculationNode> NegateCalculationNode::create(NonnullOwnPtr<Web::CSS::CalculationNode> value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) NegateCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) NegateCalculationNode(move(value)));
 }
 
 NegateCalculationNode::NegateCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -471,9 +465,9 @@ NegateCalculationNode::NegateCalculationNode(NonnullOwnPtr<CalculationNode> valu
 
 NegateCalculationNode::~NegateCalculationNode() = default;
 
-ErrorOr<String> NegateCalculationNode::to_string() const
+String NegateCalculationNode::to_string() const
 {
-    return String::formatted("(0 - {})", TRY(m_value->to_string()));
+    return MUST(String::formatted("(0 - {})", m_value->to_string()));
 }
 
 Optional<CalculatedStyleValue::ResolvedType> NegateCalculationNode::resolved_type() const
@@ -500,23 +494,21 @@ CalculatedStyleValue::CalculationResult NegateCalculationNode::resolve(Optional<
     return child_value;
 }
 
-ErrorOr<void> NegateCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void NegateCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> NegateCalculationNode::dump(StringBuilder& builder, int indent) const
+void NegateCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}NEGATE:\n", "", indent));
-    TRY(m_value->dump(builder, indent + 2));
-    return {};
+    builder.appendff("{: >{}}NEGATE:\n", "", indent);
+    m_value->dump(builder, indent + 2);
 }
 
-ErrorOr<NonnullOwnPtr<InvertCalculationNode>> InvertCalculationNode::create(NonnullOwnPtr<Web::CSS::CalculationNode> value)
+NonnullOwnPtr<InvertCalculationNode> InvertCalculationNode::create(NonnullOwnPtr<Web::CSS::CalculationNode> value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) InvertCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) InvertCalculationNode(move(value)));
 }
 
 InvertCalculationNode::InvertCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -527,9 +519,9 @@ InvertCalculationNode::InvertCalculationNode(NonnullOwnPtr<CalculationNode> valu
 
 InvertCalculationNode::~InvertCalculationNode() = default;
 
-ErrorOr<String> InvertCalculationNode::to_string() const
+String InvertCalculationNode::to_string() const
 {
-    return String::formatted("(1 / {})", TRY(m_value->to_string()));
+    return MUST(String::formatted("(1 / {})", m_value->to_string()));
 }
 
 Optional<CalculatedStyleValue::ResolvedType> InvertCalculationNode::resolved_type() const
@@ -563,23 +555,21 @@ CalculatedStyleValue::CalculationResult InvertCalculationNode::resolve(Optional<
     return child_value;
 }
 
-ErrorOr<void> InvertCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void InvertCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> InvertCalculationNode::dump(StringBuilder& builder, int indent) const
+void InvertCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}INVERT:\n", "", indent));
-    TRY(m_value->dump(builder, indent + 2));
-    return {};
+    builder.appendff("{: >{}}INVERT:\n", "", indent);
+    m_value->dump(builder, indent + 2);
 }
 
-ErrorOr<NonnullOwnPtr<MinCalculationNode>> MinCalculationNode::create(Vector<NonnullOwnPtr<Web::CSS::CalculationNode>> values)
+NonnullOwnPtr<MinCalculationNode> MinCalculationNode::create(Vector<NonnullOwnPtr<Web::CSS::CalculationNode>> values)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) MinCalculationNode(move(values)));
+    return adopt_own(*new (nothrow) MinCalculationNode(move(values)));
 }
 
 MinCalculationNode::MinCalculationNode(Vector<NonnullOwnPtr<CalculationNode>> values)
@@ -590,17 +580,17 @@ MinCalculationNode::MinCalculationNode(Vector<NonnullOwnPtr<CalculationNode>> va
 
 MinCalculationNode::~MinCalculationNode() = default;
 
-ErrorOr<String> MinCalculationNode::to_string() const
+String MinCalculationNode::to_string() const
 {
     StringBuilder builder;
-    TRY(builder.try_append("min("sv));
+    builder.append("min("sv);
     for (size_t i = 0; i < m_values.size(); ++i) {
         if (i != 0)
-            TRY(builder.try_append(", "sv));
-        TRY(builder.try_append(TRY(m_values[i]->to_string())));
+            builder.append(", "sv);
+        builder.append(m_values[i]->to_string());
     }
-    TRY(builder.try_append(")"sv));
-    return builder.to_string();
+    builder.append(")"sv);
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> MinCalculationNode::resolved_type() const
@@ -644,27 +634,24 @@ CalculatedStyleValue::CalculationResult MinCalculationNode::resolve(Optional<Len
     return smallest_node;
 }
 
-ErrorOr<void> MinCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void MinCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
     for (auto& value : m_values) {
-        TRY(value->for_each_child_node(callback));
-        TRY(callback(value));
+        value->for_each_child_node(callback);
+        callback(value);
     }
-
-    return {};
 }
 
-ErrorOr<void> MinCalculationNode::dump(StringBuilder& builder, int indent) const
+void MinCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}MIN:\n", "", indent));
+    builder.appendff("{: >{}}MIN:\n", "", indent);
     for (auto const& value : m_values)
-        TRY(value->dump(builder, indent + 2));
-    return {};
+        value->dump(builder, indent + 2);
 }
 
-ErrorOr<NonnullOwnPtr<MaxCalculationNode>> MaxCalculationNode::create(Vector<NonnullOwnPtr<Web::CSS::CalculationNode>> values)
+NonnullOwnPtr<MaxCalculationNode> MaxCalculationNode::create(Vector<NonnullOwnPtr<Web::CSS::CalculationNode>> values)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) MaxCalculationNode(move(values)));
+    return adopt_own(*new (nothrow) MaxCalculationNode(move(values)));
 }
 
 MaxCalculationNode::MaxCalculationNode(Vector<NonnullOwnPtr<CalculationNode>> values)
@@ -675,17 +662,17 @@ MaxCalculationNode::MaxCalculationNode(Vector<NonnullOwnPtr<CalculationNode>> va
 
 MaxCalculationNode::~MaxCalculationNode() = default;
 
-ErrorOr<String> MaxCalculationNode::to_string() const
+String MaxCalculationNode::to_string() const
 {
     StringBuilder builder;
-    TRY(builder.try_append("max("sv));
+    builder.append("max("sv);
     for (size_t i = 0; i < m_values.size(); ++i) {
         if (i != 0)
-            TRY(builder.try_append(", "sv));
-        TRY(builder.try_append(TRY(m_values[i]->to_string())));
+            builder.append(", "sv);
+        builder.append(m_values[i]->to_string());
     }
-    TRY(builder.try_append(")"sv));
-    return builder.to_string();
+    builder.append(")"sv);
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> MaxCalculationNode::resolved_type() const
@@ -729,27 +716,24 @@ CalculatedStyleValue::CalculationResult MaxCalculationNode::resolve(Optional<Len
     return largest_node;
 }
 
-ErrorOr<void> MaxCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void MaxCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
     for (auto& value : m_values) {
-        TRY(value->for_each_child_node(callback));
-        TRY(callback(value));
+        value->for_each_child_node(callback);
+        callback(value);
     }
-
-    return {};
 }
 
-ErrorOr<void> MaxCalculationNode::dump(StringBuilder& builder, int indent) const
+void MaxCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}MAX:\n", "", indent));
+    builder.appendff("{: >{}}MAX:\n", "", indent);
     for (auto const& value : m_values)
-        TRY(value->dump(builder, indent + 2));
-    return {};
+        value->dump(builder, indent + 2);
 }
 
-ErrorOr<NonnullOwnPtr<ClampCalculationNode>> ClampCalculationNode::create(NonnullOwnPtr<CalculationNode> min, NonnullOwnPtr<CalculationNode> center, NonnullOwnPtr<CalculationNode> max)
+NonnullOwnPtr<ClampCalculationNode> ClampCalculationNode::create(NonnullOwnPtr<CalculationNode> min, NonnullOwnPtr<CalculationNode> center, NonnullOwnPtr<CalculationNode> max)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) ClampCalculationNode(move(min), move(center), move(max)));
+    return adopt_own(*new (nothrow) ClampCalculationNode(move(min), move(center), move(max)));
 }
 
 ClampCalculationNode::ClampCalculationNode(NonnullOwnPtr<CalculationNode> min, NonnullOwnPtr<CalculationNode> center, NonnullOwnPtr<CalculationNode> max)
@@ -762,17 +746,17 @@ ClampCalculationNode::ClampCalculationNode(NonnullOwnPtr<CalculationNode> min, N
 
 ClampCalculationNode::~ClampCalculationNode() = default;
 
-ErrorOr<String> ClampCalculationNode::to_string() const
+String ClampCalculationNode::to_string() const
 {
     StringBuilder builder;
-    TRY(builder.try_append("clamp("sv));
-    TRY(builder.try_append(TRY(m_min_value->to_string())));
-    TRY(builder.try_append(", "sv));
-    TRY(builder.try_append(TRY(m_center_value->to_string())));
-    TRY(builder.try_append(", "sv));
-    TRY(builder.try_append(TRY(m_max_value->to_string())));
-    TRY(builder.try_append(")"sv));
-    return builder.to_string();
+    builder.append("clamp("sv);
+    builder.append(m_min_value->to_string());
+    builder.append(", "sv);
+    builder.append(m_center_value->to_string());
+    builder.append(", "sv);
+    builder.append(m_max_value->to_string());
+    builder.append(")"sv);
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> ClampCalculationNode::resolved_type() const
@@ -825,30 +809,27 @@ CalculatedStyleValue::CalculationResult ClampCalculationNode::resolve(Optional<L
     VERIFY_NOT_REACHED();
 }
 
-ErrorOr<void> ClampCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void ClampCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_min_value->for_each_child_node(callback));
-    TRY(m_center_value->for_each_child_node(callback));
-    TRY(m_max_value->for_each_child_node(callback));
-    TRY(callback(m_min_value));
-    TRY(callback(m_center_value));
-    TRY(callback(m_max_value));
-
-    return {};
+    m_min_value->for_each_child_node(callback);
+    m_center_value->for_each_child_node(callback);
+    m_max_value->for_each_child_node(callback);
+    callback(m_min_value);
+    callback(m_center_value);
+    callback(m_max_value);
 }
 
-ErrorOr<void> ClampCalculationNode::dump(StringBuilder& builder, int indent) const
+void ClampCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}CLAMP:\n", "", indent));
-    TRY(m_min_value->dump(builder, indent + 2));
-    TRY(m_center_value->dump(builder, indent + 2));
-    TRY(m_max_value->dump(builder, indent + 2));
-    return {};
+    builder.appendff("{: >{}}CLAMP:\n", "", indent);
+    m_min_value->dump(builder, indent + 2);
+    m_center_value->dump(builder, indent + 2);
+    m_max_value->dump(builder, indent + 2);
 }
 
-ErrorOr<NonnullOwnPtr<AbsCalculationNode>> AbsCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
+NonnullOwnPtr<AbsCalculationNode> AbsCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) AbsCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) AbsCalculationNode(move(value)));
 }
 
 AbsCalculationNode::AbsCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -859,13 +840,13 @@ AbsCalculationNode::AbsCalculationNode(NonnullOwnPtr<CalculationNode> value)
 
 AbsCalculationNode::~AbsCalculationNode() = default;
 
-ErrorOr<String> AbsCalculationNode::to_string() const
+String AbsCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("abs("sv);
-    builder.append(TRY(m_value->to_string()));
+    builder.append(m_value->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> AbsCalculationNode::resolved_type() const
@@ -897,22 +878,20 @@ CalculatedStyleValue::CalculationResult AbsCalculationNode::resolve(Optional<Len
     return node_a;
 }
 
-ErrorOr<void> AbsCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void AbsCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> AbsCalculationNode::dump(StringBuilder& builder, int indent) const
+void AbsCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}ABS: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}ABS: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<SignCalculationNode>> SignCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
+NonnullOwnPtr<SignCalculationNode> SignCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) SignCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) SignCalculationNode(move(value)));
 }
 
 SignCalculationNode::SignCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -923,13 +902,13 @@ SignCalculationNode::SignCalculationNode(NonnullOwnPtr<CalculationNode> value)
 
 SignCalculationNode::~SignCalculationNode() = default;
 
-ErrorOr<String> SignCalculationNode::to_string() const
+String SignCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("sign("sv);
-    builder.append(TRY(m_value->to_string()));
+    builder.append(m_value->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> SignCalculationNode::resolved_type() const
@@ -963,22 +942,20 @@ CalculatedStyleValue::CalculationResult SignCalculationNode::resolve(Optional<Le
     return { Number(Number::Type::Integer, 0) };
 }
 
-ErrorOr<void> SignCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void SignCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> SignCalculationNode::dump(StringBuilder& builder, int indent) const
+void SignCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}SIGN: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}SIGN: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<ConstantCalculationNode>> ConstantCalculationNode::create(ConstantType constant)
+NonnullOwnPtr<ConstantCalculationNode> ConstantCalculationNode::create(ConstantType constant)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) ConstantCalculationNode(constant));
+    return adopt_own(*new (nothrow) ConstantCalculationNode(constant));
 }
 
 ConstantCalculationNode::ConstantCalculationNode(ConstantType constant)
@@ -989,13 +966,13 @@ ConstantCalculationNode::ConstantCalculationNode(ConstantType constant)
 
 ConstantCalculationNode::~ConstantCalculationNode() = default;
 
-ErrorOr<String> ConstantCalculationNode::to_string() const
+String ConstantCalculationNode::to_string() const
 {
     switch (m_constant) {
     case CalculationNode::ConstantType::E:
-        return "e"_short_string;
+        return "e"_string;
     case CalculationNode::ConstantType::Pi:
-        return "pi"_short_string;
+        return "pi"_string;
     case CalculationNode::ConstantType::Infinity:
         return "infinity"_string;
     case CalculationNode::ConstantType::MinusInfinity:
@@ -1029,9 +1006,9 @@ CalculatedStyleValue::CalculationResult ConstantCalculationNode::resolve([[maybe
         return { Number(Number::Type::Number, M_PI) };
     // FIXME: We need to keep track of Infinity and NaN across all nodes, since they require special handling.
     case CalculationNode::ConstantType::Infinity:
-        return { Number(Number::Type::Number, NumericLimits<float>::max()) };
+        return { Number(Number::Type::Number, NumericLimits<double>::max()) };
     case CalculationNode::ConstantType::MinusInfinity:
-        return { Number(Number::Type::Number, NumericLimits<float>::lowest()) };
+        return { Number(Number::Type::Number, NumericLimits<double>::lowest()) };
     case CalculationNode::ConstantType::NaN:
         return { Number(Number::Type::Number, NAN) };
     }
@@ -1039,20 +1016,14 @@ CalculatedStyleValue::CalculationResult ConstantCalculationNode::resolve([[maybe
     VERIFY_NOT_REACHED();
 }
 
-ErrorOr<void> ConstantCalculationNode::for_each_child_node([[maybe_unused]] Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void ConstantCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    return {};
+    builder.appendff("{: >{}}CONSTANT: {}\n", "", indent, to_string());
 }
 
-ErrorOr<void> ConstantCalculationNode::dump(StringBuilder& builder, int indent) const
+NonnullOwnPtr<SinCalculationNode> SinCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
 {
-    TRY(builder.try_appendff("{: >{}}CONSTANT: {}\n", "", indent, TRY(to_string())));
-    return {};
-}
-
-ErrorOr<NonnullOwnPtr<SinCalculationNode>> SinCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
-{
-    return adopt_nonnull_own_or_enomem(new (nothrow) SinCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) SinCalculationNode(move(value)));
 }
 
 SinCalculationNode::SinCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -1063,13 +1034,13 @@ SinCalculationNode::SinCalculationNode(NonnullOwnPtr<CalculationNode> value)
 
 SinCalculationNode::~SinCalculationNode() = default;
 
-ErrorOr<String> SinCalculationNode::to_string() const
+String SinCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("sin("sv);
-    builder.append(TRY(m_value->to_string()));
+    builder.append(m_value->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> SinCalculationNode::resolved_type() const
@@ -1098,22 +1069,20 @@ CalculatedStyleValue::CalculationResult SinCalculationNode::resolve(Optional<Len
     return { Number(Number::Type::Number, result) };
 }
 
-ErrorOr<void> SinCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void SinCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> SinCalculationNode::dump(StringBuilder& builder, int indent) const
+void SinCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}SIN: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}SIN: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<CosCalculationNode>> CosCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
+NonnullOwnPtr<CosCalculationNode> CosCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) CosCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) CosCalculationNode(move(value)));
 }
 
 CosCalculationNode::CosCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -1124,13 +1093,13 @@ CosCalculationNode::CosCalculationNode(NonnullOwnPtr<CalculationNode> value)
 
 CosCalculationNode::~CosCalculationNode() = default;
 
-ErrorOr<String> CosCalculationNode::to_string() const
+String CosCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("cos("sv);
-    builder.append(TRY(m_value->to_string()));
+    builder.append(m_value->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> CosCalculationNode::resolved_type() const
@@ -1159,22 +1128,20 @@ CalculatedStyleValue::CalculationResult CosCalculationNode::resolve(Optional<Len
     return { Number(Number::Type::Number, result) };
 }
 
-ErrorOr<void> CosCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void CosCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> CosCalculationNode::dump(StringBuilder& builder, int indent) const
+void CosCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}COS: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}COS: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<TanCalculationNode>> TanCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
+NonnullOwnPtr<TanCalculationNode> TanCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) TanCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) TanCalculationNode(move(value)));
 }
 
 TanCalculationNode::TanCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -1185,13 +1152,13 @@ TanCalculationNode::TanCalculationNode(NonnullOwnPtr<CalculationNode> value)
 
 TanCalculationNode::~TanCalculationNode() = default;
 
-ErrorOr<String> TanCalculationNode::to_string() const
+String TanCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("tan("sv);
-    builder.append(TRY(m_value->to_string()));
+    builder.append(m_value->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> TanCalculationNode::resolved_type() const
@@ -1220,22 +1187,20 @@ CalculatedStyleValue::CalculationResult TanCalculationNode::resolve(Optional<Len
     return { Number(Number::Type::Number, result) };
 }
 
-ErrorOr<void> TanCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void TanCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> TanCalculationNode::dump(StringBuilder& builder, int indent) const
+void TanCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}TAN: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}TAN: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<AsinCalculationNode>> AsinCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
+NonnullOwnPtr<AsinCalculationNode> AsinCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) AsinCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) AsinCalculationNode(move(value)));
 }
 
 AsinCalculationNode::AsinCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -1246,13 +1211,13 @@ AsinCalculationNode::AsinCalculationNode(NonnullOwnPtr<CalculationNode> value)
 
 AsinCalculationNode::~AsinCalculationNode() = default;
 
-ErrorOr<String> AsinCalculationNode::to_string() const
+String AsinCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("asin("sv);
-    builder.append(TRY(m_value->to_string()));
+    builder.append(m_value->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> AsinCalculationNode::resolved_type() const
@@ -1281,22 +1246,20 @@ CalculatedStyleValue::CalculationResult AsinCalculationNode::resolve(Optional<Le
     return { Angle(result, Angle::Type::Rad) };
 }
 
-ErrorOr<void> AsinCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void AsinCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> AsinCalculationNode::dump(StringBuilder& builder, int indent) const
+void AsinCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}ASIN: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}ASIN: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<AcosCalculationNode>> AcosCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
+NonnullOwnPtr<AcosCalculationNode> AcosCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) AcosCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) AcosCalculationNode(move(value)));
 }
 
 AcosCalculationNode::AcosCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -1307,13 +1270,13 @@ AcosCalculationNode::AcosCalculationNode(NonnullOwnPtr<CalculationNode> value)
 
 AcosCalculationNode::~AcosCalculationNode() = default;
 
-ErrorOr<String> AcosCalculationNode::to_string() const
+String AcosCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("acos("sv);
-    builder.append(TRY(m_value->to_string()));
+    builder.append(m_value->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> AcosCalculationNode::resolved_type() const
@@ -1342,22 +1305,20 @@ CalculatedStyleValue::CalculationResult AcosCalculationNode::resolve(Optional<Le
     return { Angle(result, Angle::Type::Rad) };
 }
 
-ErrorOr<void> AcosCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void AcosCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> AcosCalculationNode::dump(StringBuilder& builder, int indent) const
+void AcosCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}ACOS: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}ACOS: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<AtanCalculationNode>> AtanCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
+NonnullOwnPtr<AtanCalculationNode> AtanCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) AtanCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) AtanCalculationNode(move(value)));
 }
 
 AtanCalculationNode::AtanCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -1368,13 +1329,13 @@ AtanCalculationNode::AtanCalculationNode(NonnullOwnPtr<CalculationNode> value)
 
 AtanCalculationNode::~AtanCalculationNode() = default;
 
-ErrorOr<String> AtanCalculationNode::to_string() const
+String AtanCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("atan("sv);
-    builder.append(TRY(m_value->to_string()));
+    builder.append(m_value->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> AtanCalculationNode::resolved_type() const
@@ -1403,22 +1364,20 @@ CalculatedStyleValue::CalculationResult AtanCalculationNode::resolve(Optional<Le
     return { Angle(result, Angle::Type::Rad) };
 }
 
-ErrorOr<void> AtanCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void AtanCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> AtanCalculationNode::dump(StringBuilder& builder, int indent) const
+void AtanCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}ATAN: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}ATAN: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<Atan2CalculationNode>> Atan2CalculationNode::create(NonnullOwnPtr<CalculationNode> y, NonnullOwnPtr<CalculationNode> x)
+NonnullOwnPtr<Atan2CalculationNode> Atan2CalculationNode::create(NonnullOwnPtr<CalculationNode> y, NonnullOwnPtr<CalculationNode> x)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) Atan2CalculationNode(move(y), move(x)));
+    return adopt_own(*new (nothrow) Atan2CalculationNode(move(y), move(x)));
 }
 
 Atan2CalculationNode::Atan2CalculationNode(NonnullOwnPtr<CalculationNode> y, NonnullOwnPtr<CalculationNode> x)
@@ -1430,15 +1389,15 @@ Atan2CalculationNode::Atan2CalculationNode(NonnullOwnPtr<CalculationNode> y, Non
 
 Atan2CalculationNode::~Atan2CalculationNode() = default;
 
-ErrorOr<String> Atan2CalculationNode::to_string() const
+String Atan2CalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("atan2("sv);
-    builder.append(TRY(m_y->to_string()));
+    builder.append(m_y->to_string());
     builder.append(", "sv);
-    builder.append(TRY(m_x->to_string()));
+    builder.append(m_x->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> Atan2CalculationNode::resolved_type() const
@@ -1471,24 +1430,22 @@ CalculatedStyleValue::CalculationResult Atan2CalculationNode::resolve(Optional<L
     return { Angle(result, Angle::Type::Rad) };
 }
 
-ErrorOr<void> Atan2CalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void Atan2CalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_y->for_each_child_node(callback));
-    TRY(m_x->for_each_child_node(callback));
-    TRY(callback(m_y));
-    TRY(callback(m_x));
-    return {};
+    m_y->for_each_child_node(callback);
+    m_x->for_each_child_node(callback);
+    callback(m_y);
+    callback(m_x);
 }
 
-ErrorOr<void> Atan2CalculationNode::dump(StringBuilder& builder, int indent) const
+void Atan2CalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}ATAN2: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}ATAN2: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<PowCalculationNode>> PowCalculationNode::create(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
+NonnullOwnPtr<PowCalculationNode> PowCalculationNode::create(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) PowCalculationNode(move(x), move(y)));
+    return adopt_own(*new (nothrow) PowCalculationNode(move(x), move(y)));
 }
 
 PowCalculationNode::PowCalculationNode(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
@@ -1500,15 +1457,15 @@ PowCalculationNode::PowCalculationNode(NonnullOwnPtr<CalculationNode> x, Nonnull
 
 PowCalculationNode::~PowCalculationNode() = default;
 
-ErrorOr<String> PowCalculationNode::to_string() const
+String PowCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("pow("sv);
-    builder.append(TRY(m_x->to_string()));
+    builder.append(m_x->to_string());
     builder.append(", "sv);
-    builder.append(TRY(m_y->to_string()));
+    builder.append(m_y->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> PowCalculationNode::resolved_type() const
@@ -1536,24 +1493,22 @@ CalculatedStyleValue::CalculationResult PowCalculationNode::resolve(Optional<Len
     return { Number(Number::Type::Number, result) };
 }
 
-ErrorOr<void> PowCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void PowCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_x->for_each_child_node(callback));
-    TRY(m_y->for_each_child_node(callback));
-    TRY(callback(m_x));
-    TRY(callback(m_y));
-    return {};
+    m_x->for_each_child_node(callback);
+    m_y->for_each_child_node(callback);
+    callback(m_x);
+    callback(m_y);
 }
 
-ErrorOr<void> PowCalculationNode::dump(StringBuilder& builder, int indent) const
+void PowCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}POW: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}POW: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<SqrtCalculationNode>> SqrtCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
+NonnullOwnPtr<SqrtCalculationNode> SqrtCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) SqrtCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) SqrtCalculationNode(move(value)));
 }
 
 SqrtCalculationNode::SqrtCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -1564,13 +1519,13 @@ SqrtCalculationNode::SqrtCalculationNode(NonnullOwnPtr<CalculationNode> value)
 
 SqrtCalculationNode::~SqrtCalculationNode() = default;
 
-ErrorOr<String> SqrtCalculationNode::to_string() const
+String SqrtCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("sqrt("sv);
-    builder.append(TRY(m_value->to_string()));
+    builder.append(m_value->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> SqrtCalculationNode::resolved_type() const
@@ -1594,22 +1549,20 @@ CalculatedStyleValue::CalculationResult SqrtCalculationNode::resolve(Optional<Le
     return { Number(Number::Type::Number, result) };
 }
 
-ErrorOr<void> SqrtCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void SqrtCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> SqrtCalculationNode::dump(StringBuilder& builder, int indent) const
+void SqrtCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}SQRT: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}SQRT: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<HypotCalculationNode>> HypotCalculationNode::create(Vector<NonnullOwnPtr<Web::CSS::CalculationNode>> values)
+NonnullOwnPtr<HypotCalculationNode> HypotCalculationNode::create(Vector<NonnullOwnPtr<Web::CSS::CalculationNode>> values)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) HypotCalculationNode(move(values)));
+    return adopt_own(*new (nothrow) HypotCalculationNode(move(values)));
 }
 
 HypotCalculationNode::HypotCalculationNode(Vector<NonnullOwnPtr<CalculationNode>> values)
@@ -1620,17 +1573,17 @@ HypotCalculationNode::HypotCalculationNode(Vector<NonnullOwnPtr<CalculationNode>
 
 HypotCalculationNode::~HypotCalculationNode() = default;
 
-ErrorOr<String> HypotCalculationNode::to_string() const
+String HypotCalculationNode::to_string() const
 {
     StringBuilder builder;
-    TRY(builder.try_append("hypot("sv));
+    builder.append("hypot("sv);
     for (size_t i = 0; i < m_values.size(); ++i) {
         if (i != 0)
-            TRY(builder.try_append(", "sv));
-        TRY(builder.try_append(TRY(m_values[i]->to_string())));
+            builder.append(", "sv);
+        builder.append(m_values[i]->to_string());
     }
-    TRY(builder.try_append(")"sv));
-    return builder.to_string();
+    builder.append(")"sv);
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> HypotCalculationNode::resolved_type() const
@@ -1672,27 +1625,24 @@ CalculatedStyleValue::CalculationResult HypotCalculationNode::resolve(Optional<L
     return to_resolved_type(resolved_type().value(), result);
 }
 
-ErrorOr<void> HypotCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void HypotCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
     for (auto& value : m_values) {
-        TRY(value->for_each_child_node(callback));
-        TRY(callback(value));
+        value->for_each_child_node(callback);
+        callback(value);
     }
-
-    return {};
 }
 
-ErrorOr<void> HypotCalculationNode::dump(StringBuilder& builder, int indent) const
+void HypotCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}HYPOT:\n", "", indent));
+    builder.appendff("{: >{}}HYPOT:\n", "", indent);
     for (auto const& value : m_values)
-        TRY(value->dump(builder, indent + 2));
-    return {};
+        value->dump(builder, indent + 2);
 }
 
-ErrorOr<NonnullOwnPtr<LogCalculationNode>> LogCalculationNode::create(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
+NonnullOwnPtr<LogCalculationNode> LogCalculationNode::create(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) LogCalculationNode(move(x), move(y)));
+    return adopt_own(*new (nothrow) LogCalculationNode(move(x), move(y)));
 }
 
 LogCalculationNode::LogCalculationNode(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
@@ -1704,15 +1654,15 @@ LogCalculationNode::LogCalculationNode(NonnullOwnPtr<CalculationNode> x, Nonnull
 
 LogCalculationNode::~LogCalculationNode() = default;
 
-ErrorOr<String> LogCalculationNode::to_string() const
+String LogCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("log("sv);
-    builder.append(TRY(m_x->to_string()));
+    builder.append(m_x->to_string());
     builder.append(", "sv);
-    builder.append(TRY(m_y->to_string()));
+    builder.append(m_y->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> LogCalculationNode::resolved_type() const
@@ -1740,24 +1690,22 @@ CalculatedStyleValue::CalculationResult LogCalculationNode::resolve(Optional<Len
     return { Number(Number::Type::Number, result) };
 }
 
-ErrorOr<void> LogCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void LogCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_x->for_each_child_node(callback));
-    TRY(m_y->for_each_child_node(callback));
-    TRY(callback(m_x));
-    TRY(callback(m_y));
-    return {};
+    m_x->for_each_child_node(callback);
+    m_y->for_each_child_node(callback);
+    callback(m_x);
+    callback(m_y);
 }
 
-ErrorOr<void> LogCalculationNode::dump(StringBuilder& builder, int indent) const
+void LogCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}LOG: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}LOG: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<ExpCalculationNode>> ExpCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
+NonnullOwnPtr<ExpCalculationNode> ExpCalculationNode::create(NonnullOwnPtr<CalculationNode> value)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) ExpCalculationNode(move(value)));
+    return adopt_own(*new (nothrow) ExpCalculationNode(move(value)));
 }
 
 ExpCalculationNode::ExpCalculationNode(NonnullOwnPtr<CalculationNode> value)
@@ -1768,13 +1716,13 @@ ExpCalculationNode::ExpCalculationNode(NonnullOwnPtr<CalculationNode> value)
 
 ExpCalculationNode::~ExpCalculationNode() = default;
 
-ErrorOr<String> ExpCalculationNode::to_string() const
+String ExpCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("exp("sv);
-    builder.append(TRY(m_value->to_string()));
+    builder.append(m_value->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> ExpCalculationNode::resolved_type() const
@@ -1798,22 +1746,20 @@ CalculatedStyleValue::CalculationResult ExpCalculationNode::resolve(Optional<Len
     return { Number(Number::Type::Number, result) };
 }
 
-ErrorOr<void> ExpCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void ExpCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_value->for_each_child_node(callback));
-    TRY(callback(m_value));
-    return {};
+    m_value->for_each_child_node(callback);
+    callback(m_value);
 }
 
-ErrorOr<void> ExpCalculationNode::dump(StringBuilder& builder, int indent) const
+void ExpCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}EXP: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}EXP: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<RoundCalculationNode>> RoundCalculationNode::create(RoundingStrategy strategy, NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
+NonnullOwnPtr<RoundCalculationNode> RoundCalculationNode::create(RoundingStrategy strategy, NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) RoundCalculationNode(strategy, move(x), move(y)));
+    return adopt_own(*new (nothrow) RoundCalculationNode(strategy, move(x), move(y)));
 }
 
 RoundCalculationNode::RoundCalculationNode(RoundingStrategy mode, NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
@@ -1826,17 +1772,17 @@ RoundCalculationNode::RoundCalculationNode(RoundingStrategy mode, NonnullOwnPtr<
 
 RoundCalculationNode::~RoundCalculationNode() = default;
 
-ErrorOr<String> RoundCalculationNode::to_string() const
+String RoundCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("round("sv);
     builder.append(CSS::to_string(m_strategy));
     builder.append(", "sv);
-    builder.append(TRY(m_x->to_string()));
+    builder.append(m_x->to_string());
     builder.append(", "sv);
-    builder.append(TRY(m_y->to_string()));
+    builder.append(m_y->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> RoundCalculationNode::resolved_type() const
@@ -1900,24 +1846,22 @@ CalculatedStyleValue::CalculationResult RoundCalculationNode::resolve(Optional<L
     VERIFY_NOT_REACHED();
 }
 
-ErrorOr<void> RoundCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void RoundCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_x->for_each_child_node(callback));
-    TRY(m_y->for_each_child_node(callback));
-    TRY(callback(m_x));
-    TRY(callback(m_y));
-    return {};
+    m_x->for_each_child_node(callback);
+    m_y->for_each_child_node(callback);
+    callback(m_x);
+    callback(m_y);
 }
 
-ErrorOr<void> RoundCalculationNode::dump(StringBuilder& builder, int indent) const
+void RoundCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}ROUND: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}ROUND: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<ModCalculationNode>> ModCalculationNode::create(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
+NonnullOwnPtr<ModCalculationNode> ModCalculationNode::create(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) ModCalculationNode(move(x), move(y)));
+    return adopt_own(*new (nothrow) ModCalculationNode(move(x), move(y)));
 }
 
 ModCalculationNode::ModCalculationNode(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
@@ -1929,15 +1873,15 @@ ModCalculationNode::ModCalculationNode(NonnullOwnPtr<CalculationNode> x, Nonnull
 
 ModCalculationNode::~ModCalculationNode() = default;
 
-ErrorOr<String> ModCalculationNode::to_string() const
+String ModCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("mod("sv);
-    builder.append(TRY(m_x->to_string()));
+    builder.append(m_x->to_string());
     builder.append(", "sv);
-    builder.append(TRY(m_y->to_string()));
+    builder.append(m_y->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> ModCalculationNode::resolved_type() const
@@ -1978,24 +1922,22 @@ CalculatedStyleValue::CalculationResult ModCalculationNode::resolve(Optional<Len
     return to_resolved_type(resolved_type, value);
 }
 
-ErrorOr<void> ModCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void ModCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_x->for_each_child_node(callback));
-    TRY(m_y->for_each_child_node(callback));
-    TRY(callback(m_x));
-    TRY(callback(m_y));
-    return {};
+    m_x->for_each_child_node(callback);
+    m_y->for_each_child_node(callback);
+    callback(m_x);
+    callback(m_y);
 }
 
-ErrorOr<void> ModCalculationNode::dump(StringBuilder& builder, int indent) const
+void ModCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}MOD: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}MOD: {}\n", "", indent, to_string());
 }
 
-ErrorOr<NonnullOwnPtr<RemCalculationNode>> RemCalculationNode::create(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
+NonnullOwnPtr<RemCalculationNode> RemCalculationNode::create(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
 {
-    return adopt_nonnull_own_or_enomem(new (nothrow) RemCalculationNode(move(x), move(y)));
+    return adopt_own(*new (nothrow) RemCalculationNode(move(x), move(y)));
 }
 
 RemCalculationNode::RemCalculationNode(NonnullOwnPtr<CalculationNode> x, NonnullOwnPtr<CalculationNode> y)
@@ -2007,15 +1949,15 @@ RemCalculationNode::RemCalculationNode(NonnullOwnPtr<CalculationNode> x, Nonnull
 
 RemCalculationNode::~RemCalculationNode() = default;
 
-ErrorOr<String> RemCalculationNode::to_string() const
+String RemCalculationNode::to_string() const
 {
     StringBuilder builder;
     builder.append("rem("sv);
-    builder.append(TRY(m_x->to_string()));
+    builder.append(m_x->to_string());
     builder.append(", "sv);
-    builder.append(TRY(m_y->to_string()));
+    builder.append(m_y->to_string());
     builder.append(")"sv);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 Optional<CalculatedStyleValue::ResolvedType> RemCalculationNode::resolved_type() const
@@ -2055,19 +1997,17 @@ CalculatedStyleValue::CalculationResult RemCalculationNode::resolve(Optional<Len
     return to_resolved_type(resolved_type, value);
 }
 
-ErrorOr<void> RemCalculationNode::for_each_child_node(Function<ErrorOr<void>(NonnullOwnPtr<CalculationNode>&)> const& callback)
+void RemCalculationNode::for_each_child_node(Function<void(NonnullOwnPtr<CalculationNode>&)> const& callback)
 {
-    TRY(m_x->for_each_child_node(callback));
-    TRY(m_y->for_each_child_node(callback));
-    TRY(callback(m_x));
-    TRY(callback(m_y));
-    return {};
+    m_x->for_each_child_node(callback);
+    m_y->for_each_child_node(callback);
+    callback(m_x);
+    callback(m_y);
 }
 
-ErrorOr<void> RemCalculationNode::dump(StringBuilder& builder, int indent) const
+void RemCalculationNode::dump(StringBuilder& builder, int indent) const
 {
-    TRY(builder.try_appendff("{: >{}}REM: {}\n", "", indent, TRY(to_string())));
-    return {};
+    builder.appendff("{: >{}}REM: {}\n", "", indent, to_string());
 }
 
 void CalculatedStyleValue::CalculationResult::add(CalculationResult const& other, Optional<Length::ResolutionContext const&> context, PercentageBasis const& percentage_basis)
@@ -2215,7 +2155,7 @@ void CalculatedStyleValue::CalculationResult::multiply_by(CalculationResult cons
             m_value = Frequency::make_hertz(frequency.to_hertz() * other.m_value.get<Number>().value());
         },
         [&](Length const& length) {
-            m_value = Length::make_px(length.to_px(*context) * static_cast<double>(other.m_value.get<Number>().value()));
+            m_value = Length::make_px(CSSPixels::nearest_value_for(length.to_px(*context) * static_cast<double>(other.m_value.get<Number>().value())));
         },
         [&](Time const& time) {
             m_value = Time::make_seconds(time.to_seconds() * other.m_value.get<Number>().value());
@@ -2247,7 +2187,7 @@ void CalculatedStyleValue::CalculationResult::divide_by(CalculationResult const&
             m_value = Frequency::make_hertz(frequency.to_hertz() / denominator);
         },
         [&](Length const& length) {
-            m_value = Length::make_px(length.to_px(*context) / static_cast<double>(denominator));
+            m_value = Length::make_px(CSSPixels::nearest_value_for(length.to_px(*context) / static_cast<double>(denominator)));
         },
         [&](Time const& time) {
             m_value = Time::make_seconds(time.to_seconds() / denominator);
@@ -2304,10 +2244,10 @@ void CalculatedStyleValue::CalculationResult::invert()
         });
 }
 
-ErrorOr<String> CalculatedStyleValue::to_string() const
+String CalculatedStyleValue::to_string() const
 {
     // FIXME: Implement this according to https://www.w3.org/TR/css-values-4/#calc-serialize once that stabilizes.
-    return String::formatted("calc({})", TRY(m_calculation->to_string()));
+    return MUST(String::formatted("calc({})", m_calculation->to_string()));
 }
 
 bool CalculatedStyleValue::equals(StyleValue const& other) const
@@ -2315,7 +2255,7 @@ bool CalculatedStyleValue::equals(StyleValue const& other) const
     if (type() != other.type())
         return false;
     // This is a case where comparing the strings actually makes sense.
-    return to_string().release_value_but_fixme_should_propagate_errors() == other.to_string().release_value_but_fixme_should_propagate_errors();
+    return to_string() == other.to_string();
 }
 
 Optional<Angle> CalculatedStyleValue::resolve_angle() const

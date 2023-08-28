@@ -11,6 +11,7 @@
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
+#include <LibWeb/DOM/HTMLFormControlsCollection.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/FormControlInfrastructure.h>
@@ -37,12 +38,10 @@ HTMLFormElement::HTMLFormElement(DOM::Document& document, DOM::QualifiedName qua
 
 HTMLFormElement::~HTMLFormElement() = default;
 
-JS::ThrowCompletionOr<void> HTMLFormElement::initialize(JS::Realm& realm)
+void HTMLFormElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLFormElementPrototype>(realm, "HTMLFormElement"));
-
-    return {};
 }
 
 void HTMLFormElement::visit_edges(Cell::Visitor& visitor)
@@ -103,7 +102,7 @@ WebIDL::ExceptionOr<void> HTMLFormElement::submit_form(JS::NonnullGCPtr<HTMLElem
         //    cancelable attribute initialized to true.
         SubmitEventInit event_init {};
         event_init.submitter = submitter_button;
-        auto submit_event = SubmitEvent::create(realm, EventNames::submit, event_init).release_value_but_fixme_should_propagate_errors();
+        auto submit_event = SubmitEvent::create(realm, EventNames::submit, event_init);
         submit_event->set_bubbles(true);
         submit_event->set_cancelable(true);
         bool should_continue = dispatch_event(*submit_event);
@@ -260,7 +259,7 @@ WebIDL::ExceptionOr<void> HTMLFormElement::submit_form(JS::NonnullGCPtr<HTMLElem
 void HTMLFormElement::reset_form()
 {
     // 1. Let reset be the result of firing an event named reset at form, with the bubbles and cancelable attributes initialized to true.
-    auto reset_event = DOM::Event::create(realm(), HTML::EventNames::reset).release_value_but_fixme_should_propagate_errors();
+    auto reset_event = DOM::Event::create(realm(), HTML::EventNames::reset);
     reset_event->set_bubbles(true);
     reset_event->set_cancelable(true);
 
@@ -408,12 +407,12 @@ static bool is_form_control(DOM::Element const& element)
 }
 
 // https://html.spec.whatwg.org/multipage/forms.html#dom-form-elements
-JS::NonnullGCPtr<DOM::HTMLCollection> HTMLFormElement::elements() const
+JS::NonnullGCPtr<DOM::HTMLFormControlsCollection> HTMLFormElement::elements() const
 {
     if (!m_elements) {
-        m_elements = DOM::HTMLCollection::create(const_cast<HTMLFormElement&>(*this), DOM::HTMLCollection::Scope::Descendants, [](Element const& element) {
+        m_elements = DOM::HTMLFormControlsCollection::create(const_cast<HTMLFormElement&>(*this), DOM::HTMLCollection::Scope::Descendants, [](Element const& element) {
             return is_form_control(element);
-        }).release_value_but_fixme_should_propagate_errors();
+        });
     }
     return *m_elements;
 }
@@ -618,7 +617,7 @@ ErrorOr<void> HTMLFormElement::mutate_action_url(AK::URL parsed_action, Vector<X
     auto query = TRY(url_encode(pairs, encoding));
 
     // 3. Set parsed action's query component to query.
-    parsed_action.set_query(query.to_deprecated_string());
+    parsed_action.set_query(query);
 
     // 4. Plan to navigate to parsed action.
     plan_to_navigate_to(move(parsed_action), target_navigable, history_handling);
@@ -717,7 +716,7 @@ ErrorOr<void> HTMLFormElement::mail_with_headers(AK::URL parsed_action, Vector<X
     TRY(headers.replace("+"sv, "%20"sv, ReplaceMode::All));
 
     // 4. Set parsed action's query to headers.
-    parsed_action.set_query(headers.to_deprecated_string());
+    parsed_action.set_query(headers);
 
     // 5. Plan to navigate to parsed action.
     plan_to_navigate_to(move(parsed_action), target_navigable, history_handling);
@@ -753,15 +752,15 @@ ErrorOr<void> HTMLFormElement::mail_as_body(AK::URL parsed_action, Vector<XHR::F
     }
 
     // 3. If parsed action's query is null, then set it to the empty string.
-    if (parsed_action.query().is_null())
-        parsed_action.set_query(DeprecatedString::empty());
+    if (!parsed_action.query().has_value())
+        parsed_action.set_query(String {});
 
     StringBuilder query_builder;
 
-    TRY(query_builder.try_append(parsed_action.query()));
+    query_builder.append(*parsed_action.query());
 
     // 4. If parsed action's query is not the empty string, then append a single U+0026 AMPERSAND character (&) to it.
-    if (!parsed_action.query().is_empty())
+    if (!parsed_action.query()->is_empty())
         TRY(query_builder.try_append('&'));
 
     // 5. Append "body=" to parsed action's query.
@@ -770,7 +769,7 @@ ErrorOr<void> HTMLFormElement::mail_as_body(AK::URL parsed_action, Vector<XHR::F
     // 6. Append body to parsed action's query.
     TRY(query_builder.try_append(body));
 
-    parsed_action.set_query(query_builder.to_deprecated_string());
+    parsed_action.set_query(MUST(query_builder.to_string()));
 
     // 7. Plan to navigate to parsed action.
     plan_to_navigate_to(move(parsed_action), target_navigable, history_handling);

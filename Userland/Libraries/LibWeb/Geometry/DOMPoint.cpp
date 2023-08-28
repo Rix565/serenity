@@ -13,7 +13,7 @@ namespace Web::Geometry {
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMPoint>> DOMPoint::construct_impl(JS::Realm& realm, double x, double y, double z, double w)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<DOMPoint>(realm, realm, x, y, z, w));
+    return realm.heap().allocate<DOMPoint>(realm, realm, x, y, z, w);
 }
 
 DOMPoint::DOMPoint(JS::Realm& realm, double x, double y, double z, double w)
@@ -30,12 +30,10 @@ JS::NonnullGCPtr<DOMPoint> DOMPoint::from_point(JS::VM& vm, DOMPointInit const& 
 
 DOMPoint::~DOMPoint() = default;
 
-JS::ThrowCompletionOr<void> DOMPoint::initialize(JS::Realm& realm)
+void DOMPoint::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::DOMPointPrototype>(realm, "DOMPoint"));
-
-    return {};
 }
 
 }

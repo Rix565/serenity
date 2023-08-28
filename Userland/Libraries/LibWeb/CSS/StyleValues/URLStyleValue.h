@@ -14,9 +14,9 @@ namespace Web::CSS {
 
 class URLStyleValue final : public StyleValueWithDefaultOperators<URLStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<URLStyleValue>> create(AK::URL const& url)
+    static ValueComparingNonnullRefPtr<URLStyleValue> create(AK::URL const& url)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) URLStyleValue(url));
+        return adopt_ref(*new (nothrow) URLStyleValue(url));
     }
 
     virtual ~URLStyleValue() override = default;
@@ -25,14 +25,14 @@ public:
 
     bool properties_equal(URLStyleValue const& other) const { return m_url == other.m_url; }
 
-    virtual ErrorOr<String> to_string() const override
+    virtual String to_string() const override
     {
         return serialize_a_url(m_url.to_deprecated_string());
     }
 
 private:
     URLStyleValue(AK::URL const& url)
-        : StyleValueWithDefaultOperators(Type::Url)
+        : StyleValueWithDefaultOperators(Type::URL)
         , m_url(url)
     {
     }

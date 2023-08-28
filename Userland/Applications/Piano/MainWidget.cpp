@@ -36,22 +36,23 @@ MainWidget::MainWidget(TrackManager& track_manager, AudioPlayerLoop& loop)
 
 ErrorOr<void> MainWidget::initialize()
 {
-    TRY(try_set_layout<GUI::VerticalBoxLayout>(2, 2));
+    set_layout<GUI::VerticalBoxLayout>(2, 2);
     set_fill_with_background_color(true);
 
     m_wave_widget = TRY(try_add<WaveWidget>(m_track_manager));
     m_wave_widget->set_fixed_height(100);
+    TRY(m_wave_widget->set_sample_size(sample_count));
 
     m_tab_widget = TRY(try_add<GUI::TabWidget>());
-    m_roll_widget = TRY(m_tab_widget->try_add_tab<RollWidget>(TRY("Piano Roll"_string), m_track_manager));
+    m_roll_widget = TRY(m_tab_widget->try_add_tab<RollWidget>("Piano Roll"_string, m_track_manager));
 
     m_roll_widget->set_fixed_height(300);
 
-    (void)TRY(m_tab_widget->try_add_tab<SamplerWidget>("Sampler"_short_string, m_track_manager));
+    (void)TRY(m_tab_widget->try_add_tab<SamplerWidget>("Sampler"_string, m_track_manager));
     m_player_widget = TRY(try_add<PlayerWidget>(m_track_manager, *this, m_audio_loop));
 
     m_keys_and_knobs_container = TRY(try_add<GUI::Widget>());
-    TRY(m_keys_and_knobs_container->try_set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 2));
+    m_keys_and_knobs_container->set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 2);
     m_keys_and_knobs_container->set_fixed_height(130);
     m_keys_and_knobs_container->set_fill_with_background_color(true);
 
@@ -59,8 +60,8 @@ ErrorOr<void> MainWidget::initialize()
 
     m_octave_container = TRY(m_keys_and_knobs_container->try_add<GUI::Widget>());
     m_octave_container->set_preferred_width(GUI::SpecialDimension::Fit);
-    TRY(m_octave_container->try_set_layout<GUI::VerticalBoxLayout>());
-    auto octave_label = TRY(m_octave_container->try_add<GUI::Label>("Octave"_short_string));
+    m_octave_container->set_layout<GUI::VerticalBoxLayout>();
+    auto octave_label = TRY(m_octave_container->try_add<GUI::Label>("Octave"_string));
     octave_label->set_preferred_width(GUI::SpecialDimension::Fit);
     m_octave_value = TRY(m_octave_container->try_add<GUI::Label>(TRY(String::number(m_track_manager.keyboard()->virtual_keyboard_octave()))));
     m_octave_value->set_preferred_width(GUI::SpecialDimension::Fit);
@@ -68,7 +69,7 @@ ErrorOr<void> MainWidget::initialize()
     // FIXME: Implement vertical flipping in GUI::Slider, not here.
     m_octave_knob = TRY(m_octave_container->try_add<GUI::VerticalSlider>());
     m_octave_knob->set_preferred_width(GUI::SpecialDimension::Fit);
-    m_octave_knob->set_tooltip("Z: octave down, X: octave up");
+    m_octave_knob->set_tooltip_deprecated("Z: octave down, X: octave up");
     m_octave_knob->set_range(octave_min - 1, octave_max - 1);
     m_octave_knob->set_value((octave_max - 1) - (m_track_manager.keyboard()->virtual_keyboard_octave() - 1));
     m_octave_knob->set_step(1);
@@ -92,15 +93,15 @@ ErrorOr<void> MainWidget::initialize()
 
 ErrorOr<void> MainWidget::add_track_actions(GUI::Menu& menu)
 {
-    TRY(menu.try_add_action(GUI::Action::create("&Add Track", { Mod_Ctrl, Key_T }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/plus.png"sv)), [&](auto&) {
+    menu.add_action(GUI::Action::create("&Add Track", { Mod_Ctrl, Key_T }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/plus.png"sv)), [&](auto&) {
         m_player_widget->add_track();
-    })));
+    }));
 
-    TRY(menu.try_add_action(GUI::Action::create("&Next Track", { Mod_Ctrl, Key_N }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/go-last.png"sv)), [&](auto&) {
+    menu.add_action(GUI::Action::create("&Next Track", { Mod_Ctrl, Key_N }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/go-last.png"sv)), [&](auto&) {
         turn_off_pressed_keys();
         m_player_widget->next_track();
         turn_on_pressed_keys();
-    })));
+    }));
 
     return {};
 }

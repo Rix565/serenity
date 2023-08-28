@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021, the SerenityOS developers.
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -36,6 +36,8 @@ class OptionConstructor;
 enum class AudioContextLatencyCategory;
 enum class CanPlayTypeResult;
 enum class CanvasFillRule;
+enum class CanvasTextAlign;
+enum class CanvasTextBaseline;
 enum class DOMParserSupportedType;
 enum class EndingType;
 enum class ImageSmoothingQuality;
@@ -112,6 +114,7 @@ class FrequencyOrCalculated;
 class FrequencyPercentage;
 class FrequencyStyleValue;
 class GridAreaShorthandStyleValue;
+class GridAutoFlowStyleValue;
 class GridMinMax;
 class GridRepeat;
 class GridSize;
@@ -147,6 +150,7 @@ class PercentageOrCalculated;
 class PercentageStyleValue;
 class PlaceContentStyleValue;
 class PlaceItemsStyleValue;
+class PlaceSelfStyleValue;
 class PositionStyleValue;
 class PropertyOwningCSSStyleDeclaration;
 class RadialGradientStyleValue;
@@ -155,6 +159,7 @@ class RatioStyleValue;
 class RectStyleValue;
 class Resolution;
 class ResolutionStyleValue;
+class RevertStyleValue;
 class Screen;
 class Selector;
 class ShadowStyleValue;
@@ -178,6 +183,7 @@ class URLStyleValue;
 class UnicodeRange;
 class UnresolvedStyleValue;
 class UnsetStyleValue;
+class VisualViewport;
 
 enum class MediaFeatureID;
 enum class PropertyID;
@@ -221,6 +227,7 @@ class Event;
 class EventHandler;
 class EventTarget;
 class HTMLCollection;
+class HTMLFormControlsCollection;
 class IDLEventListener;
 class LiveNodeList;
 class MutationObserver;
@@ -234,6 +241,7 @@ class ParentNode;
 class Position;
 class ProcessingInstruction;
 class Range;
+class RadioNodeList;
 class RegisteredObserver;
 class ShadowRoot;
 class StaticNodeList;
@@ -294,6 +302,7 @@ class DOMMatrix;
 class DOMMatrixReadOnly;
 class DOMPoint;
 class DOMPointReadOnly;
+class DOMQuad;
 class DOMRect;
 class DOMRectList;
 class DOMRectReadOnly;
@@ -405,6 +414,12 @@ class MimeType;
 class MimeTypeArray;
 class Navigable;
 class NavigableContainer;
+class NavigateEvent;
+class Navigation;
+class NavigationCurrentEntryChangeEvent;
+class NavigationDestination;
+class NavigationHistoryEntry;
+class NavigationTransition;
 class Navigator;
 struct NavigationParams;
 class Origin;
@@ -451,6 +466,10 @@ namespace Web::HighResolutionTime {
 class Performance;
 }
 
+namespace Web::Internals {
+class Internals;
+}
+
 namespace Web::IntersectionObserver {
 class IntersectionObserver;
 class IntersectionObserverEntry;
@@ -489,6 +508,10 @@ enum class LayoutMode;
 struct LayoutState;
 }
 
+namespace Web::MathML {
+class MathMLElement;
+}
+
 namespace Web::MimeSniff {
 class MimeType;
 }
@@ -509,6 +532,7 @@ class PaintableWithLines;
 class StackingContext;
 class TextPaintable;
 class VideoPaintable;
+class ViewportPaintable;
 
 enum class PaintPhase;
 
@@ -519,6 +543,9 @@ struct LinearGradientData;
 
 namespace Web::PerformanceTimeline {
 class PerformanceEntry;
+class PerformanceObserver;
+class PerformanceObserverEntryList;
+struct PerformanceObserverInit;
 }
 
 namespace Web::PermissionsPolicy {
@@ -584,6 +611,7 @@ class SVGGeometryElement;
 class SVGGraphicsElement;
 class SVGLength;
 class SVGLineElement;
+class SVGMaskElement;
 class SVGPathElement;
 class SVGPolygonElement;
 class SVGPolylineElement;

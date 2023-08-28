@@ -9,9 +9,9 @@
 
 namespace Web::HTML {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<CloseEvent>> CloseEvent::create(JS::Realm& realm, FlyString const& event_name, CloseEventInit const& event_init)
+JS::NonnullGCPtr<CloseEvent> CloseEvent::create(JS::Realm& realm, FlyString const& event_name, CloseEventInit const& event_init)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<CloseEvent>(realm, realm, event_name, event_init));
+    return realm.heap().allocate<CloseEvent>(realm, realm, event_name, event_init);
 }
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<CloseEvent>> CloseEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, CloseEventInit const& event_init)
@@ -29,12 +29,10 @@ CloseEvent::CloseEvent(JS::Realm& realm, FlyString const& event_name, CloseEvent
 
 CloseEvent::~CloseEvent() = default;
 
-JS::ThrowCompletionOr<void> CloseEvent::initialize(JS::Realm& realm)
+void CloseEvent::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::CloseEventPrototype>(realm, "CloseEvent"));
-
-    return {};
 }
 
 }

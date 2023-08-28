@@ -36,6 +36,32 @@ but because of the async operation, we can't send the `errno` code back to userl
 to ensure that internal functions still use the `ErrorOr<>` return type, and in main calling function, we use
 other meaningful infrastructure utilities in the Kernel to indicate that the operation failed.
 
+## KStrings vs FixedStringBuffers
+
+As you might understand, we put a respectable amount of effort into making the kernel code OOM-safe.
+One approach to achieve this is to allow error propagation where possible.
+The other approach is to eliminate heap allocations altogether where possible.
+
+To do so, the `FixedStringBuffer` class was introduced into the AK library, and is used
+extensively in kernel syscall handlers' code.
+The idea is very simple - if we know the maximum length of an inspected string during
+a syscall and it's relatively short (so it doesn't exceed the stack size), something like
+1024 bytes is the total max length (but in theory we could just make the stack size bigger),
+it could be copied from userspace to that stack storage instead of doing an heap allocation
+to create a KString. This is especially useful when inspecting a string only during the
+syscall handler scope, because doing an heap allocation is wasteful on memory resources
+and puts a strain on the kernel memory manager for no good reason.
+
+The `Process` and `Thread` classes use a `FixedStringBuffer` to store their names,
+to completely circumvent OOM conditions due to needing to allocate heap storage
+for their names in the past.
+
+The `FixedStringBuffer` puts some safety guards - like zeroing the memory when storing new
+StringView, as well as truncating it if its length exceeds the allocated stack storage size.
+
+There are many helpers (in the `Process` class and also in the `Kernel/Library/StdLib.h` file) that will do a check on whether the input size is exceeding the allocated `FixedStringBuffer` storage size.
+An appropriate error will be released instead of just truncating the string and continue execution in these helpers.
+
 ## We don't break userspace - the SerenityOS version
 
 We don't break userspace. However, in contrast to the Linux vision on this statement,

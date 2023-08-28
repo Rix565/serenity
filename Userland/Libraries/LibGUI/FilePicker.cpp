@@ -32,7 +32,6 @@
 #include <LibGUI/Widget.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
-#include <string.h>
 #include <unistd.h>
 
 namespace GUI {
@@ -258,7 +257,7 @@ FilePicker::FilePicker(Window* parent_window, Mode mode, StringView filename, St
     };
 
     auto& cancel_button = *widget->find_descendant_of_type_named<GUI::Button>("cancel_button");
-    cancel_button.set_text("Cancel"_short_string);
+    cancel_button.set_text("Cancel"_string);
     cancel_button.on_click = [this](auto) {
         done(ExecResult::Cancel);
     };
@@ -340,11 +339,11 @@ void FilePicker::model_did_update(unsigned)
 void FilePicker::on_file_return()
 {
     auto path = m_filename_textbox->text();
-    if (!path.starts_with('/')) {
+    if (!path.starts_with('/'))
         path = LexicalPath::join(m_model->root_path(), path).string();
-    }
 
-    bool file_exists = FileSystem::exists(path);
+    auto stat_or_error = Core::System::stat(path);
+    bool file_exists = !stat_or_error.is_error();
 
     if (!file_exists && (m_mode == Mode::Open || m_mode == Mode::OpenFolder)) {
         (void)MessageBox::try_show_error(this, DeprecatedString::formatted("Opening \"{}\" failed: {}", m_filename_textbox->text(), Error::from_errno(ENOENT)));
@@ -358,6 +357,13 @@ void FilePicker::on_file_return()
         auto result = MessageBox::show(this, text.release_value(), "Confirm Overwrite"sv, MessageBox::Type::Warning, MessageBox::InputType::OKCancel);
         if (result == MessageBox::ExecResult::Cancel)
             return;
+    }
+
+    // If the entered filename matches an existing directory, traverse into it
+    if (file_exists && m_mode != Mode::OpenFolder && S_ISDIR(stat_or_error.value().st_mode)) {
+        m_filename_textbox->clear();
+        set_path(path);
+        return;
     }
 
     m_selected_file = path;

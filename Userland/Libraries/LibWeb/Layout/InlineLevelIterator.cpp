@@ -42,6 +42,9 @@ void InlineLevelIterator::enter_node_with_box_model_metrics(Layout::NodeWithStyl
     m_extra_leading_metrics->border += used_values.border_left;
     m_extra_leading_metrics->padding += used_values.padding_left;
 
+    // Now's our chance to resolve the inset properties for this node.
+    m_inline_formatting_context.compute_inset(node);
+
     m_box_model_node_stack.append(node);
 }
 
@@ -121,7 +124,40 @@ void InlineLevelIterator::skip_to_next()
     compute_next();
 }
 
-Optional<InlineLevelIterator::Item> InlineLevelIterator::next(CSSPixels available_width)
+Optional<InlineLevelIterator::Item> InlineLevelIterator::next()
+{
+    if (m_lookahead_items.is_empty())
+        return next_without_lookahead();
+    return m_lookahead_items.dequeue();
+}
+
+CSSPixels InlineLevelIterator::next_non_whitespace_sequence_width()
+{
+    CSSPixels next_width = 0;
+    for (;;) {
+        auto next_item_opt = next_without_lookahead();
+        if (!next_item_opt.has_value())
+            break;
+        m_lookahead_items.enqueue(next_item_opt.release_value());
+        auto& next_item = m_lookahead_items.tail();
+        if (next_item.type == InlineLevelIterator::Item::Type::ForcedBreak)
+            break;
+        if (next_item.node->computed_values().white_space() != CSS::WhiteSpace::Nowrap) {
+            if (next_item.type != InlineLevelIterator::Item::Type::Text)
+                break;
+            if (next_item.is_collapsible_whitespace)
+                break;
+            auto& next_text_node = verify_cast<Layout::TextNode>(*(next_item.node));
+            auto next_view = next_text_node.text_for_rendering().substring_view(next_item.offset_in_node, next_item.length_in_node);
+            if (next_view.is_whitespace())
+                break;
+        }
+        next_width += next_item.border_box_width();
+    }
+    return next_width;
+}
+
+Optional<InlineLevelIterator::Item> InlineLevelIterator::next_without_lookahead()
 {
     if (!m_current_node)
         return {};
@@ -136,7 +172,7 @@ Optional<InlineLevelIterator::Item> InlineLevelIterator::next(CSSPixels availabl
         if (!chunk_opt.has_value()) {
             m_text_node_context = {};
             skip_to_next();
-            return next(available_width);
+            return next_without_lookahead();
         }
 
         m_text_node_context->next_chunk = m_text_node_context->chunk_iterator.next();
@@ -144,7 +180,7 @@ Optional<InlineLevelIterator::Item> InlineLevelIterator::next(CSSPixels availabl
             m_text_node_context->is_last_chunk = true;
 
         auto& chunk = chunk_opt.value();
-        CSSPixels chunk_width = text_node.font().width(chunk.view) + text_node.font().glyph_spacing();
+        CSSPixels chunk_width = CSSPixels::nearest_value_for(text_node.font().width(chunk.view) + text_node.font().glyph_spacing());
 
         if (m_text_node_context->do_respect_linebreaks && chunk.has_breaking_newline) {
             return Item {
@@ -197,12 +233,12 @@ Optional<InlineLevelIterator::Item> InlineLevelIterator::next(CSSPixels availabl
 
     if (is<Layout::ListItemMarkerBox>(*m_current_node)) {
         skip_to_next();
-        return next(available_width);
+        return next_without_lookahead();
     }
 
     if (!is<Layout::Box>(*m_current_node)) {
         skip_to_next();
-        return next(available_width);
+        return next_without_lookahead();
     }
 
     if (is<Layout::ReplacedBox>(*m_current_node)) {
@@ -266,7 +302,7 @@ void InlineLevelIterator::enter_text_node(Layout::TextNode const& text_node)
         .do_respect_linebreaks = do_respect_linebreaks,
         .is_first_chunk = true,
         .is_last_chunk = false,
-        .chunk_iterator = TextNode::ChunkIterator { text_node.text_for_rendering(), do_wrap_lines, do_respect_linebreaks, text_node.is_generated() && text_node.text_for_rendering().is_empty() },
+        .chunk_iterator = TextNode::ChunkIterator { text_node.text_for_rendering(), do_wrap_lines, do_respect_linebreaks },
     };
     m_text_node_context->next_chunk = m_text_node_context->chunk_iterator.next();
 }

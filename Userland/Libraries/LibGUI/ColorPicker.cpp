@@ -213,12 +213,12 @@ void ColorPicker::build_ui()
 
     auto& tab_widget = root_container->add<GUI::TabWidget>();
 
-    auto& tab_palette = tab_widget.add_tab<Widget>("Palette"_short_string);
+    auto& tab_palette = tab_widget.add_tab<Widget>("Palette"_string);
     tab_palette.set_layout<VerticalBoxLayout>(4, 4);
 
     build_ui_palette(tab_palette);
 
-    auto& tab_custom_color = tab_widget.add_tab<Widget>("Custom Color"_string.release_value_but_fixme_should_propagate_errors());
+    auto& tab_custom_color = tab_widget.add_tab<Widget>("Custom Color"_string);
     tab_custom_color.set_layout<VerticalBoxLayout>(4, 4);
 
     build_ui_custom(tab_custom_color);
@@ -226,10 +226,10 @@ void ColorPicker::build_ui()
     auto& button_container = root_container->add<Widget>();
     button_container.set_preferred_height(GUI::SpecialDimension::Fit);
     button_container.set_layout<HorizontalBoxLayout>(4);
-    button_container.add_spacer().release_value_but_fixme_should_propagate_errors();
+    button_container.add_spacer();
 
     auto& ok_button = button_container.add<DialogButton>();
-    ok_button.set_text("OK"_short_string);
+    ok_button.set_text("OK"_string);
     ok_button.on_click = [this](auto) {
         if (on_color_changed)
             on_color_changed(m_color);
@@ -238,7 +238,7 @@ void ColorPicker::build_ui()
     ok_button.set_default(true);
 
     auto& cancel_button = button_container.add<DialogButton>();
-    cancel_button.set_text("Cancel"_short_string);
+    cancel_button.set_text("Cancel"_string);
     cancel_button.on_click = [this](auto) {
         if (on_color_changed)
             on_color_changed(m_original_color);
@@ -327,7 +327,7 @@ void ColorPicker::build_ui_custom(Widget& root_container)
     // Preview selected color
     m_preview_widget = preview_container.add<ColorPreview>(m_color);
 
-    vertical_container.add_spacer().release_value_but_fixme_should_propagate_errors();
+    vertical_container.add_spacer();
 
     // HTML
     auto& html_container = vertical_container.add<GUI::Widget>();
@@ -337,7 +337,7 @@ void ColorPicker::build_ui_custom(Widget& root_container)
     auto& html_label = html_container.add<GUI::Label>();
     html_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
     html_label.set_preferred_width(48);
-    html_label.set_text("HTML:"_short_string);
+    html_label.set_text("HTML:"_string);
 
     m_html_text = html_container.add<GUI::TextBox>();
     m_html_text->set_text(m_color_has_alpha_channel ? m_color.to_deprecated_string() : m_color.to_deprecated_string_without_alpha());
@@ -393,16 +393,16 @@ void ColorPicker::build_ui_custom(Widget& root_container)
         };
 
         if (component == Red) {
-            rgb_label.set_text("Red:"_short_string);
+            rgb_label.set_text("Red:"_string);
             m_red_spinbox = spinbox;
         } else if (component == Green) {
-            rgb_label.set_text("Green:"_short_string);
+            rgb_label.set_text("Green:"_string);
             m_green_spinbox = spinbox;
         } else if (component == Blue) {
-            rgb_label.set_text("Blue:"_short_string);
+            rgb_label.set_text("Blue:"_string);
             m_blue_spinbox = spinbox;
         } else if (component == Alpha) {
-            rgb_label.set_text("Alpha:"_short_string);
+            rgb_label.set_text("Alpha:"_string);
             m_alpha_spinbox = spinbox;
         }
     };
@@ -412,7 +412,7 @@ void ColorPicker::build_ui_custom(Widget& root_container)
     make_spinbox(Blue, m_color.blue());
     make_spinbox(Alpha, m_color.alpha());
 
-    m_selector_button = vertical_container.add<GUI::Button>("Select on Screen"_string.release_value_but_fixme_should_propagate_errors());
+    m_selector_button = vertical_container.add<GUI::Button>("Select on Screen"_string);
     m_selector_button->on_click = [this](auto) {
         auto selector = ColorSelectOverlay::construct();
         auto original_color = m_color;

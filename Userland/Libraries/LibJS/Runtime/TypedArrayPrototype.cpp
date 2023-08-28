@@ -21,10 +21,10 @@ TypedArrayPrototype::TypedArrayPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> TypedArrayPrototype::initialize(Realm& realm)
+void TypedArrayPrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     u8 attr = Attribute::Writable | Attribute::Configurable;
 
     define_native_accessor(realm, vm.names.buffer, buffer_getter, nullptr, Attribute::Configurable);
@@ -70,8 +70,6 @@ ThrowCompletionOr<void> TypedArrayPrototype::initialize(Realm& realm)
 
     // 23.2.3.37 %TypedArray%.prototype [ @@iterator ] ( ), https://tc39.es/ecma262/#sec-%typedarray%.prototype-@@iterator
     define_direct_property(vm.well_known_symbol_iterator(), get_without_side_effects(vm.names.values), attr);
-
-    return {};
 }
 
 static ThrowCompletionOr<TypedArrayBase*> typed_array_from_this(VM& vm)
@@ -95,7 +93,7 @@ static ThrowCompletionOr<FunctionObject*> callback_from_args(VM& vm, DeprecatedS
         return vm.throw_completion<TypeError>(ErrorType::TypedArrayPrototypeOneArg, name);
     auto callback = vm.argument(0);
     if (!callback.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback.to_string_without_side_effects());
     return &callback.as_function();
 }
 
@@ -1494,7 +1492,7 @@ JS_DEFINE_NATIVE_FUNCTION(TypedArrayPrototype::sort)
     // 1. If comparefn is not undefined and IsCallable(comparefn) is false, throw a TypeError exception.
     auto compare_fn = vm.argument(0);
     if (!compare_fn.is_undefined() && !compare_fn.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, compare_fn.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, compare_fn.to_string_without_side_effects());
 
     // 2. Let obj be the this value.
     // 3. Perform ? ValidateTypedArray(obj).

@@ -11,9 +11,9 @@
 
 namespace Web::CSS {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSSupportsRule>> CSSSupportsRule::create(JS::Realm& realm, NonnullRefPtr<Supports>&& supports, CSSRuleList& rules)
+JS::NonnullGCPtr<CSSSupportsRule> CSSSupportsRule::create(JS::Realm& realm, NonnullRefPtr<Supports>&& supports, CSSRuleList& rules)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<CSSSupportsRule>(realm, realm, move(supports), rules));
+    return realm.heap().allocate<CSSSupportsRule>(realm, realm, move(supports), rules);
 }
 
 CSSSupportsRule::CSSSupportsRule(JS::Realm& realm, NonnullRefPtr<Supports>&& supports, CSSRuleList& rules)
@@ -22,17 +22,15 @@ CSSSupportsRule::CSSSupportsRule(JS::Realm& realm, NonnullRefPtr<Supports>&& sup
 {
 }
 
-JS::ThrowCompletionOr<void> CSSSupportsRule::initialize(JS::Realm& realm)
+void CSSSupportsRule::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::CSSSupportsRulePrototype>(realm, "CSSSupportsRule"));
-
-    return {};
 }
 
 DeprecatedString CSSSupportsRule::condition_text() const
 {
-    return m_supports->to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+    return m_supports->to_string().to_deprecated_string();
 }
 
 void CSSSupportsRule::set_condition_text(DeprecatedString text)

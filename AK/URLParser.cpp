@@ -250,6 +250,11 @@ static void serialize_ipv6_address(URL::IPv6Address const& address, StringBuilde
         }
     }
 
+    if (current_sequence_length > longest_sequence_length) {
+        longest_sequence_length = current_sequence_length;
+        compress = current_sequence_start;
+    }
+
     // 3. If there is no sequence of address’s IPv6 pieces that are 0 that is longer than 1, then set compress to null.
     if (longest_sequence_length <= 1)
         compress = {};
@@ -627,7 +632,9 @@ ErrorOr<String> URLParser::serialize_host(URL::Host const& host)
     }
 
     // 3. Otherwise, host is a domain, opaque host, or empty host, return host.
-    return host.get<String>();
+    if (host.has<String>())
+        return host.get<String>();
+    return String {};
 }
 
 // https://url.spec.whatwg.org/#start-with-a-windows-drive-letter
@@ -843,7 +850,7 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
                 }
 
                 // 2. Set url’s scheme to buffer.
-                url->m_scheme = buffer.to_deprecated_string();
+                url->m_scheme = buffer.to_string().release_value_but_fixme_should_propagate_errors();
 
                 // 3. If state override is given, then:
                 if (state_override.has_value()) {
@@ -917,7 +924,7 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
                 url->m_scheme = base_url->m_scheme;
                 url->m_paths = base_url->m_paths;
                 url->m_query = base_url->m_query;
-                url->m_fragment = "";
+                url->m_fragment = String {};
                 url->m_cannot_be_a_base_url = true;
                 state = State::Fragment;
             }
@@ -987,12 +994,12 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
 
                 // 2. If c is U+003F (?), then set url’s query to the empty string, and state to query state.
                 if (code_point == '?') {
-                    url->m_query = "";
+                    url->m_query = String {};
                     state = State::Query;
                 }
                 // 3. Otherwise, if c is U+0023 (#), set url’s fragment to the empty string and state to fragment state.
                 else if (code_point == '#') {
-                    url->m_fragment = "";
+                    url->m_fragment = String {};
                     state = State::Fragment;
                 }
                 // 4. Otherwise, if c is not the EOF code point:
@@ -1095,15 +1102,15 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
                     builder.clear();
                     // 3. If passwordTokenSeen is true, then append encodedCodePoints to url’s password.
                     if (password_token_seen) {
-                        builder.append(url->password());
+                        builder.append(url->m_password);
                         URL::append_percent_encoded_if_necessary(builder, c, URL::PercentEncodeSet::Userinfo);
-                        url->m_password = builder.string_view();
+                        url->m_password = builder.to_string().release_value_but_fixme_should_propagate_errors();
                     }
                     // 4. Otherwise, append encodedCodePoints to url’s username.
                     else {
-                        builder.append(url->username());
+                        builder.append(url->m_username);
                         URL::append_percent_encoded_if_necessary(builder, c, URL::PercentEncodeSet::Userinfo);
-                        url->m_username = builder.string_view();
+                        url->m_username = builder.to_string().release_value_but_fixme_should_propagate_errors();
                     }
                 }
 
@@ -1274,7 +1281,7 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
         // -> file state, https://url.spec.whatwg.org/#file-state
         case State::File:
             // 1. Set url’s scheme to "file".
-            url->m_scheme = "file";
+            url->m_scheme = String::from_utf8("file"sv).release_value_but_fixme_should_propagate_errors();
 
             // 2. Set url’s host to the empty string.
             url->m_host = String {};
@@ -1297,12 +1304,12 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
 
                 // 2. If c is U+003F (?), then set url’s query to the empty string and state to query state.
                 if (code_point == '?') {
-                    url->m_query = "";
+                    url->m_query = String {};
                     state = State::Query;
                 }
                 // 3. Otherwise, if c is U+0023 (#), set url’s fragment to the empty string and state to fragment state.
                 else if (code_point == '#') {
-                    url->m_fragment = "";
+                    url->m_fragment = String {};
                     state = State::Fragment;
                 }
                 // 4. Otherwise, if c is not the EOF code point:
@@ -1359,7 +1366,7 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
                     // 2. If the code point substring from pointer to the end of input does not start with a Windows drive letter and base’s path[0] is a normalized Windows drive letter, then append base’s path[0] to url’s path.
                     auto substring_from_pointer = input.substring_view(iterator - input.begin()).as_string();
                     if (!starts_with_windows_drive_letter(substring_from_pointer) && is_normalized_windows_drive_letter(base_url->m_paths[0]))
-                        url->append_path(base_url->m_paths[0], URL::ApplyPercentEncoding::No);
+                        url->m_paths.append(base_url->m_paths[0]);
                 }
 
                 // 2. Set state to path state, and decrease pointer by 1.
@@ -1438,12 +1445,12 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
             }
             // 2. Otherwise, if state override is not given and c is U+003F (?), set url’s query to the empty string and state to query state.
             else if (!state_override.has_value() && code_point == '?') {
-                url->m_query = "";
+                url->m_query = String {};
                 state = State::Query;
             }
             // 3. Otherwise, if state override is not given and c is U+0023 (#), set url’s fragment to the empty string and state to fragment state.
             else if (!state_override.has_value() && code_point == '#') {
-                url->m_fragment = "";
+                url->m_fragment = String {};
                 state = State::Fragment;
             }
             // 4. Otherwise, if c is not the EOF code point:
@@ -1499,8 +1506,7 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
                         buffer.append(':');
                     }
                     // 2. Append buffer to url’s path.
-                    //    FIXME: It would be nicer (and closer to spec) if URLParser could just directly append the path.
-                    url->append_path(buffer.string_view(), URL::ApplyPercentEncoding::No);
+                    url->m_paths.append(buffer.string_view());
                 }
 
                 // 5. Set buffer to the empty string.
@@ -1508,12 +1514,12 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
 
                 // 6. If c is U+003F (?), then set url’s query to the empty string and state to query state.
                 if (code_point == '?') {
-                    url->m_query = "";
+                    url->m_query = String {};
                     state = State::Query;
                 }
                 // 7. If c is U+0023 (#), then set url’s fragment to the empty string and state to fragment state.
                 else if (code_point == '#') {
-                    url->m_fragment = "";
+                    url->m_fragment = String {};
                     state = State::Fragment;
                 }
             }
@@ -1537,7 +1543,7 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
             // 1. If c is U+003F (?), then set url’s query to the empty string and state to query state.
             if (code_point == '?') {
                 url->m_paths[0] = buffer.string_view();
-                url->m_query = "";
+                url->m_query = String {};
                 buffer.clear();
                 state = State::Query;
             }
@@ -1545,7 +1551,7 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
             else if (code_point == '#') {
                 // NOTE: This needs to be percent decoded since the member variables contain decoded data.
                 url->m_paths[0] = buffer.string_view();
-                url->m_fragment = "";
+                url->m_fragment = String {};
                 buffer.clear();
                 state = State::Fragment;
             }
@@ -1578,21 +1584,20 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
             //    * c is the EOF code point
             if ((!state_override.has_value() && code_point == '#')
                 || code_point == end_of_file) {
-                VERIFY(url->m_query == "");
                 // then:
 
                 // 1. Let queryPercentEncodeSet be the special-query percent-encode set if url is special; otherwise the query percent-encode set.
                 auto query_percent_encode_set = url->is_special() ? URL::PercentEncodeSet::SpecialQuery : URL::PercentEncodeSet::Query;
 
                 // 2. Percent-encode after encoding, with encoding, buffer, and queryPercentEncodeSet, and append the result to url’s query.
-                url->m_query = percent_encode_after_encoding(buffer.string_view(), query_percent_encode_set);
+                url->m_query = String::from_deprecated_string(percent_encode_after_encoding(buffer.string_view(), query_percent_encode_set)).release_value_but_fixme_should_propagate_errors();
 
                 // 3. Set buffer to the empty string.
                 buffer.clear();
 
                 // 4. If c is U+0023 (#), then set url’s fragment to the empty string and state to fragment state.
                 if (code_point == '#') {
-                    url->m_fragment = "";
+                    url->m_fragment = String {};
                     state = State::Fragment;
                 }
             }
@@ -1622,7 +1627,7 @@ URL URLParser::basic_parse(StringView raw_input, Optional<URL> const& base_url, 
                 // FIXME: 3. UTF-8 percent-encode c using the fragment percent-encode set and append the result to url’s fragment.
                 buffer.append_code_point(code_point);
             } else {
-                url->m_fragment = buffer.string_view();
+                url->m_fragment = buffer.to_string().release_value_but_fixme_should_propagate_errors();
                 buffer.clear();
             }
             break;

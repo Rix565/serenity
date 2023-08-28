@@ -382,8 +382,8 @@ void VideoPlayerWidget::set_sizing_mode(VideoSizingMode sizing_mode)
 ErrorOr<void> VideoPlayerWidget::initialize_menubar(GUI::Window& window)
 {
     // File menu
-    auto file_menu = TRY(window.try_add_menu("&File"_short_string));
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_open_action([&](auto&) {
+    auto file_menu = window.add_menu("&File"_string);
+    file_menu->add_action(GUI::CommonActions::make_open_action([&](auto&) {
         FileSystemAccessClient::OpenFileOptions options {
             .allowed_file_types = { { GUI::FileTypeFilter { "Video Files", { { "mkv", "webm" } } }, GUI::FileTypeFilter::all_files() } },
         };
@@ -392,26 +392,26 @@ ErrorOr<void> VideoPlayerWidget::initialize_menubar(GUI::Window& window)
             return;
 
         open_file(response.release_value());
-    })));
-    TRY(file_menu->try_add_separator());
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([&](auto&) {
+    }));
+    file_menu->add_separator();
+    file_menu->add_action(GUI::CommonActions::make_quit_action([&](auto&) {
         window.close();
-    })));
+    }));
 
     // Playback menu
-    auto playback_menu = TRY(window.try_add_menu(TRY("&Playback"_string)));
+    auto playback_menu = window.add_menu("&Playback"_string);
 
     // FIXME: Maybe seek mode should be in an options dialog instead. The playback menu may get crowded.
     //        For now, leave it here for convenience.
     m_use_fast_seeking = GUI::Action::create_checkable("&Fast Seeking", [&](auto&) {});
-    TRY(playback_menu->try_add_action(*m_use_fast_seeking));
+    playback_menu->add_action(*m_use_fast_seeking);
     set_seek_mode(Video::PlaybackManager::DEFAULT_SEEK_MODE);
 
     // View menu
-    auto view_menu = TRY(window.try_add_menu("&View"_short_string));
-    TRY(view_menu->try_add_action(*m_toggle_fullscreen_action));
+    auto view_menu = window.add_menu("&View"_string);
+    view_menu->add_action(*m_toggle_fullscreen_action);
 
-    auto sizing_mode_menu = TRY(view_menu->try_add_submenu(TRY("&Sizing Mode"_string)));
+    auto sizing_mode_menu = view_menu->add_submenu("&Sizing Mode"_string);
     sizing_mode_menu->set_icon(TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/fit-image-to-view.png"sv)));
 
     m_sizing_mode_group = make<GUI::ActionGroup>();
@@ -421,14 +421,14 @@ ErrorOr<void> VideoPlayerWidget::initialize_menubar(GUI::Window& window)
     m_sizing_mode_group->add_action(*m_size_stretch_action);
     m_sizing_mode_group->add_action(*m_size_fullsize_action);
 
-    TRY(sizing_mode_menu->try_add_action(*m_size_fit_action));
-    TRY(sizing_mode_menu->try_add_action(*m_size_fill_action));
-    TRY(sizing_mode_menu->try_add_action(*m_size_stretch_action));
-    TRY(sizing_mode_menu->try_add_action(*m_size_fullsize_action));
+    sizing_mode_menu->add_action(*m_size_fit_action);
+    sizing_mode_menu->add_action(*m_size_fill_action);
+    sizing_mode_menu->add_action(*m_size_stretch_action);
+    sizing_mode_menu->add_action(*m_size_fullsize_action);
 
     // Help menu
-    auto help_menu = TRY(window.try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Video Player", TRY(GUI::Icon::try_create_default_icon("app-video-player"sv)), &window)));
+    auto help_menu = window.add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_about_action("Video Player", TRY(GUI::Icon::try_create_default_icon("app-video-player"sv)), &window));
 
     return {};
 }

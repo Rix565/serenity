@@ -34,10 +34,10 @@ DatePrototype::DatePrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> DatePrototype::initialize(Realm& realm)
+void DatePrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.names.getDate, get_date, 0, attr);
     define_native_function(realm, vm.names.getDay, get_day, 0, attr);
@@ -95,8 +95,6 @@ ThrowCompletionOr<void> DatePrototype::initialize(Realm& realm)
     // B.2.4.3 Date.prototype.toGMTString ( ), https://tc39.es/ecma262/#sec-date.prototype.togmtstring
     // The initial value of the "toGMTString" property is %Date.prototype.toUTCString%, defined in 21.4.4.43.
     define_direct_property(vm.names.toGMTString, get_without_side_effects(vm.names.toUTCString), attr);
-
-    return {};
 }
 
 // thisTimeValue ( value ), https://tc39.es/ecma262/#thistimevalue
@@ -952,7 +950,7 @@ JS_DEFINE_NATIVE_FUNCTION(DatePrototype::to_date_string)
 
     // 3. If tv is NaN, return "Invalid Date".
     if (isnan(time))
-        return MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Invalid Date"sv));
+        return PrimitiveString::create(vm, "Invalid Date"_string);
 
     // 4. Let t be LocalTime(tv).
     // 5. Return DateString(t).
@@ -998,7 +996,7 @@ JS_DEFINE_NATIVE_FUNCTION(DatePrototype::to_locale_date_string)
 
     // 2. If x is NaN, return "Invalid Date".
     if (isnan(time))
-        return MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Invalid Date"sv));
+        return PrimitiveString::create(vm, "Invalid Date"_string);
 
     // 3. Let dateFormat be ? CreateDateTimeFormat(%DateTimeFormat%, locales, options, "date", "date").
     auto date_format = TRY(Intl::create_date_time_format(vm, realm.intrinsics().intl_date_time_format_constructor(), locales, options, Intl::OptionRequired::Date, Intl::OptionDefaults::Date));
@@ -1022,7 +1020,7 @@ JS_DEFINE_NATIVE_FUNCTION(DatePrototype::to_locale_string)
 
     // 2. If x is NaN, return "Invalid Date".
     if (isnan(time))
-        return MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Invalid Date"sv));
+        return PrimitiveString::create(vm, "Invalid Date"_string);
 
     // 3. Let dateFormat be ? CreateDateTimeFormat(%DateTimeFormat%, locales, options, "any", "all").
     auto date_format = TRY(Intl::create_date_time_format(vm, realm.intrinsics().intl_date_time_format_constructor(), locales, options, Intl::OptionRequired::Any, Intl::OptionDefaults::All));
@@ -1046,7 +1044,7 @@ JS_DEFINE_NATIVE_FUNCTION(DatePrototype::to_locale_time_string)
 
     // 2. If x is NaN, return "Invalid Date".
     if (isnan(time))
-        return MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Invalid Date"sv));
+        return PrimitiveString::create(vm, "Invalid Date"_string);
 
     // 3. Let timeFormat be ? CreateDateTimeFormat(%DateTimeFormat%, locales, options, "time", "time").
     auto time_format = TRY(Intl::create_date_time_format(vm, realm.intrinsics().intl_date_time_format_constructor(), locales, options, Intl::OptionRequired::Time, Intl::OptionDefaults::Time));
@@ -1200,7 +1198,7 @@ JS_DEFINE_NATIVE_FUNCTION(DatePrototype::to_time_string)
 
     // 3. If tv is NaN, return "Invalid Date".
     if (isnan(time))
-        return MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Invalid Date"sv));
+        return PrimitiveString::create(vm, "Invalid Date"_string);
 
     // 4. Let t be LocalTime(tv).
     // 5. Return the string-concatenation of TimeString(t) and TimeZoneString(tv).
@@ -1217,7 +1215,7 @@ JS_DEFINE_NATIVE_FUNCTION(DatePrototype::to_utc_string)
 
     // 3. If tv is NaN, return "Invalid Date".
     if (isnan(time))
-        return MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Invalid Date"sv));
+        return PrimitiveString::create(vm, "Invalid Date"_string);
 
     // 4. Let weekday be the Name of the entry in Table 62 with the Number WeekDay(tv).
     auto weekday = short_day_names[week_day(time)];
@@ -1245,11 +1243,11 @@ JS_DEFINE_NATIVE_FUNCTION(DatePrototype::symbol_to_primitive)
 {
     auto this_value = vm.this_value();
     if (!this_value.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, this_value.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, this_value.to_string_without_side_effects());
     auto hint_value = vm.argument(0);
     if (!hint_value.is_string())
-        return vm.throw_completion<TypeError>(ErrorType::InvalidHint, TRY_OR_THROW_OOM(vm, hint_value.to_string_without_side_effects()));
-    auto hint = TRY(hint_value.as_string().deprecated_string());
+        return vm.throw_completion<TypeError>(ErrorType::InvalidHint, hint_value.to_string_without_side_effects());
+    auto hint = hint_value.as_string().deprecated_string();
     Value::PreferredType try_first;
     if (hint == "string" || hint == "default")
         try_first = Value::PreferredType::String;

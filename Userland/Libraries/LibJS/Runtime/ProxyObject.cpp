@@ -17,7 +17,7 @@ namespace JS {
 
 NonnullGCPtr<ProxyObject> ProxyObject::create(Realm& realm, Object& target, Object& handler)
 {
-    return realm.heap().allocate<ProxyObject>(realm, target, handler, realm.intrinsics().object_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<ProxyObject>(realm, target, handler, realm.intrinsics().object_prototype());
 }
 
 ProxyObject::ProxyObject(Object& target, Object& handler, Object& prototype)
@@ -738,7 +738,7 @@ ThrowCompletionOr<MarkedVector<Value>> ProxyObject::internal_own_property_keys()
     for (auto& key : target_nonconfigurable_keys) {
         // a. If key is not an element of uncheckedResultKeys, throw a TypeError exception.
         if (!unchecked_result_keys.contains_slow(key))
-            return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysSkippedNonconfigurableProperty, TRY_OR_THROW_OOM(vm, key.to_string_without_side_effects()));
+            return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysSkippedNonconfigurableProperty, key.to_string_without_side_effects());
 
         // b. Remove key from uncheckedResultKeys.
         unchecked_result_keys.remove_first_matching([&](auto& value) {
@@ -754,7 +754,7 @@ ThrowCompletionOr<MarkedVector<Value>> ProxyObject::internal_own_property_keys()
     for (auto& key : target_configurable_keys) {
         // a. If key is not an element of uncheckedResultKeys, throw a TypeError exception.
         if (!unchecked_result_keys.contains_slow(key))
-            return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysNonExtensibleSkippedProperty, TRY_OR_THROW_OOM(vm, key.to_string_without_side_effects()));
+            return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysNonExtensibleSkippedProperty, key.to_string_without_side_effects());
 
         // b. Remove key from uncheckedResultKeys.
         unchecked_result_keys.remove_first_matching([&](auto& value) {
@@ -764,7 +764,7 @@ ThrowCompletionOr<MarkedVector<Value>> ProxyObject::internal_own_property_keys()
 
     // 22. If uncheckedResultKeys is not empty, throw a TypeError exception.
     if (!unchecked_result_keys.is_empty())
-        return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysNonExtensibleNewProperty, TRY_OR_THROW_OOM(vm, unchecked_result_keys[0].to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysNonExtensibleNewProperty, unchecked_result_keys[0].to_string_without_side_effects());
 
     // 23. Return trapResult.
     return { move(trap_result) };

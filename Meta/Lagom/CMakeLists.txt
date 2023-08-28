@@ -25,8 +25,6 @@ get_filename_component(
 )
 set(SerenityOS_SOURCE_DIR "${SERENITY_PROJECT_ROOT}" CACHE STRING "")
 
-set(SERENITY_CACHE_DIR "${PROJECT_BINARY_DIR}" CACHE STRING "")
-
 list(APPEND CMAKE_MODULE_PATH "${SERENITY_PROJECT_ROOT}/Meta/CMake")
 
 if(NOT COMMAND serenity_option)
@@ -78,30 +76,7 @@ endif()
 include(flac_spec_tests)
 include(lagom_compile_options)
 
-include(GNUInstallDirs) # make sure to include before we mess w/RPATH
-
-# Mirror the structure of the installed tree to ensure that rpaths
-# always remain valid.
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin")
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}")
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}")
-
-set(CMAKE_SKIP_BUILD_RPATH FALSE)
-set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
-# See slide 100 of the following ppt :^)
-# https://crascit.com/wp-content/uploads/2019/09/Deep-CMake-For-Library-Authors-Craig-Scott-CppCon-2019.pdf
-if (APPLE)
-    set(CMAKE_MACOSX_RPATH TRUE)
-    set(CMAKE_INSTALL_NAME_DIR "@rpath")
-    set(CMAKE_INSTALL_RPATH "@loader_path/../lib")
-else()
-    set(CMAKE_INSTALL_RPATH "$ORIGIN:$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
-endif()
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-set(CMAKE_INSTALL_MESSAGE NEVER)
 
 if (EMSCRIPTEN)
     set(CMAKE_EXECUTABLE_SUFFIX ".js")
@@ -121,6 +96,9 @@ endif()
 
 if (ENABLE_UNDEFINED_SANITIZER)
     add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer)
+    if (UNDEFINED_BEHAVIOR_IS_FATAL)
+        add_compile_options(-fno-sanitize-recover=undefined)
+    endif()
     set(LINKER_FLAGS "${LINKER_FLAGS} -fsanitize=undefined")
 endif()
 
@@ -142,6 +120,8 @@ if (ENABLE_LAGOM_LADYBIRD AND (ENABLE_FUZZERS OR ENABLE_COMPILER_EXPLORER_BUILD)
         "Disable ENABLE_LAGOM_LADYBIRD and try again."
     )
 endif()
+
+CHECK_INCLUDE_FILE(pulse/pulseaudio.h HAVE_PULSEAUDIO)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang$")
     add_compile_options(-Wno-overloaded-virtual)
@@ -370,12 +350,28 @@ install(TARGETS LibTimeZone EXPORT LagomTargets)
 # This is used by the BindingsGenerator so needs to always be built.
 add_serenity_subdirectory(Userland/Libraries/LibIDL)
 
+# LibGUI - only GML
+# This is used by the GML compiler and therefore always needed.
+set(LIBGUI_GML_SOURCES
+    GML/Lexer.cpp
+    GML/Parser.cpp
+)
+list(TRANSFORM LIBGUI_GML_SOURCES PREPEND "${SERENITY_PROJECT_ROOT}/Userland/Libraries/LibGUI/")
+lagom_lib(LibGUI_GML gui_gml
+    SOURCES ${LIBGUI_GML_SOURCES}
+)
+
 # Manually install AK headers
 install(
     DIRECTORY "${SERENITY_PROJECT_ROOT}/AK"
     COMPONENT Lagom_Development
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.h"
+)
+install(FILES
+    ${Lagom_BINARY_DIR}/AK/Debug.h
+    COMPONENT Lagom_Development
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/AK"
 )
 
 # Code Generators and other host tools
@@ -408,6 +404,7 @@ if (BUILD_LAGOM)
         Markdown
         PDF
         Protocol
+        PublicSuffix
         Regex
         SoftGPU
         SQL
@@ -422,6 +419,12 @@ if (BUILD_LAGOM)
         XML
     )
 
+    # These are needed for both LibWeb and LibProtocol.
+    compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/RequestServer/RequestClient.ipc RequestServer/RequestClientEndpoint.h)
+    compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/RequestServer/RequestServer.ipc RequestServer/RequestServerEndpoint.h)
+    compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/WebSocket/WebSocketClient.ipc WebSocket/WebSocketClientEndpoint.h)
+    compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/WebSocket/WebSocketServer.ipc WebSocket/WebSocketServerEndpoint.h)
+
     if (ENABLE_LAGOM_LIBWEB)
         list(APPEND lagom_standard_libraries Web)
 
@@ -432,26 +435,39 @@ if (BUILD_LAGOM)
         list(APPEND LIBWEBVIEW_SOURCES "../../Userland/Libraries/LibWebView/ViewImplementation.cpp")
         list(APPEND LIBWEBVIEW_SOURCES "../../Userland/Libraries/LibWebView/WebContentClient.cpp")
         list(APPEND LIBWEBVIEW_SOURCES "../../Userland/Libraries/LibWebView/RequestServerAdapter.cpp")
+        list(APPEND LIBWEBVIEW_SOURCES "../../Userland/Libraries/LibWebView/WebSocketClientAdapter.cpp")
 
         compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/WebContent/WebContentServer.ipc WebContent/WebContentServerEndpoint.h)
         compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/WebContent/WebContentClient.ipc WebContent/WebContentClientEndpoint.h)
         compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/WebContent/WebDriverClient.ipc WebContent/WebDriverClientEndpoint.h)
         compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/WebContent/WebDriverServer.ipc WebContent/WebDriverServerEndpoint.h)
-        compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/RequestServer/RequestClient.ipc RequestServer/RequestClientEndpoint.h)
-        compile_ipc(${SERENITY_PROJECT_ROOT}/Userland/Services/RequestServer/RequestServer.ipc RequestServer/RequestServerEndpoint.h)
 
+        embed_as_string_view(
+            "NativeStyleSheetSource"
+            "${SERENITY_PROJECT_ROOT}/Userland/Libraries/LibWebView/Native.css"
+            "LibWebView/NativeStyleSheetSource.cpp"
+            "native_stylesheet_source"
+            NAMESPACE "WebView"
+        )
+
+        list(APPEND LIBWEBVIEW_GENERATED_SOURCES LibWebView/NativeStyleSheetSource.cpp)
         list(APPEND LIBWEBVIEW_GENERATED_SOURCES WebContent/WebContentClientEndpoint.h)
         list(APPEND LIBWEBVIEW_GENERATED_SOURCES WebContent/WebContentServerEndpoint.h)
         list(APPEND LIBWEBVIEW_GENERATED_SOURCES WebContent/WebDriverClientEndpoint.h)
         list(APPEND LIBWEBVIEW_GENERATED_SOURCES WebContent/WebDriverServerEndpoint.h)
         list(APPEND LIBWEBVIEW_GENERATED_SOURCES RequestServer/RequestClientEndpoint.h)
         list(APPEND LIBWEBVIEW_GENERATED_SOURCES RequestServer/RequestServerEndpoint.h)
+        list(APPEND LIBWEBVIEW_GENERATED_SOURCES WebSocket/WebSocketClientEndpoint.h)
+        list(APPEND LIBWEBVIEW_GENERATED_SOURCES WebSocket/WebSocketServerEndpoint.h)
 
-        set(GENERATED_SOURCES ${LIBWEBVIEW_GENERATED_SOURCES})
         lagom_lib(LibWebView webview
             SOURCES ${LIBWEBVIEW_SOURCES} ${LIBWEBVIEW_GENERATED_SOURCES}
             LIBS LibGfx LibGUI LibIPC LibWeb LibProtocol)
-        unset(GENERATED_SOURCES)
+        foreach(header ${LIBWEBVIEW_GENERATED_SOURCES})
+            get_filename_component(subdirectory ${header} DIRECTORY)
+            install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${header}" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/${subdirectory}")
+        endforeach()
+        install(FILES "${SERENITY_PROJECT_ROOT}/Userland/Services/RequestServer/ConnectionCache.h" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/RequestServer")
     endif()
 
     if (NOT EMSCRIPTEN)
@@ -482,6 +498,9 @@ if (BUILD_LAGOM)
     lagom_lib(LibGUI gui
         SOURCES ${LIBGUI_SOURCES}
         LIBS LibGfx LibSyntax)
+
+    # FIXME: How about we don't include Kernel/API from random high-level libraries?
+    install(FILES ${SERENITY_PROJECT_ROOT}/Kernel/API/KeyCode.h DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/Kernel/API")
 
     # FIXME: LibLocaleData is an object lib in Lagom, because the weak symbol trick we use on serenity
     #    straight up isn't supposed to work per ELF rules
@@ -629,6 +648,7 @@ if (BUILD_LAGOM)
             LibCompress
             LibGL
             LibGfx
+            LibIMAP
             LibLocale
             LibMarkdown
             LibPDF
@@ -654,9 +674,15 @@ if (BUILD_LAGOM)
         # The FLAC tests need a special working directory to find the test files
         lagom_test(../../Tests/LibAudio/TestFLACSpec.cpp LIBS LibAudio WORKING_DIRECTORY "${FLAC_TEST_PATH}/..")
 
+        lagom_test(../../Tests/LibAudio/TestPlaybackStream.cpp LIBS LibAudio)
+        if (HAVE_PULSEAUDIO)
+            target_compile_definitions(TestPlaybackStream PRIVATE HAVE_PULSEAUDIO=1)
+        endif()
+
         # LibCore
         if ((LINUX OR APPLE) AND NOT EMSCRIPTEN)
             lagom_test(../../Tests/LibCore/TestLibCoreFileWatcher.cpp)
+            lagom_test(../../Tests/LibCore/TestLibCorePromise.cpp LIBS LibThreading)
         endif()
 
         # RegexLibC test POSIX <regex.h> and contains many Serenity extensions
@@ -674,12 +700,6 @@ if (BUILD_LAGOM)
             COMMAND test-js --show-progress=false
         )
         set_tests_properties(JS PROPERTIES ENVIRONMENT SERENITY_SOURCE_DIR=${SERENITY_PROJECT_ROOT})
-
-        add_test(
-            NAME JS-AST
-            COMMAND test-js --ast --show-progress=false
-        )
-        set_tests_properties(JS-AST PROPERTIES ENVIRONMENT SERENITY_SOURCE_DIR=${SERENITY_PROJECT_ROOT})
 
         # Extra tests from Tests/LibJS
         lagom_test(../../Tests/LibJS/test-invalid-unicode-js.cpp LIBS LibJS)
@@ -700,7 +720,7 @@ if (BUILD_LAGOM)
         add_executable(test-wasm
             ../../Tests/LibWasm/test-wasm.cpp
             ../../Userland/Libraries/LibTest/JavaScriptTestRunnerMain.cpp)
-        target_link_libraries(test-wasm LibCore LibFileSystem LibTest LibWasm LibJS)
+        target_link_libraries(test-wasm LibCore LibFileSystem LibTest LibWasm LibJS LibCrypto)
         add_test(
             NAME WasmParser
             COMMAND test-wasm --show-progress=false ${CMAKE_CURRENT_BINARY_DIR}/Userland/Libraries/LibWasm/Tests

@@ -18,12 +18,10 @@ SVGLinearGradientElement::SVGLinearGradientElement(DOM::Document& document, DOM:
 {
 }
 
-JS::ThrowCompletionOr<void> SVGLinearGradientElement::initialize(JS::Realm& realm)
+void SVGLinearGradientElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::SVGLinearGradientElementPrototype>(realm, "SVGLinearGradientElement"));
-
-    return {};
 }
 
 void SVGLinearGradientElement::attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value)
@@ -133,6 +131,7 @@ Optional<Gfx::PaintStyle const&> SVGLinearGradientElement::to_gfx_paint_style(SV
     }
 
     m_paint_style->set_gradient_transform(gradient_paint_transform(paint_context));
+    m_paint_style->set_spread_method(to_gfx_spread_method(spread_method()));
     return *m_paint_style;
 }
 

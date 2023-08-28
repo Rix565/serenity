@@ -26,14 +26,14 @@ ZonedDateTimePrototype::ZonedDateTimePrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> ZonedDateTimePrototype::initialize(Realm& realm)
+void ZonedDateTimePrototype::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
     // 6.3.2 Temporal.ZonedDateTime.prototype[ @@toStringTag ], https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype-@@tostringtag
-    define_direct_property(vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Temporal.ZonedDateTime"sv)), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Temporal.ZonedDateTime"_string), Attribute::Configurable);
 
     define_native_accessor(realm, vm.names.calendar, calendar_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.timeZone, time_zone_getter, {}, Attribute::Configurable);
@@ -90,8 +90,6 @@ ThrowCompletionOr<void> ZonedDateTimePrototype::initialize(Realm& realm)
     define_native_function(realm, vm.names.toPlainYearMonth, to_plain_year_month, 0, attr);
     define_native_function(realm, vm.names.toPlainMonthDay, to_plain_month_day, 0, attr);
     define_native_function(realm, vm.names.getISOFields, get_iso_fields, 0, attr);
-
-    return {};
 }
 
 // 6.3.3 get Temporal.ZonedDateTime.prototype.calendar, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.calendar
@@ -756,7 +754,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with)
     // 3. If Type(temporalZonedDateTimeLike) is not Object, then
     if (!temporal_zoned_date_time_like.is_object()) {
         // a. Throw a TypeError exception.
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, temporal_zoned_date_time_like.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, temporal_zoned_date_time_like.to_string_without_side_effects());
     }
 
     // 4. Perform ? RejectObjectWithCalendarOrTimeZone(temporalZonedDateTimeLike).
@@ -769,7 +767,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with)
     auto field_names = TRY(calendar_fields(vm, calendar, { "day"sv, "hour"sv, "microsecond"sv, "millisecond"sv, "minute"sv, "month"sv, "monthCode"sv, "nanosecond"sv, "second"sv, "year"sv }));
 
     // 7. Append "offset" to fieldNames.
-    field_names.append(TRY_OR_THROW_OOM(vm, "offset"_string));
+    field_names.append("offset"_string);
 
     // 8. Let partialZonedDateTime be ? PrepareTemporalFields(temporalZonedDateTimeLike, fieldNames, partial).
     auto* partial_zoned_date_time = TRY(prepare_temporal_fields(vm, temporal_zoned_date_time_like.as_object(), field_names, PrepareTemporalFieldsPartial {}));
@@ -787,7 +785,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with)
     auto& time_zone = zoned_date_time->time_zone();
 
     // 13. Append "timeZone" to fieldNames.
-    field_names.append(TRY_OR_THROW_OOM(vm, "timeZone"_string));
+    field_names.append("timeZone"_string);
 
     // 14. Let fields be ? PrepareTemporalFields(zonedDateTime, fieldNames, « "timeZone", "offset" »).
     auto* fields = TRY(prepare_temporal_fields(vm, zoned_date_time, field_names, Vector<StringView> { "timeZone"sv, "offset"sv }));
@@ -803,7 +801,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with)
 
     // 18. Assert: Type(offsetString) is String.
     VERIFY(offset_string_value.is_string());
-    auto offset_string = TRY(offset_string_value.as_string().utf8_string());
+    auto offset_string = offset_string_value.as_string().utf8_string();
 
     // 19. Let dateTimeResult be ? InterpretTemporalDateTimeFields(calendar, fields, options).
     auto date_time_result = TRY(interpret_temporal_date_time_fields(vm, calendar, *fields, options));

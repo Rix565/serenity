@@ -14,7 +14,7 @@ namespace Web::DOM {
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<AbortSignal>> AbortSignal::construct_impl(JS::Realm& realm)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<AbortSignal>(realm, realm));
+    return realm.heap().allocate<AbortSignal>(realm, realm);
 }
 
 AbortSignal::AbortSignal(JS::Realm& realm)
@@ -22,12 +22,10 @@ AbortSignal::AbortSignal(JS::Realm& realm)
 {
 }
 
-JS::ThrowCompletionOr<void> AbortSignal::initialize(JS::Realm& realm)
+void AbortSignal::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::AbortSignalPrototype>(realm, "AbortSignal"));
-
-    return {};
 }
 
 // https://dom.spec.whatwg.org/#abortsignal-add
@@ -62,7 +60,7 @@ void AbortSignal::signal_abort(JS::Value reason)
     m_abort_algorithms.clear();
 
     // 5. Fire an event named abort at signal.
-    dispatch_event(Event::create(realm(), HTML::EventNames::abort).release_value_but_fixme_should_propagate_errors());
+    dispatch_event(Event::create(realm(), HTML::EventNames::abort));
 }
 
 void AbortSignal::set_onabort(WebIDL::CallbackType* event_handler)

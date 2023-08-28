@@ -94,17 +94,31 @@ UNMAP_AFTER_INIT VirtualFileSystem::VirtualFileSystem()
 
 UNMAP_AFTER_INIT VirtualFileSystem::~VirtualFileSystem() = default;
 
-InodeIdentifier VirtualFileSystem::root_inode_id() const
+bool VirtualFileSystem::check_matching_absolute_path_hierarchy(Custody const& first_custody, Custody const& second_custody)
 {
-    VERIFY(m_root_inode);
-    return m_root_inode->identifier();
+    // Are both custodies the root mount?
+    if (!first_custody.parent() && !second_custody.parent())
+        return true;
+    if (first_custody.name() != second_custody.name())
+        return false;
+    auto const* custody1 = &first_custody;
+    auto const* custody2 = &second_custody;
+    while (custody1->parent()) {
+        if (!custody2->parent())
+            return false;
+        if (custody1->parent().ptr() != custody2->parent().ptr())
+            return false;
+        custody1 = custody1->parent();
+        custody2 = custody2->parent();
+    }
+    return true;
 }
 
-bool VirtualFileSystem::mount_point_exists_at_inode(InodeIdentifier inode_identifier)
+bool VirtualFileSystem::mount_point_exists_at_custody(Custody& mount_point)
 {
     return m_mounts.with([&](auto& mounts) -> bool {
-        return any_of(mounts, [&inode_identifier](auto const& existing_mount) {
-            return existing_mount.host() && existing_mount.host()->identifier() == inode_identifier;
+        return any_of(mounts, [&mount_point](auto const& existing_mount) {
+            return existing_mount.host_custody() && check_matching_absolute_path_hierarchy(*existing_mount.host_custody(), mount_point);
         });
     });
 }
@@ -113,14 +127,14 @@ ErrorOr<void> VirtualFileSystem::add_file_system_to_mount_table(FileSystem& file
 {
     auto new_mount = TRY(adopt_nonnull_own_or_enomem(new (nothrow) Mount(file_system, &mount_point, flags)));
     return m_mounts.with([&](auto& mounts) -> ErrorOr<void> {
-        auto& inode = mount_point.inode();
-        dbgln("VirtualFileSystem: FileSystemID {} (non file-backed), Mounting {} at inode {} with flags {}",
+        auto& mount_point_inode = mount_point.inode();
+        dbgln("VirtualFileSystem: FileSystemID {}, Mounting {} at inode {} with flags {}",
             file_system.fsid(),
             file_system.class_name(),
-            inode.identifier(),
+            mount_point_inode.identifier(),
             flags);
-        if (mount_point_exists_at_inode(inode.identifier())) {
-            dbgln("VirtualFileSystem: Mounting unsuccessful - inode {} is already a mount-point.", inode.identifier());
+        if (mount_point_exists_at_custody(mount_point)) {
+            dbgln("VirtualFileSystem: Mounting unsuccessful - inode {} is already a mount-point.", mount_point_inode.identifier());
             return EBUSY;
         }
         // Note: Actually add a mount for the filesystem and increment the filesystem mounted count
@@ -211,7 +225,7 @@ ErrorOr<void> VirtualFileSystem::bind_mount(Custody& source, Custody& mount_poin
     return m_mounts.with([&](auto& mounts) -> ErrorOr<void> {
         auto& inode = mount_point.inode();
         dbgln("VirtualFileSystem: Bind-mounting inode {} at inode {}", source.inode().identifier(), inode.identifier());
-        if (mount_point_exists_at_inode(inode.identifier())) {
+        if (mount_point_exists_at_custody(mount_point)) {
             dbgln("VirtualFileSystem: Bind-mounting unsuccessful - inode {} is already a mount-point.",
                 mount_point.inode().identifier());
             return EBUSY;
@@ -231,11 +245,9 @@ ErrorOr<void> VirtualFileSystem::remount(Custody& mount_point, int new_flags)
 {
     dbgln("VirtualFileSystem: Remounting inode {}", mount_point.inode().identifier());
 
-    auto* mount = find_mount_for_guest(mount_point.inode().identifier());
-    if (!mount)
-        return ENODEV;
-
-    mount->set_flags(new_flags);
+    TRY(apply_to_mount_for_host_custody(mount_point, [new_flags](auto& mount) {
+        mount.set_flags(new_flags);
+    }));
     return {};
 }
 
@@ -247,8 +259,12 @@ void VirtualFileSystem::sync_filesystems()
             file_systems.append(fs);
     });
 
-    for (auto& fs : file_systems)
-        fs->flush_writes();
+    for (auto& fs : file_systems) {
+        auto result = fs->flush_writes();
+        if (result.is_error()) {
+            // TODO: Figure out how to propagate error to a higher function.
+        }
+    }
 }
 
 void VirtualFileSystem::lock_all_filesystems()
@@ -358,51 +374,35 @@ ErrorOr<void> VirtualFileSystem::mount_root(FileSystem& fs)
     return {};
 }
 
-auto VirtualFileSystem::find_mount_for_host(InodeIdentifier id) -> Mount*
+ErrorOr<void> VirtualFileSystem::apply_to_mount_for_host_custody(Custody const& current_custody, Function<void(Mount&)> callback)
 {
-    return m_mounts.with([&](auto& mounts) -> Mount* {
-        for (auto& mount : mounts) {
-            if (mount.host() && mount.host()->identifier() == id)
-                return &mount;
+    return m_mounts.with([&](auto& mounts) -> ErrorOr<void> {
+        // NOTE: We either search for the root mount or for a mount that has a parent custody!
+        if (!current_custody.parent()) {
+            for (auto& mount : mounts) {
+                if (!mount.host_custody()) {
+                    callback(mount);
+                    return {};
+                }
+            }
+            // NOTE: There must be a root mount entry, so fail if we don't find it.
+            VERIFY_NOT_REACHED();
+        } else {
+            for (auto& mount : mounts) {
+                if (mount.host_custody() && check_matching_absolute_path_hierarchy(*mount.host_custody(), current_custody)) {
+                    callback(mount);
+                    return {};
+                }
+            }
         }
-        return nullptr;
+        return Error::from_errno(ENODEV);
     });
-}
-
-auto VirtualFileSystem::find_mount_for_guest(InodeIdentifier id) -> Mount*
-{
-    return m_mounts.with([&](auto& mounts) -> Mount* {
-        for (auto& mount : mounts) {
-            if (mount.guest().identifier() == id)
-                return &mount;
-        }
-        return nullptr;
-    });
-}
-
-bool VirtualFileSystem::is_vfs_root(InodeIdentifier inode) const
-{
-    return inode == root_inode_id();
 }
 
 ErrorOr<void> VirtualFileSystem::traverse_directory_inode(Inode& dir_inode, Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)> callback)
 {
     return dir_inode.traverse_as_directory([&](auto& entry) -> ErrorOr<void> {
-        InodeIdentifier resolved_inode;
-        if (auto mount = find_mount_for_host(entry.inode))
-            resolved_inode = mount->guest().identifier();
-        else
-            resolved_inode = entry.inode;
-
-        // FIXME: This is now broken considering chroot and bind mounts.
-        bool is_root_inode = dir_inode.identifier() == dir_inode.fs().root_inode().identifier();
-        if (is_root_inode && !is_vfs_root(dir_inode.identifier()) && entry.name == "..") {
-            auto mount = find_mount_for_guest(dir_inode.identifier());
-            VERIFY(mount);
-            VERIFY(mount->host());
-            resolved_inode = mount->host()->identifier();
-        }
-        TRY(callback({ entry.name, resolved_inode, entry.file_type }));
+        TRY(callback({ entry.name, entry.inode, entry.file_type }));
         return {};
     });
 }
@@ -1226,14 +1226,19 @@ ErrorOr<NonnullRefPtr<Custody>> VirtualFileSystem::resolve_path_without_veil(Cre
 
         int mount_flags_for_child = parent.mount_flags();
 
+        auto current_custody = TRY(Custody::try_create(&parent, part, *child_inode, mount_flags_for_child));
+
         // See if there's something mounted on the child; in that case
         // we would need to return the guest inode, not the host inode.
-        if (auto mount = find_mount_for_host(child_inode->identifier())) {
-            child_inode = mount->guest();
-            mount_flags_for_child = mount->flags();
+        auto found_mount_or_error = apply_to_mount_for_host_custody(current_custody, [&child_inode, &mount_flags_for_child](auto& mount) {
+            child_inode = mount.guest();
+            mount_flags_for_child = mount.flags();
+        });
+        if (!found_mount_or_error.is_error()) {
+            custody = TRY(Custody::try_create(&parent, part, *child_inode, mount_flags_for_child));
+        } else {
+            custody = current_custody;
         }
-
-        custody = TRY(Custody::try_create(&parent, part, *child_inode, mount_flags_for_child));
 
         if (child_inode->metadata().is_symlink()) {
             if (!have_more_parts) {

@@ -30,11 +30,6 @@ enum class IsLayoutTestMode {
     Yes
 };
 
-enum class UseJavaScriptBytecode {
-    No,
-    Yes
-};
-
 class ViewImplementation {
 public:
     virtual ~ViewImplementation() { }
@@ -51,6 +46,10 @@ public:
     AK::URL const& url() const { return m_url; }
 
     String const& handle() const { return m_client_state.client_handle; }
+
+    void server_did_paint(Badge<WebContentClient>, i32 bitmap_id, Gfx::IntSize size);
+    void server_did_invalidate_content_rect(Badge<WebContentClient>, Gfx::IntRect rect);
+    void server_did_change_selection(Badge<WebContentClient>);
 
     void load(AK::URL const&);
     void load_html(StringView, AK::URL const&);
@@ -74,13 +73,15 @@ public:
     void clear_inspected_dom_node();
     i32 get_hovered_node_id();
 
-    UseJavaScriptBytecode use_javascript_bytecode() const { return m_use_javascript_bytecode; }
-
     void debug_request(DeprecatedString const& request, DeprecatedString const& argument = {});
 
     void run_javascript(StringView);
     void js_console_input(DeprecatedString const& js_source);
     void js_console_request_messages(i32 start_index);
+
+    void alert_closed();
+    void confirm_closed(bool accepted);
+    void prompt_closed(Optional<String> response);
 
     void toggle_media_play_state();
     void toggle_media_mute_state();
@@ -93,6 +94,13 @@ public:
     };
     ErrorOr<void> take_screenshot(ScreenshotType);
 
+    void set_user_style_sheet(String source);
+    // Load Native.css as the User style sheet, which attempts to make WebView content look as close to
+    // native GUI widgets as possible.
+    void use_native_user_style_sheet();
+
+    Function<void(Gfx::IntSize)> on_did_layout;
+    Function<void()> on_ready_to_paint;
     Function<String(Web::HTML::ActivateTab)> on_new_tab;
     Function<void()> on_activate_tab;
     Function<void()> on_close;
@@ -107,16 +115,29 @@ public:
     Function<void(DeprecatedString const&)> on_title_change;
     Function<void(const AK::URL&, bool)> on_load_start;
     Function<void(const AK::URL&)> on_load_finish;
+    Function<void(DeprecatedString const& path, i32)> on_request_file;
     Function<void()> on_navigate_back;
     Function<void()> on_navigate_forward;
     Function<void()> on_refresh;
     Function<void(Gfx::Bitmap const&)> on_favicon_change;
-    Function<void(const AK::URL&, DeprecatedString const&)> on_get_source;
-    Function<void(DeprecatedString const&)> on_get_dom_tree;
-    Function<void(i32 node_id, DeprecatedString const& computed_style, DeprecatedString const& resolved_style, DeprecatedString const& custom_properties, DeprecatedString const& node_box_sizing, DeprecatedString const& aria_properties_state)> on_get_dom_node_properties;
-    Function<void(DeprecatedString const&)> on_get_accessibility_tree;
-    Function<void(i32 message_id)> on_js_console_new_message;
-    Function<void(i32 start_index, Vector<DeprecatedString> const& message_types, Vector<DeprecatedString> const& messages)> on_get_js_console_messages;
+    Function<void(i32, i32)> on_scroll_by_delta;
+    Function<void(Gfx::IntPoint)> on_scroll_to_point;
+    Function<void(Gfx::IntRect)> on_scroll_into_view;
+    Function<void(Gfx::StandardCursor)> on_cursor_change;
+    Function<void(Gfx::IntPoint, DeprecatedString const&)> on_enter_tooltip_area;
+    Function<void()> on_leave_tooltip_area;
+    Function<void(String const& message)> on_request_alert;
+    Function<void(String const& message)> on_request_confirm;
+    Function<void(String const& message, String const& default_)> on_request_prompt;
+    Function<void(String const& message)> on_request_set_prompt_text;
+    Function<void()> on_request_accept_dialog;
+    Function<void()> on_request_dismiss_dialog;
+    Function<void(const AK::URL&, DeprecatedString const&)> on_received_source;
+    Function<void(DeprecatedString const&)> on_received_dom_tree;
+    Function<void(i32 node_id, DeprecatedString const& computed_style, DeprecatedString const& resolved_style, DeprecatedString const& custom_properties, DeprecatedString const& node_box_sizing, DeprecatedString const& aria_properties_state)> on_received_dom_node_properties;
+    Function<void(DeprecatedString const&)> on_received_accessibility_tree;
+    Function<void(i32 message_id)> on_received_console_message;
+    Function<void(i32 start_index, Vector<DeprecatedString> const& message_types, Vector<DeprecatedString> const& messages)> on_received_console_messages;
     Function<Vector<Web::Cookie::Cookie>(AK::URL const& url)> on_get_all_cookies;
     Function<Optional<Web::Cookie::Cookie>(AK::URL const& url, DeprecatedString const& name)> on_get_named_cookie;
     Function<DeprecatedString(const AK::URL& url, Web::Cookie::Source source)> on_get_cookie;
@@ -129,27 +150,7 @@ public:
     Function<Gfx::IntRect()> on_maximize_window;
     Function<Gfx::IntRect()> on_minimize_window;
     Function<Gfx::IntRect()> on_fullscreen_window;
-    Function<void()> on_back_button;
-    Function<void()> on_forward_button;
-
-    virtual void notify_server_did_layout(Badge<WebContentClient>, Gfx::IntSize content_size) = 0;
-    virtual void notify_server_did_paint(Badge<WebContentClient>, i32 bitmap_id, Gfx::IntSize) = 0;
-    virtual void notify_server_did_invalidate_content_rect(Badge<WebContentClient>, Gfx::IntRect const&) = 0;
-    virtual void notify_server_did_change_selection(Badge<WebContentClient>) = 0;
-    virtual void notify_server_did_request_cursor_change(Badge<WebContentClient>, Gfx::StandardCursor cursor) = 0;
-    virtual void notify_server_did_request_scroll(Badge<WebContentClient>, i32, i32) = 0;
-    virtual void notify_server_did_request_scroll_to(Badge<WebContentClient>, Gfx::IntPoint) = 0;
-    virtual void notify_server_did_request_scroll_into_view(Badge<WebContentClient>, Gfx::IntRect const&) = 0;
-    virtual void notify_server_did_enter_tooltip_area(Badge<WebContentClient>, Gfx::IntPoint, DeprecatedString const&) = 0;
-    virtual void notify_server_did_leave_tooltip_area(Badge<WebContentClient>) = 0;
-    virtual void notify_server_did_request_alert(Badge<WebContentClient>, String const& message) = 0;
-    virtual void notify_server_did_request_confirm(Badge<WebContentClient>, String const& message) = 0;
-    virtual void notify_server_did_request_prompt(Badge<WebContentClient>, String const& message, String const& default_) = 0;
-    virtual void notify_server_did_request_set_prompt_text(Badge<WebContentClient>, String const& message) = 0;
-    virtual void notify_server_did_request_accept_dialog(Badge<WebContentClient>) = 0;
-    virtual void notify_server_did_request_dismiss_dialog(Badge<WebContentClient>) = 0;
-    virtual void notify_server_did_request_file(Badge<WebContentClient>, DeprecatedString const& path, i32) = 0;
-    virtual void notify_server_did_finish_handling_input_event(bool event_was_accepted) = 0;
+    Function<void(bool)> on_finish_handling_input_event;
 
     virtual Gfx::IntRect viewport_rect() const = 0;
     virtual Gfx::IntPoint to_content_position(Gfx::IntPoint widget_position) const = 0;
@@ -160,7 +161,7 @@ protected:
     static constexpr auto ZOOM_MAX_LEVEL = 5.0f;
     static constexpr auto ZOOM_STEP = 0.1f;
 
-    explicit ViewImplementation(UseJavaScriptBytecode);
+    ViewImplementation();
 
     WebContentClient& client();
     WebContentClient const& client() const;
@@ -208,8 +209,6 @@ protected:
 
     size_t m_crash_count = 0;
     RefPtr<Core::Timer> m_repeated_crash_timer;
-
-    UseJavaScriptBytecode m_use_javascript_bytecode {};
 };
 
 }

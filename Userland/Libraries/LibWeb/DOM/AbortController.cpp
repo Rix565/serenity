@@ -13,7 +13,7 @@ namespace Web::DOM {
 WebIDL::ExceptionOr<JS::NonnullGCPtr<AbortController>> AbortController::construct_impl(JS::Realm& realm)
 {
     auto signal = TRY(AbortSignal::construct_impl(realm));
-    return MUST_OR_THROW_OOM(realm.heap().allocate<AbortController>(realm, realm, move(signal)));
+    return realm.heap().allocate<AbortController>(realm, realm, move(signal));
 }
 
 // https://dom.spec.whatwg.org/#dom-abortcontroller-abortcontroller
@@ -25,12 +25,10 @@ AbortController::AbortController(JS::Realm& realm, JS::NonnullGCPtr<AbortSignal>
 
 AbortController::~AbortController() = default;
 
-JS::ThrowCompletionOr<void> AbortController::initialize(JS::Realm& realm)
+void AbortController::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::AbortControllerPrototype>(realm, "AbortController"));
-
-    return {};
 }
 
 void AbortController::visit_edges(Cell::Visitor& visitor)

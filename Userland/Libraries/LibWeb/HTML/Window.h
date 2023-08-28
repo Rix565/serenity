@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -20,6 +20,7 @@
 #include <LibWeb/HTML/CrossOrigin/CrossOriginPropertyDescriptorMap.h>
 #include <LibWeb/HTML/GlobalEventHandlers.h>
 #include <LibWeb/HTML/MimeType.h>
+#include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/Plugin.h>
 #include <LibWeb/HTML/Scripting/ImportMap.h>
 #include <LibWeb/HTML/ScrollOptions.h>
@@ -46,7 +47,7 @@ class Window final
     WEB_PLATFORM_OBJECT(Window, DOM::EventTarget);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Window>> create(JS::Realm&);
+    [[nodiscard]] static JS::NonnullGCPtr<Window> create(JS::Realm&);
 
     ~Window();
 
@@ -81,6 +82,8 @@ public:
     // https://html.spec.whatwg.org/multipage/window-object.html#window-bc
     BrowsingContext const* browsing_context() const;
     BrowsingContext* browsing_context();
+
+    JS::GCPtr<Navigable> navigable() const;
 
     size_t document_tree_child_browsing_context_count() const;
 
@@ -131,8 +134,9 @@ public:
     JS::NonnullGCPtr<DOM::Document const> document() const;
     String name() const;
     void set_name(String const&);
-    WebIDL::ExceptionOr<JS::NonnullGCPtr<Location>> location();
+    [[nodiscard]] JS::NonnullGCPtr<Location> location();
     JS::NonnullGCPtr<History> history() const;
+    JS::NonnullGCPtr<Navigation> navigation();
     void focus();
 
     JS::NonnullGCPtr<WindowProxy> frames() const;
@@ -142,7 +146,7 @@ public:
     JS::GCPtr<DOM::Element const> frame_element() const;
     WebIDL::ExceptionOr<JS::GCPtr<WindowProxy>> open(Optional<String> const& url, Optional<String> const& target, Optional<String> const& features);
 
-    WebIDL::ExceptionOr<JS::NonnullGCPtr<Navigator>> navigator();
+    [[nodiscard]] JS::NonnullGCPtr<Navigator> navigator();
 
     void alert(String const& message = {});
     bool confirm(Optional<String> const& message);
@@ -152,10 +156,11 @@ public:
 
     Variant<JS::Handle<DOM::Event>, JS::Value> event() const;
 
-    WebIDL::ExceptionOr<JS::NonnullGCPtr<CSS::CSSStyleDeclaration>> get_computed_style(DOM::Element&, Optional<String> const& pseudo_element) const;
+    [[nodiscard]] JS::NonnullGCPtr<CSS::CSSStyleDeclaration> get_computed_style(DOM::Element&, Optional<String> const& pseudo_element) const;
 
     WebIDL::ExceptionOr<JS::NonnullGCPtr<CSS::MediaQueryList>> match_media(String const& query);
-    WebIDL::ExceptionOr<JS::NonnullGCPtr<CSS::Screen>> screen();
+    [[nodiscard]] JS::NonnullGCPtr<CSS::Screen> screen();
+    [[nodiscard]] JS::GCPtr<CSS::VisualViewport> visual_viewport();
 
     i32 inner_width() const;
     i32 inner_height() const;
@@ -181,14 +186,16 @@ public:
 
     JS::GCPtr<Selection::Selection> get_selection() const;
 
-    WebIDL::ExceptionOr<JS::NonnullGCPtr<HighResolutionTime::Performance>> performance();
+    [[nodiscard]] JS::NonnullGCPtr<HighResolutionTime::Performance> performance();
 
-    WebIDL::ExceptionOr<JS::NonnullGCPtr<Crypto::Crypto>> crypto();
+    [[nodiscard]] JS::NonnullGCPtr<Crypto::Crypto> crypto();
 
-    WebIDL::ExceptionOr<JS::NonnullGCPtr<CustomElementRegistry>> custom_elements();
+    [[nodiscard]] JS::NonnullGCPtr<CustomElementRegistry> custom_elements();
 
     HighResolutionTime::DOMHighResTimeStamp get_last_activation_timestamp() const { return m_last_activation_timestamp; }
     void set_last_activation_timestamp(HighResolutionTime::DOMHighResTimeStamp timestamp) { m_last_activation_timestamp = timestamp; }
+
+    static void set_internals_object_exposed(bool);
 
 private:
     explicit Window(JS::Realm&);
@@ -219,6 +226,9 @@ private:
     JS::GCPtr<CSS::Screen> m_screen;
     JS::GCPtr<Navigator> m_navigator;
     JS::GCPtr<Location> m_location;
+
+    // https://html.spec.whatwg.org/multipage/nav-history-apis.html#window-navigation-api
+    JS::GCPtr<Navigation> m_navigation;
 
     // https://html.spec.whatwg.org/multipage/custom-elements.html#custom-elements-api
     // Each Window object is associated with a unique instance of a CustomElementRegistry object, allocated when the Window object is created.

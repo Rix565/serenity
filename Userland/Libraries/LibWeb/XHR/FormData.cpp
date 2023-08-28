@@ -35,7 +35,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<FormData>> FormData::construct_impl(JS::Rea
 
 WebIDL::ExceptionOr<JS::NonnullGCPtr<FormData>> FormData::construct_impl(JS::Realm& realm, Vector<FormDataEntry> entry_list)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<FormData>(realm, realm, move(entry_list)));
+    return realm.heap().allocate<FormData>(realm, realm, move(entry_list));
 }
 
 FormData::FormData(JS::Realm& realm, Vector<FormDataEntry> entry_list)
@@ -46,12 +46,10 @@ FormData::FormData(JS::Realm& realm, Vector<FormDataEntry> entry_list)
 
 FormData::~FormData() = default;
 
-JS::ThrowCompletionOr<void> FormData::initialize(JS::Realm& realm)
+void FormData::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::FormDataPrototype>(realm, "FormData"));
-
-    return {};
 }
 
 // https://xhr.spec.whatwg.org/#dom-formdata-append

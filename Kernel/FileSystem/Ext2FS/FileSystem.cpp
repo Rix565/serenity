@@ -589,7 +589,6 @@ ErrorOr<void> Ext2FS::prepare_to_clear_last_mount(Inode& mount_guest_inode)
     if (any_inode_busy)
         return EBUSY;
 
-    BlockBasedFileSystem::remove_disk_cache_before_last_unmount();
     m_inode_cache.clear();
     m_root_inode = nullptr;
 
@@ -597,6 +596,7 @@ ErrorOr<void> Ext2FS::prepare_to_clear_last_mount(Inode& mount_guest_inode)
     dmesgln("Ext2FS: Clean unmount, setting superblock to valid state");
     m_super_block.s_state = EXT2_VALID_FS;
     TRY(flush_super_block());
+    BlockBasedFileSystem::remove_disk_cache_before_last_unmount();
 
     return {};
 }
@@ -662,7 +662,7 @@ void Ext2FS::flush_block_group_descriptor_table()
     }
 }
 
-void Ext2FS::flush_writes()
+ErrorOr<void> Ext2FS::flush_writes()
 {
     {
         MutexLocker locker(m_lock);
@@ -670,8 +670,7 @@ void Ext2FS::flush_writes()
             auto result = flush_super_block();
             if (result.is_error()) {
                 dbgln("Ext2FS[{}]::flush_writes(): Failed to write superblock: {}", fsid(), result.error());
-                // FIXME: We should handle this error.
-                VERIFY_NOT_REACHED();
+                return result.release_error();
             }
             m_super_block_dirty = false;
         }
@@ -708,7 +707,13 @@ void Ext2FS::flush_writes()
         });
     }
 
-    BlockBasedFileSystem::flush_writes();
+    auto result = BlockBasedFileSystem::flush_writes();
+    if (result.is_error()) {
+        dbgln("Ext2FS[{}]::flush_writes(): Failed to flush writes: {}", BlockBasedFileSystem::fsid(), result.error());
+        return result.release_error();
+    }
+
+    return {};
 }
 
 ErrorOr<NonnullRefPtr<Ext2FSInode>> Ext2FS::build_root_inode() const

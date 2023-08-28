@@ -17,10 +17,10 @@ DisposableStackPrototype::DisposableStackPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> DisposableStackPrototype::initialize(Realm& realm)
+void DisposableStackPrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     u8 attr = Attribute::Writable | Attribute::Configurable;
 
     define_native_accessor(realm, vm.names.disposed, disposed_getter, {}, attr);
@@ -35,8 +35,6 @@ ThrowCompletionOr<void> DisposableStackPrototype::initialize(Realm& realm)
 
     // 11.3.3.8 DisposableStack.prototype [ @@toStringTag ], https://tc39.es/proposal-explicit-resource-management/#sec-disposablestack.prototype-@@toStringTag
     define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, vm.names.DisposableStack.as_string()), Attribute::Configurable);
-
-    return {};
 }
 
 // 11.3.3.1 get DisposableStack.prototype.disposed, https://tc39.es/proposal-explicit-resource-management/#sec-get-disposablestack.prototype.disposed
@@ -89,7 +87,7 @@ JS_DEFINE_NATIVE_FUNCTION(DisposableStackPrototype::use)
     if (!value.is_nullish()) {
         // a. If Type(value) is not Object, throw a TypeError exception.
         if (!value.is_object())
-            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
+            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, value.to_string_without_side_effects());
 
         // FIXME: This should be TRY in the spec
         // b. Let method be GetDisposeMethod(value, sync-dispose).
@@ -98,7 +96,7 @@ JS_DEFINE_NATIVE_FUNCTION(DisposableStackPrototype::use)
         // c. If method is undefined, then
         if (!method.ptr()) {
             // i. Throw a TypeError exception.
-            return vm.throw_completion<TypeError>(ErrorType::NoDisposeMethod, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
+            return vm.throw_completion<TypeError>(ErrorType::NoDisposeMethod, value.to_string_without_side_effects());
         }
         // d. Else,
         // i. Perform ? AddDisposableResource(disposableStack, value, sync-dispose, method).
@@ -128,7 +126,7 @@ JS_DEFINE_NATIVE_FUNCTION(DisposableStackPrototype::adopt)
 
     // 4. If IsCallable(onDispose) is false, throw a TypeError exception.
     if (!on_dispose.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, on_dispose.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, on_dispose.to_string_without_side_effects());
 
     // 5. Let F be a new built-in function object as defined in 11.3.3.4.1.
     // 6. Set F.[[Argument]] to value.
@@ -169,7 +167,7 @@ JS_DEFINE_NATIVE_FUNCTION(DisposableStackPrototype::defer)
 
     // 4. If IsCallable(onDispose) is false, throw a TypeError exception.
     if (!on_dispose.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, on_dispose.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, on_dispose.to_string_without_side_effects());
 
     // 5. Perform ? AddDisposableResource(disposableStack, undefined, sync-dispose, onDispose).
     TRY(add_disposable_resource(vm, disposable_stack->disposable_resource_stack(), js_undefined(), Environment::InitializeBindingHint::SyncDispose, &on_dispose.as_function()));

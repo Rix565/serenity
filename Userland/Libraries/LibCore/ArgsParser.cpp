@@ -383,11 +383,25 @@ void ArgsParser::print_usage_markdown(FILE* file, StringView argv0)
 
 void ArgsParser::print_version(FILE* file)
 {
+    // FIXME: Allow applications to override version string for --version.
+    //        Especially useful for Lagom applications
     outln(file, Core::Version::read_long_version_string().release_value_but_fixme_should_propagate_errors());
 }
 
 void ArgsParser::add_option(Option&& option)
 {
+    for (auto const& existing_option : m_options) {
+        if (option.long_name && existing_option.long_name == option.long_name) {
+            warnln("Error: Multiple options have the long name \"--{}\"", option.long_name);
+            dbgln("Error: Multiple options have the long name \"--{}\"", option.long_name);
+            VERIFY_NOT_REACHED();
+        }
+        if (option.short_name && existing_option.short_name == option.short_name) {
+            warnln("Error: Multiple options have the short name \"-{}\"", option.short_name);
+            dbgln("Error: Multiple options have the short name \"-{}\"", option.short_name);
+            VERIFY_NOT_REACHED();
+        }
+    }
     m_options.append(move(option));
 }
 

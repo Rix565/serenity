@@ -22,7 +22,7 @@ enum class ShadowPlacement {
 
 class ShadowStyleValue final : public StyleValueWithDefaultOperators<ShadowStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<ShadowStyleValue>> create(
+    static ValueComparingNonnullRefPtr<ShadowStyleValue> create(
         Color color,
         ValueComparingNonnullRefPtr<StyleValue const> offset_x,
         ValueComparingNonnullRefPtr<StyleValue const> offset_y,
@@ -30,7 +30,7 @@ public:
         ValueComparingNonnullRefPtr<StyleValue const> spread_distance,
         ShadowPlacement placement)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) ShadowStyleValue(color, move(offset_x), move(offset_y), move(blur_radius), move(spread_distance), placement));
+        return adopt_ref(*new (nothrow) ShadowStyleValue(color, move(offset_x), move(offset_y), move(blur_radius), move(spread_distance), placement));
     }
     virtual ~ShadowStyleValue() override = default;
 
@@ -41,7 +41,7 @@ public:
     ValueComparingNonnullRefPtr<StyleValue const> const& spread_distance() const { return m_properties.spread_distance; }
     ShadowPlacement placement() const { return m_properties.placement; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(ShadowStyleValue const& other) const { return m_properties == other.m_properties; }
 
@@ -65,7 +65,7 @@ private:
     {
     }
 
-    virtual ErrorOr<ValueComparingNonnullRefPtr<StyleValue const>> absolutized(CSSPixelRect const& viewport_rect, Length::FontMetrics const& font_metrics, Length::FontMetrics const& root_font_metrics) const override;
+    virtual ValueComparingNonnullRefPtr<StyleValue const> absolutized(CSSPixelRect const& viewport_rect, Length::FontMetrics const& font_metrics, Length::FontMetrics const& root_font_metrics) const override;
 
     struct Properties {
         Color color;

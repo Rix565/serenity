@@ -20,12 +20,11 @@ public:
 
     static Optional<Type> unit_from_name(StringView);
 
-    Time(int value, Type type);
     Time(double value, Type type);
     static Time make_seconds(double);
     Time percentage_of(Percentage const&) const;
 
-    ErrorOr<String> to_string() const;
+    String to_string() const;
     double to_milliseconds() const;
     double to_seconds() const;
 
@@ -62,6 +61,6 @@ template<>
 struct AK::Formatter<Web::CSS::Time> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder& builder, Web::CSS::Time const& time)
     {
-        return Formatter<StringView>::format(builder, TRY(time.to_string()));
+        return Formatter<StringView>::format(builder, time.to_string());
     }
 };

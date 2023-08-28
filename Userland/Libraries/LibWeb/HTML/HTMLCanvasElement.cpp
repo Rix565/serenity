@@ -6,13 +6,19 @@
 
 #include <AK/Base64.h>
 #include <AK/Checked.h>
+#include <AK/MemoryStream.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/ImageFormats/JPEGWriter.h>
 #include <LibGfx/ImageFormats/PNGWriter.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/CanvasRenderingContext2D.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
+#include <LibWeb/HTML/Scripting/ExceptionReporter.h>
 #include <LibWeb/Layout/CanvasBox.h>
+#include <LibWeb/Platform/EventLoopPlugin.h>
+#include <LibWeb/WebIDL/AbstractOperations.h>
 
 namespace Web::HTML {
 
@@ -25,12 +31,10 @@ HTMLCanvasElement::HTMLCanvasElement(DOM::Document& document, DOM::QualifiedName
 
 HTMLCanvasElement::~HTMLCanvasElement() = default;
 
-JS::ThrowCompletionOr<void> HTMLCanvasElement::initialize(JS::Realm& realm)
+void HTMLCanvasElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLCanvasElementPrototype>(realm, "HTMLCanvasElement"));
-
-    return {};
 }
 
 void HTMLCanvasElement::visit_edges(Cell::Visitor& visitor)
@@ -97,7 +101,7 @@ HTMLCanvasElement::HasOrCreatedContext HTMLCanvasElement::create_2d_context()
     if (!m_context.has<Empty>())
         return m_context.has<JS::NonnullGCPtr<CanvasRenderingContext2D>>() ? HasOrCreatedContext::Yes : HasOrCreatedContext::No;
 
-    m_context = CanvasRenderingContext2D::create(realm(), *this).release_value_but_fixme_should_propagate_errors();
+    m_context = CanvasRenderingContext2D::create(realm(), *this);
     return HasOrCreatedContext::Yes;
 }
 
@@ -179,23 +183,100 @@ bool HTMLCanvasElement::create_bitmap(size_t minimum_width, size_t minimum_heigh
     return m_bitmap;
 }
 
-DeprecatedString HTMLCanvasElement::to_data_url(DeprecatedString const& type, [[maybe_unused]] Optional<double> quality) const
+struct SerializeBitmapResult {
+    ByteBuffer buffer;
+    StringView mime_type;
+};
+
+// https://html.spec.whatwg.org/multipage/canvas.html#a-serialisation-of-the-bitmap-as-a-file
+static ErrorOr<SerializeBitmapResult> serialize_bitmap(Gfx::Bitmap const& bitmap, StringView type, Optional<double> quality)
 {
+    // If type is an image format that supports variable quality (such as "image/jpeg"), quality is given, and type is not "image/png", then,
+    // if Type(quality) is Number, and quality is in the range 0.0 to 1.0 inclusive, the user agent must treat quality as the desired quality level.
+    // Otherwise, the user agent must use its default quality value, as if the quality argument had not been given.
+    if (quality.has_value() && !(*quality >= 0.0 && *quality <= 1.0))
+        quality = OptionalNone {};
+
+    if (type.equals_ignoring_ascii_case("image/jpeg"sv)) {
+        AllocatingMemoryStream file;
+        Gfx::JPEGWriter::Options jpeg_options;
+        if (quality.has_value())
+            jpeg_options.quality = static_cast<int>(quality.value() * 100);
+        TRY(Gfx::JPEGWriter::encode(file, bitmap, jpeg_options));
+        return SerializeBitmapResult { TRY(file.read_until_eof()), "image/jpeg"sv };
+    }
+
+    // User agents must support PNG ("image/png"). User agents may support other types.
+    // If the user agent does not support the requested type, then it must create the file using the PNG format. [PNG]
+    return SerializeBitmapResult { TRY(Gfx::PNGWriter::encode(bitmap)), "image/png"sv };
+}
+
+// https://html.spec.whatwg.org/multipage/canvas.html#dom-canvas-todataurl
+DeprecatedString HTMLCanvasElement::to_data_url(DeprecatedString const& type, Optional<double> quality) const
+{
+    // FIXME: 1. If this canvas element's bitmap's origin-clean flag is set to false, then throw a "SecurityError" DOMException.
+
+    // 2. If this canvas element's bitmap has no pixels (i.e. either its horizontal dimension or its vertical dimension is zero)
+    //    then return the string "data:,". (This is the shortest data: URL; it represents the empty string in a text/plain resource.)
     if (!m_bitmap)
-        return {};
-    if (type != "image/png")
-        return {};
-    auto encoded_bitmap_or_error = Gfx::PNGWriter::encode(*m_bitmap);
-    if (encoded_bitmap_or_error.is_error()) {
-        dbgln("Gfx::PNGWriter failed to encode the HTMLCanvasElement: {}", encoded_bitmap_or_error.error());
-        return {};
+        return "data:,";
+
+    // 3. Let file be a serialization of this canvas element's bitmap as a file, passing type and quality if given.
+    auto file = serialize_bitmap(*m_bitmap, type, move(quality));
+
+    // 4. If file is null then return "data:,".
+    if (file.is_error()) {
+        dbgln("HTMLCanvasElement: Failed to encode canvas bitmap to {}: {}", type, file.error());
+        return "data:,";
     }
-    auto base64_encoded_or_error = encode_base64(encoded_bitmap_or_error.value());
+
+    // 5. Return a data: URL representing file. [RFC2397]
+    auto base64_encoded_or_error = encode_base64(file.value().buffer);
     if (base64_encoded_or_error.is_error()) {
-        // FIXME: propagate error
-        return {};
+        return "data:,";
     }
-    return AK::URL::create_with_data(type, base64_encoded_or_error.release_value(), true).to_deprecated_string();
+    return AK::URL::create_with_data(file.value().mime_type, base64_encoded_or_error.release_value(), true).to_deprecated_string();
+}
+
+// https://html.spec.whatwg.org/multipage/canvas.html#dom-canvas-toblob
+WebIDL::ExceptionOr<void> HTMLCanvasElement::to_blob(JS::NonnullGCPtr<WebIDL::CallbackType> callback, DeprecatedString const& type, Optional<double> quality)
+{
+    // FIXME: 1. If this canvas element's bitmap's origin-clean flag is set to false, then throw a "SecurityError" DOMException.
+
+    // 2. Let result be null.
+    RefPtr<Gfx::Bitmap> bitmap_result;
+
+    // 3. If this canvas element's bitmap has pixels (i.e., neither its horizontal dimension nor its vertical dimension is zero),
+    //    then set result to a copy of this canvas element's bitmap.
+    if (m_bitmap)
+        bitmap_result = TRY_OR_THROW_OOM(vm(), m_bitmap->clone());
+
+    // 4. Run these steps in parallel:
+    Platform::EventLoopPlugin::the().deferred_invoke([this, callback, bitmap_result, type, quality] {
+        // 1. If result is non-null, then set result to a serialization of result as a file with type and quality if given.
+        Optional<SerializeBitmapResult> file_result;
+        if (bitmap_result) {
+            if (auto result = serialize_bitmap(*bitmap_result, type, move(quality)); !result.is_error())
+                file_result = result.release_value();
+        }
+
+        // 2. Queue an element task on the canvas blob serialization task source given the canvas element to run these steps:
+        queue_an_element_task(Task::Source::CanvasBlobSerializationTask, [this, callback, file_result = move(file_result)] {
+            auto maybe_error = Bindings::throw_dom_exception_if_needed(vm(), [&]() -> WebIDL::ExceptionOr<void> {
+                // 1. If result is non-null, then set result to a new Blob object, created in the relevant realm of this canvas element, representing result. [FILEAPI]
+                JS::GCPtr<FileAPI::Blob> blob_result;
+                if (file_result.has_value())
+                    blob_result = FileAPI::Blob::create(realm(), file_result->buffer, TRY_OR_THROW_OOM(vm(), String::from_utf8(file_result->mime_type)));
+
+                // 2. Invoke callback with « result ».
+                TRY(WebIDL::invoke_callback(*callback, {}, move(blob_result)));
+                return {};
+            });
+            if (maybe_error.is_throw_completion())
+                report_exception(maybe_error.throw_completion(), realm());
+        });
+    });
+    return {};
 }
 
 void HTMLCanvasElement::present()

@@ -9,40 +9,40 @@
 
 namespace Web::CSS {
 
-ErrorOr<ValueComparingNonnullRefPtr<GridTrackSizeListShorthandStyleValue>> GridTrackSizeListShorthandStyleValue::create(
+ValueComparingNonnullRefPtr<GridTrackSizeListShorthandStyleValue> GridTrackSizeListShorthandStyleValue::create(
     ValueComparingNonnullRefPtr<GridTemplateAreaStyleValue const> areas,
     ValueComparingNonnullRefPtr<GridTrackSizeListStyleValue const> rows,
     ValueComparingNonnullRefPtr<GridTrackSizeListStyleValue const> columns)
 {
-    return adopt_nonnull_ref_or_enomem(new (nothrow) GridTrackSizeListShorthandStyleValue(move(areas), move(rows), move(columns)));
+    return adopt_ref(*new (nothrow) GridTrackSizeListShorthandStyleValue(move(areas), move(rows), move(columns)));
 }
 
-ErrorOr<String> GridTrackSizeListShorthandStyleValue::to_string() const
+String GridTrackSizeListShorthandStyleValue::to_string() const
 {
-    auto construct_rows_string = [&]() -> ErrorOr<String> {
+    auto construct_rows_string = [&]() {
         StringBuilder builder;
         size_t idx = 0;
         for (auto const& row : m_properties.rows->grid_track_size_list().track_list()) {
             if (m_properties.areas->grid_template_area().size() > idx) {
-                TRY(builder.try_append("\""sv));
+                builder.append("\""sv);
                 for (size_t y = 0; y < m_properties.areas->grid_template_area()[idx].size(); ++y) {
-                    TRY(builder.try_append(m_properties.areas->grid_template_area()[idx][y]));
+                    builder.append(m_properties.areas->grid_template_area()[idx][y]);
                     if (y != m_properties.areas->grid_template_area()[idx].size() - 1)
-                        TRY(builder.try_append(" "sv));
+                        builder.append(" "sv);
                 }
-                TRY(builder.try_append("\" "sv));
+                builder.append("\" "sv);
             }
-            TRY(builder.try_append(TRY(row.to_string())));
+            builder.append(row.to_string());
             if (idx < m_properties.rows->grid_track_size_list().track_list().size() - 1)
-                TRY(builder.try_append(' '));
+                builder.append(' ');
             idx++;
         }
-        return TRY(builder.to_string());
+        return MUST(builder.to_string());
     };
 
     if (m_properties.columns->grid_track_size_list().track_list().size() == 0)
-        return String::formatted("{}", TRY(construct_rows_string()));
-    return String::formatted("{} / {}", TRY(construct_rows_string()), TRY(m_properties.columns->grid_track_size_list().to_string()));
+        return MUST(String::formatted("{}", construct_rows_string()));
+    return MUST(String::formatted("{} / {}", construct_rows_string(), m_properties.columns->grid_track_size_list().to_string()));
 }
 
 }

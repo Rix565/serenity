@@ -9,6 +9,7 @@
 #include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Painting/PaintableBox.h>
 #include <LibWeb/Painting/StackingContext.h>
+#include <LibWeb/Painting/ViewportPaintable.h>
 
 namespace Web::Layout {
 
@@ -22,42 +23,6 @@ Viewport::~Viewport() = default;
 JS::GCPtr<Selection::Selection> Viewport::selection() const
 {
     return const_cast<DOM::Document&>(document()).get_selection();
-}
-
-void Viewport::build_stacking_context_tree_if_needed()
-{
-    if (paintable_box()->stacking_context())
-        return;
-    build_stacking_context_tree();
-}
-
-void Viewport::build_stacking_context_tree()
-{
-    const_cast<Painting::PaintableBox*>(paintable_box())->set_stacking_context(make<Painting::StackingContext>(*this, nullptr, 0));
-
-    size_t index_in_tree_order = 1;
-    for_each_in_subtree_of_type<Box>([&](Box& box) {
-        if (!box.paintable_box())
-            return IterationDecision::Continue;
-        const_cast<Painting::PaintableBox*>(box.paintable_box())->invalidate_stacking_context();
-        if (!box.establishes_stacking_context()) {
-            VERIFY(!box.paintable_box()->stacking_context());
-            return IterationDecision::Continue;
-        }
-        auto* parent_context = const_cast<Painting::PaintableBox*>(box.paintable_box())->enclosing_stacking_context();
-        VERIFY(parent_context);
-        const_cast<Painting::PaintableBox*>(box.paintable_box())->set_stacking_context(make<Painting::StackingContext>(box, parent_context, index_in_tree_order++));
-        return IterationDecision::Continue;
-    });
-
-    const_cast<Painting::PaintableBox*>(paintable_box())->stacking_context()->sort();
-}
-
-void Viewport::paint_all_phases(PaintContext& context)
-{
-    build_stacking_context_tree_if_needed();
-    context.painter().translate(-context.device_viewport_rect().location().to_type<int>());
-    paintable_box()->stacking_context()->paint(context);
 }
 
 void Viewport::recompute_selection_states()
@@ -124,6 +89,11 @@ void Viewport::recompute_selection_states()
         if (auto* layout_node = node->layout_node())
             layout_node->set_selection_state(SelectionState::Full);
     }
+}
+
+JS::GCPtr<Painting::Paintable> Viewport::create_paintable() const
+{
+    return Painting::ViewportPaintable::create(*this);
 }
 
 }

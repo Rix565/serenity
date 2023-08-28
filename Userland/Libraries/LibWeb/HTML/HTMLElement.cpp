@@ -5,7 +5,6 @@
  */
 
 #include <AK/StringBuilder.h>
-#include <LibJS/Interpreter.h>
 #include <LibWeb/ARIA/Roles.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/DOM/Document.h>
@@ -44,16 +43,12 @@ HTMLElement::HTMLElement(DOM::Document& document, DOM::QualifiedName qualified_n
 
 HTMLElement::~HTMLElement() = default;
 
-JS::ThrowCompletionOr<void> HTMLElement::initialize(JS::Realm& realm)
+void HTMLElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLElementPrototype>(realm, "HTMLElement"));
 
-    m_dataset = TRY(Bindings::throw_dom_exception_if_needed(realm.vm(), [&]() {
-        return DOMStringMap::create(*this);
-    }));
-
-    return {};
+    m_dataset = DOMStringMap::create(*this);
 }
 
 void HTMLElement::visit_edges(Cell::Visitor& visitor)
@@ -288,7 +283,7 @@ bool HTMLElement::fire_a_synthetic_pointer_event(FlyString const& type, DOM::Ele
     // 1. Let event be the result of creating an event using PointerEvent.
     // 2. Initialize event's type attribute to e.
     // FIXME: Actually create a PointerEvent!
-    auto event = UIEvents::MouseEvent::create(realm(), type).release_value_but_fixme_should_propagate_errors();
+    auto event = UIEvents::MouseEvent::create(realm(), type);
 
     // 3. Initialize event's bubbles and cancelable attributes to true.
     event->set_bubbles(true);

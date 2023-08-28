@@ -13,7 +13,7 @@ namespace JS::Intl {
 
 NonnullGCPtr<CollatorCompareFunction> CollatorCompareFunction::create(Realm& realm, Collator& collator)
 {
-    return realm.heap().allocate<CollatorCompareFunction>(realm, realm, collator).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<CollatorCompareFunction>(realm, realm, collator);
 }
 
 CollatorCompareFunction::CollatorCompareFunction(Realm& realm, Collator& collator)
@@ -22,13 +22,11 @@ CollatorCompareFunction::CollatorCompareFunction(Realm& realm, Collator& collato
 {
 }
 
-ThrowCompletionOr<void> CollatorCompareFunction::initialize(Realm&)
+void CollatorCompareFunction::initialize(Realm&)
 {
     auto& vm = this->vm();
     define_direct_property(vm.names.length, Value(2), Attribute::Configurable);
     define_direct_property(vm.names.name, PrimitiveString::create(vm, String {}), Attribute::Configurable);
-
-    return {};
 }
 
 // 10.3.3.2 CompareStrings ( collator, x, y ), https://tc39.es/ecma402/#sec-collator-comparestrings

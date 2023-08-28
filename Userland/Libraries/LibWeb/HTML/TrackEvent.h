@@ -23,8 +23,8 @@ class TrackEvent : public DOM::Event {
     WEB_PLATFORM_OBJECT(TrackEvent, DOM::Event);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<TrackEvent>> create(JS::Realm&, FlyString const& event_name, TrackEventInit event_init = {});
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<TrackEvent>> construct_impl(JS::Realm&, FlyString const& event_name, TrackEventInit event_init);
+    [[nodiscard]] static JS::NonnullGCPtr<TrackEvent> create(JS::Realm&, FlyString const& event_name, TrackEventInit = {});
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<TrackEvent>> construct_impl(JS::Realm&, FlyString const& event_name, TrackEventInit);
 
     // https://html.spec.whatwg.org/multipage/media.html#dom-trackevent-track
     Variant<Empty, JS::Handle<VideoTrack>, JS::Handle<AudioTrack>> track() const;
@@ -32,7 +32,7 @@ public:
 private:
     TrackEvent(JS::Realm&, FlyString const& event_name, TrackEventInit event_init);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     TrackEventInit::TrackType m_track;
 };

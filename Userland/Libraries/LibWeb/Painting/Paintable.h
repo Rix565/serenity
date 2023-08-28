@@ -23,7 +23,7 @@ enum class PaintPhase {
     Background,
     Border,
     Foreground,
-    FocusOutline,
+    Outline,
     Overlay,
 };
 
@@ -48,16 +48,20 @@ enum class HitTestType {
     TextCursor, // Clicking past the right/bottom edge of text will still hit the text
 };
 
-class Paintable : public JS::Cell {
+class Paintable
+    : public JS::Cell
+    , public TreeNode<Paintable> {
     JS_CELL(Paintable, Cell);
 
 public:
     virtual ~Paintable() = default;
 
-    Paintable const* first_child() const;
-    Paintable const* last_child() const;
-    Paintable const* next_sibling() const;
-    Paintable const* previous_sibling() const;
+    [[nodiscard]] bool is_positioned() const;
+    [[nodiscard]] bool is_fixed_position() const { return layout_node().is_fixed_position(); }
+    [[nodiscard]] bool is_absolutely_positioned() const { return layout_node().is_absolutely_positioned(); }
+    [[nodiscard]] bool is_floating() const { return layout_node().is_floating(); }
+    [[nodiscard]] bool is_inline() const { return layout_node().is_inline(); }
+    [[nodiscard]] CSS::Display display() const { return layout_node().display(); }
 
     template<typename U, typename Callback>
     TraversalDecision for_each_in_inclusive_subtree_of_type(Callback callback) const
@@ -134,15 +138,16 @@ public:
     Layout::Node const& layout_node() const { return m_layout_node; }
     Layout::Node& layout_node() { return const_cast<Layout::Node&>(*m_layout_node); }
 
-    DOM::Node* dom_node() { return layout_node().dom_node(); }
-    DOM::Node const* dom_node() const { return layout_node().dom_node(); }
+    [[nodiscard]] JS::GCPtr<DOM::Node> dom_node();
+    [[nodiscard]] JS::GCPtr<DOM::Node const> dom_node() const;
+    void set_dom_node(JS::GCPtr<DOM::Node>);
 
     auto const& computed_values() const { return m_layout_node->computed_values(); }
 
     bool visible_for_hit_testing() const { return computed_values().pointer_events() != CSS::PointerEvents::None; }
 
-    HTML::BrowsingContext const& browsing_context() const { return m_layout_node->browsing_context(); }
-    HTML::BrowsingContext& browsing_context() { return layout_node().browsing_context(); }
+    [[nodiscard]] HTML::BrowsingContext const& browsing_context() const;
+    [[nodiscard]] HTML::BrowsingContext& browsing_context();
 
     void set_needs_display() const { const_cast<Layout::Node&>(*m_layout_node).set_needs_display(); }
 
@@ -156,18 +161,20 @@ public:
     template<typename T>
     bool fast_is() const = delete;
 
+    [[nodiscard]] virtual bool is_paintable_box() const { return false; }
+    [[nodiscard]] virtual bool is_paintable_with_lines() const { return false; }
+
     StackingContext const* stacking_context_rooted_here() const;
 
 protected:
-    explicit Paintable(Layout::Node const& layout_node)
-        : m_layout_node(layout_node)
-    {
-    }
+    explicit Paintable(Layout::Node const&);
 
     virtual void visit_edges(Cell::Visitor&) override;
 
 private:
+    JS::GCPtr<DOM::Node> m_dom_node;
     JS::NonnullGCPtr<Layout::Node const> m_layout_node;
+    JS::NonnullGCPtr<HTML::BrowsingContext> m_browsing_context;
     Optional<JS::GCPtr<Layout::Box const>> mutable m_containing_block;
 };
 
@@ -182,6 +189,9 @@ inline DOM::Node const* HitTestResult::dom_node() const
 }
 
 template<>
-inline bool Paintable::fast_is<PaintableBox>() const { return m_layout_node->is_box(); }
+inline bool Paintable::fast_is<PaintableBox>() const { return is_paintable_box(); }
+
+template<>
+inline bool Paintable::fast_is<PaintableWithLines>() const { return is_paintable_with_lines(); }
 
 }

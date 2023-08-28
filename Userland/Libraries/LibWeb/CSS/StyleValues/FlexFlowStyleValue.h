@@ -15,16 +15,16 @@ namespace Web::CSS {
 
 class FlexFlowStyleValue final : public StyleValueWithDefaultOperators<FlexFlowStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<FlexFlowStyleValue>> create(ValueComparingNonnullRefPtr<StyleValue> flex_direction, ValueComparingNonnullRefPtr<StyleValue> flex_wrap)
+    static ValueComparingNonnullRefPtr<FlexFlowStyleValue> create(ValueComparingNonnullRefPtr<StyleValue> flex_direction, ValueComparingNonnullRefPtr<StyleValue> flex_wrap)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) FlexFlowStyleValue(move(flex_direction), move(flex_wrap)));
+        return adopt_ref(*new (nothrow) FlexFlowStyleValue(move(flex_direction), move(flex_wrap)));
     }
     virtual ~FlexFlowStyleValue() override = default;
 
     ValueComparingNonnullRefPtr<StyleValue> flex_direction() const { return m_properties.flex_direction; }
     ValueComparingNonnullRefPtr<StyleValue> flex_wrap() const { return m_properties.flex_wrap; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(FlexFlowStyleValue const& other) const { return m_properties == other.m_properties; }
 

@@ -35,7 +35,7 @@ public:
 
     class ChunkIterator {
     public:
-        ChunkIterator(StringView text, bool wrap_lines, bool respect_linebreaks, bool is_generated_empty_string);
+        ChunkIterator(StringView text, bool wrap_lines, bool respect_linebreaks);
         Optional<Chunk> next();
 
     private:
@@ -43,11 +43,11 @@ public:
 
         bool const m_wrap_lines;
         bool const m_respect_linebreaks;
-        bool m_should_emit_one_empty_chunk { false };
         Utf8View m_utf8_view;
         Utf8View::Iterator m_iterator;
     };
 
+    void invalidate_text_for_rendering();
     void compute_text_for_rendering();
 
     virtual JS::GCPtr<Painting::Paintable> create_paintable() const override;

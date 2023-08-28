@@ -16,11 +16,11 @@ namespace Web::CSS {
 
 class ColorStyleValue : public StyleValueWithDefaultOperators<ColorStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<ColorStyleValue>> create(Color color);
+    static ValueComparingNonnullRefPtr<ColorStyleValue> create(Color color);
     virtual ~ColorStyleValue() override = default;
 
     Color color() const { return m_color; }
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
     virtual bool has_color() const override { return true; }
     virtual Color to_color(Optional<Layout::NodeWithStyle const&>) const override { return m_color; }
 

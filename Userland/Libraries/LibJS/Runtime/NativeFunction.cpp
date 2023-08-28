@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibJS/Interpreter.h>
+#include <LibJS/AST.h>
 #include <LibJS/Runtime/FunctionEnvironment.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/NativeFunction.h>
@@ -36,7 +36,7 @@ NonnullGCPtr<NativeFunction> NativeFunction::create(Realm& allocating_realm, Saf
     // 7. Set func.[[Extensible]] to true.
     // 8. Set func.[[Realm]] to realm.
     // 9. Set func.[[InitialName]] to null.
-    auto function = allocating_realm.heap().allocate<NativeFunction>(allocating_realm, move(behaviour), prototype.value(), *realm.value()).release_allocated_value_but_fixme_should_propagate_errors();
+    auto function = allocating_realm.heap().allocate<NativeFunction>(allocating_realm, move(behaviour), prototype.value(), *realm.value());
 
     // 10. Perform SetFunctionLength(func, length).
     function->set_function_length(length);
@@ -53,7 +53,7 @@ NonnullGCPtr<NativeFunction> NativeFunction::create(Realm& allocating_realm, Saf
 
 NonnullGCPtr<NativeFunction> NativeFunction::create(Realm& realm, DeprecatedFlyString const& name, SafeFunction<ThrowCompletionOr<Value>(VM&)> function)
 {
-    return realm.heap().allocate<NativeFunction>(realm, name, move(function), realm.intrinsics().function_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<NativeFunction>(realm, name, move(function), realm.intrinsics().function_prototype());
 }
 
 NativeFunction::NativeFunction(SafeFunction<ThrowCompletionOr<Value>(VM&)> native_function, Object* prototype, Realm& realm)
@@ -141,9 +141,6 @@ ThrowCompletionOr<Value> NativeFunction::internal_call(Value this_argument, Mark
     // NOTE: This is a LibJS specific hack for NativeFunction to inherit the strictness of its caller.
     callee_context.is_strict_mode = vm.in_strict_mode();
 
-    if (auto* interpreter = vm.interpreter_if_exists())
-        callee_context.current_node = interpreter->current_node();
-
     // </8.> --------------------------------------------------------------------------
 
     // 9. Push calleeContext onto the execution context stack; calleeContext is now the running execution context.
@@ -203,9 +200,6 @@ ThrowCompletionOr<NonnullGCPtr<Object>> NativeFunction::internal_construct(Marke
 
     // NOTE: This is a LibJS specific hack for NativeFunction to inherit the strictness of its caller.
     callee_context.is_strict_mode = vm.in_strict_mode();
-
-    if (auto* interpreter = vm.interpreter_if_exists())
-        callee_context.current_node = interpreter->current_node();
 
     // </8.> --------------------------------------------------------------------------
 

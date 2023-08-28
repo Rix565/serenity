@@ -16,15 +16,15 @@ namespace Web::CSS {
 
 class FrequencyStyleValue : public StyleValueWithDefaultOperators<FrequencyStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<FrequencyStyleValue>> create(Frequency frequency)
+    static ValueComparingNonnullRefPtr<FrequencyStyleValue> create(Frequency frequency)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) FrequencyStyleValue(move(frequency)));
+        return adopt_ref(*new (nothrow) FrequencyStyleValue(move(frequency)));
     }
     virtual ~FrequencyStyleValue() override = default;
 
     Frequency const& frequency() const { return m_frequency; }
 
-    virtual ErrorOr<String> to_string() const override { return m_frequency.to_string(); }
+    virtual String to_string() const override { return m_frequency.to_string(); }
 
     bool properties_equal(FrequencyStyleValue const& other) const { return m_frequency == other.m_frequency; }
 

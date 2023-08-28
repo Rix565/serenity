@@ -30,11 +30,6 @@ Length::FontMetrics::FontMetrics(CSSPixels font_size, Gfx::FontPixelMetrics cons
 {
 }
 
-Length::Length(int value, Type type)
-    : m_type(type)
-    , m_value(value)
-{
-}
 Length::Length(double value, Type type)
     : m_type(type)
     , m_value(value)
@@ -59,46 +54,38 @@ Length Length::percentage_of(Percentage const& percentage) const
         return *this;
     }
 
-    // HACK: We round to 3 decimal places to emulate what happens in browsers that used fixed point math.
-    // FIXME: Remove this when converting CSSPixels to a fixed-point type.
-    //        https://github.com/SerenityOS/serenity/issues/18566
-    auto value = percentage.as_fraction() * raw_value();
-    value *= 1000;
-    value = round(value);
-    value /= 1000;
-
-    return Length { value, m_type };
+    return Length { percentage.as_fraction() * raw_value(), m_type };
 }
 
 CSSPixels Length::font_relative_length_to_px(Length::FontMetrics const& font_metrics, Length::FontMetrics const& root_font_metrics) const
 {
     switch (m_type) {
     case Type::Em:
-        return m_value * font_metrics.font_size.to_double();
+        return CSSPixels::nearest_value_for(m_value * font_metrics.font_size.to_double());
     case Type::Rem:
-        return m_value * root_font_metrics.font_size.to_double();
+        return CSSPixels::nearest_value_for(m_value * root_font_metrics.font_size.to_double());
     case Type::Ex:
-        return m_value * font_metrics.x_height.to_double();
+        return CSSPixels::nearest_value_for(m_value * font_metrics.x_height.to_double());
     case Type::Rex:
-        return m_value * root_font_metrics.x_height.to_double();
+        return CSSPixels::nearest_value_for(m_value * root_font_metrics.x_height.to_double());
     case Type::Cap:
-        return m_value * font_metrics.cap_height.to_double();
+        return CSSPixels::nearest_value_for(m_value * font_metrics.cap_height.to_double());
     case Type::Rcap:
-        return m_value * root_font_metrics.cap_height.to_double();
+        return CSSPixels::nearest_value_for(m_value * root_font_metrics.cap_height.to_double());
     case Type::Ch:
-        return m_value * font_metrics.zero_advance.to_double();
+        return CSSPixels::nearest_value_for(m_value * font_metrics.zero_advance.to_double());
     case Type::Rch:
-        return m_value * root_font_metrics.zero_advance.to_double();
+        return CSSPixels::nearest_value_for(m_value * root_font_metrics.zero_advance.to_double());
     case Type::Ic:
         // FIXME: Use the "advance measure of the “水” (CJK water ideograph, U+6C34) glyph"
-        return m_value * font_metrics.font_size.to_double();
+        return CSSPixels::nearest_value_for(m_value * font_metrics.font_size.to_double());
     case Type::Ric:
         // FIXME: Use the "advance measure of the “水” (CJK water ideograph, U+6C34) glyph"
-        return m_value * root_font_metrics.font_size.to_double();
+        return CSSPixels::nearest_value_for(m_value * root_font_metrics.font_size.to_double());
     case Type::Lh:
-        return m_value * font_metrics.line_height.to_double();
+        return CSSPixels::nearest_value_for(m_value * font_metrics.line_height.to_double());
     case Type::Rlh:
-        return m_value * root_font_metrics.line_height.to_double();
+        return CSSPixels::nearest_value_for(m_value * root_font_metrics.line_height.to_double());
     default:
         VERIFY_NOT_REACHED();
     }
@@ -111,34 +98,34 @@ CSSPixels Length::viewport_relative_length_to_px(CSSPixelRect const& viewport_re
     case Type::Svw:
     case Type::Lvw:
     case Type::Dvw:
-        return viewport_rect.width() * (m_value / 100);
+        return CSSPixels::nearest_value_for(viewport_rect.width() * (m_value / 100));
     case Type::Vh:
     case Type::Svh:
     case Type::Lvh:
     case Type::Dvh:
-        return viewport_rect.height() * (m_value / 100);
+        return CSSPixels::nearest_value_for(viewport_rect.height() * (m_value / 100));
     case Type::Vi:
     case Type::Svi:
     case Type::Lvi:
     case Type::Dvi:
         // FIXME: Select the width or height based on which is the inline axis.
-        return viewport_rect.width() * (m_value / 100);
+        return CSSPixels::nearest_value_for(viewport_rect.width() * (m_value / 100));
     case Type::Vb:
     case Type::Svb:
     case Type::Lvb:
     case Type::Dvb:
         // FIXME: Select the width or height based on which is the block axis.
-        return viewport_rect.height() * (m_value / 100);
+        return CSSPixels::nearest_value_for(viewport_rect.height() * (m_value / 100));
     case Type::Vmin:
     case Type::Svmin:
     case Type::Lvmin:
     case Type::Dvmin:
-        return min(viewport_rect.width(), viewport_rect.height()) * (m_value / 100);
+        return CSSPixels::nearest_value_for(min(viewport_rect.width(), viewport_rect.height()) * (m_value / 100));
     case Type::Vmax:
     case Type::Svmax:
     case Type::Lvmax:
     case Type::Dvmax:
-        return max(viewport_rect.width(), viewport_rect.height()) * (m_value / 100);
+        return CSSPixels::nearest_value_for(max(viewport_rect.width(), viewport_rect.height()) * (m_value / 100));
     default:
         VERIFY_NOT_REACHED();
     }
@@ -151,8 +138,8 @@ Length::ResolutionContext Length::ResolutionContext::for_layout_node(Layout::Nod
     VERIFY(root_element->layout_node());
     return Length::ResolutionContext {
         .viewport_rect = node.browsing_context().viewport_rect(),
-        .font_metrics = { node.computed_values().font_size(), node.font().pixel_metrics(), node.line_height() },
-        .root_font_metrics = { root_element->layout_node()->computed_values().font_size(), root_element->layout_node()->font().pixel_metrics(), root_element->layout_node()->line_height() },
+        .font_metrics = { CSSPixels::nearest_value_for(node.computed_values().font_size()), node.font().pixel_metrics(), node.line_height() },
+        .root_font_metrics = { CSSPixels::nearest_value_for(root_element->layout_node()->computed_values().font_size()), root_element->layout_node()->font().pixel_metrics(), root_element->layout_node()->line_height() },
     };
 }
 
@@ -181,12 +168,12 @@ CSSPixels Length::to_px(Layout::Node const& layout_node) const
             return 0;
 
         FontMetrics font_metrics {
-            layout_node.computed_values().font_size(),
+            CSSPixels::nearest_value_for(layout_node.computed_values().font_size()),
             layout_node.font().pixel_metrics(),
             layout_node.line_height()
         };
         FontMetrics root_font_metrics {
-            root_element->layout_node()->computed_values().font_size(),
+            CSSPixels::nearest_value_for(root_element->layout_node()->computed_values().font_size()),
             root_element->layout_node()->font().pixel_metrics(),
             root_element->layout_node()->line_height()
         };
@@ -199,11 +186,11 @@ CSSPixels Length::to_px(Layout::Node const& layout_node) const
     return viewport_relative_length_to_px(viewport_rect);
 }
 
-ErrorOr<String> Length::to_string() const
+String Length::to_string() const
 {
     if (is_auto())
         return "auto"_string;
-    return String::formatted("{}{}", m_value, unit_name());
+    return MUST(String::formatted("{}{}", m_value, unit_name()));
 }
 
 char const* Length::unit_name() const

@@ -12,24 +12,11 @@
 #include <LibJS/Bytecode/Instruction.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Bytecode/Op.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/GlobalEnvironment.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Realm.h>
 
 namespace JS::Bytecode {
-
-static bool s_bytecode_interpreter_enabled = false;
-
-bool Interpreter::enabled()
-{
-    return s_bytecode_interpreter_enabled;
-}
-
-void Interpreter::set_enabled(bool enabled)
-{
-    s_bytecode_interpreter_enabled = enabled;
-}
 
 bool g_dump_bytecode = false;
 
@@ -300,9 +287,9 @@ Interpreter::ValueAndFrame Interpreter::run_and_return_frame(Realm& realm, Execu
         for (size_t i = 0; i < registers().size(); ++i) {
             String value_string;
             if (registers()[i].is_empty())
-                value_string = MUST("(empty)"_string);
+                value_string = "(empty)"_string;
             else
-                value_string = MUST(registers()[i].to_string_without_side_effects());
+                value_string = registers()[i].to_string_without_side_effects();
             dbgln("[{:3}] {}", i, value_string);
         }
     }
@@ -380,14 +367,6 @@ ThrowCompletionOr<void> Interpreter::continue_pending_unwind(Label const& resume
         jump(resume_label);
     }
     return {};
-}
-
-VM::InterpreterExecutionScope Interpreter::ast_interpreter_scope(Realm& realm)
-{
-    if (!m_ast_interpreter)
-        m_ast_interpreter = JS::Interpreter::create_with_existing_realm(realm);
-
-    return { *m_ast_interpreter };
 }
 
 size_t Interpreter::pc() const

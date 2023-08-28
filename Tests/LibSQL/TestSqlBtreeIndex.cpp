@@ -134,7 +134,7 @@ NonnullRefPtr<SQL::BTree> setup_btree(SQL::Serializer& serializer)
         root_pointer = serializer.heap().request_new_block_index();
         serializer.heap().set_user_value(0, root_pointer);
     }
-    auto btree = SQL::BTree::construct(serializer, tuple_descriptor, true, root_pointer);
+    auto btree = MUST(SQL::BTree::create(serializer, tuple_descriptor, true, root_pointer));
     btree->on_new_root = [&]() {
         serializer.heap().set_user_value(0, btree->root());
     };
@@ -145,7 +145,7 @@ void insert_and_get_to_and_from_btree(int num_keys)
 {
     ScopeGuard guard([]() { unlink("/tmp/test.db"); });
     {
-        auto heap = SQL::Heap::construct("/tmp/test.db");
+        auto heap = MUST(SQL::Heap::create("/tmp/test.db"));
         TRY_OR_FAIL(heap->open());
         SQL::Serializer serializer(heap);
         auto btree = setup_btree(serializer);
@@ -162,7 +162,7 @@ void insert_and_get_to_and_from_btree(int num_keys)
     }
 
     {
-        auto heap = SQL::Heap::construct("/tmp/test.db");
+        auto heap = MUST(SQL::Heap::create("/tmp/test.db"));
         TRY_OR_FAIL(heap->open());
         SQL::Serializer serializer(heap);
         auto btree = setup_btree(serializer);
@@ -181,7 +181,7 @@ void insert_into_and_scan_btree(int num_keys)
 {
     ScopeGuard guard([]() { unlink("/tmp/test.db"); });
     {
-        auto heap = SQL::Heap::construct("/tmp/test.db");
+        auto heap = MUST(SQL::Heap::create("/tmp/test.db"));
         TRY_OR_FAIL(heap->open());
         SQL::Serializer serializer(heap);
         auto btree = setup_btree(serializer);
@@ -199,7 +199,7 @@ void insert_into_and_scan_btree(int num_keys)
     }
 
     {
-        auto heap = SQL::Heap::construct("/tmp/test.db");
+        auto heap = MUST(SQL::Heap::create("/tmp/test.db"));
         TRY_OR_FAIL(heap->open());
         SQL::Serializer serializer(heap);
         auto btree = setup_btree(serializer);

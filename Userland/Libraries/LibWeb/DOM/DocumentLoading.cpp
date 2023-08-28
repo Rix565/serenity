@@ -119,7 +119,7 @@ static bool build_image_document(DOM::Document& document, ByteBuffer const& data
     MUST(head_element->append_child(title_element));
 
     auto basename = LexicalPath::basename(document.url().serialize_path());
-    auto title_text = document.heap().allocate<DOM::Text>(document.realm(), document, DeprecatedString::formatted("{} [{}x{}]", basename, bitmap->width(), bitmap->height())).release_allocated_value_but_fixme_should_propagate_errors();
+    auto title_text = document.heap().allocate<DOM::Text>(document.realm(), document, DeprecatedString::formatted("{} [{}x{}]", basename, bitmap->width(), bitmap->height()));
     MUST(title_element->append_child(*title_text));
 
     auto body_element = DOM::create_element(document, HTML::TagNames::body, Namespace::HTML).release_value_but_fixme_should_propagate_errors();
@@ -233,7 +233,7 @@ JS::GCPtr<DOM::Document> load_document(Optional<HTML::NavigationParams> navigati
 
     auto& realm = document->realm();
 
-    if (navigation_params->response->body().has_value()) {
+    if (navigation_params->response->body()) {
         auto process_body = [navigation_params, document](ByteBuffer bytes) {
             if (!parse_document(*document, bytes)) {
                 // FIXME: Load html page with an error if parsing failed.

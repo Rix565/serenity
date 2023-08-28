@@ -16,9 +16,9 @@
 
 namespace Web::URL {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<URL>> URL::create(JS::Realm& realm, AK::URL url, JS::NonnullGCPtr<URLSearchParams> query)
+JS::NonnullGCPtr<URL> URL::create(JS::Realm& realm, AK::URL url, JS::NonnullGCPtr<URLSearchParams> query)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<URL>(realm, realm, move(url), move(query)));
+    return realm.heap().allocate<URL>(realm, realm, move(url), move(query));
 }
 
 // https://url.spec.whatwg.org/#api-url-parser
@@ -50,8 +50,6 @@ static Optional<AK::URL> parse_api_url(String const& url, Optional<String> const
 // https://url.spec.whatwg.org/#dom-url-url
 WebIDL::ExceptionOr<JS::NonnullGCPtr<URL>> URL::construct_impl(JS::Realm& realm, String const& url, Optional<String> const& base)
 {
-    auto& vm = realm.vm();
-
     // 1. Let parsedURL be the result of running the API URL parser on url with base, if given.
     auto parsed_url = parse_api_url(url, base);
 
@@ -60,14 +58,14 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<URL>> URL::construct_impl(JS::Realm& realm,
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Invalid URL"sv };
 
     // 3. Let query be parsedURL’s query, if that is non-null, and the empty string otherwise.
-    auto query = parsed_url->query().is_null() ? String {} : TRY_OR_THROW_OOM(vm, String::from_deprecated_string(parsed_url->query()));
+    auto query = parsed_url->query().value_or(String {});
 
     // 4. Set this’s URL to parsedURL.
     // 5. Set this’s query object to a new URLSearchParams object.
     auto query_object = MUST(URLSearchParams::construct_impl(realm, query));
 
     // 6. Initialize this’s query object with query.
-    auto result_url = TRY(URL::create(realm, parsed_url.release_value(), move(query_object)));
+    auto result_url = URL::create(realm, parsed_url.release_value(), move(query_object));
 
     // 7. Set this’s query object’s URL object to this.
     result_url->m_query->m_url = result_url;
@@ -84,12 +82,10 @@ URL::URL(JS::Realm& realm, AK::URL url, JS::NonnullGCPtr<URLSearchParams> query)
 
 URL::~URL() = default;
 
-JS::ThrowCompletionOr<void> URL::initialize(JS::Realm& realm)
+void URL::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::URLPrototype>(realm, "URL"));
-
-    return {};
 }
 
 void URL::visit_edges(Cell::Visitor& visitor)
@@ -184,8 +180,8 @@ WebIDL::ExceptionOr<void> URL::set_href(String const& href)
     auto query = m_url.query();
 
     // 6. If query is non-null, then set this’s query object’s list to the result of parsing query.
-    if (!query.is_null())
-        m_query->m_list = TRY_OR_THROW_OOM(vm, url_decode(query));
+    if (query.has_value())
+        m_query->m_list = TRY_OR_THROW_OOM(vm, url_decode(*query));
     return {};
 }
 
@@ -226,7 +222,7 @@ WebIDL::ExceptionOr<String> URL::username() const
     auto& vm = realm().vm();
 
     // The username getter steps are to return this’s URL’s username.
-    return TRY_OR_THROW_OOM(vm, String::from_deprecated_string(m_url.username()));
+    return TRY_OR_THROW_OOM(vm, m_url.username());
 }
 
 // https://url.spec.whatwg.org/#ref-for-dom-url-username%E2%91%A0
@@ -237,7 +233,7 @@ void URL::set_username(String const& username)
         return;
 
     // 2. Set the username given this’s URL and the given value.
-    m_url.set_username(username.to_deprecated_string(), AK::URL::ApplyPercentEncoding::Yes);
+    MUST(m_url.set_username(username));
 }
 
 // https://url.spec.whatwg.org/#dom-url-password
@@ -246,7 +242,7 @@ WebIDL::ExceptionOr<String> URL::password() const
     auto& vm = realm().vm();
 
     // The password getter steps are to return this’s URL’s password.
-    return TRY_OR_THROW_OOM(vm, String::from_deprecated_string(m_url.password()));
+    return TRY_OR_THROW_OOM(vm, m_url.password());
 }
 
 // https://url.spec.whatwg.org/#ref-for-dom-url-password%E2%91%A0
@@ -257,7 +253,7 @@ void URL::set_password(String const& password)
         return;
 
     // 2. Set the password given this’s URL and the given value.
-    m_url.set_password(password.to_deprecated_string(), AK::URL::ApplyPercentEncoding::Yes);
+    MUST(m_url.set_password(password));
 }
 
 // https://url.spec.whatwg.org/#dom-url-host
@@ -384,11 +380,11 @@ WebIDL::ExceptionOr<String> URL::search() const
     auto& vm = realm().vm();
 
     // 1. If this’s URL’s query is either null or the empty string, then return the empty string.
-    if (m_url.query().is_null() || m_url.query().is_empty())
+    if (!m_url.query().has_value() || m_url.query()->is_empty())
         return String {};
 
     // 2. Return U+003F (?), followed by this’s URL’s query.
-    return TRY_OR_THROW_OOM(vm, String::formatted("?{}", m_url.query()));
+    return TRY_OR_THROW_OOM(vm, String::formatted("?{}", *m_url.query()));
 }
 
 // https://url.spec.whatwg.org/#ref-for-dom-url-search%E2%91%A0
@@ -419,7 +415,7 @@ WebIDL::ExceptionOr<void> URL::set_search(String const& search)
 
     // 4. Set url’s query to the empty string.
     auto url_copy = url; // We copy the URL here to follow other browser's behavior of reverting the search change if the parse failed.
-    url_copy.set_query(DeprecatedString::empty());
+    url_copy.set_query(String {});
 
     // 5. Basic URL parse input with url as url and query state as state override.
     auto result_url = URLParser::basic_parse(input, {}, move(url_copy), URLParser::State::Query);
@@ -446,7 +442,7 @@ WebIDL::ExceptionOr<String> URL::hash() const
     auto& vm = realm().vm();
 
     // 1. If this’s URL’s fragment is either null or the empty string, then return the empty string.
-    if (m_url.fragment().is_null() || m_url.fragment().is_empty())
+    if (!m_url.fragment().has_value() || m_url.fragment()->is_empty())
         return String {};
 
     // 2. Return U+0023 (#), followed by this’s URL’s fragment.
@@ -473,7 +469,7 @@ void URL::set_hash(String const& hash)
 
     // 3. Set this’s URL’s fragment to the empty string.
     auto url = m_url; // We copy the URL here to follow other browser's behavior of reverting the hash change if the parse failed.
-    url.set_fragment(DeprecatedString::empty());
+    url.set_fragment(String {});
 
     // 4. Basic URL parse input with this’s URL as url and fragment state as state override.
     auto result_url = URLParser::basic_parse(input, {}, move(url), URLParser::State::Fragment);
@@ -517,14 +513,14 @@ HTML::Origin url_origin(AK::URL const& url)
     // -> "wss"
     if (url.scheme().is_one_of("ftp"sv, "http"sv, "https"sv, "ws"sv, "wss"sv)) {
         // Return the tuple origin (url’s scheme, url’s host, url’s port, null).
-        return HTML::Origin(url.scheme(), url.host(), url.port().value_or(0));
+        return HTML::Origin(url.scheme().to_deprecated_string(), url.host(), url.port().value_or(0));
     }
 
     // -> "file"
     if (url.scheme() == "file"sv) {
         // Unfortunate as it is, this is left as an exercise to the reader. When in doubt, return a new opaque origin.
         // Note: We must return an origin with the `file://' protocol for `file://' iframes to work from `file://' pages.
-        return HTML::Origin(url.scheme(), String {}, 0);
+        return HTML::Origin(url.scheme().to_deprecated_string(), String {}, 0);
     }
 
     // -> Otherwise

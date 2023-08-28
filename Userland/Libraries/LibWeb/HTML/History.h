@@ -16,7 +16,7 @@ class History final : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(History, Bindings::PlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<History>> create(JS::Realm&, DOM::Document&);
+    [[nodiscard]] static JS::NonnullGCPtr<History> create(JS::Realm&, DOM::Document&);
 
     virtual ~History() override;
 
@@ -30,7 +30,7 @@ public:
 private:
     History(JS::Realm&, DOM::Document&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     enum class IsPush {

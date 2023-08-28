@@ -15,9 +15,9 @@
 
 namespace Web::CSS {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<MediaQueryList>> MediaQueryList::create(DOM::Document& document, Vector<NonnullRefPtr<MediaQuery>>&& media)
+JS::NonnullGCPtr<MediaQueryList> MediaQueryList::create(DOM::Document& document, Vector<NonnullRefPtr<MediaQuery>>&& media)
 {
-    return MUST_OR_THROW_OOM(document.heap().allocate<MediaQueryList>(document.realm(), document, move(media)));
+    return document.heap().allocate<MediaQueryList>(document.realm(), document, move(media));
 }
 
 MediaQueryList::MediaQueryList(DOM::Document& document, Vector<NonnullRefPtr<MediaQuery>>&& media)
@@ -28,12 +28,10 @@ MediaQueryList::MediaQueryList(DOM::Document& document, Vector<NonnullRefPtr<Med
     evaluate();
 }
 
-JS::ThrowCompletionOr<void> MediaQueryList::initialize(JS::Realm& realm)
+void MediaQueryList::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::MediaQueryListPrototype>(realm, "MediaQueryList"));
-
-    return {};
 }
 
 void MediaQueryList::visit_edges(Cell::Visitor& visitor)
@@ -45,7 +43,7 @@ void MediaQueryList::visit_edges(Cell::Visitor& visitor)
 // https://drafts.csswg.org/cssom-view/#dom-mediaquerylist-media
 DeprecatedString MediaQueryList::media() const
 {
-    return serialize_a_media_query_list(m_media).release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+    return serialize_a_media_query_list(m_media).to_deprecated_string();
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-mediaquerylist-matches

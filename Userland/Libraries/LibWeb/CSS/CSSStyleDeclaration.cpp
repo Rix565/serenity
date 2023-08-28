@@ -20,16 +20,15 @@ CSSStyleDeclaration::CSSStyleDeclaration(JS::Realm& realm)
 {
 }
 
-JS::ThrowCompletionOr<void> CSSStyleDeclaration::initialize(JS::Realm& realm)
+void CSSStyleDeclaration::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::CSSStyleDeclarationPrototype>(realm, "CSSStyleDeclaration"));
-    return {};
 }
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<PropertyOwningCSSStyleDeclaration>> PropertyOwningCSSStyleDeclaration::create(JS::Realm& realm, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
+JS::NonnullGCPtr<PropertyOwningCSSStyleDeclaration> PropertyOwningCSSStyleDeclaration::create(JS::Realm& realm, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<PropertyOwningCSSStyleDeclaration>(realm, realm, move(properties), move(custom_properties)));
+    return realm.heap().allocate<PropertyOwningCSSStyleDeclaration>(realm, realm, move(properties), move(custom_properties));
 }
 
 PropertyOwningCSSStyleDeclaration::PropertyOwningCSSStyleDeclaration(JS::Realm& realm, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
@@ -46,10 +45,10 @@ DeprecatedString PropertyOwningCSSStyleDeclaration::item(size_t index) const
     return CSS::string_from_property_id(m_properties[index].property_id);
 }
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<ElementInlineCSSStyleDeclaration>> ElementInlineCSSStyleDeclaration::create(DOM::Element& element, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
+JS::NonnullGCPtr<ElementInlineCSSStyleDeclaration> ElementInlineCSSStyleDeclaration::create(DOM::Element& element, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
 {
     auto& realm = element.realm();
-    return MUST_OR_THROW_OOM(realm.heap().allocate<ElementInlineCSSStyleDeclaration>(realm, element, move(properties), move(custom_properties)));
+    return realm.heap().allocate<ElementInlineCSSStyleDeclaration>(realm, element, move(properties), move(custom_properties));
 }
 
 ElementInlineCSSStyleDeclaration::ElementInlineCSSStyleDeclaration(DOM::Element& element, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties)
@@ -101,8 +100,8 @@ WebIDL::ExceptionOr<void> PropertyOwningCSSStyleDeclaration::set_property(Proper
 
     // 5. Let component value list be the result of parsing value for property property.
     auto component_value_list = is<ElementInlineCSSStyleDeclaration>(this)
-        ? MUST(parse_css_value(CSS::Parser::ParsingContext { static_cast<ElementInlineCSSStyleDeclaration&>(*this).element()->document() }, value, property_id))
-        : MUST(parse_css_value(CSS::Parser::ParsingContext { realm() }, value, property_id));
+        ? parse_css_value(CSS::Parser::ParsingContext { static_cast<ElementInlineCSSStyleDeclaration&>(*this).element()->document() }, value, property_id)
+        : parse_css_value(CSS::Parser::ParsingContext { realm() }, value, property_id);
 
     // 6. If component value list is null, then return.
     if (!component_value_list)
@@ -211,7 +210,7 @@ DeprecatedString CSSStyleDeclaration::get_property_value(StringView property_nam
     auto maybe_property = property(property_id.value());
     if (!maybe_property.has_value())
         return {};
-    return maybe_property->value->to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+    return maybe_property->value->to_string().to_deprecated_string();
 }
 
 // https://drafts.csswg.org/cssom/#dom-cssstyledeclaration-getpropertypriority
@@ -304,7 +303,7 @@ DeprecatedString PropertyOwningCSSStyleDeclaration::serialized() const
         // NOTE: There are no shorthands for custom properties.
 
         // 5. Let value be the result of invoking serialize a CSS value of declaration.
-        auto value = declaration.value.value->to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+        auto value = declaration.value.value->to_string().to_deprecated_string();
 
         // 6. Let serialized declaration be the result of invoking serialize a CSS declaration with property name property, value value,
         //    and the important flag set if declaration has its important flag set.
@@ -355,7 +354,7 @@ DeprecatedString PropertyOwningCSSStyleDeclaration::serialized() const
         // FIXME: 4. Shorthand loop: For each shorthand in shorthands, follow these substeps: ...
 
         // 5. Let value be the result of invoking serialize a CSS value of declaration.
-        auto value = declaration.value->to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+        auto value = declaration.value->to_string().to_deprecated_string();
 
         // 6. Let serialized declaration be the result of invoking serialize a CSS declaration with property name property, value value,
         //    and the important flag set if declaration has its important flag set.
@@ -404,7 +403,7 @@ JS::ThrowCompletionOr<JS::Value> CSSStyleDeclaration::internal_get(JS::PropertyK
     if (property_id == CSS::PropertyID::Invalid)
         return Base::internal_get(name, receiver, cacheable_metadata);
     if (auto maybe_property = property(property_id); maybe_property.has_value())
-        return { JS::PrimitiveString::create(vm(), maybe_property->value->to_string().release_value_but_fixme_should_propagate_errors().to_deprecated_string()) };
+        return { JS::PrimitiveString::create(vm(), maybe_property->value->to_string().to_deprecated_string()) };
     return { JS::PrimitiveString::create(vm(), String {}) };
 }
 

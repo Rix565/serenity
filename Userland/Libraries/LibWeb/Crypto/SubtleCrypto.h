@@ -15,7 +15,7 @@ class SubtleCrypto final : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(SubtleCrypto, Bindings::PlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<SubtleCrypto>> create(JS::Realm&);
+    [[nodiscard]] static JS::NonnullGCPtr<SubtleCrypto> create(JS::Realm&);
 
     virtual ~SubtleCrypto() override;
 
@@ -23,7 +23,7 @@ public:
 
 private:
     explicit SubtleCrypto(JS::Realm&);
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

@@ -282,7 +282,7 @@ void TreeMapWidget::mousemove_event(GUI::MouseEvent& event)
 {
     auto* node = path_node(m_viewpoint);
     if (!node) {
-        set_tooltip({});
+        set_tooltip_deprecated({});
         return;
     }
 
@@ -293,7 +293,7 @@ void TreeMapWidget::mousemove_event(GUI::MouseEvent& event)
         }
     });
 
-    set_tooltip(DeprecatedString::formatted("{}\n{}", hovered_node->name(), human_readable_size(hovered_node->area())));
+    set_tooltip_deprecated(DeprecatedString::formatted("{}\n{}", hovered_node->name(), human_readable_size(hovered_node->area())));
 }
 
 void TreeMapWidget::mousedown_event(GUI::MouseEvent& event)
@@ -433,7 +433,7 @@ ErrorOr<void> TreeMapWidget::analyze(GUI::Statusbar& statusbar)
         }
         statusbar.set_text(TRY(builder.to_string()));
     } else {
-        statusbar.set_text(TRY("No errors"_string));
+        statusbar.set_text("No errors"_string);
     }
 
     m_tree = move(tree);

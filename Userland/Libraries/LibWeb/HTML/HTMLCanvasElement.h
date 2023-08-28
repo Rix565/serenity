@@ -34,13 +34,14 @@ public:
     WebIDL::ExceptionOr<void> set_height(unsigned);
 
     DeprecatedString to_data_url(DeprecatedString const& type, Optional<double> quality) const;
+    WebIDL::ExceptionOr<void> to_blob(JS::NonnullGCPtr<WebIDL::CallbackType> callback, DeprecatedString const& type, Optional<double> quality);
 
     void present();
 
 private:
     HTMLCanvasElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     virtual JS::GCPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::StyleProperties>) override;

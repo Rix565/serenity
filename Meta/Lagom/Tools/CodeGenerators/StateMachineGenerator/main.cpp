@@ -216,10 +216,15 @@ void output_header(StateMachine const&, SourceGenerator&);
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    Core::ArgsParser args_parser;
     StringView path;
-    args_parser.add_positional_argument(path, "Path to parser description", "input", Core::ArgsParser::Required::Yes);
-    args_parser.parse(arguments);
+    StringView output_file = "-"sv;
+
+    Core::ArgsParser parser;
+    parser.add_positional_argument(path, "Path to parser description", "input", Core::ArgsParser::Required::Yes);
+    parser.add_option(output_file, "Place to write file", "output", 'o', "output-file");
+    parser.parse(arguments);
+
+    auto output = TRY(Core::File::open_file_or_standard_stream(output_file, Core::File::OpenMode::Write));
 
     auto file = TRY(Core::File::open(path, Core::File::OpenMode::Read));
     auto content = TRY(file->read_until_eof());
@@ -228,7 +233,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     StringBuilder builder;
     SourceGenerator generator { builder };
     output_header(*state_machine, generator);
-    outln("{}", generator.as_string_view());
+
+    TRY(output->write_until_depleted(generator.as_string_view().bytes()));
     return 0;
 }
 
@@ -261,7 +267,7 @@ void generate_lookup_table(StateMachine const& machine, SourceGenerator& generat
 )~~~");
 
     auto generate_for_state = [&](State const& s) {
-        auto table_generator = generator.fork().release_value_but_fixme_should_propagate_errors();
+        auto table_generator = generator.fork();
         table_generator.set("active_state", s.name);
         table_generator.append("/* @active_state@ */ { ");
         VERIFY(!s.name.is_empty());
@@ -274,7 +280,7 @@ void generate_lookup_table(StateMachine const& machine, SourceGenerator& generat
             }
         }
         for (int i = 0; i < 256; ++i) {
-            auto cell_generator = table_generator.fork().release_value_but_fixme_should_propagate_errors();
+            auto cell_generator = table_generator.fork();
             cell_generator.set("cell_new_state", row[i].new_state.value_or(s.name));
             cell_generator.set("cell_action", row[i].action.value_or("_Ignore"));
             cell_generator.append(" {State::@cell_new_state@, Action::@cell_action@}, ");
@@ -320,7 +326,7 @@ public:
     for (auto a : actions(machine)) {
         if (a.is_empty())
             continue;
-        auto action_generator = generator.fork().release_value_but_fixme_should_propagate_errors();
+        auto action_generator = generator.fork();
         action_generator.set("action.name", a);
         action_generator.append(R"~~~(
         @action.name@,
@@ -347,7 +353,7 @@ public:
             switch (m_state) {
 )~~~");
     for (auto s : machine.states) {
-        auto state_generator = generator.fork().release_value_but_fixme_should_propagate_errors();
+        auto state_generator = generator.fork();
         if (s.exit_action.has_value()) {
             state_generator.set("state_name", s.name);
             state_generator.set("action", s.exit_action.value());
@@ -375,7 +381,7 @@ public:
             {
 )~~~");
     for (auto state : machine.states) {
-        auto state_generator = generator.fork().release_value_but_fixme_should_propagate_errors();
+        auto state_generator = generator.fork();
         if (state.entry_action.has_value()) {
             state_generator.set("state_name", state.name);
             state_generator.set("action", state.entry_action.value());
@@ -399,7 +405,7 @@ private:
 )~~~");
 
     for (auto s : machine.states) {
-        auto state_generator = generator.fork().release_value_but_fixme_should_propagate_errors();
+        auto state_generator = generator.fork();
         state_generator.set("state.name", s.name);
         state_generator.append(R"~~~(
         @state.name@,
@@ -434,7 +440,7 @@ private:
     }
 )~~~");
 
-    auto table_generator = generator.fork().release_value_but_fixme_should_propagate_errors();
+    auto table_generator = generator.fork();
     generate_lookup_table(machine, table_generator);
     generator.append(R"~~~(
 }; // end @class_name@

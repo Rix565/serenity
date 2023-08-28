@@ -19,7 +19,7 @@ class CSSStyleDeclaration : public Bindings::PlatformObject {
 
 public:
     virtual ~CSSStyleDeclaration() = default;
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     virtual size_t length() const = 0;
     virtual DeprecatedString item(size_t index) const = 0;
@@ -53,7 +53,7 @@ class PropertyOwningCSSStyleDeclaration : public CSSStyleDeclaration {
     friend class ElementInlineCSSStyleDeclaration;
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<PropertyOwningCSSStyleDeclaration>>
+    [[nodiscard]] static JS::NonnullGCPtr<PropertyOwningCSSStyleDeclaration>
     create(JS::Realm&, Vector<StyleProperty>, HashMap<DeprecatedString, StyleProperty> custom_properties);
 
     virtual ~PropertyOwningCSSStyleDeclaration() override = default;
@@ -93,7 +93,7 @@ class ElementInlineCSSStyleDeclaration final : public PropertyOwningCSSStyleDecl
     WEB_PLATFORM_OBJECT(ElementInlineCSSStyleDeclaration, PropertyOwningCSSStyleDeclaration);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<ElementInlineCSSStyleDeclaration>> create(DOM::Element&, Vector<StyleProperty> properties, HashMap<DeprecatedString, StyleProperty> custom_properties);
+    [[nodiscard]] static JS::NonnullGCPtr<ElementInlineCSSStyleDeclaration> create(DOM::Element&, Vector<StyleProperty>, HashMap<DeprecatedString, StyleProperty> custom_properties);
 
     virtual ~ElementInlineCSSStyleDeclaration() override = default;
 

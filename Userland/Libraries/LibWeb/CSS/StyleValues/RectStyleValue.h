@@ -16,11 +16,11 @@ namespace Web::CSS {
 
 class RectStyleValue : public StyleValueWithDefaultOperators<RectStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<RectStyleValue>> create(EdgeRect rect);
+    static ValueComparingNonnullRefPtr<RectStyleValue> create(EdgeRect rect);
     virtual ~RectStyleValue() override = default;
 
     EdgeRect rect() const { return m_rect; }
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(RectStyleValue const& other) const { return m_rect == other.m_rect; }
 

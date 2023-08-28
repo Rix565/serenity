@@ -11,8 +11,8 @@
 #include <AK/WeakPtr.h>
 #include <LibCore/Event.h>
 #include <LibCore/EventLoopImplementationUnix.h>
+#include <LibCore/EventReceiver.h>
 #include <LibCore/Notifier.h>
-#include <LibCore/Object.h>
 #include <LibCore/Socket.h>
 #include <LibCore/System.h>
 #include <LibCore/ThreadEventQueue.h>
@@ -33,7 +33,7 @@ struct EventLoopTimer {
     MonotonicTime fire_time { MonotonicTime::now_coarse() };
     bool should_reload { false };
     TimerShouldFireWhenNotVisible fire_when_not_visible { TimerShouldFireWhenNotVisible::No };
-    WeakPtr<Object> owner;
+    WeakPtr<EventReceiver> owner;
 
     void reload(MonotonicTime const& now) { fire_time = now + interval; }
     bool has_expired(MonotonicTime const& now) const { return now > fire_time; }
@@ -126,7 +126,7 @@ bool EventLoopImplementationUnix::was_exit_requested() const
     return m_exit_requested;
 }
 
-void EventLoopImplementationUnix::post_event(Object& receiver, NonnullOwnPtr<Event>&& event)
+void EventLoopImplementationUnix::post_event(EventReceiver& receiver, NonnullOwnPtr<Event>&& event)
 {
     m_thread_event_queue.post_event(receiver, move(event));
     if (&m_thread_event_queue != &ThreadEventQueue::current())
@@ -169,13 +169,12 @@ retry:
 
     // Figure out how long to wait at maximum.
     // This mainly depends on the PumpMode and whether we have pending events, but also the next expiring timer.
-    MonotonicTime now = MonotonicTime::now_coarse();
     struct timeval timeout = { 0, 0 };
     bool should_wait_forever = false;
     if (mode == EventLoopImplementation::PumpMode::WaitForEvents && !has_pending_events) {
         auto next_timer_expiration = get_next_timer_expiration();
         if (next_timer_expiration.has_value()) {
-            now = MonotonicTime::now();
+            auto now = MonotonicTime::now_coarse();
             auto computed_timeout = next_timer_expiration.value() - now;
             if (computed_timeout.is_negative())
                 computed_timeout = Duration::zero();
@@ -228,28 +227,28 @@ try_select_again:
             goto retry;
     }
 
-    if (!thread_data.timers.is_empty()) {
-        now = MonotonicTime::now_coarse();
-    }
-
     // Handle expired timers.
-    for (auto& it : thread_data.timers) {
-        auto& timer = *it.value;
-        if (!timer.has_expired(now))
-            continue;
-        auto owner = timer.owner.strong_ref();
-        if (timer.fire_when_not_visible == TimerShouldFireWhenNotVisible::No
-            && owner && !owner->is_visible_for_timer_purposes()) {
-            continue;
-        }
+    if (!thread_data.timers.is_empty()) {
+        auto now = MonotonicTime::now_coarse();
 
-        if (owner)
-            ThreadEventQueue::current().post_event(*owner, make<TimerEvent>(timer.timer_id));
-        if (timer.should_reload) {
-            timer.reload(now);
-        } else {
-            // FIXME: Support removing expired timers that don't want to reload.
-            VERIFY_NOT_REACHED();
+        for (auto& it : thread_data.timers) {
+            auto& timer = *it.value;
+            if (!timer.has_expired(now))
+                continue;
+            auto owner = timer.owner.strong_ref();
+            if (timer.fire_when_not_visible == TimerShouldFireWhenNotVisible::No
+                && owner && !owner->is_visible_for_timer_purposes()) {
+                continue;
+            }
+
+            if (owner)
+                ThreadEventQueue::current().post_event(*owner, make<TimerEvent>(timer.timer_id));
+            if (timer.should_reload) {
+                timer.reload(now);
+            } else {
+                // FIXME: Support removing expired timers that don't want to reload.
+                VERIFY_NOT_REACHED();
+            }
         }
     }
 
@@ -481,7 +480,7 @@ void EventLoopManagerUnix::unregister_signal(int handler_id)
         info.signal_handlers.remove(remove_signal_number);
 }
 
-int EventLoopManagerUnix::register_timer(Object& object, int milliseconds, bool should_reload, TimerShouldFireWhenNotVisible fire_when_not_visible)
+int EventLoopManagerUnix::register_timer(EventReceiver& object, int milliseconds, bool should_reload, TimerShouldFireWhenNotVisible fire_when_not_visible)
 {
     VERIFY(milliseconds >= 0);
     auto& thread_data = ThreadData::the();

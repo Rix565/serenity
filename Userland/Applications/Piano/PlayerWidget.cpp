@@ -41,11 +41,11 @@ PlayerWidget::PlayerWidget(TrackManager& manager, MainWidget& main_widget, Audio
 
 ErrorOr<void> PlayerWidget::initialize()
 {
-    TRY(try_set_layout<GUI::HorizontalBoxLayout>());
+    set_layout<GUI::HorizontalBoxLayout>();
     set_fill_with_background_color(true);
     TRY(m_track_number_choices.try_append("1"));
 
-    RefPtr<GUI::Label> label = TRY(try_add<GUI::Label>("Track"_short_string));
+    RefPtr<GUI::Label> label = TRY(try_add<GUI::Label>("Track"_string));
     label->set_max_width(75);
 
     m_track_dropdown = TRY(try_add<GUI::ComboBox>());
@@ -62,7 +62,7 @@ ErrorOr<void> PlayerWidget::initialize()
     m_add_track_button = TRY(try_add<GUI::Button>());
     m_add_track_button->set_icon(*m_add_track_icon);
     m_add_track_button->set_fixed_width(30);
-    m_add_track_button->set_tooltip("Add Track");
+    m_add_track_button->set_tooltip_deprecated("Add Track");
     m_add_track_button->set_focus_policy(GUI::FocusPolicy::NoFocus);
     m_add_track_button->on_click = [this](unsigned) {
         add_track();
@@ -71,7 +71,7 @@ ErrorOr<void> PlayerWidget::initialize()
     m_next_track_button = TRY(try_add<GUI::Button>());
     m_next_track_button->set_icon(*m_next_track_icon);
     m_next_track_button->set_fixed_width(30);
-    m_next_track_button->set_tooltip("Next Track");
+    m_next_track_button->set_tooltip_deprecated("Next Track");
     m_next_track_button->set_focus_policy(GUI::FocusPolicy::NoFocus);
     m_next_track_button->on_click = [this](unsigned) {
         next_track();
@@ -80,7 +80,7 @@ ErrorOr<void> PlayerWidget::initialize()
     m_play_button = TRY(try_add<GUI::Button>());
     m_play_button->set_icon(*m_pause_icon);
     m_play_button->set_fixed_width(30);
-    m_play_button->set_tooltip("Play/Pause playback");
+    m_play_button->set_tooltip_deprecated("Play/Pause playback");
     m_play_button->set_focus_policy(GUI::FocusPolicy::NoFocus);
     m_play_button->on_click = [this](unsigned) {
         m_audio_loop.toggle_paused();
@@ -95,7 +95,7 @@ ErrorOr<void> PlayerWidget::initialize()
     m_back_button = TRY(try_add<GUI::Button>());
     m_back_button->set_icon(*m_back_icon);
     m_back_button->set_fixed_width(30);
-    m_back_button->set_tooltip("Previous Note");
+    m_back_button->set_tooltip_deprecated("Previous Note");
     m_back_button->set_focus_policy(GUI::FocusPolicy::NoFocus);
     m_back_button->on_click = [this](unsigned) {
         m_track_manager.time_forward(-(sample_rate / (beats_per_minute / 60) / notes_per_beat));
@@ -104,7 +104,7 @@ ErrorOr<void> PlayerWidget::initialize()
     m_next_button = TRY(try_add<GUI::Button>());
     m_next_button->set_icon(*m_next_icon);
     m_next_button->set_fixed_width(30);
-    m_next_button->set_tooltip("Next Note");
+    m_next_button->set_tooltip_deprecated("Next Note");
     m_next_button->set_focus_policy(GUI::FocusPolicy::NoFocus);
     m_next_button->on_click = [this](unsigned) {
         m_track_manager.time_forward((sample_rate / (beats_per_minute / 60) / notes_per_beat));

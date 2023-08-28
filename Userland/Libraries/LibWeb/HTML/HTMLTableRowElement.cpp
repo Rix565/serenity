@@ -27,12 +27,10 @@ HTMLTableRowElement::HTMLTableRowElement(DOM::Document& document, DOM::Qualified
 
 HTMLTableRowElement::~HTMLTableRowElement() = default;
 
-JS::ThrowCompletionOr<void> HTMLTableRowElement::initialize(JS::Realm& realm)
+void HTMLTableRowElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLTableRowElementPrototype>(realm, "HTMLTableRowElement"));
-
-    return {};
 }
 
 void HTMLTableRowElement::apply_presentational_hints(CSS::StyleProperties& style) const
@@ -43,11 +41,11 @@ void HTMLTableRowElement::apply_presentational_hints(CSS::StyleProperties& style
             // https://html.spec.whatwg.org/multipage/rendering.html#tables-2:rules-for-parsing-a-legacy-colour-value
             auto color = parse_legacy_color_value(value);
             if (color.has_value())
-                style.set_property(CSS::PropertyID::BackgroundColor, CSS::ColorStyleValue::create(color.value()).release_value_but_fixme_should_propagate_errors());
+                style.set_property(CSS::PropertyID::BackgroundColor, CSS::ColorStyleValue::create(color.value()));
             return;
         } else if (name == HTML::AttributeNames::background) {
             if (auto parsed_value = document().parse_url(value); parsed_value.is_valid())
-                style.set_property(CSS::PropertyID::BackgroundImage, CSS::ImageStyleValue::create(parsed_value).release_value_but_fixme_should_propagate_errors());
+                style.set_property(CSS::PropertyID::BackgroundImage, CSS::ImageStyleValue::create(parsed_value));
             return;
         }
     });
@@ -67,7 +65,7 @@ JS::NonnullGCPtr<DOM::HTMLCollection> HTMLTableRowElement::cells() const
     if (!m_cells) {
         m_cells = DOM::HTMLCollection::create(const_cast<HTMLTableRowElement&>(*this), DOM::HTMLCollection::Scope::Children, [](Element const& element) {
             return is<HTMLTableCellElement>(element);
-        }).release_value_but_fixme_should_propagate_errors();
+        });
     }
     return *m_cells;
 }

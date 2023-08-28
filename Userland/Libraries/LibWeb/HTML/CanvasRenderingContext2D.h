@@ -28,6 +28,7 @@
 #include <LibWeb/HTML/Canvas/CanvasRect.h>
 #include <LibWeb/HTML/Canvas/CanvasState.h>
 #include <LibWeb/HTML/Canvas/CanvasText.h>
+#include <LibWeb/HTML/Canvas/CanvasTextDrawingStyles.h>
 #include <LibWeb/HTML/Canvas/CanvasTransform.h>
 #include <LibWeb/HTML/CanvasGradient.h>
 #include <LibWeb/Layout/InlineNode.h>
@@ -53,12 +54,13 @@ class CanvasRenderingContext2D
     , public CanvasImageData
     , public CanvasImageSmoothing
     , public CanvasCompositing
-    , public CanvasPathDrawingStyles<CanvasRenderingContext2D> {
+    , public CanvasPathDrawingStyles<CanvasRenderingContext2D>
+    , public CanvasTextDrawingStyles<CanvasRenderingContext2D> {
 
     WEB_PLATFORM_OBJECT(CanvasRenderingContext2D, Bindings::PlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CanvasRenderingContext2D>> create(JS::Realm&, HTMLCanvasElement&);
+    [[nodiscard]] static JS::NonnullGCPtr<CanvasRenderingContext2D> create(JS::Realm&, HTMLCanvasElement&);
     virtual ~CanvasRenderingContext2D() override;
 
     virtual void fill_rect(float x, float y, float width, float height) override;
@@ -98,10 +100,13 @@ public:
     virtual float global_alpha() const override;
     virtual void set_global_alpha(float) override;
 
+    HTMLCanvasElement& canvas_element();
+    HTMLCanvasElement const& canvas_element() const;
+
 private:
     explicit CanvasRenderingContext2D(JS::Realm&, HTMLCanvasElement&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     struct PreparedTextGlyph {
@@ -130,13 +135,12 @@ private:
         did_draw(draw_rect);
     }
 
+    RefPtr<Gfx::Font const> current_font();
+
     PreparedText prepare_text(DeprecatedString const& text, float max_width = INFINITY);
 
     Gfx::Painter* painter();
     Optional<Gfx::AntiAliasingPainter> antialiased_painter();
-
-    HTMLCanvasElement& canvas_element();
-    HTMLCanvasElement const& canvas_element() const;
 
     Gfx::Path rect_path(float x, float y, float width, float height);
 

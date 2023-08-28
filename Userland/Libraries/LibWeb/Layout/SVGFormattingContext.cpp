@@ -15,6 +15,8 @@
 #include <LibWeb/Layout/SVGTextBox.h>
 #include <LibWeb/SVG/SVGForeignObjectElement.h>
 #include <LibWeb/SVG/SVGSVGElement.h>
+#include <LibWeb/SVG/SVGSymbolElement.h>
+#include <LibWeb/SVG/SVGUseElement.h>
 
 namespace Web::Layout {
 
@@ -84,13 +86,13 @@ static ViewBoxTransform scale_and_align_viewbox_content(SVG::PreserveAspectRatio
         case SVG::PreserveAspectRatio::Align::xMidYMid:
         case SVG::PreserveAspectRatio::Align::xMidYMax:
             // Align the midpoint X value of the element's ‘viewBox’ with the midpoint X value of the SVG viewport.
-            viewbox_transform.offset.translate_by((svg_box_state.content_width() - (view_box.width * viewbox_transform.scale_factor)) / 2, 0);
+            viewbox_transform.offset.translate_by((svg_box_state.content_width() - CSSPixels::nearest_value_for(view_box.width * viewbox_transform.scale_factor)) / 2, 0);
             break;
         case SVG::PreserveAspectRatio::Align::xMaxYMin:
         case SVG::PreserveAspectRatio::Align::xMaxYMid:
         case SVG::PreserveAspectRatio::Align::xMaxYMax:
             // Align the <min-x>+<width> of the element's ‘viewBox’ with the maximum X value of the SVG viewport.
-            viewbox_transform.offset.translate_by((svg_box_state.content_width() - (view_box.width * viewbox_transform.scale_factor)), 0);
+            viewbox_transform.offset.translate_by((svg_box_state.content_width() - CSSPixels::nearest_value_for(view_box.width * viewbox_transform.scale_factor)), 0);
             break;
         default:
             VERIFY_NOT_REACHED();
@@ -115,13 +117,13 @@ static ViewBoxTransform scale_and_align_viewbox_content(SVG::PreserveAspectRatio
         case SVG::PreserveAspectRatio::Align::xMidYMid:
         case SVG::PreserveAspectRatio::Align::xMaxYMid:
             // Align the midpoint Y value of the element's ‘viewBox’ with the midpoint Y value of the SVG viewport.
-            viewbox_transform.offset.translate_by(0, (svg_box_state.content_height() - (view_box.height * viewbox_transform.scale_factor)) / 2);
+            viewbox_transform.offset.translate_by(0, (svg_box_state.content_height() - CSSPixels::nearest_value_for(view_box.height * viewbox_transform.scale_factor)) / 2);
             break;
         case SVG::PreserveAspectRatio::Align::xMinYMax:
         case SVG::PreserveAspectRatio::Align::xMidYMax:
         case SVG::PreserveAspectRatio::Align::xMaxYMax:
             // Align the <min-y>+<height> of the element's ‘viewBox’ with the maximum Y value of the SVG viewport.
-            viewbox_transform.offset.translate_by(0, (svg_box_state.content_height() - (view_box.height * viewbox_transform.scale_factor)));
+            viewbox_transform.offset.translate_by(0, (svg_box_state.content_height() - CSSPixels::nearest_value_for(view_box.height * viewbox_transform.scale_factor)));
             break;
         default:
             VERIFY_NOT_REACHED();
@@ -129,6 +131,21 @@ static ViewBoxTransform scale_and_align_viewbox_content(SVG::PreserveAspectRatio
     }
 
     return viewbox_transform;
+}
+
+static bool should_ensure_creation_of_paintable(Node const& node)
+{
+    if (is<SVGTextBox>(node))
+        return true;
+    if (is<SVGGraphicsBox>(node))
+        return true;
+    if (node.dom_node()) {
+        if (is<SVG::SVGUseElement>(*node.dom_node()))
+            return true;
+        if (is<SVG::SVGSymbolElement>(*node.dom_node()))
+            return true;
+    }
+    return false;
 }
 
 void SVGFormattingContext::run(Box const& box, LayoutMode layout_mode, AvailableSpace const& available_space)
@@ -149,7 +166,7 @@ void SVGFormattingContext::run(Box const& box, LayoutMode layout_mode, Available
         return IterationDecision::Continue;
     });
 
-    box.for_each_in_subtree_of_type<Box>([&](Box const& descendant) {
+    box.for_each_in_subtree([&](Node const& descendant) {
         if (is<SVGGeometryBox>(descendant)) {
             auto const& geometry_box = static_cast<SVGGeometryBox const&>(descendant);
             auto& geometry_box_state = m_state.get_mutable(geometry_box);
@@ -174,31 +191,62 @@ void SVGFormattingContext::run(Box const& box, LayoutMode layout_mode, Available
                 // The initial value for preserveAspectRatio is xMidYMid meet.
                 auto preserve_aspect_ratio = svg_svg_element.preserve_aspect_ratio().value_or(SVG::PreserveAspectRatio {});
                 auto viewbox_transform = scale_and_align_viewbox_content(preserve_aspect_ratio, view_box, { scale_width, scale_height }, svg_box_state);
-                path_transform = Gfx::AffineTransform {}.translate(viewbox_transform.offset.to_type<double>().to_type<float>()).scale(viewbox_transform.scale_factor, viewbox_transform.scale_factor).translate({ -view_box.min_x, -view_box.min_y }).multiply(path_transform);
+                path_transform = Gfx::AffineTransform {}.translate(viewbox_transform.offset.to_type<float>()).scale(viewbox_transform.scale_factor, viewbox_transform.scale_factor).translate({ -view_box.min_x, -view_box.min_y }).multiply(path_transform);
                 viewbox_scale = viewbox_transform.scale_factor;
             }
 
             // Stroke increases the path's size by stroke_width/2 per side.
             auto path_bounding_box = path_transform.map(path.bounding_box()).to_type<CSSPixels>();
-            CSSPixels stroke_width = static_cast<double>(geometry_box.dom_node().visible_stroke_width()) * viewbox_scale;
+            CSSPixels stroke_width = CSSPixels::nearest_value_for(static_cast<double>(geometry_box.dom_node().visible_stroke_width()) * viewbox_scale);
             path_bounding_box.inflate(stroke_width, stroke_width);
             geometry_box_state.set_content_offset(path_bounding_box.top_left());
             geometry_box_state.set_content_width(path_bounding_box.width());
             geometry_box_state.set_content_height(path_bounding_box.height());
         } else if (is<SVGSVGBox>(descendant)) {
-            SVGFormattingContext nested_context(m_state, descendant, this);
-            nested_context.run(descendant, layout_mode, available_space);
-        } else if (is<SVGTextBox>(descendant)) {
-            auto const& svg_text_box = static_cast<SVGTextBox const&>(descendant);
-            // NOTE: This hack creates a layout state to ensure the existence of a paintable box node in LayoutState::commit(), even when none of the values from UsedValues impact the SVG text.
-            m_state.get_mutable(svg_text_box);
-        } else if (is<SVGGraphicsBox>(descendant)) {
-            // Same hack as above.
-            // FIXME: This should be sized based on its children.
-            auto const& svg_graphics_box = static_cast<SVGGraphicsBox const&>(descendant);
-            m_state.get_mutable(svg_graphics_box);
+            SVGFormattingContext nested_context(m_state, static_cast<SVGSVGBox const&>(descendant), this);
+            nested_context.run(static_cast<SVGSVGBox const&>(descendant), layout_mode, available_space);
+        } else if (should_ensure_creation_of_paintable(descendant)) {
+            // NOTE: This hack creates a layout state to ensure the existence of
+            //       a paintable in LayoutState::commit().
+            m_state.get_mutable(static_cast<NodeWithStyleAndBoxModelMetrics const&>(descendant));
         }
 
+        return IterationDecision::Continue;
+    });
+
+    // https://svgwg.org/svg2-draft/struct.html#Groups
+    // 5.2. Grouping: the ‘g’ element
+    // The ‘g’ element is a container element for grouping together related graphics elements.
+    box.for_each_in_subtree_of_type<Box>([&](Box const& descendant) {
+        if (is<SVGGraphicsBox>(descendant) && !is<SVGGeometryBox>(descendant) && !is<SVGTextBox>(descendant)) {
+            auto const& svg_graphics_box = static_cast<SVGGraphicsBox const&>(descendant);
+            auto& graphics_box_state = m_state.get_mutable(svg_graphics_box);
+            auto smallest_x_position = CSSPixels(0);
+            auto smallest_y_position = CSSPixels(0);
+            auto greatest_x_position = CSSPixels(0);
+            auto greatest_y_position = CSSPixels(0);
+
+            descendant.for_each_in_subtree_of_type<Box>([&](Box const& child_of_svg_container) {
+                auto& box_state = m_state.get_mutable(child_of_svg_container);
+                smallest_x_position = box_state.offset.x();
+                smallest_y_position = box_state.offset.y();
+                return IterationDecision::Break;
+            });
+
+            descendant.for_each_in_subtree_of_type<Box>([&](Box const& child_of_svg_container) {
+                auto& box_state = m_state.get_mutable(child_of_svg_container);
+                smallest_x_position = min(smallest_x_position, box_state.offset.x());
+                smallest_y_position = min(smallest_y_position, box_state.offset.y());
+                greatest_x_position = max(greatest_x_position, box_state.offset.x() + box_state.content_width());
+                greatest_y_position = max(greatest_y_position, box_state.offset.y() + box_state.content_height());
+                return IterationDecision::Continue;
+            });
+
+            graphics_box_state.set_content_x(smallest_x_position);
+            graphics_box_state.set_content_y(smallest_y_position);
+            graphics_box_state.set_content_width(greatest_x_position - smallest_x_position);
+            graphics_box_state.set_content_height(greatest_y_position - smallest_y_position);
+        }
         return IterationDecision::Continue;
     });
 }

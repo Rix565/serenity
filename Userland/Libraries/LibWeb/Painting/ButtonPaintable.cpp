@@ -43,17 +43,32 @@ void ButtonPaintable::paint(PaintContext& context, PaintPhase phase) const
 
     auto const& dom_node = layout_box().dom_node();
     if (is<HTML::HTMLInputElement>(dom_node) && phase == PaintPhase::Foreground) {
-        auto text_rect = context.enclosing_device_rect(absolute_rect());
+        auto button_rect = context.enclosing_device_rect(absolute_rect());
+        auto text_rect = button_rect;
+
+        // Apply CSS text-indent property to text rect
+        // FIXME: The second parameter to to_px() needs to be the block container’s own inline-axis inner size:
+        //        https://drafts.csswg.org/css-text-3/#propdef-text-indent
+        auto text_indent = computed_values().text_indent().to_px(layout_box(), CSSPixels());
+        text_rect.translate_by(context.rounded_device_pixels(text_indent), 0);
+
+        // Apply button pressed state offset
         if (being_pressed()) {
             auto offset = context.rounded_device_pixels(1);
             text_rect.translate_by(offset, offset);
         }
-        context.painter().draw_text(
+
+        // Paint button text clipped to button rect
+        auto& painter = context.painter();
+        painter.save();
+        painter.add_clip_rect(button_rect.to_type<int>());
+        painter.draw_text(
             text_rect.to_type<int>(),
             static_cast<HTML::HTMLInputElement const&>(dom_node).value(),
-            FontCache::the().scaled_font(layout_box().font(), context.device_pixels_per_css_pixel()),
+            document().style_computer().font_cache().scaled_font(layout_box().font(), context.device_pixels_per_css_pixel()),
             Gfx::TextAlignment::Center,
             computed_values().color());
+        painter.restore();
     }
 }
 

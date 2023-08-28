@@ -17,10 +17,10 @@
 #include <LibJS/Bytecode/Generator.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Contrib/Test262/GlobalObject.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Parser.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibJS/Script.h>
+#include <LibJS/SourceTextModule.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
@@ -90,22 +90,22 @@ static Result<void, TestError> run_program(InterpreterT& interpreter, ScriptOrMo
 
             auto name = object.get_without_side_effects("name");
             if (!name.is_empty() && !name.is_accessor()) {
-                error.type = name.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+                error.type = name.to_string_without_side_effects().to_deprecated_string();
             } else {
                 auto constructor = object.get_without_side_effects("constructor");
                 if (constructor.is_object()) {
                     name = constructor.as_object().get_without_side_effects("name");
                     if (!name.is_undefined())
-                        error.type = name.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+                        error.type = name.to_string_without_side_effects().to_deprecated_string();
                 }
             }
 
             auto message = object.get_without_side_effects("message");
             if (!message.is_empty() && !message.is_accessor())
-                error.details = message.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+                error.details = message.to_string_without_side_effects().to_deprecated_string();
         }
         if (error.type.is_empty())
-            error.type = error_value.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+            error.type = error_value.to_string_without_side_effects().to_deprecated_string();
         return error;
     }
     return {};
@@ -206,27 +206,28 @@ static Result<void, TestError> run_test(StringView source, StringView filepath, 
 
     auto vm = MUST(JS::VM::create());
     vm->enable_default_host_import_module_dynamically_hook();
-    auto ast_interpreter = JS::Interpreter::create<JS::Test262::GlobalObject>(*vm);
-    auto& realm = ast_interpreter->realm();
 
-    auto program_or_error = parse_program(realm, source, filepath, metadata.program_type);
+    JS::GCPtr<JS::Realm> realm;
+    JS::GCPtr<JS::Test262::GlobalObject> global_object;
+    auto root_execution_context = MUST(JS::Realm::initialize_host_defined_realm(
+        *vm,
+        [&](JS::Realm& realm_) -> JS::GlobalObject* {
+            realm = &realm_;
+            global_object = vm->heap().allocate_without_realm<JS::Test262::GlobalObject>(realm_);
+            return global_object;
+        },
+        nullptr));
+
+    auto program_or_error = parse_program(*realm, source, filepath, metadata.program_type);
     if (program_or_error.is_error())
         return program_or_error.release_error();
 
-    auto* bytecode_interpreter = vm->bytecode_interpreter_if_exists();
-
-    auto run_with_interpreter = [&](ScriptOrModuleProgram& program) {
-        if (bytecode_interpreter)
-            return run_program(*bytecode_interpreter, program);
-        return run_program(*ast_interpreter, program);
-    };
-
     for (auto& harness_file : metadata.harness_files) {
-        auto harness_program_or_error = parse_harness_files(realm, harness_file);
+        auto harness_program_or_error = parse_harness_files(*realm, harness_file);
         if (harness_program_or_error.is_error())
             return harness_program_or_error.release_error();
         ScriptOrModuleProgram harness_program { harness_program_or_error.release_value() };
-        auto result = run_with_interpreter(harness_program);
+        auto result = run_program(vm->bytecode_interpreter(), harness_program);
         if (result.is_error()) {
             return TestError {
                 NegativePhase::Harness,
@@ -237,7 +238,7 @@ static Result<void, TestError> run_test(StringView source, StringView filepath, 
         }
     }
 
-    return run_with_interpreter(program_or_error.value());
+    return run_program(vm->bytecode_interpreter(), program_or_error.value());
 }
 
 static Result<TestMetadata, DeprecatedString> extract_metadata(StringView source)
@@ -562,22 +563,18 @@ int main(int argc, char** argv)
     int timeout = 10;
     bool enable_debug_printing = false;
     bool disable_core_dumping = false;
-    bool use_bytecode = false;
 
     Core::ArgsParser args_parser;
     args_parser.set_general_help("LibJS test262 runner for streaming tests");
     args_parser.add_option(s_harness_file_directory, "Directory containing the harness files", "harness-location", 'l', "harness-files");
-    args_parser.add_option(use_bytecode, "Use the bytecode interpreter", "use-bytecode", 'b');
     args_parser.add_option(s_parse_only, "Only parse the files", "parse-only", 'p');
     args_parser.add_option(timeout, "Seconds before test should timeout", "timeout", 't', "seconds");
     args_parser.add_option(enable_debug_printing, "Enable debug printing", "debug", 'd');
     args_parser.add_option(disable_core_dumping, "Disable core dumping", "disable-core-dump", 0);
     args_parser.parse(arguments);
 
-    JS::Bytecode::Interpreter::set_enabled(use_bytecode);
-
 #if !defined(AK_OS_MACOS) && !defined(AK_OS_EMSCRIPTEN)
-    if (disable_core_dumping && prctl(PR_SET_DUMPABLE, 0, 0) < 0) {
+    if (disable_core_dumping && prctl(PR_SET_DUMPABLE, 0, 0, 0) < 0) {
         perror("prctl(PR_SET_DUMPABLE)");
         return exit_wrong_arguments;
     }

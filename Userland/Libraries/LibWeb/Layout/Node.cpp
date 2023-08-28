@@ -229,16 +229,14 @@ CSSPixelPoint Node::box_type_agnostic_position() const
         return verify_cast<Box>(*this).paintable_box()->absolute_position();
     VERIFY(is_inline());
     CSSPixelPoint position;
-    if (auto* block = containing_block()) {
-        if (is<Painting::PaintableWithLines>(*block)) {
-            static_cast<Painting::PaintableWithLines const&>(*block->paintable_box()).for_each_fragment([&](auto& fragment) {
-                if (&fragment.layout_node() == this || is_ancestor_of(fragment.layout_node())) {
-                    position = fragment.absolute_rect().location();
-                    return IterationDecision::Break;
-                }
-                return IterationDecision::Continue;
-            });
-        }
+    if (auto* block = containing_block(); block && block->paintable() && is<Painting::PaintableWithLines>(*block->paintable())) {
+        static_cast<Painting::PaintableWithLines const&>(*block->paintable_box()).for_each_fragment([&](auto& fragment) {
+            if (&fragment.layout_node() == this || is_ancestor_of(fragment.layout_node())) {
+                position = fragment.absolute_rect().location();
+                return IterationDecision::Break;
+            }
+            return IterationDecision::Continue;
+        });
     }
     return position;
 }
@@ -302,11 +300,11 @@ static CSSPixels snap_a_length_as_a_border_width(double device_pixels_per_css_pi
 
     // 3. If len is greater than zero, but less than 1 device pixel, round len up to 1 device pixel.
     if (device_pixels > 0 && device_pixels < 1)
-        return 1 / device_pixels_per_css_pixel;
+        return CSSPixels::nearest_value_for(1 / device_pixels_per_css_pixel);
 
     // 4. If len is greater than 1 device pixel, round it down to the nearest integer number of device pixels.
     if (device_pixels > 1)
-        return floor(device_pixels) / device_pixels_per_css_pixel;
+        return CSSPixels::nearest_value_for(floor(device_pixels) / device_pixels_per_css_pixel);
 
     return length;
 }
@@ -686,11 +684,11 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& computed_style)
                     // https://www.w3.org/TR/css-backgrounds-3/#valdef-line-width-thin
                     switch (value->to_identifier()) {
                     case CSS::ValueID::Thin:
-                        return 1.0;
+                        return 1;
                     case CSS::ValueID::Medium:
-                        return 3.0;
+                        return 3;
                     case CSS::ValueID::Thick:
-                        return 5.0;
+                        return 5;
                     default:
                         VERIFY_NOT_REACHED();
                     }
@@ -707,6 +705,15 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& computed_style)
     do_border_style(computed_values.border_right(), CSS::PropertyID::BorderRightWidth, CSS::PropertyID::BorderRightColor, CSS::PropertyID::BorderRightStyle);
     do_border_style(computed_values.border_bottom(), CSS::PropertyID::BorderBottomWidth, CSS::PropertyID::BorderBottomColor, CSS::PropertyID::BorderBottomStyle);
 
+    if (auto outline_color = computed_style.property(CSS::PropertyID::OutlineColor); outline_color->has_color())
+        computed_values.set_outline_color(outline_color->to_color(*this));
+    if (auto outline_offset = computed_style.property(CSS::PropertyID::OutlineOffset); outline_offset->is_length())
+        computed_values.set_outline_offset(outline_offset->as_length().length());
+    if (auto outline_style = computed_style.outline_style(); outline_style.has_value())
+        computed_values.set_outline_style(outline_style.value());
+    if (auto outline_width = computed_style.property(CSS::PropertyID::OutlineWidth); outline_width->is_length())
+        computed_values.set_outline_width(outline_width->as_length().length());
+
     computed_values.set_content(computed_style.content());
     computed_values.set_grid_auto_columns(computed_style.grid_auto_columns());
     computed_values.set_grid_auto_rows(computed_style.grid_auto_rows());
@@ -717,6 +724,7 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& computed_style)
     computed_values.set_grid_row_end(computed_style.grid_row_end());
     computed_values.set_grid_row_start(computed_style.grid_row_start());
     computed_values.set_grid_template_areas(computed_style.grid_template_areas());
+    computed_values.set_grid_auto_flow(computed_style.grid_auto_flow());
 
     auto fill = computed_style.property(CSS::PropertyID::Fill);
     if (fill->has_color())
@@ -734,7 +742,7 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& computed_style)
     // FIXME: Converting to pixels isn't really correct - values should be in "user units"
     //        https://svgwg.org/svg2-draft/coords.html#TermUserUnits
     if (stroke_width->is_number())
-        computed_values.set_stroke_width(CSS::Length::make_px(stroke_width->as_number().number()));
+        computed_values.set_stroke_width(CSS::Length::make_px(CSSPixels::nearest_value_for(stroke_width->as_number().number())));
     else if (stroke_width->is_length())
         computed_values.set_stroke_width(stroke_width->as_length().length());
     else if (stroke_width->is_percentage())
@@ -755,6 +763,9 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& computed_style)
 
     if (auto border_collapse = computed_style.border_collapse(); border_collapse.has_value())
         computed_values.set_border_collapse(border_collapse.value());
+
+    if (auto table_layout = computed_style.table_layout(); table_layout.has_value())
+        computed_values.set_table_layout(table_layout.value());
 
     auto aspect_ratio = computed_style.property(CSS::PropertyID::AspectRatio);
     if (aspect_ratio->is_value_list()) {
@@ -904,6 +915,18 @@ DOM::Node* Node::dom_node()
     if (m_anonymous)
         return nullptr;
     return m_dom_node.ptr();
+}
+
+DOM::Element const* Node::pseudo_element_generator() const
+{
+    VERIFY(m_generated_for != GeneratedFor::NotGenerated);
+    return m_pseudo_element_generator.ptr();
+}
+
+DOM::Element* Node::pseudo_element_generator()
+{
+    VERIFY(m_generated_for != GeneratedFor::NotGenerated);
+    return m_pseudo_element_generator.ptr();
 }
 
 DOM::Document& Node::document()

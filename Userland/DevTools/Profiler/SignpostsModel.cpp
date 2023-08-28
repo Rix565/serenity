@@ -30,19 +30,19 @@ ErrorOr<String> SignpostsModel::column_name(int column) const
 {
     switch (column) {
     case Column::SignpostIndex:
-        return "#"_short_string;
+        return "#"_string;
     case Column::Timestamp:
-        return TRY("Timestamp"_string);
+        return "Timestamp"_string;
     case Column::ProcessID:
-        return "PID"_short_string;
+        return "PID"_string;
     case Column::ThreadID:
-        return "TID"_short_string;
+        return "TID"_string;
     case Column::ExecutableName:
-        return TRY("Executable"_string);
+        return "Executable"_string;
     case Column::SignpostString:
-        return "String"_short_string;
+        return "String"_string;
     case Column::SignpostArgument:
-        return TRY("Argument"_string);
+        return "Argument"_string;
     default:
         VERIFY_NOT_REACHED();
     }

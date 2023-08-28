@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022-2023, San Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,6 +8,8 @@
 #include <AK/AnyOf.h>
 #include <AK/Debug.h>
 #include <AK/StringBuilder.h>
+#include <LibUnicode/CharacterTypes.h>
+#include <LibUnicode/UnicodeData.h>
 #include <LibWeb/Bindings/ElementPrototype.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
@@ -42,6 +45,7 @@
 #include <LibWeb/HTML/HTMLOptGroupElement.h>
 #include <LibWeb/HTML/HTMLOptionElement.h>
 #include <LibWeb/HTML/HTMLSelectElement.h>
+#include <LibWeb/HTML/HTMLStyleElement.h>
 #include <LibWeb/HTML/HTMLTextAreaElement.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
 #include <LibWeb/HTML/Window.h>
@@ -70,16 +74,12 @@ Element::Element(Document& document, DOM::QualifiedName qualified_name)
 
 Element::~Element() = default;
 
-JS::ThrowCompletionOr<void> Element::initialize(JS::Realm& realm)
+void Element::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::ElementPrototype>(realm, "Element"));
 
-    m_attributes = TRY(Bindings::throw_dom_exception_if_needed(realm.vm(), [&]() {
-        return NamedNodeMap::create(*this);
-    }));
-
-    return {};
+    m_attributes = NamedNodeMap::create(*this);
 }
 
 void Element::visit_edges(Cell::Visitor& visitor)
@@ -134,7 +134,7 @@ WebIDL::ExceptionOr<void> Element::set_attribute(DeprecatedFlyString const& name
 
     // 4. If attribute is null, create an attribute whose local name is qualifiedName, value is value, and node document is this’s node document, then append this attribute to this, and then return.
     if (!attribute) {
-        auto new_attribute = TRY(Attr::create(document(), insert_as_lowercase ? name.to_lowercase() : name, value));
+        auto new_attribute = Attr::create(document(), insert_as_lowercase ? name.to_lowercase() : name, value);
         m_attributes->append_attribute(new_attribute);
 
         attribute = new_attribute.ptr();
@@ -238,6 +238,17 @@ bool Element::has_attribute(DeprecatedFlyString const& name) const
     return m_attributes->get_attribute(name) != nullptr;
 }
 
+// https://dom.spec.whatwg.org/#dom-element-hasattributens
+bool Element::has_attribute_ns(DeprecatedFlyString namespace_, DeprecatedFlyString const& name) const
+{
+    // 1. If namespace is the empty string, then set it to null.
+    if (namespace_.is_empty())
+        namespace_ = {};
+
+    // 2. Return true if this has an attribute whose namespace is namespace and local name is localName; otherwise false.
+    return m_attributes->get_attribute_ns(namespace_, name) != nullptr;
+}
+
 // https://dom.spec.whatwg.org/#dom-element-toggleattribute
 WebIDL::ExceptionOr<bool> Element::toggle_attribute(DeprecatedFlyString const& name, Optional<bool> force)
 {
@@ -257,7 +268,7 @@ WebIDL::ExceptionOr<bool> Element::toggle_attribute(DeprecatedFlyString const& n
     if (!attribute) {
         // 1. If force is not given or is true, create an attribute whose local name is qualifiedName, value is the empty string, and node document is this’s node document, then append this attribute to this, and then return true.
         if (!force.has_value() || force.value()) {
-            auto new_attribute = TRY(Attr::create(document(), insert_as_lowercase ? name.to_lowercase() : name, ""));
+            auto new_attribute = Attr::create(document(), insert_as_lowercase ? name.to_lowercase() : name, "");
             m_attributes->append_attribute(new_attribute);
 
             attribute_changed(new_attribute->local_name(), "");
@@ -341,7 +352,7 @@ JS::GCPtr<Layout::Node> Element::create_layout_node_for_display_type(DOM::Docume
             return document.heap().allocate_without_realm<Layout::Box>(document, element, move(style));
         if (display.is_grid_inside())
             return document.heap().allocate_without_realm<Layout::Box>(document, element, move(style));
-        dbgln_if(LIBWEB_CSS_DEBUG, "FIXME: Support display: {}", MUST(display.to_string()));
+        dbgln_if(LIBWEB_CSS_DEBUG, "FIXME: Support display: {}", display.to_string());
         return document.heap().allocate_without_realm<Layout::InlineNode>(document, element, move(style));
     }
 
@@ -351,7 +362,7 @@ JS::GCPtr<Layout::Node> Element::create_layout_node_for_display_type(DOM::Docume
     if (display.is_flow_inside() || display.is_flow_root_inside() || display.is_contents())
         return document.heap().allocate_without_realm<Layout::BlockContainer>(document, element, move(style));
 
-    dbgln("FIXME: CSS display '{}' not implemented yet.", display.to_string().release_value_but_fixme_should_propagate_errors());
+    dbgln("FIXME: CSS display '{}' not implemented yet.", display.to_string());
     return document.heap().allocate_without_realm<Layout::InlineNode>(document, element, move(style));
 }
 
@@ -384,6 +395,16 @@ void Element::attribute_changed(DeprecatedFlyString const& name, DeprecatedStrin
             m_inline_style = parse_css_style_attribute(CSS::Parser::ParsingContext(document()), value, *this);
             set_needs_style_update(true);
         }
+    } else if (name == HTML::AttributeNames::dir) {
+        // https://html.spec.whatwg.org/multipage/dom.html#attr-dir
+        if (value.equals_ignoring_ascii_case("ltr"sv))
+            m_dir = Dir::Ltr;
+        else if (value.equals_ignoring_ascii_case("rtl"sv))
+            m_dir = Dir::Rtl;
+        else if (value.equals_ignoring_ascii_case("auto"sv))
+            m_dir = Dir::Auto;
+        else
+            m_dir = {};
     }
 }
 
@@ -469,7 +490,7 @@ Element::RequiredInvalidationAfterStyleChange Element::recompute_style()
 
 NonnullRefPtr<CSS::StyleProperties> Element::resolved_css_values()
 {
-    auto element_computed_style = CSS::ResolvedCSSStyleDeclaration::create(*this).release_value_but_fixme_should_propagate_errors();
+    auto element_computed_style = CSS::ResolvedCSSStyleDeclaration::create(*this);
     auto properties = CSS::StyleProperties::create();
 
     for (auto i = to_underlying(CSS::first_property_id); i <= to_underlying(CSS::last_property_id); ++i) {
@@ -486,7 +507,7 @@ NonnullRefPtr<CSS::StyleProperties> Element::resolved_css_values()
 DOMTokenList* Element::class_list()
 {
     if (!m_class_list)
-        m_class_list = DOMTokenList::create(*this, HTML::AttributeNames::class_).release_value_but_fixme_should_propagate_errors();
+        m_class_list = DOMTokenList::create(*this, FlyString::from_deprecated_fly_string(HTML::AttributeNames::class_).release_value());
     return m_class_list;
 }
 
@@ -521,7 +542,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<ShadowRoot>> Element::attach_shadow(ShadowR
         return WebIDL::NotSupportedError::create(realm(), "Element already is a shadow host");
 
     // 5. Let shadow be a new shadow root whose node document is this’s node document, host is this, and mode is init["mode"].
-    auto shadow = MUST_OR_THROW_OOM(heap().allocate<ShadowRoot>(realm(), document(), *this, init.mode));
+    auto shadow = heap().allocate<ShadowRoot>(realm(), document(), *this, init.mode);
 
     // 6. Set shadow’s delegates focus to init["delegatesFocus"].
     shadow->set_delegates_focus(init.delegates_focus);
@@ -566,7 +587,7 @@ WebIDL::ExceptionOr<bool> Element::matches(StringView selectors) const
     // 3. If the result of match a selector against an element, using s, this, and scoping root this, returns success, then return true; otherwise, return false.
     auto sel = maybe_selectors.value();
     for (auto& s : sel) {
-        if (SelectorEngine::matches(s, *this, {}, static_cast<ParentNode const*>(this)))
+        if (SelectorEngine::matches(s, {}, *this, {}, static_cast<ParentNode const*>(this)))
             return true;
     }
     return false;
@@ -585,7 +606,7 @@ WebIDL::ExceptionOr<DOM::Element const*> Element::closest(StringView selectors) 
     auto matches_selectors = [this](CSS::SelectorList const& selector_list, Element const* element) {
         // 4. For each element in elements, if match a selector against an element, using s, element, and scoping root this, returns success, return element.
         for (auto& selector : selector_list) {
-            if (!SelectorEngine::matches(selector, *element, {}, this))
+            if (!SelectorEngine::matches(selector, {}, *element, {}, this))
                 return false;
         }
         return true;
@@ -627,6 +648,17 @@ bool Element::is_active() const
     return document().active_element() == this;
 }
 
+bool Element::is_target() const
+{
+    return document().target_element() == this;
+}
+
+// https://dom.spec.whatwg.org/#document-element
+bool Element::is_document_element() const
+{
+    return document().document_element() == this;
+}
+
 JS::NonnullGCPtr<HTMLCollection> Element::get_elements_by_class_name(DeprecatedFlyString const& class_names)
 {
     Vector<FlyString> list_of_class_names;
@@ -639,7 +671,7 @@ JS::NonnullGCPtr<HTMLCollection> Element::get_elements_by_class_name(DeprecatedF
                 return false;
         }
         return true;
-    }).release_value_but_fixme_should_propagate_errors();
+    });
 }
 
 // https://dom.spec.whatwg.org/#element-shadow-host
@@ -664,7 +696,7 @@ void Element::set_shadow_root(JS::GCPtr<ShadowRoot> shadow_root)
 CSS::CSSStyleDeclaration* Element::style_for_bindings()
 {
     if (!m_inline_style)
-        m_inline_style = CSS::ElementInlineCSSStyleDeclaration::create(*this, {}, {}).release_value_but_fixme_should_propagate_errors();
+        m_inline_style = CSS::ElementInlineCSSStyleDeclaration::create(*this, {}, {});
     return m_inline_style;
 }
 
@@ -673,7 +705,7 @@ void Element::make_html_uppercased_qualified_name()
 {
     // This is allowed by the spec: "User agents could optimize qualified name and HTML-uppercased qualified name by storing them in internal slots."
     if (namespace_() == Namespace::HTML && document().document_type() == Document::Type::HTML)
-        m_html_uppercased_qualified_name = qualified_name().to_uppercase();
+        m_html_uppercased_qualified_name = DeprecatedString(qualified_name()).to_uppercase();
     else
         m_html_uppercased_qualified_name = qualified_name();
 }
@@ -711,7 +743,7 @@ JS::NonnullGCPtr<Geometry::DOMRect> Element::get_bounding_client_rect() const
     VERIFY(document().browsing_context());
     auto viewport_offset = document().browsing_context()->viewport_scroll_offset();
 
-    return Geometry::DOMRect::create(realm(), paintable_box->absolute_rect().translated(-viewport_offset.x(), -viewport_offset.y()).to_type<double>().to_type<float>()).release_value_but_fixme_should_propagate_errors();
+    return Geometry::DOMRect::create(realm(), paintable_box->absolute_rect().translated(-viewport_offset.x(), -viewport_offset.y()).to_type<float>());
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-getclientrects
@@ -724,7 +756,7 @@ JS::NonnullGCPtr<Geometry::DOMRectList> Element::get_client_rects() const
 
     // 1. If the element on which it was invoked does not have an associated layout box return an empty DOMRectList object and stop this algorithm.
     if (!layout_node() || !layout_node()->is_box())
-        return Geometry::DOMRectList::create(realm(), move(rects)).release_value_but_fixme_should_propagate_errors();
+        return Geometry::DOMRectList::create(realm(), move(rects));
 
     // FIXME: 2. If the element has an associated SVG layout box return a DOMRectList object containing a single DOMRect object that describes
     // the bounding box of the element as defined by the SVG specification, applying the transforms that apply to the element and its ancestors.
@@ -738,7 +770,7 @@ JS::NonnullGCPtr<Geometry::DOMRectList> Element::get_client_rects() const
 
     auto bounding_rect = get_bounding_client_rect();
     rects.append(*bounding_rect);
-    return Geometry::DOMRectList::create(realm(), move(rects)).release_value_but_fixme_should_propagate_errors();
+    return Geometry::DOMRectList::create(realm(), move(rects));
 }
 
 int Element::client_top() const
@@ -943,11 +975,9 @@ double Element::scroll_top() const
     if (!layout_node() || !is<Layout::Box>(layout_node()))
         return 0.0;
 
-    auto const* box = static_cast<Layout::Box const*>(layout_node());
-
     // 9. Return the y-coordinate of the scrolling area at the alignment point with the top of the padding edge of the element.
     // FIXME: Is this correct?
-    return box->scroll_offset().y().to_double();
+    return paintable_box()->scroll_offset().y().to_double();
 }
 
 double Element::scroll_left() const
@@ -985,11 +1015,9 @@ double Element::scroll_left() const
     if (!layout_node() || !is<Layout::Box>(layout_node()))
         return 0.0;
 
-    auto const* box = static_cast<Layout::Box const*>(layout_node());
-
     // 9. Return the x-coordinate of the scrolling area at the alignment point with the left of the padding edge of the element.
     // FIXME: Is this correct?
-    return box->scroll_offset().x().to_double();
+    return paintable_box()->scroll_offset().x().to_double();
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scrollleft
@@ -1049,16 +1077,16 @@ void Element::set_scroll_left(double x)
         return;
 
     auto* box = static_cast<Layout::Box*>(layout_node());
-    if (!box->is_scrollable())
+    if (!box->is_scroll_container())
         return;
 
     // FIXME: or the element has no overflow.
 
     // 11. Scroll the element to x,scrollTop, with the scroll behavior being "auto".
     // FIXME: Implement this in terms of calling "scroll the element".
-    auto scroll_offset = box->scroll_offset();
-    scroll_offset.set_x(static_cast<float>(x));
-    box->set_scroll_offset(scroll_offset);
+    auto scroll_offset = paintable_box()->scroll_offset();
+    scroll_offset.set_x(CSSPixels::nearest_value_for(x));
+    paintable_box()->set_scroll_offset(scroll_offset);
 }
 
 void Element::set_scroll_top(double y)
@@ -1117,16 +1145,16 @@ void Element::set_scroll_top(double y)
         return;
 
     auto* box = static_cast<Layout::Box*>(layout_node());
-    if (!box->is_scrollable())
+    if (!box->is_scroll_container())
         return;
 
     // FIXME: or the element has no overflow.
 
     // 11. Scroll the element to scrollLeft,y, with the scroll behavior being "auto".
     // FIXME: Implement this in terms of calling "scroll the element".
-    auto scroll_offset = box->scroll_offset();
-    scroll_offset.set_y(static_cast<float>(y));
-    box->set_scroll_offset(scroll_offset);
+    auto scroll_offset = paintable_box()->scroll_offset();
+    scroll_offset.set_y(CSSPixels::nearest_value_for(y));
+    paintable_box()->set_scroll_offset(scroll_offset);
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scrollwidth
@@ -1356,7 +1384,7 @@ WebIDL::ExceptionOr<JS::GCPtr<Element>> Element::insert_adjacent_element(Depreca
 WebIDL::ExceptionOr<void> Element::insert_adjacent_text(DeprecatedString const& where, DeprecatedString const& data)
 {
     // 1. Let text be a new Text node whose data is data and node document is this’s node document.
-    auto text = MUST_OR_THROW_OOM(heap().allocate<DOM::Text>(realm(), document(), data));
+    auto text = heap().allocate<DOM::Text>(realm(), document(), data);
 
     // 2. Run insert adjacent, given this, where, and text.
     // Spec Note: This method returns nothing because it existed before we had a chance to design it.
@@ -1581,7 +1609,7 @@ void Element::enqueue_a_custom_element_callback_reaction(FlyString const& callba
         VERIFY(!arguments.is_empty());
         auto& attribute_name_value = arguments.first();
         VERIFY(attribute_name_value.is_string());
-        auto attribute_name = attribute_name_value.as_string().utf8_string().release_allocated_value_but_fixme_should_propagate_errors();
+        auto attribute_name = attribute_name_value.as_string().utf8_string();
 
         // 2. If definition's observed attributes does not contain attributeName, then return.
         if (!definition->observed_attributes().contains_slow(attribute_name))
@@ -1783,7 +1811,8 @@ HashMap<DeprecatedFlyString, CSS::StyleProperty> const& Element::custom_properti
 // https://drafts.csswg.org/cssom-view/#dom-element-scroll
 void Element::scroll(double x, double y)
 {
-    dbgln("FIXME: Implement Element::scroll(x: {}, y: {}", x, y);
+    // AD-HOC:
+    paintable_box()->scroll_by(x, y);
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scroll
@@ -1816,6 +1845,142 @@ IntersectionObserver::IntersectionObserverRegistration& Element::get_intersectio
     });
     VERIFY(!registration_iterator.is_end());
     return *registration_iterator;
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#the-directionality
+Element::Directionality Element::directionality() const
+{
+    // The directionality of an element (any element, not just an HTML element) is either 'ltr' or 'rtl',
+    // and is determined as per the first appropriate set of steps from the following list:
+
+    auto dir = this->dir();
+
+    // -> If the element's dir attribute is in the ltr state
+    // -> If the element is a document element and the dir attribute is not in a defined state
+    //    (i.e. it is not present or has an invalid value)
+    // -> If the element is an input element whose type attribute is in the Telephone state, and the
+    //    dir attribute is not in a defined state (i.e. it is not present or has an invalid value)
+    if (dir == Dir::Ltr
+        || (is_document_element() && !dir.has_value())
+        || (is<HTML::HTMLInputElement>(this)
+            && static_cast<HTML::HTMLInputElement const&>(*this).type_state() == HTML::HTMLInputElement::TypeAttributeState::Telephone
+            && !dir.has_value())) {
+        // The directionality of the element is 'ltr'.
+        return Directionality::Ltr;
+    }
+
+    // -> If the element's dir attribute is in the rtl state
+    if (dir == Dir::Rtl) {
+        // The directionality of the element is 'rtl'.
+        return Directionality::Rtl;
+    }
+
+    // -> If the element is an input element whose type attribute is in the Text, Search, Telephone,
+    //    URL, or Email state, and the dir attribute is in the auto state
+    // -> If the element is a textarea element and the dir attribute is in the auto state
+    if ((is<HTML::HTMLInputElement>(this)
+            && first_is_one_of(static_cast<HTML::HTMLInputElement const&>(*this).type_state(),
+                HTML::HTMLInputElement::TypeAttributeState::Text, HTML::HTMLInputElement::TypeAttributeState::Search,
+                HTML::HTMLInputElement::TypeAttributeState::Telephone, HTML::HTMLInputElement::TypeAttributeState::URL,
+                HTML::HTMLInputElement::TypeAttributeState::Email)
+            && dir == Dir::Auto)
+        || (is<HTML::HTMLTextAreaElement>(this) && dir == Dir::Auto)) {
+
+        auto value = is<HTML::HTMLInputElement>(this)
+            ? static_cast<HTML::HTMLInputElement const&>(*this).value()
+            : static_cast<HTML::HTMLTextAreaElement const&>(*this).value();
+
+        // If the element's value contains a character of bidirectional character type AL or R, and
+        // there is no character of bidirectional character type L anywhere before it in the element's
+        // value, then the directionality of the element is 'rtl'. [BIDI]
+        for (auto code_point : Utf8View(value)) {
+            auto bidi_class = Unicode::bidirectional_class(code_point);
+            if (bidi_class == Unicode::BidirectionalClass::L)
+                break;
+            if (bidi_class == Unicode::BidirectionalClass::AL || bidi_class == Unicode::BidirectionalClass::R)
+                return Directionality::Rtl;
+        }
+        // Otherwise, if the element's value is not the empty string, or if the element is a document element,
+        // the directionality of the element is 'ltr'.
+        if (!value.is_empty() || is_document_element()) {
+            return Directionality::Ltr;
+        }
+        // Otherwise, the directionality of the element is the same as the element's parent element's directionality.
+        else {
+            return parent_element()->directionality();
+        }
+    }
+
+    // -> If the element's dir attribute is in the auto state
+    // FIXME: -> If the element is a bdi element and the dir attribute is not in a defined state
+    //    (i.e. it is not present or has an invalid value)
+    if (dir == Dir::Auto) {
+        // Find the first character in tree order that matches the following criteria:
+        // - The character is from a Text node that is a descendant of the element whose directionality is being determined.
+        // - The character is of bidirectional character type L, AL, or R. [BIDI]
+        // - The character is not in a Text node that has an ancestor element that is a descendant of
+        //   the element whose directionality is being determined and that is either:
+        //   - FIXME: A bdi element.
+        //   - A script element.
+        //   - A style element.
+        //   - A textarea element.
+        //   - An element with a dir attribute in a defined state.
+        Optional<u32> found_character;
+        Optional<Unicode::BidirectionalClass> found_character_bidi_class;
+        for_each_in_subtree_of_type<Text>([&](Text const& text_node) {
+            // Discard not-allowed ancestors
+            for (auto* ancestor = text_node.parent(); ancestor && ancestor != this; ancestor = ancestor->parent()) {
+                if (is<HTML::HTMLScriptElement>(*ancestor) || is<HTML::HTMLStyleElement>(*ancestor) || is<HTML::HTMLTextAreaElement>(*ancestor))
+                    return IterationDecision::Continue;
+                if (ancestor->is_element()) {
+                    auto ancestor_element = static_cast<Element const*>(ancestor);
+                    if (ancestor_element->dir().has_value())
+                        return IterationDecision::Continue;
+                }
+            }
+
+            // Look for matching characters
+            for (auto code_point : Utf8View(text_node.data())) {
+                auto bidi_class = Unicode::bidirectional_class(code_point);
+                if (first_is_one_of(bidi_class, Unicode::BidirectionalClass::L, Unicode::BidirectionalClass::AL, Unicode::BidirectionalClass::R)) {
+                    found_character = code_point;
+                    found_character_bidi_class = bidi_class;
+                    return IterationDecision::Break;
+                }
+            }
+
+            return IterationDecision::Continue;
+        });
+
+        // If such a character is found and it is of bidirectional character type AL or R,
+        // the directionality of the element is 'rtl'.
+        if (found_character.has_value()
+            && first_is_one_of(found_character_bidi_class.value(), Unicode::BidirectionalClass::AL, Unicode::BidirectionalClass::R)) {
+            return Directionality::Rtl;
+        }
+        // If such a character is found and it is of bidirectional character type L,
+        // the directionality of the element is 'ltr'.
+        if (found_character.has_value() && found_character_bidi_class.value() == Unicode::BidirectionalClass::L) {
+            return Directionality::Ltr;
+        }
+        // Otherwise, if the element is a document element, the directionality of the element is 'ltr'.
+        else if (is_document_element()) {
+            return Directionality::Ltr;
+        }
+        // Otherwise, the directionality of the element is the same as the element's parent element's directionality.
+        else {
+            return parent_element()->directionality();
+        }
+    }
+
+    // If the element has a parent element and the dir attribute is not in a defined state
+    // (i.e. it is not present or has an invalid value)
+    if (parent_element() && !dir.has_value()) {
+        // The directionality of the element is the same as the element's parent element's directionality.
+        return parent_element()->directionality();
+    }
+
+    VERIFY_NOT_REACHED();
 }
 
 }

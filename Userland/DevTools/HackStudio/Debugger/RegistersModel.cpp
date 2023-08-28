@@ -90,9 +90,9 @@ ErrorOr<String> RegistersModel::column_name(int column) const
 {
     switch (column) {
     case Column::Register:
-        return TRY("Register"_string);
+        return "Register"_string;
     case Column::Value:
-        return "Value"_short_string;
+        return "Value"_string;
     default:
         VERIFY_NOT_REACHED();
     }

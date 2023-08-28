@@ -53,10 +53,13 @@ set(SOURCES
     CSS/Parser/Declaration.cpp
     CSS/Parser/DeclarationOrAtRule.cpp
     CSS/Parser/Function.cpp
+    CSS/Parser/GradientParsing.cpp
     CSS/Parser/Helpers.cpp
+    CSS/Parser/MediaParsing.cpp
     CSS/Parser/Parser.cpp
     CSS/Parser/ParsingContext.cpp
     CSS/Parser/Rule.cpp
+    CSS/Parser/SelectorParsing.cpp
     CSS/Parser/Token.cpp
     CSS/Parser/Tokenizer.cpp
     CSS/PercentageOr.cpp
@@ -96,6 +99,7 @@ set(SOURCES
     CSS/StyleValues/FlexStyleValue.cpp
     CSS/StyleValues/FontStyleValue.cpp
     CSS/StyleValues/GridAreaShorthandStyleValue.cpp
+    CSS/StyleValues/GridAutoFlowStyleValue.cpp
     CSS/StyleValues/GridTemplateAreaStyleValue.cpp
     CSS/StyleValues/GridTrackPlacementStyleValue.cpp
     CSS/StyleValues/GridTrackPlacementShorthandStyleValue.cpp
@@ -111,6 +115,7 @@ set(SOURCES
     CSS/StyleValues/OverflowStyleValue.cpp
     CSS/StyleValues/PlaceContentStyleValue.cpp
     CSS/StyleValues/PlaceItemsStyleValue.cpp
+    CSS/StyleValues/PlaceSelfStyleValue.cpp
     CSS/StyleValues/PositionStyleValue.cpp
     CSS/StyleValues/RadialGradientStyleValue.cpp
     CSS/StyleValues/RectStyleValue.cpp
@@ -121,7 +126,9 @@ set(SOURCES
     CSS/StyleValues/UnresolvedStyleValue.cpp
     CSS/Supports.cpp
     CSS/SyntaxHighlighter/SyntaxHighlighter.cpp
+    CSS/SystemColor.cpp
     CSS/Time.cpp
+    CSS/VisualViewport.cpp
     Cookie/Cookie.cpp
     Cookie/ParsedCookie.cpp
     DOM/AbortController.cpp
@@ -148,6 +155,7 @@ set(SOURCES
     DOM/EventDispatcher.cpp
     DOM/EventTarget.cpp
     DOM/HTMLCollection.cpp
+    DOM/HTMLFormControlsCollection.cpp
     DOM/IDLEventListener.cpp
     DOM/LiveNodeList.cpp
     DOM/MutationObserver.cpp
@@ -163,6 +171,7 @@ set(SOURCES
     DOM/Position.cpp
     DOM/ProcessingInstruction.cpp
     DOM/QualifiedName.cpp
+    DOM/RadioNodeList.cpp
     DOM/Range.cpp
     DOM/ShadowRoot.cpp
     DOM/StaticNodeList.cpp
@@ -214,6 +223,7 @@ set(SOURCES
     Geometry/DOMMatrixReadOnly.cpp
     Geometry/DOMPoint.cpp
     Geometry/DOMPointReadOnly.cpp
+    Geometry/DOMQuad.cpp
     Geometry/DOMRect.cpp
     Geometry/DOMRectList.cpp
     Geometry/DOMRectReadOnly.cpp
@@ -341,8 +351,15 @@ set(SOURCES
     HTML/MimeTypeArray.cpp
     HTML/Navigable.cpp
     HTML/NavigableContainer.cpp
+    HTML/NavigateEvent.cpp
+    HTML/Navigation.cpp
+    HTML/NavigationDestination.cpp
+    HTML/NavigationCurrentEntryChangeEvent.cpp
+    HTML/NavigationHistoryEntry.cpp
+    HTML/NavigationTransition.cpp
     HTML/Navigator.cpp
     HTML/NavigatorID.cpp
+    HTML/Numbers.cpp
     HTML/PageTransitionEvent.cpp
     HTML/Parser/Entities.cpp
     HTML/Parser/HTMLEncodingDetection.cpp
@@ -396,6 +413,7 @@ set(SOURCES
     Infra/ByteSequences.cpp
     Infra/JSON.cpp
     Infra/Strings.cpp
+    Internals/Internals.cpp
     IntersectionObserver/IntersectionObserver.cpp
     IntersectionObserver/IntersectionObserverEntry.cpp
     Layout/AudioBox.cpp
@@ -436,17 +454,21 @@ set(SOURCES
     Layout/SVGSVGBox.cpp
     Layout/SVGTextBox.cpp
     Layout/TableFormattingContext.cpp
+    Layout/TableGrid.cpp
     Layout/TableWrapper.cpp
     Layout/TextNode.cpp
     Layout/TreeBuilder.cpp
     Layout/VideoBox.cpp
     Loader/ContentFilter.cpp
+    Loader/FileDirectoryLoader.cpp
     Loader/FileRequest.cpp
     Loader/FrameLoader.cpp
     Loader/LoadRequest.cpp
     Loader/ProxyMappings.cpp
     Loader/Resource.cpp
     Loader/ResourceLoader.cpp
+    MathML/MathMLElement.cpp
+    MathML/TagNames.cpp
     MimeSniff/MimeType.cpp
     Namespace.cpp
     NavigationTiming/EntryNames.cpp
@@ -484,11 +506,15 @@ set(SOURCES
     Painting/TableBordersPainting.cpp
     Painting/TextPaintable.cpp
     Painting/VideoPaintable.cpp
+    Painting/ViewportPaintable.cpp
     PerformanceTimeline/EntryTypes.cpp
     PerformanceTimeline/PerformanceEntry.cpp
+    PerformanceTimeline/PerformanceObserver.cpp
+    PerformanceTimeline/PerformanceObserverEntryList.cpp
     PermissionsPolicy/AutoplayAllowlist.cpp
     PixelUnits.cpp
     Platform/AudioCodecPlugin.cpp
+    Platform/AudioCodecPluginAgnostic.cpp
     Platform/EventLoopPlugin.cpp
     Platform/EventLoopPluginSerenity.cpp
     Platform/FontPlugin.cpp
@@ -539,6 +565,7 @@ set(SOURCES
     SVG/SVGLength.cpp
     SVG/SVGLineElement.cpp
     SVG/SVGLinearGradientElement.cpp
+    SVG/SVGMaskElement.cpp
     SVG/SVGPolygonElement.cpp
     SVG/SVGPolylineElement.cpp
     SVG/SVGRectElement.cpp
@@ -623,9 +650,11 @@ set(GENERATED_SOURCES
     CSS/MathFunctions.cpp
     CSS/MediaFeatureID.cpp
     CSS/PropertyID.cpp
+    CSS/PseudoClass.cpp
     CSS/QuirksModeStyleSheetSource.cpp
     CSS/TransformFunctions.cpp
     CSS/ValueID.cpp
+    MathML/MathMLStyleSheetSource.cpp
 )
 
 serenity_lib(LibWeb web)

@@ -21,13 +21,13 @@ IteratorPrototype::IteratorPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> IteratorPrototype::initialize(Realm& realm)
+void IteratorPrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
 
     // 3.1.3.13 Iterator.prototype [ @@toStringTag ], https://tc39.es/proposal-iterator-helpers/#sec-iteratorprototype-@@tostringtag
-    define_direct_property(vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Iterator"sv)), Attribute::Configurable | Attribute::Writable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Iterator"_string), Attribute::Configurable | Attribute::Writable);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.well_known_symbol_iterator(), symbol_iterator, 0, attr);
@@ -42,8 +42,6 @@ ThrowCompletionOr<void> IteratorPrototype::initialize(Realm& realm)
     define_native_function(realm, vm.names.some, some, 1, attr);
     define_native_function(realm, vm.names.every, every, 1, attr);
     define_native_function(realm, vm.names.find, find, 1, attr);
-
-    return {};
 }
 
 // 27.1.2.1 %IteratorPrototype% [ @@iterator ] ( ), https://tc39.es/ecma262/#sec-%iteratorprototype%-@@iterator
@@ -441,7 +439,7 @@ JS_DEFINE_NATIVE_FUNCTION(IteratorPrototype::flat_map)
     // 4. Let iterated be ? GetIteratorDirect(O).
     auto iterated = TRY(get_iterator_direct(vm, object));
 
-    auto flat_map_iterator = MUST_OR_THROW_OOM(vm.heap().allocate<FlatMapIterator>(realm));
+    auto flat_map_iterator = vm.heap().allocate<FlatMapIterator>(realm);
 
     // 5. Let closure be a new Abstract Closure with no parameters that captures iterated and mapper and performs the following steps when called:
     IteratorHelper::Closure closure = [flat_map_iterator, mapper = NonnullGCPtr { mapper.as_function() }](auto& vm, auto& iterator) mutable -> ThrowCompletionOr<Value> {

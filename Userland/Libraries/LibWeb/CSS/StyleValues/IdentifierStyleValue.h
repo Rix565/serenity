@@ -16,17 +16,18 @@ namespace Web::CSS {
 
 class IdentifierStyleValue final : public StyleValueWithDefaultOperators<IdentifierStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<IdentifierStyleValue>> create(ValueID id)
+    static ValueComparingNonnullRefPtr<IdentifierStyleValue> create(ValueID id)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) IdentifierStyleValue(id));
+        return adopt_ref(*new (nothrow) IdentifierStyleValue(id));
     }
     virtual ~IdentifierStyleValue() override = default;
 
     ValueID id() const { return m_id; }
 
+    static bool is_color(ValueID);
     virtual bool has_color() const override;
     virtual Color to_color(Optional<Layout::NodeWithStyle const&> node) const override;
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(IdentifierStyleValue const& other) const { return m_id == other.m_id; }
 

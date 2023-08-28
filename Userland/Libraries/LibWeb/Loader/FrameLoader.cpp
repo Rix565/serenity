@@ -20,6 +20,7 @@
 #include <LibWeb/Namespace.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/ImageCodecPlugin.h>
+#include <LibWeb/ReferrerPolicy/AbstractOperations.h>
 #include <LibWeb/XML/XMLDocumentBuilder.h>
 
 namespace Web {
@@ -76,6 +77,12 @@ bool FrameLoader::load(LoadRequest& request, Type type)
     //                   `text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`
     if (!request.headers().contains("Accept"))
         request.set_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+
+    // HACK: We're crudely computing the referer value and shoving it into the
+    //       request until fetch infrastructure is used here.
+    auto referrer_url = ReferrerPolicy::strip_url_for_use_as_referrer(url);
+    if (referrer_url.has_value() && !request.headers().contains("Referer"))
+        request.set_header("Referer", referrer_url->serialize());
 
     set_resource(ResourceLoader::the().load_resource(Resource::Type::Generic, request));
 
@@ -162,11 +169,40 @@ void FrameLoader::load_html(StringView html, const AK::URL& url)
     parser->run(url);
 }
 
+static DeprecatedString s_resource_directory_url = "file:///res";
+
+DeprecatedString FrameLoader::resource_directory_url()
+{
+    return s_resource_directory_url;
+}
+
+void FrameLoader::set_resource_directory_url(DeprecatedString resource_directory_url)
+{
+    s_resource_directory_url = resource_directory_url;
+}
+
 static DeprecatedString s_error_page_url = "file:///res/html/error.html";
+
+DeprecatedString FrameLoader::error_page_url()
+{
+    return s_error_page_url;
+}
 
 void FrameLoader::set_error_page_url(DeprecatedString error_page_url)
 {
     s_error_page_url = error_page_url;
+}
+
+static DeprecatedString s_directory_page_url = "file:///res/html/directory.html";
+
+DeprecatedString FrameLoader::directory_page_url()
+{
+    return s_directory_page_url;
+}
+
+void FrameLoader::set_directory_page_url(DeprecatedString directory_page_url)
+{
+    s_directory_page_url = directory_page_url;
 }
 
 // FIXME: Use an actual templating engine (our own one when it's built, preferably
@@ -182,6 +218,7 @@ void FrameLoader::load_error_page(const AK::URL& failed_url, DeprecatedString co
             VERIFY(!data.is_null());
             StringBuilder builder;
             SourceGenerator generator { builder };
+            generator.set("resource_directory_url", resource_directory_url());
             generator.set("failed_url", escape_html_entities(failed_url.to_deprecated_string()));
             generator.set("error", escape_html_entities(error));
             generator.append(data);
@@ -295,8 +332,8 @@ void FrameLoader::resource_did_load()
         return;
     }
 
-    if (!url.fragment().is_empty())
-        browsing_context().scroll_to_anchor(url.fragment());
+    if (url.fragment().has_value() && !url.fragment()->is_empty())
+        browsing_context().scroll_to_anchor(url.fragment()->to_deprecated_string());
     else
         browsing_context().scroll_to({ 0, 0 });
 

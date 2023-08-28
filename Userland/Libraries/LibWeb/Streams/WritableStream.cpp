@@ -21,7 +21,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<WritableStream>> WritableStream::construct_
 {
     auto& vm = realm.vm();
 
-    auto writable_stream = MUST_OR_THROW_OOM(realm.heap().allocate<WritableStream>(realm, realm));
+    auto writable_stream = realm.heap().allocate<WritableStream>(realm, realm);
 
     // 1. If underlyingSink is missing, set it to null.
     auto underlying_sink = underlying_sink_object.has_value() ? JS::Value(underlying_sink_object.value().ptr()) : JS::js_null();
@@ -103,12 +103,10 @@ WritableStream::WritableStream(JS::Realm& realm)
 {
 }
 
-JS::ThrowCompletionOr<void> WritableStream::initialize(JS::Realm& realm)
+void WritableStream::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::WritableStreamPrototype>(realm, "WritableStream"));
-
-    return {};
 }
 
 void WritableStream::visit_edges(Cell::Visitor& visitor)

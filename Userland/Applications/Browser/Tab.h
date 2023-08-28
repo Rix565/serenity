@@ -99,7 +99,7 @@ public:
     WebView::OutOfProcessWebView& view() { return *m_web_content_view; }
 
 private:
-    Tab(BrowserWindow&, WebView::UseJavaScriptBytecode);
+    explicit Tab(BrowserWindow&);
 
     virtual void show_event(GUI::ShowEvent&) override;
     virtual void hide_event(GUI::HideEvent&) override;
@@ -135,6 +135,8 @@ private:
     RefPtr<HistoryWidget> m_history_widget;
     RefPtr<GUI::Statusbar> m_statusbar;
     RefPtr<GUI::ToolbarContainer> m_toolbar_container;
+
+    RefPtr<GUI::Dialog> m_dialog;
 
     RefPtr<GUI::Menu> m_link_context_menu;
     RefPtr<GUI::Action> m_link_context_menu_default_action;

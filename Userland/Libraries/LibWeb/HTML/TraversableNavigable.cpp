@@ -16,7 +16,10 @@
 
 namespace Web::HTML {
 
-TraversableNavigable::TraversableNavigable() = default;
+TraversableNavigable::TraversableNavigable(Page& page)
+    : m_page(page)
+{
+}
 
 TraversableNavigable::~TraversableNavigable() = default;
 
@@ -76,7 +79,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<TraversableNavigable>> TraversableNavigable
     document_state->set_navigable_target_name(target_name);
 
     // 5. Let traversable be a new traversable navigable.
-    auto traversable = vm.heap().allocate_without_realm<TraversableNavigable>();
+    auto traversable = vm.heap().allocate_without_realm<TraversableNavigable>(page);
 
     // 6. Initialize the navigable traversable given documentState.
     TRY_OR_THROW_OOM(vm, traversable->initialize_navigable(document_state, nullptr));
@@ -327,26 +330,21 @@ void TraversableNavigable::apply_the_history_step(int step, Optional<SourceSnaps
                 // 3. Let potentiallyTargetSpecificSourceSnapshotParams be sourceSnapshotParams.
                 Optional<SourceSnapshotParams> potentially_target_specific_source_snapshot_params = source_snapshot_params;
 
-                // FIXME: 4. If potentiallyTargetSpecificSourceSnapshotParams is null, then set it to the result of snapshotting source snapshot params given navigable's active document.
+                // 4. If potentiallyTargetSpecificSourceSnapshotParams is null, then set it to the result of snapshotting source snapshot params given navigable's active document.
                 if (!potentially_target_specific_source_snapshot_params.has_value()) {
-                    potentially_target_specific_source_snapshot_params = SourceSnapshotParams {
-                        .has_transient_activation = false,
-                        .sandboxing_flags = navigable->active_document()->active_sandboxing_flag_set(),
-                        .allows_downloading = true,
-                        .fetch_client = navigable->active_document()->relevant_settings_object(),
-                        .source_policy_container = navigable->active_document()->policy_container()
-                    };
+                    potentially_target_specific_source_snapshot_params = navigable->active_document()->snapshot_source_snapshot_params();
                 }
 
                 // 5. Set targetEntry's document state's reload pending to false.
                 target_entry->document_state->set_reload_pending(false);
 
-                // FIXME: 6. Let allowPOST be targetEntry's document state's reload pending.
+                // 6. Let allowPOST be targetEntry's document state's reload pending.
+                auto allow_POST = target_entry->document_state->reload_pending();
 
                 // 7. In parallel, attempt to populate the history entry's document for targetEntry, given navigable, potentiallyTargetSpecificSourceSnapshotParams,
                 //    targetSnapshotParams, with allowPOST set to allowPOST and completionSteps set to queue a global task on the navigation and traversal task source given
                 //    navigable's active window to run afterDocumentPopulated.
-                navigable->populate_session_history_entry_document(target_entry, {}, {}, *potentially_target_specific_source_snapshot_params, [this, after_document_populated]() mutable {
+                navigable->populate_session_history_entry_document(target_entry, {}, {}, *potentially_target_specific_source_snapshot_params, allow_POST, [this, after_document_populated]() mutable {
                              queue_global_task(Task::Source::NavigationAndTraversal, *active_window(), [after_document_populated]() mutable {
                                  after_document_populated();
                              });
@@ -479,24 +477,25 @@ void TraversableNavigable::traverse_the_history_by_delta(int delta)
     // FIXME: 2. If sourceDocument is given, then:
 
     // 3. Append the following session history traversal steps to traversable:
+    append_session_history_traversal_steps([this, delta] {
+        // 1. Let allSteps be the result of getting all used history steps for traversable.
+        auto all_steps = get_all_used_history_steps();
 
-    // 1. Let allSteps be the result of getting all used history steps for traversable.
-    auto all_steps = get_all_used_history_steps();
+        // 2. Let currentStepIndex be the index of traversable's current session history step within allSteps.
+        auto current_step_index = *all_steps.find_first_index(current_session_history_step());
 
-    // 2. Let currentStepIndex be the index of traversable's current session history step within allSteps.
-    auto current_step_index = *all_steps.find_first_index(current_session_history_step());
+        // 3. Let targetStepIndex be currentStepIndex plus delta
+        auto target_step_index = current_step_index + delta;
 
-    // 3. Let targetStepIndex be currentStepIndex plus delta
-    auto target_step_index = current_step_index + delta;
+        // 4. If allSteps[targetStepIndex] does not exist, then abort these steps.
+        if (target_step_index >= all_steps.size()) {
+            return;
+        }
 
-    // 4. If allSteps[targetStepIndex] does not exist, then abort these steps.
-    if (target_step_index >= all_steps.size()) {
-        return;
-    }
-
-    // 5. Apply the history step allSteps[targetStepIndex] to traversable, with checkForUserCancelation set to true,
-    //    sourceSnapshotParams set to sourceSnapshotParams, and initiatorToCheck set to initiatorToCheck.
-    apply_the_history_step(all_steps[target_step_index]);
+        // 5. Apply the history step allSteps[targetStepIndex] to traversable, with checkForUserCancelation set to true,
+        //    sourceSnapshotParams set to sourceSnapshotParams, and initiatorToCheck set to initiatorToCheck.
+        apply_the_history_step(all_steps[target_step_index]);
+    });
 }
 
 // https://html.spec.whatwg.org/multipage/browsing-the-web.html#apply-pending-history-changes
@@ -507,6 +506,25 @@ void TraversableNavigable::apply_pending_history_changes()
 
     // 2. Apply the history step targetStep to traversable with checkForUserCancelation set to checkForUserCancelation.
     apply_the_history_step(target_step);
+}
+
+// https://html.spec.whatwg.org/multipage/document-sequences.html#close-a-top-level-traversable
+void TraversableNavigable::close_top_level_traversable()
+{
+    VERIFY(is_top_level_traversable());
+
+    // 1. Let toUnload be traversable's active document's inclusive descendant navigables.
+    auto to_unload = active_document()->inclusive_descendant_navigables();
+
+    // FIXME: 2. If the result of checking if unloading is user-canceled for toUnload is true, then return.
+
+    // 3. Unload the active documents of each of toUnload.
+    for (auto navigable : to_unload) {
+        navigable->active_document()->unload();
+    }
+
+    // 4. Destroy traversable.
+    destroy_top_level_traversable();
 }
 
 // https://html.spec.whatwg.org/multipage/document-sequences.html#destroy-a-top-level-traversable
@@ -534,6 +552,50 @@ void TraversableNavigable::destroy_top_level_traversable()
 
     // 5. Remove traversable from the user agent's top-level traversable set.
     user_agent_top_level_traversable_set().remove(this);
+}
+
+// https://html.spec.whatwg.org/multipage/browsing-the-web.html#finalize-a-same-document-navigation
+void finalize_a_same_document_navigation(JS::NonnullGCPtr<TraversableNavigable> traversable, JS::NonnullGCPtr<Navigable> target_navigable, JS::NonnullGCPtr<SessionHistoryEntry> target_entry, JS::GCPtr<SessionHistoryEntry> entry_to_replace)
+{
+    // FIXME: 1. Assert: this is running on traversable's session history traversal queue.
+
+    // 2. If targetNavigable's active session history entry is not targetEntry, then return.
+    if (target_navigable->active_session_history_entry() != target_entry) {
+        return;
+    }
+
+    // 3. Let targetStep be null.
+    Optional<int> target_step;
+
+    // 4. Let targetEntries be the result of getting session history entries for targetNavigable.
+    auto& target_entries = target_navigable->get_session_history_entries();
+
+    // 5. If entryToReplace is null, then:
+    if (!entry_to_replace) {
+        // 1. Clear the forward session history of traversable.
+        traversable->clear_the_forward_session_history();
+
+        // 2. Set targetStep to traversable's current session history step + 1.
+        target_step = traversable->current_session_history_step() + 1;
+
+        // 3. Set targetEntry's step to targetStep.
+        target_entry->step = *target_step;
+
+        // 4. Append targetEntry to targetEntries.
+        target_entries.append(target_entry);
+    } else {
+        // 1. Replace entryToReplace with targetEntry in targetEntries.
+        *(target_entries.find(*entry_to_replace)) = target_entry;
+
+        // 2. Set targetEntry's step to entryToReplace's step.
+        target_entry->step = entry_to_replace->step;
+
+        // 3. Set targetStep to traversable's current session history step.
+        target_step = traversable->current_session_history_step();
+    }
+
+    // 6. Apply the push/replace history step targetStep to traversable.
+    traversable->apply_the_history_step(*target_step);
 }
 
 }

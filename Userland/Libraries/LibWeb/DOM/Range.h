@@ -26,9 +26,9 @@ class Range final : public AbstractRange {
     WEB_PLATFORM_OBJECT(Range, AbstractRange);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> create(Document&);
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> create(HTML::Window&);
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> create(Node& start_container, u32 start_offset, Node& end_container, u32 end_offset);
+    [[nodiscard]] static JS::NonnullGCPtr<Range> create(Document&);
+    [[nodiscard]] static JS::NonnullGCPtr<Range> create(HTML::Window&);
+    [[nodiscard]] static JS::NonnullGCPtr<Range> create(Node& start_container, u32 start_offset, Node& end_container, u32 end_offset);
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<Range>> construct_impl(JS::Realm&);
 
     virtual ~Range() override;
@@ -95,7 +95,7 @@ private:
     explicit Range(Document&);
     Range(Node& start_container, u32 start_offset, Node& end_container, u32 end_offset);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     Node& root();

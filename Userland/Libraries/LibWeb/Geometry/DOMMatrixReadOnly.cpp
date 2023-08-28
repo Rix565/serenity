@@ -24,7 +24,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMMatrixReadOnly>> DOMMatrixReadOnly::cons
             return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, TRY_OR_THROW_OOM(vm, String::formatted("Sequence must contain exactly 6 or 16 elements, got {} element(s)", double_sequence->size())) };
     }
 
-    return realm.heap().allocate<DOMMatrixReadOnly>(realm, realm, init).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<DOMMatrixReadOnly>(realm, realm, init);
 }
 
 // https://drafts.fxtf.org/geometry/#create-a-dommatrixreadonly-from-the-2d-dictionary
@@ -43,7 +43,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMMatrixReadOnly>> DOMMatrixReadOnly::crea
 
     // 2. Return the result of invoking create a 2d matrix of type DOMMatrixReadOnly or DOMMatrix as appropriate, with a sequence of numbers,
     //    the values being the 6 elements m11, m12, m21, m22, m41 and m42 of other in the given order.
-    return realm.heap().allocate<DOMMatrixReadOnly>(realm, realm, init.m11.value(), init.m12.value(), init.m21.value(), init.m22.value(), init.m41.value(), init.m42.value()).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<DOMMatrixReadOnly>(realm, realm, init.m11.value(), init.m12.value(), init.m21.value(), init.m22.value(), init.m41.value(), init.m42.value());
 }
 
 DOMMatrixReadOnly::DOMMatrixReadOnly(JS::Realm& realm, double m11, double m12, double m21, double m22, double m41, double m42)
@@ -107,12 +107,10 @@ DOMMatrixReadOnly::DOMMatrixReadOnly(JS::Realm& realm, DOMMatrixReadOnly const& 
 
 DOMMatrixReadOnly::~DOMMatrixReadOnly() = default;
 
-JS::ThrowCompletionOr<void> DOMMatrixReadOnly::initialize(JS::Realm& realm)
+void DOMMatrixReadOnly::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::DOMMatrixReadOnlyPrototype>(realm, "DOMMatrixReadOnly"));
-
-    return {};
 }
 
 // https://drafts.fxtf.org/geometry/#create-a-2d-matrix
@@ -265,37 +263,37 @@ WebIDL::ExceptionOr<String> DOMMatrixReadOnly::to_string() const
         TRY_OR_THROW_OOM(vm, builder.try_append("matrix("sv));
 
         // 2. Append ! ToString(m11 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::Value(m11()).to_string_without_side_effects())));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::Value(m11()).to_string_without_side_effects()));
 
         // 3. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 4. Append ! ToString(m12 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::Value(m12()).to_string_without_side_effects())));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::Value(m12()).to_string_without_side_effects()));
 
         // 5. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 6. Append ! ToString(m21 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::Value(m21()).to_string_without_side_effects())));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::Value(m21()).to_string_without_side_effects()));
 
         // 7. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 8. Append ! ToString(m22 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::Value(m22()).to_string_without_side_effects())));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::Value(m22()).to_string_without_side_effects()));
 
         // 9. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 10. Append ! ToString(m41 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::Value(m41()).to_string_without_side_effects())));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::Value(m41()).to_string_without_side_effects()));
 
         // 11. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 12. Append ! ToString(m42 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::Value(m42()).to_string_without_side_effects())));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::Value(m42()).to_string_without_side_effects()));
 
         // 13. Append ")" to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(")"sv));
@@ -304,83 +302,83 @@ WebIDL::ExceptionOr<String> DOMMatrixReadOnly::to_string() const
         TRY_OR_THROW_OOM(vm, builder.try_append("matrix3d("sv));
 
         // 2. Append ! ToString(m11 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m11()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m11())));
 
         // 3. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 4. Append ! ToString(m12 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m12()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m12())));
 
         // 5. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 6. Append ! ToString(m13 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m13()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m13())));
 
         // 7. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 8. Append ! ToString(m14 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m14()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m14())));
 
         // 9. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 10. Append ! ToString(m21 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m21()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m21())));
 
         // 11. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 12. Append ! ToString(m22 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m22()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m22())));
 
         // 13. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 14. Append ! ToString(m23 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m23()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m23())));
 
         // 15. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 16. Append ! ToString(m24 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m24()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m24())));
 
         // 17. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // NOTE: The spec doesn't include the steps to append m31 to m34, but they are required as matrix3d requires 16 elements.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m31()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m31())));
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m32()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m32())));
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m33()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m33())));
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m34()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m34())));
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 18. Append ! ToString(m41 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m41()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m41())));
 
         // 19. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 20. Append ! ToString(m42 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m42()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m42())));
 
         // 21. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 22. Append ! ToString(m43 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m43()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m43())));
 
         // 23. Append ", " to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(", "sv));
 
         // 24. Append ! ToString(m44 element) to string.
-        TRY_OR_THROW_OOM(vm, builder.try_append(TRY_OR_THROW_OOM(vm, JS::number_to_string(m44()))));
+        TRY_OR_THROW_OOM(vm, builder.try_append(JS::number_to_string(m44())));
 
         // 25. Append ")" to string.
         TRY_OR_THROW_OOM(vm, builder.try_append(")"sv));

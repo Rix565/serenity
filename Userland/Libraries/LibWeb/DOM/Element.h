@@ -71,7 +71,7 @@ class Element
 public:
     virtual ~Element() override;
 
-    DeprecatedString const& qualified_name() const { return m_qualified_name.as_string(); }
+    DeprecatedFlyString const& qualified_name() const { return m_qualified_name.as_string(); }
     DeprecatedString const& html_uppercased_qualified_name() const { return m_html_uppercased_qualified_name; }
     virtual DeprecatedFlyString node_name() const final { return html_uppercased_qualified_name(); }
     DeprecatedFlyString const& local_name() const { return m_qualified_name.local_name(); }
@@ -88,6 +88,7 @@ public:
     DeprecatedFlyString const& namespace_uri() const { return namespace_(); }
 
     bool has_attribute(DeprecatedFlyString const& name) const;
+    bool has_attribute_ns(DeprecatedFlyString namespace_, DeprecatedFlyString const& name) const;
     bool has_attributes() const;
     DeprecatedString attribute(DeprecatedFlyString const& name) const { return get_attribute(name); }
     DeprecatedString get_attribute(DeprecatedFlyString const& name) const;
@@ -167,6 +168,8 @@ public:
 
     bool is_focused() const;
     bool is_active() const;
+    bool is_target() const;
+    bool is_document_element() const;
 
     JS::NonnullGCPtr<HTMLCollection> get_elements_by_class_name(DeprecatedFlyString const&);
 
@@ -314,9 +317,30 @@ public:
     void unregister_intersection_observer(Badge<IntersectionObserver::IntersectionObserver>, JS::NonnullGCPtr<IntersectionObserver::IntersectionObserver>);
     IntersectionObserver::IntersectionObserverRegistration& get_intersection_observer_registration(Badge<DOM::Document>, IntersectionObserver::IntersectionObserver const&);
 
+    enum class ScrollOffsetFor {
+        Self,
+        PseudoBefore,
+        PseudoAfter
+    };
+    CSSPixelPoint scroll_offset(ScrollOffsetFor type) const { return m_scroll_offset[to_underlying(type)]; }
+    void set_scroll_offset(ScrollOffsetFor type, CSSPixelPoint offset) { m_scroll_offset[to_underlying(type)] = offset; }
+
+    enum class Dir {
+        Ltr,
+        Rtl,
+        Auto,
+    };
+    Optional<Dir> dir() const { return m_dir; }
+
+    enum class Directionality {
+        Ltr,
+        Rtl,
+    };
+    Directionality directionality() const;
+
 protected:
     Element(Document&, DOM::QualifiedName);
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     virtual void children_changed() override;
     virtual i32 default_tab_index_value() const;
@@ -347,6 +371,7 @@ private:
     Array<HashMap<DeprecatedFlyString, CSS::StyleProperty>, to_underlying(CSS::Selector::PseudoElement::PseudoElementCount)> m_pseudo_element_custom_properties;
 
     Vector<FlyString> m_classes;
+    Optional<Dir> m_dir;
 
     Array<JS::GCPtr<Layout::Node>, to_underlying(CSS::Selector::PseudoElement::PseudoElementCount)> m_pseudo_element_nodes;
 
@@ -367,6 +392,8 @@ private:
     // https://www.w3.org/TR/intersection-observer/#dom-element-registeredintersectionobservers-slot
     // Element objects have an internal [[RegisteredIntersectionObservers]] slot, which is initialized to an empty list.
     Vector<IntersectionObserver::IntersectionObserverRegistration> m_registered_intersection_observers;
+
+    Array<CSSPixelPoint, 3> m_scroll_offset;
 };
 
 template<>

@@ -17,7 +17,7 @@ bool ConnectionInfo::is_secure() const
 {
     // RFC 6455 Section 3 :
     // The URI is called "secure" if the scheme component matches "wss" case-insensitively.
-    return m_url.scheme().equals_ignoring_ascii_case("wss"sv);
+    return m_url.scheme().bytes_as_string_view().equals_ignoring_ascii_case("wss"sv);
 }
 
 DeprecatedString ConnectionInfo::resource_name() const
@@ -32,10 +32,11 @@ DeprecatedString ConnectionInfo::resource_name() const
     // The path component
     builder.append(path);
     // "?" if the query component is non-empty
-    if (!m_url.query().is_empty())
+    if (m_url.query().has_value() && !m_url.query()->is_empty()) {
         builder.append('?');
-    // the query component
-    builder.append(m_url.query());
+        // the query component
+        builder.append(*m_url.query());
+    }
     return builder.to_deprecated_string();
 }
 

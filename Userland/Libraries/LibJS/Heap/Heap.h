@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,6 +19,7 @@
 #include <LibJS/Heap/Cell.h>
 #include <LibJS/Heap/CellAllocator.h>
 #include <LibJS/Heap/Handle.h>
+#include <LibJS/Heap/HeapRootTypeOrLocation.h>
 #include <LibJS/Heap/Internals.h>
 #include <LibJS/Heap/MarkedVector.h>
 #include <LibJS/Runtime/Completion.h>
@@ -43,12 +44,12 @@ public:
     }
 
     template<typename T, typename... Args>
-    ThrowCompletionOr<NonnullGCPtr<T>> allocate(Realm& realm, Args&&... args)
+    NonnullGCPtr<T> allocate(Realm& realm, Args&&... args)
     {
         auto* memory = allocate_cell(sizeof(T));
         new (memory) T(forward<Args>(args)...);
         auto* cell = static_cast<T*>(memory);
-        MUST_OR_THROW_OOM(memory->initialize(realm));
+        memory->initialize(realm);
         return *cell;
     }
 
@@ -58,6 +59,7 @@ public:
     };
 
     void collect_garbage(CollectionType = CollectionType::CollectGarbage, bool print_report = false);
+    void dump_graph();
 
     bool should_collect_on_every_allocation() const { return m_should_collect_on_every_allocation; }
     void set_should_collect_on_every_allocation(bool b) { m_should_collect_on_every_allocation = b; }
@@ -79,14 +81,17 @@ public:
     void uproot_cell(Cell* cell);
 
 private:
+    friend class MarkingVisitor;
+    friend class GraphConstructorVisitor;
+
     static bool cell_must_survive_garbage_collection(Cell const&);
 
     Cell* allocate_cell(size_t);
 
-    void gather_roots(HashTable<Cell*>&);
-    void gather_conservative_roots(HashTable<Cell*>&);
-    void gather_asan_fake_stack_roots(HashTable<FlatPtr>&, FlatPtr);
-    void mark_live_cells(HashTable<Cell*> const& live_cells);
+    void gather_roots(HashMap<Cell*, HeapRootTypeOrLocation>&);
+    void gather_conservative_roots(HashMap<Cell*, HeapRootTypeOrLocation>&);
+    void gather_asan_fake_stack_roots(HashMap<FlatPtr, HeapRootTypeOrLocation>&, FlatPtr);
+    void mark_live_cells(HashMap<Cell*, HeapRootTypeOrLocation> const& live_cells);
     void finalize_unmarked_cells();
     void sweep_dead_cells(bool print_report, Core::ElapsedTimer const&);
 
@@ -101,8 +106,9 @@ private:
         }
     }
 
-    size_t m_max_allocations_between_gc { 100000 };
-    size_t m_allocations_since_last_gc { 0 };
+    static constexpr size_t GC_MIN_BYTES_THRESHOLD { 4 * 1024 * 1024 };
+    size_t m_gc_bytes_threshold { GC_MIN_BYTES_THRESHOLD };
+    size_t m_allocated_bytes_since_last_gc { 0 };
 
     bool m_should_collect_on_every_allocation { false };
 

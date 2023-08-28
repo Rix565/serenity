@@ -11,14 +11,14 @@
 
 namespace Web::CSS {
 
-ErrorOr<ValueComparingNonnullRefPtr<RectStyleValue>> RectStyleValue::create(EdgeRect rect)
+ValueComparingNonnullRefPtr<RectStyleValue> RectStyleValue::create(EdgeRect rect)
 {
-    return adopt_nonnull_ref_or_enomem(new (nothrow) RectStyleValue(move(rect)));
+    return adopt_ref(*new (nothrow) RectStyleValue(move(rect)));
 }
 
-ErrorOr<String> RectStyleValue::to_string() const
+String RectStyleValue::to_string() const
 {
-    return String::formatted("rect({} {} {} {})", m_rect.top_edge, m_rect.right_edge, m_rect.bottom_edge, m_rect.left_edge);
+    return MUST(String::formatted("rect({} {} {} {})", m_rect.top_edge, m_rect.right_edge, m_rect.bottom_edge, m_rect.left_edge));
 }
 
 }

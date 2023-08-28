@@ -29,12 +29,10 @@ Request::Request(JS::Realm& realm, JS::NonnullGCPtr<Infrastructure::Request> req
 
 Request::~Request() = default;
 
-JS::ThrowCompletionOr<void> Request::initialize(JS::Realm& realm)
+void Request::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::RequestPrototype>(realm, "Request"));
-
-    return {};
 }
 
 void Request::visit_edges(Cell::Visitor& visitor)
@@ -56,43 +54,43 @@ ErrorOr<Optional<MimeSniff::MimeType>> Request::mime_type_impl() const
 
 // https://fetch.spec.whatwg.org/#concept-body-body
 // https://fetch.spec.whatwg.org/#ref-for-concept-body-body%E2%91%A7
-Optional<Infrastructure::Body const&> Request::body_impl() const
+JS::GCPtr<Infrastructure::Body const> Request::body_impl() const
 {
     // Objects including the Body interface mixin have an associated body (null or a body).
     // A Request object’s body is its request’s body.
     return m_request->body().visit(
-        [](Infrastructure::Body const& b) -> Optional<Infrastructure::Body const&> { return b; },
-        [](Empty) -> Optional<Infrastructure::Body const&> { return {}; },
+        [](JS::NonnullGCPtr<Infrastructure::Body> const& b) -> JS::GCPtr<Infrastructure::Body const> { return b; },
+        [](Empty) -> JS::GCPtr<Infrastructure::Body const> { return nullptr; },
         // A byte sequence will be safely extracted into a body early on in fetch.
-        [](ByteBuffer const&) -> Optional<Infrastructure::Body const&> { VERIFY_NOT_REACHED(); });
+        [](ByteBuffer const&) -> JS::GCPtr<Infrastructure::Body const> { VERIFY_NOT_REACHED(); });
 }
 
 // https://fetch.spec.whatwg.org/#concept-body-body
 // https://fetch.spec.whatwg.org/#ref-for-concept-body-body%E2%91%A7
-Optional<Infrastructure::Body&> Request::body_impl()
+JS::GCPtr<Infrastructure::Body> Request::body_impl()
 {
     // Objects including the Body interface mixin have an associated body (null or a body).
     // A Request object’s body is its request’s body.
     return m_request->body().visit(
-        [](Infrastructure::Body& b) -> Optional<Infrastructure::Body&> { return b; },
-        [](Empty) -> Optional<Infrastructure::Body&> { return {}; },
+        [](JS::NonnullGCPtr<Infrastructure::Body>& b) -> JS::GCPtr<Infrastructure::Body> { return b; },
+        [](Empty) -> JS::GCPtr<Infrastructure::Body> { return {}; },
         // A byte sequence will be safely extracted into a body early on in fetch.
-        [](ByteBuffer&) -> Optional<Infrastructure::Body&> { VERIFY_NOT_REACHED(); });
+        [](ByteBuffer&) -> JS::GCPtr<Infrastructure::Body> { VERIFY_NOT_REACHED(); });
 }
 
 // https://fetch.spec.whatwg.org/#request-create
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> Request::create(JS::Realm& realm, JS::NonnullGCPtr<Infrastructure::Request> request, Headers::Guard guard)
+JS::NonnullGCPtr<Request> Request::create(JS::Realm& realm, JS::NonnullGCPtr<Infrastructure::Request> request, Headers::Guard guard)
 {
     // 1. Let requestObject be a new Request object with realm.
     // 2. Set requestObject’s request to request.
-    auto request_object = MUST_OR_THROW_OOM(realm.heap().allocate<Request>(realm, realm, request));
+    auto request_object = realm.heap().allocate<Request>(realm, realm, request);
 
     // 3. Set requestObject’s headers to a new Headers object with realm, whose headers list is request’s headers list and guard is guard.
-    request_object->m_headers = MUST_OR_THROW_OOM(realm.heap().allocate<Headers>(realm, realm, request->header_list()));
+    request_object->m_headers = realm.heap().allocate<Headers>(realm, realm, request->header_list());
     request_object->m_headers->set_guard(guard);
 
     // 4. Set requestObject’s signal to a new AbortSignal object with realm.
-    request_object->m_signal = MUST_OR_THROW_OOM(realm.heap().allocate<DOM::AbortSignal>(realm, realm));
+    request_object->m_signal = realm.heap().allocate<DOM::AbortSignal>(realm, realm);
 
     // 5. Return requestObject.
     return request_object;
@@ -104,7 +102,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> Request::construct_impl(JS::Realm
     auto& vm = realm.vm();
 
     // Referred to as 'this' in the spec.
-    auto request_object = MUST_OR_THROW_OOM(realm.heap().allocate<Request>(realm, realm, Infrastructure::Request::create(vm)));
+    auto request_object = realm.heap().allocate<Request>(realm, realm, Infrastructure::Request::create(vm));
 
     // 1. Let request be null.
     JS::GCPtr<Infrastructure::Request> input_request;
@@ -309,8 +307,8 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> Request::construct_impl(JS::Realm
             // - parsedReferrer’s scheme is "about" and path is the string "client"
             // - parsedReferrer’s origin is not same origin with origin
             // then set request’s referrer to "client".
-            // FIXME: Actually use the given origin once we have https://url.spec.whatwg.org/#concept-url-origin.
-            if ((parsed_referrer.scheme() == "about"sv && parsed_referrer.serialize_path() == "client"sv) || !HTML::Origin().is_same_origin(origin)) {
+            auto parsed_referrer_origin = URL::url_origin(parsed_referrer);
+            if ((parsed_referrer.scheme() == "about"sv && parsed_referrer.serialize_path() == "client"sv) || !parsed_referrer_origin.is_same_origin(origin)) {
                 request->set_referrer(Infrastructure::Request::Referrer::Client);
             }
             // 4. Otherwise, set request’s referrer to parsedReferrer.
@@ -389,14 +387,14 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> Request::construct_impl(JS::Realm
 
     // 28. Set this’s signal to a new AbortSignal object with this’s relevant Realm.
     auto& this_relevant_realm = HTML::relevant_realm(*request_object);
-    request_object->m_signal = MUST_OR_THROW_OOM(realm.heap().allocate<DOM::AbortSignal>(this_relevant_realm, this_relevant_realm));
+    request_object->m_signal = realm.heap().allocate<DOM::AbortSignal>(this_relevant_realm, this_relevant_realm);
 
     // 29. If signal is not null, then make this’s signal follow signal.
     if (input_signal != nullptr)
         request_object->m_signal->follow(*input_signal);
 
     // 30. Set this’s headers to a new Headers object with this’s relevant Realm, whose header list is request’s header list and guard is "request".
-    request_object->m_headers = MUST_OR_THROW_OOM(realm.heap().allocate<Headers>(realm, realm, request->header_list()));
+    request_object->m_headers = realm.heap().allocate<Headers>(realm, realm, request->header_list());
     request_object->m_headers->set_guard(Headers::Guard::Request);
 
     // 31. If this’s request’s mode is "no-cors", then:
@@ -442,7 +440,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> Request::construct_impl(JS::Realm
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Method must not be GET or HEAD when body is provided"sv };
 
     // 35. Let initBody be null.
-    Optional<Infrastructure::Body> init_body;
+    JS::GCPtr<Infrastructure::Body> init_body;
 
     // 36. If init["body"] exists and is non-null, then:
     if (init.body.has_value() && (*init.body).has_value()) {
@@ -450,7 +448,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> Request::construct_impl(JS::Realm
         auto body_with_type = TRY(extract_body(realm, (*init.body).value(), request->keepalive()));
 
         // 2. Set initBody to bodyWithType’s body.
-        init_body = move(body_with_type.body);
+        init_body = body_with_type.body;
 
         // 3. Let type be bodyWithType’s type.
         auto const& type = body_with_type.type;
@@ -461,15 +459,15 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> Request::construct_impl(JS::Realm
     }
 
     // 37. Let inputOrInitBody be initBody if it is non-null; otherwise inputBody.
-    Optional<Infrastructure::Request::BodyType> input_or_init_body = init_body.has_value()
-        ? Infrastructure::Request::BodyType { init_body.value() }
+    Optional<Infrastructure::Request::BodyType> input_or_init_body = init_body
+        ? Infrastructure::Request::BodyType { *init_body }
         : input_body;
 
     // 38. If inputOrInitBody is non-null and inputOrInitBody’s source is null, then:
     // FIXME: The spec doesn't check if inputOrInitBody is a body before accessing source.
-    if (input_or_init_body.has_value() && input_or_init_body->has<Infrastructure::Body>() && input_or_init_body->get<Infrastructure::Body>().source().has<Empty>()) {
+    if (input_or_init_body.has_value() && input_or_init_body->has<JS::NonnullGCPtr<Infrastructure::Body>>() && input_or_init_body->get<JS::NonnullGCPtr<Infrastructure::Body>>()->source().has<Empty>()) {
         // 1. If initBody is non-null and init["duplex"] does not exist, then throw a TypeError.
-        if (init_body.has_value() && !init.duplex.has_value())
+        if (init_body && !init.duplex.has_value())
             return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Body without source requires 'duplex' value to be set"sv };
 
         // 2. If this’s request’s mode is neither "same-origin" nor "cors", then throw a TypeError.
@@ -484,7 +482,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> Request::construct_impl(JS::Realm
     auto const& final_body = input_or_init_body;
 
     // 40. If initBody is null and inputBody is non-null, then:
-    if (!init_body.has_value() && input_body.has_value()) {
+    if (!init_body && input_body.has_value()) {
         // 2. If input is unusable, then throw a TypeError.
         if (input.has<JS::Handle<Request>>() && input.get<JS::Handle<Request>>()->is_unusable())
             return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Request is unusable"sv };
@@ -543,7 +541,7 @@ WebIDL::ExceptionOr<String> Request::referrer() const
                 return String {};
             // 2. If this’s request’s referrer is "client", then return "about:client".
             case Infrastructure::Request::Referrer::Client:
-                return TRY_OR_THROW_OOM(vm, "about:client"_string);
+                return "about:client"_string;
             default:
                 VERIFY_NOT_REACHED();
             }
@@ -641,10 +639,10 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> Request::clone() const
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Request is unusable"sv };
 
     // 2. Let clonedRequest be the result of cloning this’s request.
-    auto cloned_request = TRY(m_request->clone(realm));
+    auto cloned_request = m_request->clone(realm);
 
     // 3. Let clonedRequestObject be the result of creating a Request object, given clonedRequest, this’s headers’s guard, and this’s relevant Realm.
-    auto cloned_request_object = TRY(Request::create(HTML::relevant_realm(*this), cloned_request, m_headers->guard()));
+    auto cloned_request_object = Request::create(HTML::relevant_realm(*this), cloned_request, m_headers->guard());
 
     // 4. Make clonedRequestObject’s signal follow this’s signal.
     cloned_request_object->m_signal->follow(*m_signal);

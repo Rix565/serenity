@@ -17,20 +17,18 @@ CollatorPrototype::CollatorPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> CollatorPrototype::initialize(Realm& realm)
+void CollatorPrototype::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(Object::initialize(realm));
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
     // 10.3.2 Intl.Collator.prototype [ @@toStringTag ], https://tc39.es/ecma402/#sec-intl.collator.prototype-@@tostringtag
-    define_direct_property(vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Intl.Collator"sv)), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Intl.Collator"_string), Attribute::Configurable);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_accessor(realm, vm.names.compare, compare_getter, {}, attr);
     define_native_function(realm, vm.names.resolvedOptions, resolved_options, 0, attr);
-
-    return {};
 }
 
 // 10.3.3 get Intl.Collator.prototype.compare, https://tc39.es/ecma402/#sec-intl.collator.prototype.compare
@@ -78,12 +76,12 @@ JS_DEFINE_NATIVE_FUNCTION(CollatorPrototype::resolved_options)
     //     d. If v is not undefined, then
     //         i. Perform ! CreateDataPropertyOrThrow(options, p, v).
     MUST(options->create_data_property_or_throw(vm.names.locale, PrimitiveString::create(vm, collator->locale())));
-    MUST(options->create_data_property_or_throw(vm.names.usage, MUST_OR_THROW_OOM(PrimitiveString::create(vm, collator->usage_string()))));
-    MUST(options->create_data_property_or_throw(vm.names.sensitivity, MUST_OR_THROW_OOM(PrimitiveString::create(vm, collator->sensitivity_string()))));
+    MUST(options->create_data_property_or_throw(vm.names.usage, PrimitiveString::create(vm, collator->usage_string())));
+    MUST(options->create_data_property_or_throw(vm.names.sensitivity, PrimitiveString::create(vm, collator->sensitivity_string())));
     MUST(options->create_data_property_or_throw(vm.names.ignorePunctuation, Value(collator->ignore_punctuation())));
     MUST(options->create_data_property_or_throw(vm.names.collation, PrimitiveString::create(vm, collator->collation())));
     MUST(options->create_data_property_or_throw(vm.names.numeric, Value(collator->numeric())));
-    MUST(options->create_data_property_or_throw(vm.names.caseFirst, MUST_OR_THROW_OOM(PrimitiveString::create(vm, collator->case_first_string()))));
+    MUST(options->create_data_property_or_throw(vm.names.caseFirst, PrimitiveString::create(vm, collator->case_first_string())));
 
     // 5. Return options.
     return options;

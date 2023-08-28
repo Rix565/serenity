@@ -21,7 +21,7 @@ class CSSKeyframesRule final : public CSSRule {
     WEB_PLATFORM_OBJECT(CSSKeyframesRule, CSSRule);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSKeyframesRule>> create(JS::Realm& realm, FlyString name, Vector<JS::NonnullGCPtr<CSSKeyframeRule>> keyframes);
+    [[nodiscard]] static JS::NonnullGCPtr<CSSKeyframesRule> create(JS::Realm&, FlyString name, Vector<JS::NonnullGCPtr<CSSKeyframeRule>>);
 
     virtual ~CSSKeyframesRule() = default;
 
@@ -46,7 +46,7 @@ private:
 
     virtual void visit_edges(Visitor&) override;
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual DeprecatedString serialized() const override;
 
     FlyString m_name;

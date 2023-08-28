@@ -13,7 +13,7 @@ namespace JS::Intl {
 // 15.5.2 Number Format Functions, https://tc39.es/ecma402/#sec-number-format-functions
 NonnullGCPtr<NumberFormatFunction> NumberFormatFunction::create(Realm& realm, NumberFormat& number_format)
 {
-    return realm.heap().allocate<NumberFormatFunction>(realm, number_format, realm.intrinsics().function_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<NumberFormatFunction>(realm, number_format, realm.intrinsics().function_prototype());
 }
 
 NumberFormatFunction::NumberFormatFunction(NumberFormat& number_format, Object& prototype)
@@ -22,15 +22,13 @@ NumberFormatFunction::NumberFormatFunction(NumberFormat& number_format, Object& 
 {
 }
 
-ThrowCompletionOr<void> NumberFormatFunction::initialize(Realm& realm)
+void NumberFormatFunction::initialize(Realm& realm)
 {
     auto& vm = this->vm();
 
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
     define_direct_property(vm.names.name, PrimitiveString::create(vm, String {}), Attribute::Configurable);
-
-    return {};
 }
 
 ThrowCompletionOr<Value> NumberFormatFunction::call()

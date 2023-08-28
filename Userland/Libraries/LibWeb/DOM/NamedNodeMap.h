@@ -22,7 +22,7 @@ class NamedNodeMap : public Bindings::LegacyPlatformObject {
     WEB_PLATFORM_OBJECT(NamedNodeMap, Bindings::LegacyPlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<NamedNodeMap>> create(Element&);
+    [[nodiscard]] static JS::NonnullGCPtr<NamedNodeMap> create(Element&);
     ~NamedNodeMap() = default;
 
     virtual bool is_supported_property_index(u32 index) const override;
@@ -56,7 +56,7 @@ public:
 private:
     explicit NamedNodeMap(Element&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     // ^Bindings::LegacyPlatformObject

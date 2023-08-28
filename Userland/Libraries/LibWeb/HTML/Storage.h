@@ -17,7 +17,7 @@ class Storage : public Bindings::LegacyPlatformObject {
     WEB_PLATFORM_OBJECT(Storage, Bindings::LegacyPlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Storage>> create(JS::Realm&);
+    [[nodiscard]] static JS::NonnullGCPtr<Storage> create(JS::Realm&);
     ~Storage();
 
     size_t length() const;
@@ -34,7 +34,7 @@ public:
 private:
     explicit Storage(JS::Realm&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     // ^LegacyPlatformObject
     virtual WebIDL::ExceptionOr<JS::Value> named_item_value(DeprecatedFlyString const&) const override;

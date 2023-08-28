@@ -12,14 +12,14 @@ namespace Web::CSS {
 
 class IntegerStyleValue : public StyleValueWithDefaultOperators<IntegerStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<IntegerStyleValue>> create(i64 value)
+    static ValueComparingNonnullRefPtr<IntegerStyleValue> create(i64 value)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) IntegerStyleValue(value));
+        return adopt_ref(*new (nothrow) IntegerStyleValue(value));
     }
 
     i64 integer() const { return m_value; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(IntegerStyleValue const& other) const { return m_value == other.m_value; }
 

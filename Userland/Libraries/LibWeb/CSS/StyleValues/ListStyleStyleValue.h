@@ -15,12 +15,12 @@ namespace Web::CSS {
 
 class ListStyleStyleValue final : public StyleValueWithDefaultOperators<ListStyleStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<ListStyleStyleValue>> create(
+    static ValueComparingNonnullRefPtr<ListStyleStyleValue> create(
         ValueComparingNonnullRefPtr<StyleValue> position,
         ValueComparingNonnullRefPtr<StyleValue> image,
         ValueComparingNonnullRefPtr<StyleValue> style_type)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) ListStyleStyleValue(move(position), move(image), move(style_type)));
+        return adopt_ref(*new (nothrow) ListStyleStyleValue(move(position), move(image), move(style_type)));
     }
     virtual ~ListStyleStyleValue() override = default;
 
@@ -28,7 +28,7 @@ public:
     ValueComparingNonnullRefPtr<StyleValue> image() const { return m_properties.image; }
     ValueComparingNonnullRefPtr<StyleValue> style_type() const { return m_properties.style_type; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(ListStyleStyleValue const& other) const { return m_properties == other.m_properties; }
 

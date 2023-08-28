@@ -31,7 +31,6 @@
 #include <LibGUI/TabWidget.h>
 #include <LibGUI/ToolbarContainer.h>
 #include <LibGUI/Widget.h>
-#include <LibJS/Interpreter.h>
 #include <LibWeb/CSS/PreferredColorScheme.h>
 #include <LibWeb/Dump.h>
 #include <LibWeb/Layout/Viewport.h>
@@ -57,10 +56,9 @@ static DeprecatedString search_engines_file_path()
     return builder.to_deprecated_string();
 }
 
-BrowserWindow::BrowserWindow(CookieJar& cookie_jar, URL url, WebView::UseJavaScriptBytecode use_javascript_bytecode)
+BrowserWindow::BrowserWindow(CookieJar& cookie_jar, URL url)
     : m_cookie_jar(cookie_jar)
     , m_window_actions(*this)
-    , m_use_javascript_bytecode(use_javascript_bytecode)
 {
     auto app_icon = GUI::Icon::default_icon("app-browser"sv);
     m_bookmarks_bar = Browser::BookmarksBarWidget::construct(Browser::bookmarks_file_path(), true);
@@ -153,26 +151,26 @@ BrowserWindow::BrowserWindow(CookieJar& cookie_jar, URL url, WebView::UseJavaScr
 
 void BrowserWindow::build_menus()
 {
-    auto& file_menu = add_menu("&File"_short_string);
-    file_menu.add_action(WindowActions::the().create_new_tab_action());
-    file_menu.add_action(WindowActions::the().create_new_window_action());
+    auto file_menu = add_menu("&File"_string);
+    file_menu->add_action(WindowActions::the().create_new_tab_action());
+    file_menu->add_action(WindowActions::the().create_new_window_action());
 
     auto close_tab_action = GUI::CommonActions::make_close_tab_action([this](auto&) {
         active_tab().on_tab_close_request(active_tab());
     },
         this);
-    file_menu.add_action(close_tab_action);
+    file_menu->add_action(close_tab_action);
 
-    file_menu.add_separator();
-    file_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    file_menu->add_separator();
+    file_menu->add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
     }));
 
-    auto& view_menu = add_menu("&View"_short_string);
-    view_menu.add_action(WindowActions::the().show_bookmarks_bar_action());
-    view_menu.add_action(WindowActions::the().vertical_tabs_action());
-    view_menu.add_separator();
-    m_zoom_menu = view_menu.add_submenu("&Zoom"_short_string);
+    auto view_menu = add_menu("&View"_string);
+    view_menu->add_action(WindowActions::the().show_bookmarks_bar_action());
+    view_menu->add_action(WindowActions::the().vertical_tabs_action());
+    view_menu->add_separator();
+    m_zoom_menu = view_menu->add_submenu("&Zoom"_string);
     m_zoom_menu->add_action(GUI::CommonActions::make_zoom_in_action(
         [this](auto&) {
             auto& tab = active_tab();
@@ -194,8 +192,8 @@ void BrowserWindow::build_menus()
             update_displayed_zoom_level();
         },
         this));
-    view_menu.add_separator();
-    view_menu.add_action(GUI::CommonActions::make_fullscreen_action(
+    view_menu->add_separator();
+    view_menu->add_action(GUI::CommonActions::make_fullscreen_action(
         [this](auto&) {
             auto& tab = active_tab();
             set_fullscreen(!is_fullscreen());
@@ -215,16 +213,16 @@ void BrowserWindow::build_menus()
     m_go_back_action = GUI::CommonActions::make_go_back_action([this](auto&) { active_tab().go_back(); }, this);
     m_go_forward_action = GUI::CommonActions::make_go_forward_action([this](auto&) { active_tab().go_forward(); }, this);
     m_go_home_action = GUI::CommonActions::make_go_home_action([this](auto&) { active_tab().load(Browser::url_from_user_input(g_home_url)); }, this);
-    m_go_home_action->set_status_tip("Go to home page"_string.release_value_but_fixme_should_propagate_errors());
+    m_go_home_action->set_status_tip("Go to home page"_string);
     m_reload_action = GUI::CommonActions::make_reload_action([this](auto&) { active_tab().reload(); }, this);
-    m_reload_action->set_status_tip("Reload current page"_string.release_value_but_fixme_should_propagate_errors());
+    m_reload_action->set_status_tip("Reload current page"_string);
 
-    auto& go_menu = add_menu("&Go"_short_string);
-    go_menu.add_action(*m_go_back_action);
-    go_menu.add_action(*m_go_forward_action);
-    go_menu.add_action(*m_go_home_action);
-    go_menu.add_separator();
-    go_menu.add_action(*m_reload_action);
+    auto go_menu = add_menu("&Go"_string);
+    go_menu->add_action(*m_go_back_action);
+    go_menu->add_action(*m_go_forward_action);
+    go_menu->add_action(*m_go_home_action);
+    go_menu->add_separator();
+    go_menu->add_action(*m_reload_action);
 
     m_copy_selection_action = GUI::CommonActions::make_copy_action([this](auto&) {
         auto& tab = active_tab();
@@ -242,51 +240,51 @@ void BrowserWindow::build_menus()
             active_tab().view().get_source();
         },
         this);
-    m_view_source_action->set_status_tip("View source code of the current page"_string.release_value_but_fixme_should_propagate_errors());
+    m_view_source_action->set_status_tip("View source code of the current page"_string);
 
     m_inspect_dom_tree_action = GUI::Action::create(
         "Inspect &DOM Tree", { Mod_None, Key_F12 }, g_icon_bag.dom_tree, [this](auto&) {
             active_tab().show_inspector_window(Tab::InspectorTarget::Document);
         },
         this);
-    m_inspect_dom_tree_action->set_status_tip("Open inspector window for this page"_string.release_value_but_fixme_should_propagate_errors());
+    m_inspect_dom_tree_action->set_status_tip("Open inspector window for this page"_string);
 
     m_inspect_dom_node_action = GUI::Action::create(
         "&Inspect Element", g_icon_bag.inspect, [this](auto&) {
             active_tab().show_inspector_window(Tab::InspectorTarget::HoveredElement);
         },
         this);
-    m_inspect_dom_node_action->set_status_tip("Open inspector for this element"_string.release_value_but_fixme_should_propagate_errors());
+    m_inspect_dom_node_action->set_status_tip("Open inspector for this element"_string);
 
-    auto& inspect_menu = add_menu("&Inspect"_string.release_value_but_fixme_should_propagate_errors());
-    inspect_menu.add_action(*m_view_source_action);
-    inspect_menu.add_action(*m_inspect_dom_tree_action);
+    auto inspect_menu = add_menu("&Inspect"_string);
+    inspect_menu->add_action(*m_view_source_action);
+    inspect_menu->add_action(*m_inspect_dom_tree_action);
 
     auto js_console_action = GUI::Action::create(
         "Open &JS Console", { Mod_Ctrl, Key_I }, g_icon_bag.filetype_javascript, [this](auto&) {
             active_tab().show_console_window();
         },
         this);
-    js_console_action->set_status_tip("Open JavaScript console for this page"_string.release_value_but_fixme_should_propagate_errors());
-    inspect_menu.add_action(js_console_action);
+    js_console_action->set_status_tip("Open JavaScript console for this page"_string);
+    inspect_menu->add_action(js_console_action);
 
     auto storage_window_action = GUI::Action::create(
         "Open S&torage Inspector", g_icon_bag.cookie, [this](auto&) {
             active_tab().show_storage_inspector();
         },
         this);
-    storage_window_action->set_status_tip("Show Storage inspector for this page"_string.release_value_but_fixme_should_propagate_errors());
-    inspect_menu.add_action(storage_window_action);
+    storage_window_action->set_status_tip("Show Storage inspector for this page"_string);
+    inspect_menu->add_action(storage_window_action);
 
     auto history_window_action = GUI::Action::create(
         "Open &History Window", g_icon_bag.history, [this](auto&) {
             active_tab().show_history_inspector();
         },
         this);
-    storage_window_action->set_status_tip("Show History inspector for this tab"_string.release_value_but_fixme_should_propagate_errors());
-    inspect_menu.add_action(history_window_action);
+    storage_window_action->set_status_tip("Show History inspector for this tab"_string);
+    inspect_menu->add_action(history_window_action);
 
-    auto& settings_menu = add_menu("&Settings"_string.release_value_but_fixme_should_propagate_errors());
+    auto settings_menu = add_menu("&Settings"_string);
 
     m_change_homepage_action = GUI::Action::create(
         "Set Homepage URL...", g_icon_bag.go_home, [this](auto&) {
@@ -302,15 +300,15 @@ void BrowserWindow::build_menus()
         },
         this);
 
-    settings_menu.add_action(*m_change_homepage_action);
+    settings_menu->add_action(*m_change_homepage_action);
 
     auto load_search_engines_result = load_search_engines(settings_menu);
     if (load_search_engines_result.is_error()) {
         dbgln("Failed to open search-engines file: {}", load_search_engines_result.error());
     }
 
-    auto& color_scheme_menu = settings_menu.add_submenu("&Color Scheme"_string.release_value_but_fixme_should_propagate_errors());
-    color_scheme_menu.set_icon(g_icon_bag.color_chooser);
+    auto color_scheme_menu = settings_menu->add_submenu("&Color Scheme"_string);
+    color_scheme_menu->set_icon(g_icon_bag.color_chooser);
     {
         auto current_setting = Web::CSS::preferred_color_scheme_from_string(Config::read_string("Browser"sv, "Preferences"sv, "ColorScheme"sv, Browser::default_color_scheme));
         m_color_scheme_actions.set_exclusive(true);
@@ -324,7 +322,7 @@ void BrowserWindow::build_menus()
                 this);
             if (current_setting == preference_value)
                 action->set_checked(true);
-            color_scheme_menu.add_action(action);
+            color_scheme_menu->add_action(action);
             m_color_scheme_actions.add_action(action);
         };
 
@@ -333,80 +331,80 @@ void BrowserWindow::build_menus()
         add_color_scheme_action("Dark", Web::CSS::PreferredColorScheme::Dark);
     }
 
-    settings_menu.add_separator();
+    settings_menu->add_separator();
     auto open_settings_action = GUI::Action::create("Browser &Settings", Gfx::Bitmap::load_from_file("/res/icons/16x16/settings.png"sv).release_value_but_fixme_should_propagate_errors(),
         [this](auto&) {
             GUI::Process::spawn_or_show_error(this, "/bin/BrowserSettings"sv);
         });
-    settings_menu.add_action(move(open_settings_action));
+    settings_menu->add_action(move(open_settings_action));
 
-    auto& debug_menu = add_menu("&Debug"_short_string);
-    debug_menu.add_action(GUI::Action::create(
+    auto debug_menu = add_menu("&Debug"_string);
+    debug_menu->add_action(GUI::Action::create(
         "Dump &DOM Tree", g_icon_bag.dom_tree, [this](auto&) {
             active_tab().view().debug_request("dump-dom-tree");
         },
         this));
-    debug_menu.add_action(GUI::Action::create(
+    debug_menu->add_action(GUI::Action::create(
         "Dump &Layout Tree", g_icon_bag.layout, [this](auto&) {
             active_tab().view().debug_request("dump-layout-tree");
         },
         this));
-    debug_menu.add_action(GUI::Action::create(
+    debug_menu->add_action(GUI::Action::create(
         "Dump &Paint Tree", g_icon_bag.layout, [this](auto&) {
             active_tab().view().debug_request("dump-paint-tree");
         },
         this));
-    debug_menu.add_action(GUI::Action::create(
+    debug_menu->add_action(GUI::Action::create(
         "Dump S&tacking Context Tree", g_icon_bag.layers, [this](auto&) {
             active_tab().view().debug_request("dump-stacking-context-tree");
         },
         this));
-    debug_menu.add_action(GUI::Action::create(
+    debug_menu->add_action(GUI::Action::create(
         "Dump &Style Sheets", g_icon_bag.filetype_css, [this](auto&) {
             active_tab().view().debug_request("dump-style-sheets");
         },
         this));
-    debug_menu.add_action(GUI::Action::create(
+    debug_menu->add_action(GUI::Action::create(
         "Dump &All Resolved Styles", g_icon_bag.filetype_css, [this](auto&) {
             active_tab().view().debug_request("dump-all-resolved-styles");
         },
         this));
-    debug_menu.add_action(GUI::Action::create("Dump &History", { Mod_Ctrl, Key_H }, g_icon_bag.history, [this](auto&) {
+    debug_menu->add_action(GUI::Action::create("Dump &History", { Mod_Ctrl, Key_H }, g_icon_bag.history, [this](auto&) {
         active_tab().m_history.dump();
     }));
-    debug_menu.add_action(GUI::Action::create("Dump C&ookies", g_icon_bag.cookie, [this](auto&) {
+    debug_menu->add_action(GUI::Action::create("Dump C&ookies", g_icon_bag.cookie, [this](auto&) {
         auto& tab = active_tab();
         if (tab.on_dump_cookies)
             tab.on_dump_cookies();
     }));
-    debug_menu.add_action(GUI::Action::create("Dump Loc&al Storage", g_icon_bag.local_storage, [this](auto&) {
+    debug_menu->add_action(GUI::Action::create("Dump Loc&al Storage", g_icon_bag.local_storage, [this](auto&) {
         active_tab().view().debug_request("dump-local-storage");
     }));
-    debug_menu.add_separator();
+    debug_menu->add_separator();
     auto line_box_borders_action = GUI::Action::create_checkable(
         "Line &Box Borders", [this](auto& action) {
             active_tab().view().debug_request("set-line-box-borders", action.is_checked() ? "on" : "off");
         },
         this);
     line_box_borders_action->set_checked(false);
-    debug_menu.add_action(line_box_borders_action);
+    debug_menu->add_action(line_box_borders_action);
 
-    debug_menu.add_separator();
-    debug_menu.add_action(GUI::Action::create("Collect &Garbage", { Mod_Ctrl | Mod_Shift, Key_G }, g_icon_bag.trash_can, [this](auto&) {
+    debug_menu->add_separator();
+    debug_menu->add_action(GUI::Action::create("Collect &Garbage", { Mod_Ctrl | Mod_Shift, Key_G }, g_icon_bag.trash_can, [this](auto&) {
         active_tab().view().debug_request("collect-garbage");
     }));
-    debug_menu.add_action(GUI::Action::create("Clear &Cache", { Mod_Ctrl | Mod_Shift, Key_C }, g_icon_bag.clear_cache, [this](auto&) {
+    debug_menu->add_action(GUI::Action::create("Clear &Cache", { Mod_Ctrl | Mod_Shift, Key_C }, g_icon_bag.clear_cache, [this](auto&) {
         active_tab().view().debug_request("clear-cache");
     }));
 
     m_user_agent_spoof_actions.set_exclusive(true);
-    auto& spoof_user_agent_menu = debug_menu.add_submenu("Spoof &User Agent"_string.release_value_but_fixme_should_propagate_errors());
+    auto spoof_user_agent_menu = debug_menu->add_submenu("Spoof &User Agent"_string);
     m_disable_user_agent_spoofing = GUI::Action::create_checkable("Disabled", [this](auto&) {
         active_tab().view().debug_request("spoof-user-agent", Web::default_user_agent);
     });
     m_disable_user_agent_spoofing->set_status_tip(String::from_utf8(Web::default_user_agent).release_value_but_fixme_should_propagate_errors());
-    spoof_user_agent_menu.add_action(*m_disable_user_agent_spoofing);
-    spoof_user_agent_menu.set_icon(g_icon_bag.spoof);
+    spoof_user_agent_menu->add_action(*m_disable_user_agent_spoofing);
+    spoof_user_agent_menu->set_icon(g_icon_bag.spoof);
     m_user_agent_spoof_actions.add_action(*m_disable_user_agent_spoofing);
     m_disable_user_agent_spoofing->set_checked(true);
 
@@ -415,7 +413,7 @@ void BrowserWindow::build_menus()
             active_tab().view().debug_request("spoof-user-agent", user_agent);
         });
         action->set_status_tip(String::from_utf8(user_agent).release_value_but_fixme_should_propagate_errors());
-        spoof_user_agent_menu.add_action(action);
+        spoof_user_agent_menu->add_action(action);
         m_user_agent_spoof_actions.add_action(action);
     };
     add_user_agent("Chrome Linux Desktop", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.128 Safari/537.36"sv);
@@ -434,17 +432,17 @@ void BrowserWindow::build_menus()
         active_tab().view().debug_request("spoof-user-agent", user_agent.to_deprecated_string());
         action.set_status_tip(user_agent);
     });
-    spoof_user_agent_menu.add_action(custom_user_agent);
+    spoof_user_agent_menu->add_action(custom_user_agent);
     m_user_agent_spoof_actions.add_action(custom_user_agent);
 
-    debug_menu.add_separator();
+    debug_menu->add_separator();
     auto scripting_enabled_action = GUI::Action::create_checkable(
         "Enable Scripting", [this](auto& action) {
             active_tab().view().debug_request("scripting", action.is_checked() ? "on" : "off");
         },
         this);
     scripting_enabled_action->set_checked(true);
-    debug_menu.add_action(scripting_enabled_action);
+    debug_menu->add_action(scripting_enabled_action);
 
     auto block_pop_ups_action = GUI::Action::create_checkable(
         "Block Pop-ups", [this](auto& action) {
@@ -452,7 +450,7 @@ void BrowserWindow::build_menus()
         },
         this);
     block_pop_ups_action->set_checked(true);
-    debug_menu.add_action(block_pop_ups_action);
+    debug_menu->add_action(block_pop_ups_action);
 
     auto same_origin_policy_action = GUI::Action::create_checkable(
         "Enable Same-Origin &Policy", [this](auto& action) {
@@ -460,18 +458,18 @@ void BrowserWindow::build_menus()
         },
         this);
     same_origin_policy_action->set_checked(false);
-    debug_menu.add_action(same_origin_policy_action);
+    debug_menu->add_action(same_origin_policy_action);
 
-    auto& help_menu = add_menu("&Help"_short_string);
-    help_menu.add_action(GUI::CommonActions::make_command_palette_action(this));
-    help_menu.add_action(WindowActions::the().about_action());
+    auto help_menu = add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(this));
+    help_menu->add_action(WindowActions::the().about_action());
 }
 
 ErrorOr<void> BrowserWindow::load_search_engines(GUI::Menu& settings_menu)
 {
     m_search_engine_actions.set_exclusive(true);
-    auto& search_engine_menu = settings_menu.add_submenu("&Search Engine"_string.release_value_but_fixme_should_propagate_errors());
-    search_engine_menu.set_icon(g_icon_bag.find);
+    auto search_engine_menu = settings_menu.add_submenu("&Search Engine"_string);
+    search_engine_menu->set_icon(g_icon_bag.find);
     bool search_engine_set = false;
 
     m_disable_search_engine_action = GUI::Action::create_checkable(
@@ -480,7 +478,7 @@ ErrorOr<void> BrowserWindow::load_search_engines(GUI::Menu& settings_menu)
             Config::write_string("Browser"sv, "Preferences"sv, "SearchEngine"sv, g_search_engine);
         },
         this);
-    search_engine_menu.add_action(*m_disable_search_engine_action);
+    search_engine_menu->add_action(*m_disable_search_engine_action);
     m_search_engine_actions.add_action(*m_disable_search_engine_action);
     m_disable_search_engine_action->set_checked(true);
 
@@ -504,7 +502,7 @@ ErrorOr<void> BrowserWindow::load_search_engines(GUI::Menu& settings_menu)
                         Config::write_string("Browser"sv, "Preferences"sv, "SearchEngine"sv, g_search_engine);
                     },
                     this);
-                search_engine_menu.add_action(action);
+                search_engine_menu->add_action(action);
                 m_search_engine_actions.add_action(action);
 
                 if (g_search_engine == url_format) {
@@ -534,7 +532,7 @@ ErrorOr<void> BrowserWindow::load_search_engines(GUI::Menu& settings_menu)
         Config::write_string("Browser"sv, "Preferences"sv, "SearchEngine"sv, g_search_engine);
         action.set_status_tip(search_engine);
     });
-    search_engine_menu.add_action(custom_search_engine_action);
+    search_engine_menu->add_action(custom_search_engine_action);
     m_search_engine_actions.add_action(custom_search_engine_action);
 
     if (!search_engine_set && !g_search_engine.is_empty()) {
@@ -564,7 +562,7 @@ void BrowserWindow::set_window_title_for_tab(Tab const& tab)
 
 Tab& BrowserWindow::create_new_tab(URL url, Web::HTML::ActivateTab activate)
 {
-    auto& new_tab = m_tab_widget->add_tab<Browser::Tab>("New tab"_short_string, *this, m_use_javascript_bytecode);
+    auto& new_tab = m_tab_widget->add_tab<Browser::Tab>("New tab"_string, *this);
 
     m_tab_widget->set_bar_visible(!is_fullscreen() && m_tab_widget->children().size() > 1);
 
@@ -760,12 +758,17 @@ void BrowserWindow::event(Core::Event& event)
     Window::event(event);
 }
 
-void BrowserWindow::update_displayed_zoom_level()
+void BrowserWindow::update_zoom_menu()
 {
     VERIFY(m_zoom_menu);
     auto zoom_level_text = String::formatted("&Zoom ({}%)", round_to<int>(active_tab().view().zoom_level() * 100)).release_value_but_fixme_should_propagate_errors();
     m_zoom_menu->set_name(zoom_level_text);
+}
+
+void BrowserWindow::update_displayed_zoom_level()
+{
     active_tab().update_reset_zoom_button();
+    update_zoom_menu();
 }
 
 }

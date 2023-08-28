@@ -12,16 +12,16 @@ namespace Web::CSS {
 
 class PlaceContentStyleValue final : public StyleValueWithDefaultOperators<PlaceContentStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<PlaceContentStyleValue>> create(ValueComparingNonnullRefPtr<StyleValue> align_content, ValueComparingNonnullRefPtr<StyleValue> justify_content)
+    static ValueComparingNonnullRefPtr<PlaceContentStyleValue> create(ValueComparingNonnullRefPtr<StyleValue> align_content, ValueComparingNonnullRefPtr<StyleValue> justify_content)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) PlaceContentStyleValue(move(align_content), move(justify_content)));
+        return adopt_ref(*new (nothrow) PlaceContentStyleValue(move(align_content), move(justify_content)));
     }
     virtual ~PlaceContentStyleValue() override = default;
 
     ValueComparingNonnullRefPtr<StyleValue> align_content() const { return m_properties.align_content; }
     ValueComparingNonnullRefPtr<StyleValue> justify_content() const { return m_properties.justify_content; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(PlaceContentStyleValue const& other) const { return m_properties == other.m_properties; }
 

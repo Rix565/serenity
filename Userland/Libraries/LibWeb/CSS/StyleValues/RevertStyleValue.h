@@ -12,14 +12,14 @@ namespace Web::CSS {
 
 class RevertStyleValue final : public StyleValueWithDefaultOperators<RevertStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<RevertStyleValue>> the()
+    static ValueComparingNonnullRefPtr<RevertStyleValue> the()
     {
-        static ValueComparingNonnullRefPtr<RevertStyleValue> instance = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) RevertStyleValue));
+        static ValueComparingNonnullRefPtr<RevertStyleValue> instance = adopt_ref(*new (nothrow) RevertStyleValue);
         return instance;
     }
     virtual ~RevertStyleValue() override = default;
 
-    ErrorOr<String> to_string() const override { return "revert"_string; }
+    String to_string() const override { return "revert"_string; }
 
     bool properties_equal(RevertStyleValue const&) const { return true; }
 

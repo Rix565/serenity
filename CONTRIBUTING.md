@@ -52,7 +52,7 @@ Nobody is perfect, and sometimes we mess things up. That said, here are some goo
   * Several categories may be combined with `+`, e.g. `LibJS+LibWeb+Browser: ...`
 * Write the commit message subject line in the imperative mood ("Foo: Change the way dates work", not "Foo: Changed the way dates work").
 * Write your commit messages in proper English, with care and punctuation.
-* Squash your commits when making revisions after a patch review.
+* Amend your existing commits when adding changes after a review, where relevant.
 * Add your personal copyright line to files when making substantive changes. (Optional but encouraged!)
 * Check the spelling of your code, comments and commit messages.
 * If you have images that go along with your code, run `optipng -strip all` on them to optimize and strip away useless metadata - this can reduce file size from multiple kilobytes to a couple hundred bytes.
@@ -82,7 +82,18 @@ Ping them right away if it's something urgent! If it's less urgent, advertise yo
 
 ### Who are the project maintainers?
 
-The project maintainers at this time are [@awesomekling](https://github.com/awesomekling), [@linusg](https://github.com/linusg), [@alimpfard](https://github.com/alimpfard), [@gunnarbeutner](https://github.com/gunnarbeutner), [@bgianfo](https://github.com/bgianfo), [@IdanHo](https://github.com/IdanHo), [@trflynn89](https://github.com/trflynn89), [@AtkinsSJ](https://github.com/AtkinsSJ), [@ADKaster](https://github.com/ADKaster), and [@GMTA](https://github.com/gmta).
+The project founder and [BDFL](https://en.wikipedia.org/wiki/Benevolent_dictator_for_life) is [@awesomekling](https://github.com/awesomekling).
+
+There is also a group of maintainers with the ability to approve and merge PRs:
+- [@ADKaster](https://github.com/ADKaster)
+- [@alimpfard](https://github.com/alimpfard)
+- [@AtkinsSJ](https://github.com/AtkinsSJ)
+- [@BertalanD](https://github.com/BertalanD)
+- [@GMTA](https://github.com/gmta)
+- [@kalenikaliaksandr](https://github.com/kalenikaliaksandr)
+- [@Lubrsi](https://github.com/Lubrsi)
+- [@timschumi](https://github.com/timschumi)
+- [@trflynn89](https://github.com/trflynn89)
 
 Maintainership is by invitation only and does not correlate with any particular metric.
 

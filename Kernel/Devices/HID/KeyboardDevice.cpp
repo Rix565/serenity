@@ -243,7 +243,11 @@ void KeyboardDevice::handle_scan_code_input_event(ScanCodeEvent event)
         m_right_shift_pressed = event.pressed;
         update_modifier(Mod_Shift, m_left_shift_pressed || m_right_shift_pressed);
         break;
+    case 0x1c:
     case 0x35:
+        if (event.e0_prefix)
+            update_modifier(Mod_Keypad, event.pressed);
+        break;
     case 0x37:
     case 0x47:
     case 0x48:
@@ -258,8 +262,8 @@ void KeyboardDevice::handle_scan_code_input_event(ScanCodeEvent event)
     case 0x51:
     case 0x52:
     case 0x53:
-        // FIXME: This should also include the keypad "enter" key, but that has the same scan code as the return key (0x1c).
-        update_modifier(Mod_Keypad, event.pressed);
+        if (!event.e0_prefix)
+            update_modifier(Mod_Keypad, event.pressed);
         break;
     }
 
@@ -299,7 +303,7 @@ void KeyboardDevice::handle_scan_code_input_event(ScanCodeEvent event)
     queued_event.flags = m_modifiers;
     queued_event.e0_prefix = event.e0_prefix;
     queued_event.caps_lock_on = m_caps_lock_on;
-    queued_event.code_point = HIDManagement::the().get_char_from_character_map(queued_event);
+    queued_event.code_point = HIDManagement::the().get_char_from_character_map(queued_event, m_num_lock_on);
 
     // If using a non-QWERTY layout, queued_event.key needs to be updated to be the same as event.code_point
     KeyCode mapped_key = code_point_to_key_code(queued_event.code_point);

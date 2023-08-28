@@ -38,17 +38,17 @@ ErrorOr<String> CookiesModel::column_name(int column) const
 {
     switch (column) {
     case Column::Domain:
-        return "Domain"_short_string;
+        return "Domain"_string;
     case Column::Path:
-        return "Path"_short_string;
+        return "Path"_string;
     case Column::Name:
-        return "Name"_short_string;
+        return "Name"_string;
     case Column::Value:
-        return "Value"_short_string;
+        return "Value"_string;
     case Column::ExpiryTime:
-        return TRY("Expiry time"_string);
+        return "Expiry time"_string;
     case Column::SameSite:
-        return TRY("SameSite"_string);
+        return "SameSite"_string;
     case Column::__Count:
         return String {};
     }

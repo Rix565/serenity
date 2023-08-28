@@ -191,7 +191,7 @@ public:
         // NOTE: This includes an implementation-defined optimization, see note above!
         if (property_key.is_string() || property_key.is_number()) {
             // a. Let numericIndex be CanonicalNumericIndexString(P).
-            auto numeric_index = MUST_OR_THROW_OOM(canonical_numeric_index_string(vm(), property_key, CanonicalIndexMode::DetectNumericRoundtrip));
+            auto numeric_index = canonical_numeric_index_string(property_key, CanonicalIndexMode::DetectNumericRoundtrip);
             // b. If numericIndex is not undefined, then
             if (!numeric_index.is_undefined()) {
                 // i. Let value be IntegerIndexedElementGet(O, numericIndex).
@@ -228,7 +228,7 @@ public:
         // NOTE: This includes an implementation-defined optimization, see note above!
         if (property_key.is_string() || property_key.is_number()) {
             // a. Let numericIndex be CanonicalNumericIndexString(P).
-            auto numeric_index = MUST_OR_THROW_OOM(canonical_numeric_index_string(vm(), property_key, CanonicalIndexMode::DetectNumericRoundtrip));
+            auto numeric_index = canonical_numeric_index_string(property_key, CanonicalIndexMode::DetectNumericRoundtrip);
             // b. If numericIndex is not undefined, return IsValidIntegerIndex(O, numericIndex).
             if (!numeric_index.is_undefined())
                 return is_valid_integer_index(*this, numeric_index);
@@ -251,7 +251,7 @@ public:
         // NOTE: This includes an implementation-defined optimization, see note above!
         if (property_key.is_string() || property_key.is_number()) {
             // a. Let numericIndex be CanonicalNumericIndexString(P).
-            auto numeric_index = MUST_OR_THROW_OOM(canonical_numeric_index_string(vm(), property_key, CanonicalIndexMode::DetectNumericRoundtrip));
+            auto numeric_index = canonical_numeric_index_string(property_key, CanonicalIndexMode::DetectNumericRoundtrip);
             // b. If numericIndex is not undefined, then
             if (!numeric_index.is_undefined()) {
                 // i. If IsValidIntegerIndex(O, numericIndex) is false, return false.
@@ -301,7 +301,7 @@ public:
         // NOTE: This includes an implementation-defined optimization, see note above!
         if (property_key.is_string() || property_key.is_number()) {
             // a. Let numericIndex be CanonicalNumericIndexString(P).
-            auto numeric_index = MUST_OR_THROW_OOM(canonical_numeric_index_string(vm(), property_key, CanonicalIndexMode::DetectNumericRoundtrip));
+            auto numeric_index = canonical_numeric_index_string(property_key, CanonicalIndexMode::DetectNumericRoundtrip);
             // b. If numericIndex is not undefined, then
             if (!numeric_index.is_undefined()) {
                 // i. Return IntegerIndexedElementGet(O, numericIndex).
@@ -328,7 +328,7 @@ public:
         // NOTE: This includes an implementation-defined optimization, see note above!
         if (property_key.is_string() || property_key.is_number()) {
             // a. Let numericIndex be CanonicalNumericIndexString(P).
-            auto numeric_index = MUST_OR_THROW_OOM(canonical_numeric_index_string(vm(), property_key, CanonicalIndexMode::DetectNumericRoundtrip));
+            auto numeric_index = canonical_numeric_index_string(property_key, CanonicalIndexMode::DetectNumericRoundtrip);
             // b. If numericIndex is not undefined, then
             if (!numeric_index.is_undefined()) {
                 // i. If SameValue(O, Receiver) is true, then
@@ -363,7 +363,7 @@ public:
         // NOTE: This includes an implementation-defined optimization, see note above!
         if (property_key.is_string() || property_key.is_number()) {
             // a. Let numericIndex be CanonicalNumericIndexString(P).
-            auto numeric_index = MUST_OR_THROW_OOM(canonical_numeric_index_string(vm(), property_key, CanonicalIndexMode::DetectNumericRoundtrip));
+            auto numeric_index = canonical_numeric_index_string(property_key, CanonicalIndexMode::DetectNumericRoundtrip);
             // b. If numericIndex is not undefined, then
             if (!numeric_index.is_undefined()) {
                 // i. If IsValidIntegerIndex(O, numericIndex) is false, return true; else return false.
@@ -479,7 +479,7 @@ ThrowCompletionOr<double> compare_typed_array_elements(VM&, Value x, Value y, Fu
         JS_OBJECT(PrototypeName, Object);                                                                         \
                                                                                                                   \
     public:                                                                                                       \
-        virtual ThrowCompletionOr<void> initialize(Realm&) override;                                              \
+        virtual void initialize(Realm&) override;                                                                 \
         virtual ~PrototypeName() override;                                                                        \
                                                                                                                   \
     private:                                                                                                      \
@@ -489,7 +489,7 @@ ThrowCompletionOr<double> compare_typed_array_elements(VM&, Value x, Value y, Fu
         JS_OBJECT(ConstructorName, TypedArrayConstructor);                                                        \
                                                                                                                   \
     public:                                                                                                       \
-        virtual ThrowCompletionOr<void> initialize(Realm&) override;                                              \
+        virtual void initialize(Realm&) override;                                                                 \
         virtual ~ConstructorName() override;                                                                      \
                                                                                                                   \
         virtual ThrowCompletionOr<Value> call() override;                                                         \

@@ -90,7 +90,7 @@ ErrorOr<NonnullRefPtr<MainWidget>> MainWidget::try_create(GUI::Icon const& icon)
     main_widget->m_editor->on_change = [main_widget = main_widget.ptr()] {
         main_widget->m_preview->remove_all_children();
         // FIXME: Parsing errors happen while the user is typing. What should we do about them?
-        (void)main_widget->m_preview->load_from_gml(main_widget->m_editor->text(), [](DeprecatedString const& class_name) -> ErrorOr<NonnullRefPtr<Core::Object>> {
+        (void)main_widget->m_preview->load_from_gml(main_widget->m_editor->text(), [](StringView class_name) -> ErrorOr<NonnullRefPtr<Core::EventReceiver>> {
             return UnregisteredWidget::try_create(class_name);
         });
     };
@@ -134,7 +134,7 @@ void MainWidget::load_file(FileSystemAccessClient::File file)
 
 ErrorOr<void> MainWidget::initialize_menubar(GUI::Window& window)
 {
-    auto file_menu = TRY(window.try_add_menu("&File"_short_string));
+    auto file_menu = window.add_menu("&File"_string);
 
     m_save_as_action = GUI::CommonActions::make_save_as_action([&](auto&) {
         LexicalPath initial_path(m_file_path.is_empty() ? "Untitled.gml" : m_file_path);
@@ -187,36 +187,36 @@ ErrorOr<void> MainWidget::initialize_menubar(GUI::Window& window)
         load_file(response.release_value());
     });
 
-    TRY(file_menu->try_add_action(open_action));
-    TRY(file_menu->try_add_action(*m_save_action));
-    TRY(file_menu->try_add_action(*m_save_as_action));
-    TRY(file_menu->try_add_separator());
+    file_menu->add_action(open_action);
+    file_menu->add_action(*m_save_action);
+    file_menu->add_action(*m_save_as_action);
+    file_menu->add_separator();
 
-    TRY(file_menu->add_recent_files_list([&](auto& action) {
+    file_menu->add_recent_files_list([&](auto& action) {
         if (request_close() == GUI::Window::CloseRequestDecision::StayOpen)
             return;
         auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(&window, action.text());
         if (response.is_error())
             return;
         load_file(response.release_value());
-    }));
+    });
 
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([&](auto&) {
+    file_menu->add_action(GUI::CommonActions::make_quit_action([&](auto&) {
         if (window.on_close_request() == GUI::Window::CloseRequestDecision::Close)
             GUI::Application::the()->quit();
-    })));
+    }));
 
-    auto edit_menu = TRY(window.try_add_menu("&Edit"_short_string));
-    TRY(edit_menu->try_add_action(m_editor->undo_action()));
-    TRY(edit_menu->try_add_action(m_editor->redo_action()));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(m_editor->cut_action()));
-    TRY(edit_menu->try_add_action(m_editor->copy_action()));
-    TRY(edit_menu->try_add_action(m_editor->paste_action()));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(m_editor->select_all_action()));
-    TRY(edit_menu->try_add_action(m_editor->go_to_line_or_column_action()));
-    TRY(edit_menu->try_add_separator());
+    auto edit_menu = window.add_menu("&Edit"_string);
+    edit_menu->add_action(m_editor->undo_action());
+    edit_menu->add_action(m_editor->redo_action());
+    edit_menu->add_separator();
+    edit_menu->add_action(m_editor->cut_action());
+    edit_menu->add_action(m_editor->copy_action());
+    edit_menu->add_action(m_editor->paste_action());
+    edit_menu->add_separator();
+    edit_menu->add_action(m_editor->select_all_action());
+    edit_menu->add_action(m_editor->go_to_line_or_column_action());
+    edit_menu->add_separator();
 
     auto format_gml_action = GUI::Action::create("&Format GML", { Mod_Ctrl | Mod_Shift, Key_I }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reformat.png"sv)), [&](auto&) {
         auto formatted_gml_or_error = GUI::GML::format_gml(m_editor->text());
@@ -230,7 +230,7 @@ ErrorOr<void> MainWidget::initialize_menubar(GUI::Window& window)
                 GUI::MessageBox::Type::Error);
         }
     });
-    TRY(edit_menu->try_add_action(format_gml_action));
+    edit_menu->add_action(format_gml_action);
 
     auto vim_emulation_setting_action = GUI::Action::create_checkable("&Vim Emulation", { Mod_Ctrl | Mod_Shift | Mod_Alt, Key_V }, [&](auto& action) {
         if (action.is_checked())
@@ -239,9 +239,9 @@ ErrorOr<void> MainWidget::initialize_menubar(GUI::Window& window)
             m_editor->set_editing_engine(make<GUI::RegularEditingEngine>());
     });
     vim_emulation_setting_action->set_checked(false);
-    TRY(edit_menu->try_add_action(vim_emulation_setting_action));
+    edit_menu->add_action(vim_emulation_setting_action);
 
-    auto view_menu = TRY(window.try_add_menu("&View"_short_string));
+    auto view_menu = window.add_menu("&View"_string);
     m_views_group.set_exclusive(true);
     m_views_group.set_unchecking_allowed(false);
 
@@ -272,25 +272,25 @@ ErrorOr<void> MainWidget::initialize_menubar(GUI::Window& window)
         m_view_frame_action->activate();
     };
 
-    auto help_menu = TRY(window.try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(&window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+    auto help_menu = window.add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(&window));
+    help_menu->add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Applications/GMLPlayground.md"), "/bin/Help");
-    })));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("GML Playground", m_icon, &window)));
+    }));
+    help_menu->add_action(GUI::CommonActions::make_about_action("GML Playground", m_icon, &window));
 
-    (void)TRY(m_toolbar->try_add_action(open_action));
-    (void)TRY(m_toolbar->try_add_action(*m_save_action));
-    (void)TRY(m_toolbar->try_add_action(*m_save_as_action));
-    TRY(m_toolbar->try_add_separator());
-    (void)TRY(m_toolbar->try_add_action(m_editor->cut_action()));
-    (void)TRY(m_toolbar->try_add_action(m_editor->copy_action()));
-    (void)TRY(m_toolbar->try_add_action(m_editor->paste_action()));
-    TRY(m_toolbar->try_add_separator());
-    (void)TRY(m_toolbar->try_add_action(m_editor->undo_action()));
-    (void)TRY(m_toolbar->try_add_action(m_editor->redo_action()));
-    TRY(m_toolbar->try_add_separator());
-    (void)TRY(m_toolbar->try_add_action(format_gml_action));
+    m_toolbar->add_action(open_action);
+    m_toolbar->add_action(*m_save_action);
+    m_toolbar->add_action(*m_save_as_action);
+    m_toolbar->add_separator();
+    m_toolbar->add_action(m_editor->cut_action());
+    m_toolbar->add_action(m_editor->copy_action());
+    m_toolbar->add_action(m_editor->paste_action());
+    m_toolbar->add_separator();
+    m_toolbar->add_action(m_editor->undo_action());
+    m_toolbar->add_action(m_editor->redo_action());
+    m_toolbar->add_separator();
+    m_toolbar->add_action(format_gml_action);
 
     return {};
 }

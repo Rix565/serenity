@@ -20,9 +20,9 @@ IteratorConstructor::IteratorConstructor(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> IteratorConstructor::initialize(Realm& realm)
+void IteratorConstructor::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
@@ -33,8 +33,6 @@ ThrowCompletionOr<void> IteratorConstructor::initialize(Realm& realm)
     define_native_function(realm, vm.names.from, from, 1, attr);
 
     define_direct_property(vm.names.length, Value(0), Attribute::Configurable);
-
-    return {};
 }
 
 // 3.1.1.1.1 Iterator ( ), https://tc39.es/proposal-iterator-helpers/#sec-iterator
@@ -80,7 +78,7 @@ JS_DEFINE_NATIVE_FUNCTION(IteratorConstructor::from)
 
     // 4. Let wrapper be OrdinaryObjectCreate(%WrapForValidIteratorPrototype%, « [[Iterated]] »).
     // 5. Set wrapper.[[Iterated]] to iteratorRecord.
-    auto wrapper = MUST_OR_THROW_OOM(Iterator::create(realm, realm.intrinsics().wrap_for_valid_iterator_prototype(), move(iterator_record)));
+    auto wrapper = Iterator::create(realm, realm.intrinsics().wrap_for_valid_iterator_prototype(), move(iterator_record));
 
     // 6. Return wrapper.
     return wrapper;

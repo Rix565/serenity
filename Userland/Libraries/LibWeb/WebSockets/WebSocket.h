@@ -9,7 +9,7 @@
 
 #include <AK/ByteBuffer.h>
 #include <AK/URL.h>
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/Forward.h>
@@ -70,12 +70,12 @@ private:
 
     WebSocket(JS::Realm&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     ErrorOr<void> establish_web_socket_connection(AK::URL& url_record, Vector<String>& protocols, HTML::EnvironmentSettingsObject& client);
 
     AK::URL m_url;
-    String m_binary_type { "blob"_string.release_value_but_fixme_should_propagate_errors() };
+    String m_binary_type { "blob"_string };
     RefPtr<WebSocketClientSocket> m_websocket;
 };
 
@@ -116,7 +116,7 @@ protected:
     explicit WebSocketClientSocket();
 };
 
-class WebSocketClientManager : public Core::Object {
+class WebSocketClientManager : public Core::EventReceiver {
     C_OBJECT_ABSTRACT(WebSocketClientManager)
 public:
     static void initialize(RefPtr<WebSocketClientManager>);

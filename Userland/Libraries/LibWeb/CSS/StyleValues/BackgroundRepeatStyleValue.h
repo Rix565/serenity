@@ -16,16 +16,16 @@ namespace Web::CSS {
 
 class BackgroundRepeatStyleValue final : public StyleValueWithDefaultOperators<BackgroundRepeatStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<BackgroundRepeatStyleValue>> create(Repeat repeat_x, Repeat repeat_y)
+    static ValueComparingNonnullRefPtr<BackgroundRepeatStyleValue> create(Repeat repeat_x, Repeat repeat_y)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) BackgroundRepeatStyleValue(repeat_x, repeat_y));
+        return adopt_ref(*new (nothrow) BackgroundRepeatStyleValue(repeat_x, repeat_y));
     }
     virtual ~BackgroundRepeatStyleValue() override;
 
     Repeat repeat_x() const { return m_properties.repeat_x; }
     Repeat repeat_y() const { return m_properties.repeat_y; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(BackgroundRepeatStyleValue const& other) const { return m_properties == other.m_properties; }
 

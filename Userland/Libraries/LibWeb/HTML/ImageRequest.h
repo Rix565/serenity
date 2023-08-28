@@ -17,9 +17,12 @@
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/images.html#image-request
-class ImageRequest : public RefCounted<ImageRequest> {
+class ImageRequest final : public JS::Cell {
+    JS_CELL(ImageRequest, JS::Cell);
+
 public:
-    static ErrorOr<NonnullRefPtr<ImageRequest>> create(Page&);
+    [[nodiscard]] static JS::NonnullGCPtr<ImageRequest> create(JS::Realm&, Page&);
+
     ~ImageRequest();
 
     // https://html.spec.whatwg.org/multipage/images.html#img-req-state
@@ -37,7 +40,7 @@ public:
     void set_state(State);
 
     AK::URL const& current_url() const;
-    void set_current_url(AK::URL);
+    void set_current_url(JS::Realm&, AK::URL);
 
     [[nodiscard]] RefPtr<DecodedImageData const> image_data() const;
     void set_image_data(RefPtr<DecodedImageData const>);
@@ -55,6 +58,8 @@ public:
     void add_callbacks(JS::SafeFunction<void()> on_finish, JS::SafeFunction<void()> on_fail);
 
     SharedImageRequest const* shared_image_request() const { return m_shared_image_request; }
+
+    virtual void visit_edges(JS::Cell::Visitor&) override;
 
 private:
     explicit ImageRequest(Page&);
@@ -81,7 +86,7 @@ private:
     // which is either a struct consisting of a width and a height or is null. It must initially be null.
     Optional<Gfx::FloatSize> m_preferred_density_corrected_dimensions;
 
-    RefPtr<SharedImageRequest> m_shared_image_request;
+    JS::GCPtr<SharedImageRequest> m_shared_image_request;
 };
 
 // https://html.spec.whatwg.org/multipage/images.html#abort-the-image-request

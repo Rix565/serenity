@@ -19,12 +19,10 @@ MimeType::MimeType(JS::Realm& realm, String type)
 
 MimeType::~MimeType() = default;
 
-JS::ThrowCompletionOr<void> MimeType::initialize(JS::Realm& realm)
+void MimeType::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::MimeTypePrototype>(realm, "MimeType"));
-
-    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/system-state.html#concept-mimetype-type
@@ -35,10 +33,10 @@ String const& MimeType::type() const
 }
 
 // https://html.spec.whatwg.org/multipage/system-state.html#dom-mimetype-description
-JS::ThrowCompletionOr<String> MimeType::description() const
+String MimeType::description() const
 {
     // The MimeType interface's description getter steps are to return "Portable Document Format".
-    static String description_string = TRY_OR_THROW_OOM(vm(), "Portable Document Format"_string);
+    static String description_string = "Portable Document Format"_string;
     return description_string;
 }
 
@@ -46,7 +44,7 @@ JS::ThrowCompletionOr<String> MimeType::description() const
 String const& MimeType::suffixes() const
 {
     // The MimeType interface's suffixes getter steps are to return "pdf".
-    static String suffixes_string = "pdf"_short_string;
+    static String suffixes_string = "pdf"_string;
     return suffixes_string;
 }
 

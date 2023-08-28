@@ -192,12 +192,12 @@ void XMLDocumentBuilder::document_end()
         (void)m_document->scripts_to_execute_when_parsing_has_finished().take_first();
     }
     // Queue a global task on the DOM manipulation task source given the Document's relevant global object to run the following substeps:
-    old_queue_global_task_with_document(HTML::Task::Source::DOMManipulation, m_document, [document = m_document] {
+    queue_global_task(HTML::Task::Source::DOMManipulation, m_document, [document = m_document] {
         // Set the Document's load timing info's DOM content loaded event start time to the current high resolution time given the Document's relevant global object.
         document->load_timing_info().dom_content_loaded_event_start_time = HighResolutionTime::unsafe_shared_current_time();
 
         // Fire an event named DOMContentLoaded at the Document object, with its bubbles attribute initialized to true.
-        auto content_loaded_event = DOM::Event::create(document->realm(), HTML::EventNames::DOMContentLoaded).release_value_but_fixme_should_propagate_errors();
+        auto content_loaded_event = DOM::Event::create(document->realm(), HTML::EventNames::DOMContentLoaded);
         content_loaded_event->set_bubbles(true);
         document->dispatch_event(content_loaded_event);
 
@@ -220,7 +220,7 @@ void XMLDocumentBuilder::document_end()
     });
 
     // Queue a global task on the DOM manipulation task source given the Document's relevant global object to run the following steps:
-    old_queue_global_task_with_document(HTML::Task::Source::DOMManipulation, m_document, [document = m_document] {
+    queue_global_task(HTML::Task::Source::DOMManipulation, m_document, [document = m_document] {
         // Update the current document readiness to "complete".
         document->update_readiness(HTML::DocumentReadyState::Complete);
 
@@ -237,7 +237,7 @@ void XMLDocumentBuilder::document_end()
         // Fire an event named load at window, with legacy target override flag set.
         // FIXME: The legacy target override flag is currently set by a virtual override of dispatch_event()
         // We should reorganize this so that the flag appears explicitly here instead.
-        window->dispatch_event(DOM::Event::create(document->realm(), HTML::EventNames::load).release_value_but_fixme_should_propagate_errors());
+        window->dispatch_event(DOM::Event::create(document->realm(), HTML::EventNames::load));
 
         // FIXME: Invoke WebDriver BiDi load complete with the Document's browsing context, and a new WebDriver BiDi navigation status whose id is the Document object's navigation id, status is "complete", and url is the Document object's URL.
 

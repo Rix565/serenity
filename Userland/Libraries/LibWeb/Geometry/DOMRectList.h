@@ -18,7 +18,7 @@ class DOMRectList final : public Bindings::LegacyPlatformObject {
     WEB_PLATFORM_OBJECT(DOMRectList, Bindings::LegacyPlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMRectList>> create(JS::Realm&, Vector<JS::Handle<DOMRect>>);
+    [[nodiscard]] static JS::NonnullGCPtr<DOMRectList> create(JS::Realm&, Vector<JS::Handle<DOMRect>>);
 
     virtual ~DOMRectList() override;
 
@@ -31,7 +31,7 @@ public:
 private:
     DOMRectList(JS::Realm&, Vector<JS::NonnullGCPtr<DOMRect>>);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     // ^Bindings::LegacyPlatformObject
     virtual bool supports_indexed_properties() const override { return true; }

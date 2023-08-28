@@ -27,10 +27,10 @@ ArrayConstructor::ArrayConstructor(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> ArrayConstructor::initialize(Realm& realm)
+void ArrayConstructor::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
+    Base::initialize(realm);
 
     // 23.1.2.4 Array.prototype, https://tc39.es/ecma262/#sec-array.prototype
     define_direct_property(vm.names.prototype, realm.intrinsics().array_prototype(), 0);
@@ -45,8 +45,6 @@ ThrowCompletionOr<void> ArrayConstructor::initialize(Realm& realm)
     define_native_accessor(realm, vm.well_known_symbol_species(), symbol_species_getter, {}, Attribute::Configurable);
 
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
-
-    return {};
 }
 
 // 23.1.1.1 Array ( ...values ), https://tc39.es/ecma262/#sec-array
@@ -155,7 +153,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
     if (!mapfn_value.is_undefined()) {
         // a. If IsCallable(mapfn) is false, throw a TypeError exception.
         if (!mapfn_value.is_function())
-            return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, mapfn_value.to_string_without_side_effects()));
+            return vm.throw_completion<TypeError>(ErrorType::NotAFunction, mapfn_value.to_string_without_side_effects());
 
         // b. Let mapping be true.
         mapfn = &mapfn_value.as_function();
@@ -320,7 +318,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from_async)
         else {
             // i. If IsCallable(mapfn) is false, throw a TypeError exception.
             if (!mapfn.is_function())
-                return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, mapfn.to_string_without_side_effects()));
+                return vm.throw_completion<TypeError>(ErrorType::NotAFunction, mapfn.to_string_without_side_effects());
 
             // ii. Let mapping be true.
             mapping = true;

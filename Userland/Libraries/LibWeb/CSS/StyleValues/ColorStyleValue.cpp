@@ -12,27 +12,27 @@
 
 namespace Web::CSS {
 
-ErrorOr<ValueComparingNonnullRefPtr<ColorStyleValue>> ColorStyleValue::create(Color color)
+ValueComparingNonnullRefPtr<ColorStyleValue> ColorStyleValue::create(Color color)
 {
     if (color.value() == 0) {
-        static auto transparent = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) ColorStyleValue(color)));
+        static auto transparent = adopt_ref(*new (nothrow) ColorStyleValue(color));
         return transparent;
     }
 
     if (color == Color::from_rgb(0x000000)) {
-        static auto black = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) ColorStyleValue(color)));
+        static auto black = adopt_ref(*new (nothrow) ColorStyleValue(color));
         return black;
     }
 
     if (color == Color::from_rgb(0xffffff)) {
-        static auto white = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) ColorStyleValue(color)));
+        static auto white = adopt_ref(*new (nothrow) ColorStyleValue(color));
         return white;
     }
 
-    return adopt_nonnull_ref_or_enomem(new (nothrow) ColorStyleValue(color));
+    return adopt_ref(*new (nothrow) ColorStyleValue(color));
 }
 
-ErrorOr<String> ColorStyleValue::to_string() const
+String ColorStyleValue::to_string() const
 {
     return serialize_a_srgb_value(m_color);
 }

@@ -1,12 +1,12 @@
 function (generate_css_implementation)
     set(LIBWEB_INPUT_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}")
     invoke_generator(
-            "EasingFunctions.cpp"
-            Lagom::GenerateCSSEasingFunctions
-            "${LIBWEB_INPUT_FOLDER}/CSS/EasingFunctions.json"
-            "CSS/EasingFunctions.h"
-            "CSS/EasingFunctions.cpp"
-            arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/EasingFunctions.json"
+        "EasingFunctions.cpp"
+        Lagom::GenerateCSSEasingFunctions
+        "${LIBWEB_INPUT_FOLDER}/CSS/EasingFunctions.json"
+        "CSS/EasingFunctions.h"
+        "CSS/EasingFunctions.cpp"
+        arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/EasingFunctions.json"
     )
 
     invoke_generator(
@@ -46,6 +46,15 @@ function (generate_css_implementation)
     )
 
     invoke_generator(
+        "PseudoClass.cpp"
+        Lagom::GenerateCSSPseudoClass
+        "${LIBWEB_INPUT_FOLDER}/CSS/PseudoClasses.json"
+        "CSS/PseudoClass.h"
+        "CSS/PseudoClass.cpp"
+        arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/PseudoClasses.json"
+    )
+
+    invoke_generator(
         "TransformFunctions.cpp"
         Lagom::GenerateCSSTransformFunctions
         "${LIBWEB_INPUT_FOLDER}/CSS/TransformFunctions.json"
@@ -63,31 +72,41 @@ function (generate_css_implementation)
         arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/Identifiers.json"
     )
 
-    add_custom_command(
-        OUTPUT CSS/DefaultStyleSheetSource.cpp
-        COMMAND "${CMAKE_COMMAND}" -E make_directory CSS
-        COMMAND "${LIBWEB_INPUT_FOLDER}/Scripts/GenerateStyleSheetSource.sh" default_stylesheet_source "${LIBWEB_INPUT_FOLDER}/CSS/Default.css" > CSS/DefaultStyleSheetSource.cpp.tmp
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different CSS/DefaultStyleSheetSource.cpp.tmp CSS/DefaultStyleSheetSource.cpp
-        COMMAND "${CMAKE_COMMAND}" -E remove CSS/DefaultStyleSheetSource.cpp.tmp
-        VERBATIM
-        DEPENDS "${LIBWEB_INPUT_FOLDER}/Scripts/GenerateStyleSheetSource.sh"
-        MAIN_DEPENDENCY "${LIBWEB_INPUT_FOLDER}/CSS/Default.css"
+    embed_as_string_view(
+        "DefaultStyleSheetSource.cpp"
+        "${LIBWEB_INPUT_FOLDER}/CSS/Default.css"
+        "CSS/DefaultStyleSheetSource.cpp"
+        "default_stylesheet_source"
+        NAMESPACE "Web::CSS"
     )
-    add_custom_target(generate_DefaultStyleSheetSource.cpp DEPENDS CSS/DefaultStyleSheetSource.cpp)
-    add_dependencies(all_generated generate_DefaultStyleSheetSource.cpp)
 
-    add_custom_command(
-        OUTPUT CSS/QuirksModeStyleSheetSource.cpp
-        COMMAND "${CMAKE_COMMAND}" -E make_directory CSS
-        COMMAND "${LIBWEB_INPUT_FOLDER}/Scripts/GenerateStyleSheetSource.sh" quirks_mode_stylesheet_source "${LIBWEB_INPUT_FOLDER}/CSS/QuirksMode.css" > CSS/QuirksModeStyleSheetSource.cpp.tmp
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different CSS/QuirksModeStyleSheetSource.cpp.tmp CSS/QuirksModeStyleSheetSource.cpp
-        COMMAND "${CMAKE_COMMAND}" -E remove CSS/QuirksModeStyleSheetSource.cpp.tmp
-        VERBATIM
-        DEPENDS "${LIBWEB_INPUT_FOLDER}/Scripts/GenerateStyleSheetSource.sh"
-        MAIN_DEPENDENCY "${LIBWEB_INPUT_FOLDER}/CSS/Default.css"
+    embed_as_string_view(
+        "QuirksModeStyleSheetSource.cpp"
+        "${LIBWEB_INPUT_FOLDER}/CSS/QuirksMode.css"
+        "CSS/QuirksModeStyleSheetSource.cpp"
+        "quirks_mode_stylesheet_source"
+        NAMESPACE "Web::CSS"
     )
-    add_custom_target(generate_QuirksModeStyleSheetSource.cpp DEPENDS CSS/QuirksModeStyleSheetSource.cpp)
-    add_dependencies(all_generated generate_QuirksModeStyleSheetSource.cpp)
+
+    embed_as_string_view(
+        "MathMLStyleSheetSource.cpp"
+        "${LIBWEB_INPUT_FOLDER}/MathML/Default.css"
+        "MathML/MathMLStyleSheetSource.cpp"
+        "mathml_stylesheet_source"
+        NAMESPACE "Web::CSS"
+    )
+
+    set(CSS_GENERATED_TO_INSTALL
+        "CSS/EasingFunctions.h"
+        "CSS/Enums.h"
+        "CSS/MathFunctions.h"
+        "CSS/MediaFeatureID.h"
+        "CSS/PropertyID.h"
+        "CSS/TransformFunctions.h"
+        "CSS/ValueID.h"
+    )
+    list(TRANSFORM CSS_GENERATED_TO_INSTALL PREPEND "${CMAKE_CURRENT_BINARY_DIR}/")
+    install(FILES ${CSS_GENERATED_TO_INSTALL} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/LibWeb/CSS")
 
 endfunction()
 
@@ -154,6 +173,10 @@ function (generate_js_bindings target)
         add_dependencies(all_generated generate_${basename})
         add_dependencies(${target} generate_${basename})
 
+        # install generated sources
+        list(FILTER BINDINGS_SOURCES INCLUDE REGEX "\.h$")
+        install(FILES ${BINDINGS_SOURCES} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/LibWeb/Bindings")
+
         list(APPEND LIBWEB_ALL_IDL_FILES "${LIBWEB_INPUT_FOLDER}/${class}.idl")
         set(LIBWEB_ALL_IDL_FILES ${LIBWEB_ALL_IDL_FILES} PARENT_SCOPE)
     endfunction()
@@ -185,6 +208,10 @@ function (generate_js_bindings target)
         add_custom_target(generate_exposed_interfaces DEPENDS ${exposed_interface_sources})
         add_dependencies(all_generated generate_exposed_interfaces)
         add_dependencies(${target} generate_exposed_interfaces)
+
+        list(FILTER exposed_interface_sources INCLUDE REGEX "\.h$")
+        list(TRANSFORM exposed_interface_sources PREPEND "${CMAKE_CURRENT_BINARY_DIR}/")
+        install(FILES ${exposed_interface_sources} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/LibWeb/Bindings")
     endfunction()
 
     include("idl_files.cmake")

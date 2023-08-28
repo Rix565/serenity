@@ -9,6 +9,7 @@
 #include <AK/ByteBuffer.h>
 #include <AK/OwnPtr.h>
 #include <LibGfx/Forward.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/CORSSettingAttribute.h>
@@ -23,7 +24,7 @@ class HTMLImageElement final
     : public HTMLElement
     , public FormAssociatedElement
     , public Layout::ImageProvider
-    , public BrowsingContext::ViewportClient {
+    , public DOM::Document::ViewportClient {
     WEB_PLATFORM_OBJECT(HTMLImageElement, HTMLElement);
     FORM_ASSOCIATED_ELEMENT(HTMLElement, HTMLImageElement)
 
@@ -91,21 +92,25 @@ public:
 
     JS::SafeFunction<void()> take_lazy_load_resumption_steps(Badge<DOM::Document>);
 
+    virtual void visit_edges(Cell::Visitor&) override;
+
 private:
     HTMLImageElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void finalize() override;
+
+    virtual void adopted_from(DOM::Document&) override;
 
     virtual void apply_presentational_hints(CSS::StyleProperties&) const override;
 
     virtual JS::GCPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::StyleProperties>) override;
 
-    virtual void browsing_context_did_set_viewport_rect(CSSPixelRect const&) override;
+    virtual void did_set_viewport_rect(CSSPixelRect const&) override;
 
     void handle_successful_fetch(AK::URL const&, StringView mime_type, ImageRequest&, ByteBuffer, bool maybe_omit_events, AK::URL const& previous_url);
     void handle_failed_fetch();
-    void add_callbacks_to_image_request(NonnullRefPtr<ImageRequest>, bool maybe_omit_events, AK::URL const& url_string, AK::URL const& previous_url);
+    void add_callbacks_to_image_request(JS::NonnullGCPtr<ImageRequest>, bool maybe_omit_events, AK::URL const& url_string, AK::URL const& previous_url);
 
     void animate();
 
@@ -122,10 +127,10 @@ private:
     Optional<String> m_last_selected_source;
 
     // https://html.spec.whatwg.org/multipage/images.html#current-request
-    RefPtr<ImageRequest> m_current_request;
+    JS::GCPtr<ImageRequest> m_current_request;
 
     // https://html.spec.whatwg.org/multipage/images.html#pending-request
-    RefPtr<ImageRequest> m_pending_request;
+    JS::GCPtr<ImageRequest> m_pending_request;
 
     SourceSet m_source_set;
 

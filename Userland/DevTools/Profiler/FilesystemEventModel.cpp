@@ -146,11 +146,11 @@ ErrorOr<String> FileEventModel::column_name(int column) const
 {
     switch (column) {
     case Column::Path:
-        return "Path"_short_string;
+        return "Path"_string;
     case Column::Count:
-        return TRY("Event Count"_string);
+        return "Event Count"_string;
     case Column::Duration:
-        return TRY("Duration [ms]"_string);
+        return "Duration [ms]"_string;
     default:
         VERIFY_NOT_REACHED();
     }

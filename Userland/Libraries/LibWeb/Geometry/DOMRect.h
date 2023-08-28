@@ -16,8 +16,8 @@ class DOMRect final : public DOMRectReadOnly {
 
 public:
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMRect>> construct_impl(JS::Realm&, double x = 0, double y = 0, double width = 0, double height = 0);
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMRect>> create(JS::Realm&, Gfx::FloatRect const&);
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMRect>> from_rect(JS::VM&, DOMRectInit const&);
+    [[nodiscard]] static JS::NonnullGCPtr<DOMRect> create(JS::Realm&, Gfx::FloatRect const&);
+    [[nodiscard]] static JS::NonnullGCPtr<DOMRect> from_rect(JS::VM&, DOMRectInit const&);
 
     virtual ~DOMRect() override;
 
@@ -34,7 +34,7 @@ public:
 private:
     DOMRect(JS::Realm&, double x, double y, double width, double height);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

@@ -7,10 +7,7 @@ if(INCLUDE_WASM_SPEC_TESTS)
     set(WASM_SPEC_TEST_GZ_PATH ${CMAKE_BINARY_DIR}/wasm-spec-testsuite.tar.gz CACHE PATH "")
     set(WASM_SPEC_TEST_PATH ${CMAKE_CURRENT_BINARY_DIR}/Tests/Fixtures/SpecTests CACHE PATH "")
 
-    if(NOT EXISTS ${WASM_SPEC_TEST_GZ_PATH})
-        message(STATUS "Downloading the WebAssembly testsuite from ${WASM_SPEC_TEST_GZ_URL}...")
-        file(DOWNLOAD ${WASM_SPEC_TEST_GZ_URL} ${WASM_SPEC_TEST_GZ_PATH} INACTIVITY_TIMEOUT 10)
-    endif()
+    download_file(${WASM_SPEC_TEST_GZ_URL} ${WASM_SPEC_TEST_GZ_PATH})
 
     set(SKIP_PRETTIER false)
     if (WASM_SPEC_TEST_SKIP_FORMATTING)
@@ -19,7 +16,7 @@ if(INCLUDE_WASM_SPEC_TESTS)
 
     find_program(WAT2WASM wat2wasm REQUIRED)
     find_program(PRETTIER prettier OPTIONAL)
-    if (NOT SKIP_PRETTIER AND NOT PRETTIER_FOUND)
+    if (NOT SKIP_PRETTIER AND PRETTIER EQUAL "PRETTIER-NOTFOUND")
        message(FATAL_ERROR "Prettier required to format Wasm spec tests! Install prettier or set WASM_SPEC_TEST_SKIP_FORMATTING to ON")
     endif()
 

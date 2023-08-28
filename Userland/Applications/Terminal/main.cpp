@@ -141,7 +141,7 @@ static ErrorOr<void> run_command(StringView command, bool keep_open)
 {
     auto shell = TRY(String::from_deprecated_string(TRY(Core::Account::self(Core::Account::Read::PasswdOnly)).shell()));
     if (shell.is_empty())
-        shell = TRY("/bin/Shell"_string);
+        shell = "/bin/Shell"_string;
 
     Vector<StringView> arguments;
     arguments.append(shell);
@@ -167,10 +167,10 @@ static ErrorOr<NonnullRefPtr<GUI::Window>> create_find_window(VT::TerminalWidget
     auto main_widget = TRY(window->set_main_widget<GUI::Widget>());
     main_widget->set_fill_with_background_color(true);
     main_widget->set_background_role(ColorRole::Button);
-    TRY(main_widget->try_set_layout<GUI::VerticalBoxLayout>(4));
+    main_widget->set_layout<GUI::VerticalBoxLayout>(4);
 
     auto find = TRY(main_widget->try_add<GUI::Widget>());
-    TRY(find->try_set_layout<GUI::HorizontalBoxLayout>(4));
+    find->set_layout<GUI::HorizontalBoxLayout>(4);
     find->set_fixed_height(30);
 
     auto find_textbox = TRY(find->try_add<GUI::TextBox>());
@@ -193,8 +193,8 @@ static ErrorOr<NonnullRefPtr<GUI::Window>> create_find_window(VT::TerminalWidget
         find_forwards->click();
     };
 
-    auto match_case = TRY(main_widget->try_add<GUI::CheckBox>(TRY("Case sensitive"_string)));
-    auto wrap_around = TRY(main_widget->try_add<GUI::CheckBox>(TRY("Wrap around"_string)));
+    auto match_case = TRY(main_widget->try_add<GUI::CheckBox>("Case sensitive"_string));
+    auto wrap_around = TRY(main_widget->try_add<GUI::CheckBox>("Wrap around"_string));
 
     find_backwards->on_click = [&terminal, find_textbox, match_case, wrap_around](auto) {
         auto needle = find_textbox->text();
@@ -332,16 +332,16 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             GUI::Process::spawn_or_show_error(window, "/bin/TerminalSettings"sv);
         });
 
-    TRY(terminal->context_menu().try_add_separator());
-    TRY(terminal->context_menu().try_add_action(open_settings_action));
+    terminal->context_menu().add_separator();
+    terminal->context_menu().add_action(open_settings_action);
 
-    auto file_menu = TRY(window->try_add_menu("&File"_short_string));
-    TRY(file_menu->try_add_action(GUI::Action::create("Open New &Terminal", { Mod_Ctrl | Mod_Shift, Key_N }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-terminal.png"sv)), [&](auto&) {
+    auto file_menu = window->add_menu("&File"_string);
+    file_menu->add_action(GUI::Action::create("Open New &Terminal", { Mod_Ctrl | Mod_Shift, Key_N }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-terminal.png"sv)), [&](auto&) {
         GUI::Process::spawn_or_show_error(window, "/bin/Terminal"sv);
-    })));
+    }));
 
-    TRY(file_menu->try_add_action(open_settings_action));
-    TRY(file_menu->try_add_separator());
+    file_menu->add_action(open_settings_action);
+    file_menu->add_separator();
 
     auto tty_has_foreground_process = [&] {
         pid_t fg_pid = tcgetpgrp(ptm_fd);
@@ -363,14 +363,14 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         Optional<String> close_message;
         auto title = "Running Process"sv;
         if (tty_has_foreground_process()) {
-            close_message = "Close Terminal and kill its foreground process?"_string.release_value_but_fixme_should_propagate_errors();
+            close_message = "Close Terminal and kill its foreground process?"_string;
         } else {
             auto child_process_count = shell_child_process_count();
             if (child_process_count > 1) {
                 title = "Running Processes"sv;
                 close_message = String::formatted("Close Terminal and kill its {} background processes?", child_process_count).release_value_but_fixme_should_propagate_errors();
             } else if (child_process_count == 1) {
-                close_message = "Close Terminal and kill its background process?"_string.release_value_but_fixme_should_propagate_errors();
+                close_message = "Close Terminal and kill its background process?"_string;
             }
         }
         if (close_message.has_value())
@@ -378,27 +378,27 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         return GUI::MessageBox::ExecResult::OK;
     };
 
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([&](auto&) {
+    file_menu->add_action(GUI::CommonActions::make_quit_action([&](auto&) {
         dbgln("Terminal: Quit menu activated!");
         if (check_terminal_quit() == GUI::MessageBox::ExecResult::OK)
             GUI::Application::the()->quit();
-    })));
+    }));
 
-    auto edit_menu = TRY(window->try_add_menu("&Edit"_short_string));
-    TRY(edit_menu->try_add_action(terminal->copy_action()));
-    TRY(edit_menu->try_add_action(terminal->paste_action()));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(GUI::Action::create("&Find...", { Mod_Ctrl | Mod_Shift, Key_F }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"sv)),
+    auto edit_menu = window->add_menu("&Edit"_string);
+    edit_menu->add_action(terminal->copy_action());
+    edit_menu->add_action(terminal->paste_action());
+    edit_menu->add_separator();
+    edit_menu->add_action(GUI::Action::create("&Find...", { Mod_Ctrl | Mod_Shift, Key_F }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"sv)),
         [&](auto&) {
             find_window->show();
             find_window->move_to_front();
-        })));
+        }));
 
-    auto view_menu = TRY(window->try_add_menu("&View"_short_string));
-    TRY(view_menu->try_add_action(GUI::CommonActions::make_fullscreen_action([&](auto&) {
+    auto view_menu = window->add_menu("&View"_string);
+    view_menu->add_action(GUI::CommonActions::make_fullscreen_action([&](auto&) {
         window->set_fullscreen(!window->is_fullscreen());
-    })));
-    TRY(view_menu->try_add_action(terminal->clear_including_history_action()));
+    }));
+    view_menu->add_action(terminal->clear_including_history_action());
 
     auto adjust_font_size = [&](float adjustment) {
         auto& font = terminal->font();
@@ -410,20 +410,20 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         }
     };
 
-    TRY(view_menu->try_add_separator());
-    TRY(view_menu->try_add_action(GUI::CommonActions::make_zoom_in_action([&](auto&) {
+    view_menu->add_separator();
+    view_menu->add_action(GUI::CommonActions::make_zoom_in_action([&](auto&) {
         adjust_font_size(1);
-    })));
-    TRY(view_menu->try_add_action(GUI::CommonActions::make_zoom_out_action([&](auto&) {
+    }));
+    view_menu->add_action(GUI::CommonActions::make_zoom_out_action([&](auto&) {
         adjust_font_size(-1);
-    })));
+    }));
 
-    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+    auto help_menu = window->add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(window));
+    help_menu->add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Applications/Terminal.md"), "/bin/Help");
-    })));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Terminal", app_icon, window)));
+    }));
+    help_menu->add_action(GUI::CommonActions::make_about_action("Terminal", app_icon, window));
 
     window->on_close_request = [&]() -> GUI::Window::CloseRequestDecision {
         if (check_terminal_quit() == GUI::MessageBox::ExecResult::OK)

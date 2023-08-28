@@ -15,9 +15,9 @@ namespace Web::CSS {
 
 class ContentStyleValue final : public StyleValueWithDefaultOperators<ContentStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<ContentStyleValue>> create(ValueComparingNonnullRefPtr<StyleValueList> content, ValueComparingRefPtr<StyleValueList> alt_text)
+    static ValueComparingNonnullRefPtr<ContentStyleValue> create(ValueComparingNonnullRefPtr<StyleValueList> content, ValueComparingRefPtr<StyleValueList> alt_text)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) ContentStyleValue(move(content), move(alt_text)));
+        return adopt_ref(*new (nothrow) ContentStyleValue(move(content), move(alt_text)));
     }
     virtual ~ContentStyleValue() override = default;
 
@@ -25,7 +25,7 @@ public:
     bool has_alt_text() const { return !m_properties.alt_text.is_null(); }
     StyleValueList const* alt_text() const { return m_properties.alt_text; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(ContentStyleValue const& other) const { return m_properties == other.m_properties; }
 

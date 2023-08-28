@@ -33,10 +33,10 @@ ArrayPrototype::ArrayPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> ArrayPrototype::initialize(Realm& realm)
+void ArrayPrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Array::initialize(realm));
+    Base::initialize(realm);
     u8 attr = Attribute::Writable | Attribute::Configurable;
 
     define_native_function(realm, vm.names.at, at, 1, attr);
@@ -104,8 +104,6 @@ ThrowCompletionOr<void> ArrayPrototype::initialize(Realm& realm)
     MUST(unscopable_list->create_data_property_or_throw(vm.names.values, Value(true)));
 
     define_direct_property(vm.well_known_symbol_unscopables(), unscopable_list, Attribute::Configurable);
-
-    return {};
 }
 
 // 10.4.2.3 ArraySpeciesCreate ( originalArray, length ), https://tc39.es/ecma262/#sec-arrayspeciescreate
@@ -139,7 +137,7 @@ static ThrowCompletionOr<Object*> array_species_create(VM& vm, Object& original_
         return TRY(Array::create(realm, length)).ptr();
 
     if (!constructor.is_constructor())
-        return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, TRY_OR_THROW_OOM(vm, constructor.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, constructor.to_string_without_side_effects());
 
     return TRY(construct(vm, constructor.as_function(), Value(length))).ptr();
 }
@@ -312,7 +310,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::every)
 
     // 3. If IsCallable(callbackfn) is false, throw a TypeError exception.
     if (!callback_function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback_function.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback_function.to_string_without_side_effects());
 
     // 4. Let k be 0.
     // 5. Repeat, while k < len,
@@ -398,7 +396,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::filter)
 
     // 3. If IsCallable(callbackfn) is false, throw a TypeError exception.
     if (!callback_function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback_function.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback_function.to_string_without_side_effects());
 
     // 4. Let A be ? ArraySpeciesCreate(O, 0).
     auto* array = TRY(array_species_create(vm, object, 0));
@@ -456,7 +454,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::find)
 
     // 3. If IsCallable(predicate) is false, throw a TypeError exception.
     if (!predicate.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, predicate.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, predicate.to_string_without_side_effects());
 
     // 4. Let k be 0.
     // 5. Repeat, while k < len,
@@ -495,7 +493,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::find_index)
 
     // 3. If IsCallable(predicate) is false, throw a TypeError exception.
     if (!predicate.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, predicate.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, predicate.to_string_without_side_effects());
 
     // 4. Let k be 0.
     // 5. Repeat, while k < len,
@@ -534,7 +532,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::find_last)
 
     // 3. If IsCallable(predicate) is false, throw a TypeError exception.
     if (!predicate.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, predicate.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, predicate.to_string_without_side_effects());
 
     // 4. Let k be len - 1.
     // 5. Repeat, while k ≥ 0,
@@ -573,7 +571,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::find_last_index)
 
     // 3. If IsCallable(predicate) is false, throw a TypeError exception.
     if (!predicate.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, predicate.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, predicate.to_string_without_side_effects());
 
     // 4. Let k be len - 1.
     // 5. Repeat, while k ≥ 0,
@@ -665,7 +663,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::flat_map)
 
     // 3. If IsCallable(mapperFunction) is false, throw a TypeError exception.
     if (!mapper_function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, mapper_function.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, mapper_function.to_string_without_side_effects());
 
     // 4. Let A be ? ArraySpeciesCreate(O, 0).
     auto* array = TRY(array_species_create(vm, object, 0));
@@ -691,7 +689,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::for_each)
 
     // 3. If IsCallable(callbackfn) is false, throw a TypeError exception.
     if (!callback_function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback_function.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback_function.to_string_without_side_effects());
 
     // 4. Let k be 0.
     // 5. Repeat, while k < len,
@@ -946,7 +944,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::map)
 
     // 3. If IsCallable(callbackfn) is false, throw a TypeError exception.
     if (!callback_function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback_function.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback_function.to_string_without_side_effects());
 
     // 4. Let A be ? ArraySpeciesCreate(O, len).
     auto* array = TRY(array_species_create(vm, object, length));
@@ -1025,7 +1023,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::reduce)
 
     // 3. If IsCallable(callbackfn) is false, throw a TypeError exception.
     if (!callback_function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback_function.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback_function.to_string_without_side_effects());
 
     // 4. If len = 0 and initialValue is not present, throw a TypeError exception.
     if (length == 0 && vm.argument_count() <= 1)
@@ -1107,7 +1105,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::reduce_right)
 
     // 3. If IsCallable(callbackfn) is false, throw a TypeError exception.
     if (!callback_function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback_function.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback_function.to_string_without_side_effects());
 
     // 4. If len = 0 and initialValue is not present, throw a TypeError exception.
     if (length == 0 && vm.argument_count() <= 1)
@@ -1307,7 +1305,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::some)
 
     // 3. If IsCallable(callbackfn) is false, throw a TypeError exception.
     if (!callback_function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback_function.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback_function.to_string_without_side_effects());
 
     // 4. Let k be 0.
     // 5. Repeat, while k < len,
@@ -1400,7 +1398,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::sort)
     // 1. If comparefn is not undefined and IsCallable(comparefn) is false, throw a TypeError exception.
     auto comparefn = vm.argument(0);
     if (!comparefn.is_undefined() && !comparefn.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, comparefn.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, comparefn.to_string_without_side_effects());
 
     // 2. Let obj be ? ToObject(this value).
     auto object = TRY(vm.this_value().to_object(vm));

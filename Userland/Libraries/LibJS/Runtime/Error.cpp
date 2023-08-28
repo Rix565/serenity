@@ -23,7 +23,7 @@ SourceRange const& TracebackFrame::source_range() const
                 static auto dummy_source_code = SourceCode::create(String {}, String {});
                 return SourceRange { dummy_source_code, {}, {} };
             }
-            return unrealized->source_code->range_from_offsets(unrealized->start_offset, unrealized->end_offset);
+            return unrealized->realize();
         }();
         source_range_storage = move(source_range);
     }
@@ -32,7 +32,7 @@ SourceRange const& TracebackFrame::source_range() const
 
 NonnullGCPtr<Error> Error::create(Realm& realm)
 {
-    return realm.heap().allocate<Error>(realm, realm.intrinsics().error_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<Error>(realm, realm.intrinsics().error_prototype());
 }
 
 NonnullGCPtr<Error> Error::create(Realm& realm, String message)
@@ -85,19 +85,8 @@ void Error::populate_stack()
 
         TracebackFrame frame {
             .function_name = move(function_name),
-            .source_range_storage = TracebackFrame::UnrealizedSourceRange {},
+            .source_range_storage = context->source_range,
         };
-
-        // We might not have an AST node associated with the execution context, e.g. in promise
-        // reaction jobs (which aren't called anywhere from the source code).
-        // They're not going to generate any _unhandled_ exceptions though, so a meaningless
-        // source range is fine.
-        if (context->current_node) {
-            auto* unrealized = frame.source_range_storage.get_pointer<TracebackFrame::UnrealizedSourceRange>();
-            unrealized->source_code = context->current_node->source_code();
-            unrealized->start_offset = context->current_node->start_offset();
-            unrealized->end_offset = context->current_node->end_offset();
-        }
 
         m_traceback.append(move(frame));
     }
@@ -130,29 +119,29 @@ ThrowCompletionOr<String> Error::stack_string(VM& vm) const
     return stack_string_builder.to_string();
 }
 
-#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, ArrayType)                                                                         \
-    NonnullGCPtr<ClassName> ClassName::create(Realm& realm)                                                                                                      \
-    {                                                                                                                                                            \
-        return realm.heap().allocate<ClassName>(realm, realm.intrinsics().snake_name##_prototype()).release_allocated_value_but_fixme_should_propagate_errors(); \
-    }                                                                                                                                                            \
-                                                                                                                                                                 \
-    NonnullGCPtr<ClassName> ClassName::create(Realm& realm, String message)                                                                                      \
-    {                                                                                                                                                            \
-        auto& vm = realm.vm();                                                                                                                                   \
-        auto error = ClassName::create(realm);                                                                                                                   \
-        u8 attr = Attribute::Writable | Attribute::Configurable;                                                                                                 \
-        error->define_direct_property(vm.names.message, PrimitiveString::create(vm, move(message)), attr);                                                       \
-        return error;                                                                                                                                            \
-    }                                                                                                                                                            \
-                                                                                                                                                                 \
-    ThrowCompletionOr<NonnullGCPtr<ClassName>> ClassName::create(Realm& realm, StringView message)                                                               \
-    {                                                                                                                                                            \
-        return create(realm, TRY_OR_THROW_OOM(realm.vm(), String::from_utf8(message)));                                                                          \
-    }                                                                                                                                                            \
-                                                                                                                                                                 \
-    ClassName::ClassName(Object& prototype)                                                                                                                      \
-        : Error(prototype)                                                                                                                                       \
-    {                                                                                                                                                            \
+#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, ArrayType)                   \
+    NonnullGCPtr<ClassName> ClassName::create(Realm& realm)                                                \
+    {                                                                                                      \
+        return realm.heap().allocate<ClassName>(realm, realm.intrinsics().snake_name##_prototype());       \
+    }                                                                                                      \
+                                                                                                           \
+    NonnullGCPtr<ClassName> ClassName::create(Realm& realm, String message)                                \
+    {                                                                                                      \
+        auto& vm = realm.vm();                                                                             \
+        auto error = ClassName::create(realm);                                                             \
+        u8 attr = Attribute::Writable | Attribute::Configurable;                                           \
+        error->define_direct_property(vm.names.message, PrimitiveString::create(vm, move(message)), attr); \
+        return error;                                                                                      \
+    }                                                                                                      \
+                                                                                                           \
+    ThrowCompletionOr<NonnullGCPtr<ClassName>> ClassName::create(Realm& realm, StringView message)         \
+    {                                                                                                      \
+        return create(realm, TRY_OR_THROW_OOM(realm.vm(), String::from_utf8(message)));                    \
+    }                                                                                                      \
+                                                                                                           \
+    ClassName::ClassName(Object& prototype)                                                                \
+        : Error(prototype)                                                                                 \
+    {                                                                                                      \
     }
 
 JS_ENUMERATE_NATIVE_ERRORS

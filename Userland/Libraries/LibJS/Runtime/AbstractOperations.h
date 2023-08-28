@@ -60,7 +60,7 @@ enum class CanonicalIndexMode {
     DetectNumericRoundtrip,
     IgnoreNumericRoundtrip,
 };
-ThrowCompletionOr<CanonicalIndex> canonical_numeric_index_string(VM&, PropertyKey const&, CanonicalIndexMode needs_numeric);
+[[nodiscard]] CanonicalIndex canonical_numeric_index_string(PropertyKey const&, CanonicalIndexMode needs_numeric);
 ThrowCompletionOr<String> get_substitution(VM&, Utf16View const& matched, Utf16View const& str, size_t position, Span<Value> captures, Value named_captures, Value replacement);
 
 enum class CallerMode {
@@ -149,7 +149,7 @@ ThrowCompletionOr<NonnullGCPtr<T>> ordinary_create_from_constructor(VM& vm, Func
 {
     auto& realm = *vm.current_realm();
     auto* prototype = TRY(get_prototype_from_constructor(vm, constructor, intrinsic_default_prototype));
-    return MUST_OR_THROW_OOM(realm.heap().allocate<T>(realm, forward<Args>(args)..., *prototype));
+    return realm.heap().allocate<T>(realm, forward<Args>(args)..., *prototype);
 }
 
 // 14.1 MergeLists ( a, b ), https://tc39.es/proposal-temporal/#sec-temporal-mergelists
@@ -220,7 +220,7 @@ ThrowCompletionOr<GroupsType> group_by(VM& vm, Value items, Value callback_funct
 
     // 2. If IsCallable(callbackfn) is false, throw a TypeError exception.
     if (!callback_function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, callback_function.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback_function.to_string_without_side_effects());
 
     // 3. Let groups be a new empty List.
     GroupsType groups;

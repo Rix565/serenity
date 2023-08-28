@@ -16,10 +16,10 @@ WeakSetPrototype::WeakSetPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> WeakSetPrototype::initialize(Realm& realm)
+void WeakSetPrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     u8 attr = Attribute::Writable | Attribute::Configurable;
 
     define_native_function(realm, vm.names.add, add, 1, attr);
@@ -28,8 +28,6 @@ ThrowCompletionOr<void> WeakSetPrototype::initialize(Realm& realm)
 
     // 24.4.3.5 WeakSet.prototype [ @@toStringTag ], https://tc39.es/ecma262/#sec-weakset.prototype-@@tostringtag
     define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, vm.names.WeakSet.as_string()), Attribute::Configurable);
-
-    return {};
 }
 
 // 24.4.3.1 WeakSet.prototype.add ( value ), https://tc39.es/ecma262/#sec-weakset.prototype.add
@@ -43,7 +41,7 @@ JS_DEFINE_NATIVE_FUNCTION(WeakSetPrototype::add)
 
     // 3. If CanBeHeldWeakly(value) is false, throw a TypeError exception.
     if (!can_be_held_weakly(value))
-        return vm.throw_completion<TypeError>(ErrorType::CannotBeHeldWeakly, TRY_OR_THROW_OOM(vm, value.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::CannotBeHeldWeakly, value.to_string_without_side_effects());
 
     // 4. For each element e of S.[[WeakSetData]], do
     //     a. If e is not empty and SameValue(e, value) is true, then

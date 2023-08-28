@@ -22,10 +22,10 @@ StringConstructor::StringConstructor(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> StringConstructor::initialize(Realm& realm)
+void StringConstructor::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
+    Base::initialize(realm);
 
     // 22.1.2.3 String.prototype, https://tc39.es/ecma262/#sec-string.prototype
     define_direct_property(vm.names.prototype, realm.intrinsics().string_prototype(), 0);
@@ -36,8 +36,6 @@ ThrowCompletionOr<void> StringConstructor::initialize(Realm& realm)
     define_native_function(realm, vm.names.fromCodePoint, from_code_point, 1, attr);
 
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
-
-    return {};
 }
 
 // 22.1.1.1 String ( value ), https://tc39.es/ecma262/#sec-string-constructor-string-value
@@ -81,7 +79,7 @@ ThrowCompletionOr<NonnullGCPtr<Object>> StringConstructor::construct(FunctionObj
 
     // 4. Return StringCreate(s, ? GetPrototypeFromConstructor(NewTarget, "%String.prototype%")).
     auto* prototype = TRY(get_prototype_from_constructor(vm, new_target, &Intrinsics::string_prototype));
-    return MUST_OR_THROW_OOM(StringObject::create(realm, *primitive_string, *prototype));
+    return StringObject::create(realm, *primitive_string, *prototype);
 }
 
 // 22.1.2.1 String.fromCharCode ( ...codeUnits ), https://tc39.es/ecma262/#sec-string.fromcharcode
@@ -101,7 +99,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringConstructor::from_char_code)
     }
 
     // 3. Return result.
-    return PrimitiveString::create(vm, TRY(Utf16String::create(vm, move(string))));
+    return PrimitiveString::create(vm, Utf16String::create(move(string)));
 }
 
 // 22.1.2.2 String.fromCodePoint ( ...codePoints ), https://tc39.es/ecma262/#sec-string.fromcodepoint
@@ -119,13 +117,13 @@ JS_DEFINE_NATIVE_FUNCTION(StringConstructor::from_code_point)
 
         // b. If IsIntegralNumber(nextCP) is false, throw a RangeError exception.
         if (!next_code_point.is_integral_number())
-            return vm.throw_completion<RangeError>(ErrorType::InvalidCodePoint, TRY_OR_THROW_OOM(vm, next_code_point.to_string_without_side_effects()));
+            return vm.throw_completion<RangeError>(ErrorType::InvalidCodePoint, next_code_point.to_string_without_side_effects());
 
         auto code_point = MUST(next_code_point.to_i32(vm));
 
         // c. If ℝ(nextCP) < 0 or ℝ(nextCP) > 0x10FFFF, throw a RangeError exception.
         if (code_point < 0 || code_point > 0x10FFFF)
-            return vm.throw_completion<RangeError>(ErrorType::InvalidCodePoint, TRY_OR_THROW_OOM(vm, next_code_point.to_string_without_side_effects()));
+            return vm.throw_completion<RangeError>(ErrorType::InvalidCodePoint, next_code_point.to_string_without_side_effects());
 
         // d. Set result to the string-concatenation of result and UTF16EncodeCodePoint(ℝ(nextCP)).
         TRY_OR_THROW_OOM(vm, code_point_to_utf16(string, static_cast<u32>(code_point)));
@@ -136,7 +134,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringConstructor::from_code_point)
         VERIFY(string.is_empty());
 
     // 4. Return result.
-    return PrimitiveString::create(vm, TRY(Utf16String::create(vm, move(string))));
+    return PrimitiveString::create(vm, Utf16String::create(move(string)));
 }
 
 // 22.1.2.4 String.raw ( template, ...substitutions ), https://tc39.es/ecma262/#sec-string.raw

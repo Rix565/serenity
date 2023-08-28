@@ -19,6 +19,12 @@ struct Attribute {
     DeprecatedString value;
 };
 
+struct Offset {
+    size_t offset { 0 };
+    size_t line { 0 };
+    size_t column { 0 };
+};
+
 struct Node {
     struct Text {
         StringBuilder builder;
@@ -34,7 +40,17 @@ struct Node {
 
     bool operator==(Node const&) const;
 
+    Offset offset;
     Variant<Text, Comment, Element> content;
     Node* parent { nullptr };
+
+    bool is_text() const { return content.has<Text>(); }
+    Text const& as_text() const { return content.get<Text>(); }
+
+    bool is_comment() const { return content.has<Comment>(); }
+    Comment const& as_comment() const { return content.get<Comment>(); }
+
+    bool is_element() const { return content.has<Element>(); }
+    Element const& as_element() const { return content.get<Element>(); }
 };
 }

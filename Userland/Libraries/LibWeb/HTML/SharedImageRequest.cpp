@@ -24,11 +24,11 @@ static HashMap<AK::URL, SharedImageRequest*>& shared_image_requests()
     return requests;
 }
 
-ErrorOr<NonnullRefPtr<SharedImageRequest>> SharedImageRequest::get_or_create(Page& page, AK::URL const& url)
+JS::NonnullGCPtr<SharedImageRequest> SharedImageRequest::get_or_create(JS::Realm& realm, Page& page, AK::URL const& url)
 {
     if (auto it = shared_image_requests().find(url); it != shared_image_requests().end())
         return *it->value;
-    auto request = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) SharedImageRequest(page, url)));
+    auto request = realm.heap().allocate<SharedImageRequest>(realm, page, url);
     shared_image_requests().set(url, request);
     return request;
 }
@@ -42,6 +42,12 @@ SharedImageRequest::SharedImageRequest(Page& page, AK::URL url)
 SharedImageRequest::~SharedImageRequest()
 {
     shared_image_requests().remove(m_url);
+}
+
+void SharedImageRequest::visit_edges(JS::Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(m_fetch_controller);
 }
 
 RefPtr<DecodedImageData const> SharedImageRequest::image_data() const
@@ -76,8 +82,10 @@ void SharedImageRequest::fetch_image(JS::Realm& realm, JS::NonnullGCPtr<Fetch::I
             handle_failed_fetch();
         };
 
-        if (response->body().has_value())
-            response->body().value().fully_read(realm, move(process_body), move(process_body_error), JS::NonnullGCPtr { realm.global_object() }).release_value_but_fixme_should_propagate_errors();
+        if (response->body())
+            response->body()->fully_read(realm, move(process_body), move(process_body_error), JS::NonnullGCPtr { realm.global_object() }).release_value_but_fixme_should_propagate_errors();
+        else
+            handle_failed_fetch();
     };
 
     m_state = State::Fetching;
@@ -154,6 +162,7 @@ void SharedImageRequest::handle_successful_fetch(AK::URL const& url_string, Stri
         if (callback.on_finish)
             callback.on_finish();
     }
+    m_callbacks.clear();
 }
 
 void SharedImageRequest::handle_failed_fetch()
@@ -163,6 +172,7 @@ void SharedImageRequest::handle_failed_fetch()
         if (callback.on_fail)
             callback.on_fail();
     }
+    m_callbacks.clear();
 }
 
 bool SharedImageRequest::needs_fetching() const

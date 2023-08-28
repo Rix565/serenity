@@ -74,16 +74,15 @@ bool PrimitiveString::is_empty() const
     VERIFY_NOT_REACHED();
 }
 
-ThrowCompletionOr<String> PrimitiveString::utf8_string() const
+String PrimitiveString::utf8_string() const
 {
-    auto& vm = this->vm();
-    TRY(resolve_rope_if_needed(EncodingPreference::UTF8));
+    resolve_rope_if_needed(EncodingPreference::UTF8);
 
     if (!has_utf8_string()) {
         if (has_deprecated_string())
-            m_utf8_string = TRY_OR_THROW_OOM(vm, String::from_deprecated_string(*m_deprecated_string));
+            m_utf8_string = MUST(String::from_deprecated_string(*m_deprecated_string));
         else if (has_utf16_string())
-            m_utf8_string = TRY(m_utf16_string->to_utf8(vm));
+            m_utf8_string = m_utf16_string->to_utf8();
         else
             VERIFY_NOT_REACHED();
     }
@@ -91,21 +90,21 @@ ThrowCompletionOr<String> PrimitiveString::utf8_string() const
     return *m_utf8_string;
 }
 
-ThrowCompletionOr<StringView> PrimitiveString::utf8_string_view() const
+StringView PrimitiveString::utf8_string_view() const
 {
-    (void)TRY(utf8_string());
+    (void)utf8_string();
     return m_utf8_string->bytes_as_string_view();
 }
 
-ThrowCompletionOr<DeprecatedString> PrimitiveString::deprecated_string() const
+DeprecatedString PrimitiveString::deprecated_string() const
 {
-    TRY(resolve_rope_if_needed(EncodingPreference::UTF8));
+    resolve_rope_if_needed(EncodingPreference::UTF8);
 
     if (!has_deprecated_string()) {
         if (has_utf8_string())
             m_deprecated_string = m_utf8_string->to_deprecated_string();
         else if (has_utf16_string())
-            m_deprecated_string = TRY(m_utf16_string->to_deprecated_string(vm()));
+            m_deprecated_string = m_utf16_string->to_deprecated_string();
         else
             VERIFY_NOT_REACHED();
     }
@@ -113,25 +112,25 @@ ThrowCompletionOr<DeprecatedString> PrimitiveString::deprecated_string() const
     return *m_deprecated_string;
 }
 
-ThrowCompletionOr<Utf16String> PrimitiveString::utf16_string() const
+Utf16String PrimitiveString::utf16_string() const
 {
-    TRY(resolve_rope_if_needed(EncodingPreference::UTF16));
+    resolve_rope_if_needed(EncodingPreference::UTF16);
 
     if (!has_utf16_string()) {
         if (has_utf8_string()) {
-            m_utf16_string = TRY(Utf16String::create(vm(), m_utf8_string->bytes_as_string_view()));
+            m_utf16_string = Utf16String::create(m_utf8_string->bytes_as_string_view());
         } else {
             VERIFY(has_deprecated_string());
-            m_utf16_string = TRY(Utf16String::create(vm(), *m_deprecated_string));
+            m_utf16_string = Utf16String::create(*m_deprecated_string);
         }
     }
 
     return *m_utf16_string;
 }
 
-ThrowCompletionOr<Utf16View> PrimitiveString::utf16_string_view() const
+Utf16View PrimitiveString::utf16_string_view() const
 {
-    (void)TRY(utf16_string());
+    (void)utf16_string();
     return m_utf16_string->view();
 }
 
@@ -141,18 +140,18 @@ ThrowCompletionOr<Optional<Value>> PrimitiveString::get(VM& vm, PropertyKey cons
         return Optional<Value> {};
     if (property_key.is_string()) {
         if (property_key.as_string() == vm.names.length.as_string()) {
-            auto length = TRY(utf16_string()).length_in_code_units();
+            auto length = utf16_string().length_in_code_units();
             return Value(static_cast<double>(length));
         }
     }
-    auto index = MUST_OR_THROW_OOM(canonical_numeric_index_string(vm, property_key, CanonicalIndexMode::IgnoreNumericRoundtrip));
+    auto index = canonical_numeric_index_string(property_key, CanonicalIndexMode::IgnoreNumericRoundtrip);
     if (!index.is_index())
         return Optional<Value> {};
-    auto str = TRY(utf16_string_view());
+    auto str = utf16_string_view();
     auto length = str.length_in_code_units();
     if (length <= index.as_index())
         return Optional<Value> {};
-    return create(vm, TRY(Utf16String::create(vm, str.substring_view(index.as_index(), 1))));
+    return create(vm, Utf16String::create(str.substring_view(index.as_index(), 1)));
 }
 
 NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, Utf16String string)
@@ -194,9 +193,9 @@ NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, FlyString const& s
     return create(vm, string.to_string());
 }
 
-ThrowCompletionOr<NonnullGCPtr<PrimitiveString>> PrimitiveString::create(VM& vm, StringView string)
+NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, StringView string)
 {
-    return create(vm, TRY_OR_THROW_OOM(vm, String::from_utf8(string)));
+    return create(vm, String::from_utf8(string).release_value());
 }
 
 NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, DeprecatedString string)
@@ -245,12 +244,10 @@ NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, PrimitiveString& l
     return vm.heap().allocate_without_realm<PrimitiveString>(lhs, rhs);
 }
 
-ThrowCompletionOr<void> PrimitiveString::resolve_rope_if_needed(EncodingPreference preference) const
+void PrimitiveString::resolve_rope_if_needed(EncodingPreference preference) const
 {
     if (!m_is_rope)
-        return {};
-
-    auto& vm = this->vm();
+        return;
 
     // This vector will hold all the pieces of the rope that need to be assembled
     // into the resolved string.
@@ -259,16 +256,16 @@ ThrowCompletionOr<void> PrimitiveString::resolve_rope_if_needed(EncodingPreferen
     // NOTE: We traverse the rope tree without using recursion, since we'd run out of
     //       stack space quickly when handling a long sequence of unresolved concatenations.
     Vector<PrimitiveString const*> stack;
-    TRY_OR_THROW_OOM(vm, stack.try_append(m_rhs));
-    TRY_OR_THROW_OOM(vm, stack.try_append(m_lhs));
+    stack.append(m_rhs);
+    stack.append(m_lhs);
     while (!stack.is_empty()) {
         auto const* current = stack.take_last();
         if (current->m_is_rope) {
-            TRY_OR_THROW_OOM(vm, stack.try_append(current->m_rhs));
-            TRY_OR_THROW_OOM(vm, stack.try_append(current->m_lhs));
+            stack.append(current->m_rhs);
+            stack.append(current->m_lhs);
             continue;
         }
-        TRY_OR_THROW_OOM(vm, pieces.try_append(current));
+        pieces.append(current);
     }
 
     if (preference == EncodingPreference::UTF16) {
@@ -277,38 +274,38 @@ ThrowCompletionOr<void> PrimitiveString::resolve_rope_if_needed(EncodingPreferen
 
         Utf16Data code_units;
         for (auto const* current : pieces)
-            code_units.extend(TRY(current->utf16_string()).string());
+            code_units.extend(current->utf16_string().string());
 
-        m_utf16_string = TRY(Utf16String::create(vm, move(code_units)));
+        m_utf16_string = Utf16String::create(move(code_units));
         m_is_rope = false;
         m_lhs = nullptr;
         m_rhs = nullptr;
-        return {};
+        return;
     }
 
     // Now that we have all the pieces, we can concatenate them using a StringBuilder.
-    ThrowableStringBuilder builder(vm);
+    StringBuilder builder;
 
     // We keep track of the previous piece in order to handle surrogate pairs spread across two pieces.
     PrimitiveString const* previous = nullptr;
     for (auto const* current : pieces) {
         if (!previous) {
             // This is the very first piece, just append it and continue.
-            TRY(builder.append(TRY(current->utf8_string())));
+            builder.append(current->utf8_string());
             previous = current;
             continue;
         }
 
         // Get the UTF-8 representations for both strings.
-        auto current_string_as_utf8 = TRY(current->utf8_string_view());
-        auto previous_string_as_utf8 = TRY(previous->utf8_string_view());
+        auto current_string_as_utf8 = current->utf8_string_view();
+        auto previous_string_as_utf8 = previous->utf8_string_view();
 
         // NOTE: Now we need to look at the end of the previous string and the start
         //       of the current string, to see if they should be combined into a surrogate.
 
         // Surrogates encoded as UTF-8 are 3 bytes.
         if ((previous_string_as_utf8.length() < 3) || (current_string_as_utf8.length() < 3)) {
-            TRY(builder.append(current_string_as_utf8));
+            builder.append(current_string_as_utf8);
             previous = current;
             continue;
         }
@@ -316,7 +313,7 @@ ThrowCompletionOr<void> PrimitiveString::resolve_rope_if_needed(EncodingPreferen
         // Might the previous string end with a UTF-8 encoded surrogate?
         if ((static_cast<u8>(previous_string_as_utf8[previous_string_as_utf8.length() - 3]) & 0xf0) != 0xe0) {
             // If not, just append the current string and continue.
-            TRY(builder.append(current_string_as_utf8));
+            builder.append(current_string_as_utf8);
             previous = current;
             continue;
         }
@@ -324,7 +321,7 @@ ThrowCompletionOr<void> PrimitiveString::resolve_rope_if_needed(EncodingPreferen
         // Might the current string begin with a UTF-8 encoded surrogate?
         if ((static_cast<u8>(current_string_as_utf8[0]) & 0xf0) != 0xe0) {
             // If not, just append the current string and continue.
-            TRY(builder.append(current_string_as_utf8));
+            builder.append(current_string_as_utf8);
             previous = current;
             continue;
         }
@@ -333,25 +330,24 @@ ThrowCompletionOr<void> PrimitiveString::resolve_rope_if_needed(EncodingPreferen
         auto low_surrogate = *Utf8View(current_string_as_utf8).begin();
 
         if (!Utf16View::is_high_surrogate(high_surrogate) || !Utf16View::is_low_surrogate(low_surrogate)) {
-            TRY(builder.append(current_string_as_utf8));
+            builder.append(current_string_as_utf8);
             previous = current;
             continue;
         }
 
         // Remove 3 bytes from the builder and replace them with the UTF-8 encoded code point.
         builder.trim(3);
-        TRY(builder.append_code_point(Utf16View::decode_surrogate_pair(high_surrogate, low_surrogate)));
+        builder.append_code_point(Utf16View::decode_surrogate_pair(high_surrogate, low_surrogate));
 
         // Append the remaining part of the current string.
-        TRY(builder.append(current_string_as_utf8.substring_view(3)));
+        builder.append(current_string_as_utf8.substring_view(3));
         previous = current;
     }
 
-    m_utf8_string = TRY(builder.to_string());
+    m_utf8_string = MUST(builder.to_string());
     m_is_rope = false;
     m_lhs = nullptr;
     m_rhs = nullptr;
-    return {};
 }
 
 }

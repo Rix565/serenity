@@ -11,9 +11,9 @@
 
 namespace Web::CSS {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSKeyframeRule>> CSSKeyframeRule::create(JS::Realm& realm, CSS::Percentage key, Web::CSS::CSSStyleDeclaration& declarations)
+JS::NonnullGCPtr<CSSKeyframeRule> CSSKeyframeRule::create(JS::Realm& realm, CSS::Percentage key, Web::CSS::CSSStyleDeclaration& declarations)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<CSSKeyframeRule>(realm, realm, key, declarations));
+    return realm.heap().allocate<CSSKeyframeRule>(realm, realm, key, declarations);
 }
 
 void CSSKeyframeRule::visit_edges(Visitor& visitor)
@@ -22,11 +22,10 @@ void CSSKeyframeRule::visit_edges(Visitor& visitor)
     visitor.visit(m_declarations);
 }
 
-JS::ThrowCompletionOr<void> CSSKeyframeRule::initialize(JS::Realm& realm)
+void CSSKeyframeRule::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::CSSKeyframeRulePrototype>(realm, "CSSKeyframeRule"));
-    return {};
 }
 
 DeprecatedString CSSKeyframeRule::serialized() const

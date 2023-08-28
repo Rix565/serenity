@@ -39,13 +39,13 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     return 0;
 }
 
-static ErrorOr<String> title_casify_transform_function(StringView input)
+static String title_casify_transform_function(StringView input)
 {
     // Transform function names look like `fooBar`, so we just have to make the first character uppercase.
     StringBuilder builder;
-    TRY(builder.try_append(toupper(input[0])));
-    TRY(builder.try_append(input.substring_view(1)));
-    return builder.to_string();
+    builder.append(toupper(input[0]));
+    builder.append(input.substring_view(1));
+    return MUST(builder.to_string());
 }
 
 ErrorOr<void> generate_header_file(JsonObject& transforms_data, Core::File& file)
@@ -53,7 +53,7 @@ ErrorOr<void> generate_header_file(JsonObject& transforms_data, Core::File& file
     StringBuilder builder;
     SourceGenerator generator { builder };
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 #pragma once
 
 #include <AK/Optional.h>
@@ -62,21 +62,20 @@ ErrorOr<void> generate_header_file(JsonObject& transforms_data, Core::File& file
 
 namespace Web::CSS {
 
-)~~~"));
+)~~~");
 
-    TRY(generator.try_appendln("enum class TransformFunction {"));
-    TRY(transforms_data.try_for_each_member([&](auto& name, auto&) -> ErrorOr<void> {
-        auto member_generator = TRY(generator.fork());
-        TRY(member_generator.set("name:titlecase", TRY(title_casify_transform_function(name))));
-        TRY(member_generator.try_appendln("    @name:titlecase@,"));
-        return {};
-    }));
-    TRY(generator.try_appendln("};"));
+    generator.appendln("enum class TransformFunction {");
+    transforms_data.for_each_member([&](auto& name, auto&) {
+        auto member_generator = generator.fork();
+        member_generator.set("name:titlecase", title_casify_transform_function(name));
+        member_generator.appendln("    @name:titlecase@,");
+    });
+    generator.appendln("};");
 
-    TRY(generator.try_appendln("Optional<TransformFunction> transform_function_from_string(StringView);"));
-    TRY(generator.try_appendln("StringView to_string(TransformFunction);"));
+    generator.appendln("Optional<TransformFunction> transform_function_from_string(StringView);");
+    generator.appendln("StringView to_string(TransformFunction);");
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 enum class TransformFunctionParameterType {
     Angle,
     Length,
@@ -93,9 +92,9 @@ struct TransformFunctionMetadata {
     Vector<TransformFunctionParameter> parameters;
 };
 TransformFunctionMetadata transform_function_metadata(TransformFunction);
-)~~~"));
+)~~~");
 
-    TRY(generator.try_appendln("\n}"));
+    generator.appendln("\n}");
 
     TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
@@ -106,72 +105,70 @@ ErrorOr<void> generate_implementation_file(JsonObject& transforms_data, Core::Fi
     StringBuilder builder;
     SourceGenerator generator { builder };
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 #include <LibWeb/CSS/TransformFunctions.h>
 #include <AK/Assertions.h>
 
 namespace Web::CSS {
-)~~~"));
+)~~~");
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 Optional<TransformFunction> transform_function_from_string(StringView name)
 {
-)~~~"));
-    TRY(transforms_data.try_for_each_member([&](auto& name, auto&) -> ErrorOr<void> {
-        auto member_generator = TRY(generator.fork());
-        TRY(member_generator.set("name", TRY(String::from_deprecated_string(name))));
-        TRY(member_generator.set("name:titlecase", TRY(title_casify_transform_function(name))));
-        TRY(member_generator.try_append(R"~~~(
+)~~~");
+    transforms_data.for_each_member([&](auto& name, auto&) {
+        auto member_generator = generator.fork();
+        member_generator.set("name", name);
+        member_generator.set("name:titlecase", title_casify_transform_function(name));
+        member_generator.append(R"~~~(
     if (name.equals_ignoring_ascii_case("@name@"sv))
         return TransformFunction::@name:titlecase@;
-)~~~"));
-        return {};
-    }));
-    TRY(generator.try_append(R"~~~(
+)~~~");
+    });
+    generator.append(R"~~~(
     return {};
 }
-)~~~"));
+)~~~");
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 StringView to_string(TransformFunction transform_function)
 {
     switch (transform_function) {
-)~~~"));
-    TRY(transforms_data.try_for_each_member([&](auto& name, auto&) -> ErrorOr<void> {
-        auto member_generator = TRY(generator.fork());
-        TRY(member_generator.set("name", TRY(String::from_deprecated_string(name))));
-        TRY(member_generator.set("name:titlecase", TRY(title_casify_transform_function(name))));
-        TRY(member_generator.try_append(R"~~~(
+)~~~");
+    transforms_data.for_each_member([&](auto& name, auto&) {
+        auto member_generator = generator.fork();
+        member_generator.set("name", name);
+        member_generator.set("name:titlecase", title_casify_transform_function(name));
+        member_generator.append(R"~~~(
     case TransformFunction::@name:titlecase@:
         return "@name@"sv;
-)~~~"));
-        return {};
-    }));
-    TRY(generator.try_append(R"~~~(
+)~~~");
+    });
+    generator.append(R"~~~(
     default:
         VERIFY_NOT_REACHED();
     }
 }
-)~~~"));
+)~~~");
 
-    TRY(generator.try_append(R"~~~(
+    generator.append(R"~~~(
 TransformFunctionMetadata transform_function_metadata(TransformFunction transform_function)
 {
     switch (transform_function) {
-)~~~"));
-    TRY(transforms_data.try_for_each_member([&](auto& name, auto& value) -> ErrorOr<void> {
+)~~~");
+    transforms_data.for_each_member([&](auto& name, auto& value) {
         VERIFY(value.is_object());
 
-        auto member_generator = TRY(generator.fork());
-        TRY(member_generator.set("name:titlecase", TRY(title_casify_transform_function(name))));
-        TRY(member_generator.try_append(R"~~~(
+        auto member_generator = generator.fork();
+        member_generator.set("name:titlecase", title_casify_transform_function(name));
+        member_generator.append(R"~~~(
     case TransformFunction::@name:titlecase@:
         return TransformFunctionMetadata {
-            .parameters = {)~~~"));
+            .parameters = {)~~~");
 
         JsonArray const& parameters = value.as_object().get_array("parameters"sv).value();
         bool first = true;
-        TRY(parameters.try_for_each([&](JsonValue const& value) -> ErrorOr<void> {
+        parameters.for_each([&](JsonValue const& value) {
             GenericLexer lexer { value.as_object().get_deprecated_string("type"sv).value() };
             VERIFY(lexer.consume_specific('<'));
             auto parameter_type_name = lexer.consume_until('>');
@@ -189,26 +186,24 @@ TransformFunctionMetadata transform_function_metadata(TransformFunction transfor
             else
                 VERIFY_NOT_REACHED();
 
-            TRY(member_generator.try_append(first ? " "sv : ", "sv));
+            member_generator.append(first ? " "sv : ", "sv);
             first = false;
 
-            TRY(member_generator.try_append(TRY(String::formatted("{{ TransformFunctionParameterType::{}, {}}}", parameter_type, value.as_object().get("required"sv)->to_deprecated_string()))));
-            return {};
-        }));
+            member_generator.append(MUST(String::formatted("{{ TransformFunctionParameterType::{}, {}}}", parameter_type, value.as_object().get("required"sv)->to_deprecated_string())));
+        });
 
-        TRY(member_generator.try_append(R"~~~( }
+        member_generator.append(R"~~~( }
     };
-)~~~"));
-        return {};
-    }));
-    TRY(generator.try_append(R"~~~(
+)~~~");
+    });
+    generator.append(R"~~~(
     default:
         VERIFY_NOT_REACHED();
     }
 }
-)~~~"));
+)~~~");
 
-    TRY(generator.try_appendln("\n}"));
+    generator.appendln("\n}");
 
     TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};

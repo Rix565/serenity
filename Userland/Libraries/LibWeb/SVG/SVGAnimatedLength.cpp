@@ -9,9 +9,9 @@
 
 namespace Web::SVG {
 
-WebIDL::ExceptionOr<JS::NonnullGCPtr<SVGAnimatedLength>> SVGAnimatedLength::create(JS::Realm& realm, JS::NonnullGCPtr<SVGLength> base_val, JS::NonnullGCPtr<SVGLength> anim_val)
+JS::NonnullGCPtr<SVGAnimatedLength> SVGAnimatedLength::create(JS::Realm& realm, JS::NonnullGCPtr<SVGLength> base_val, JS::NonnullGCPtr<SVGLength> anim_val)
 {
-    return MUST_OR_THROW_OOM(realm.heap().allocate<SVGAnimatedLength>(realm, realm, move(base_val), move(anim_val)));
+    return realm.heap().allocate<SVGAnimatedLength>(realm, realm, move(base_val), move(anim_val));
 }
 
 SVGAnimatedLength::SVGAnimatedLength(JS::Realm& realm, JS::NonnullGCPtr<SVGLength> base_val, JS::NonnullGCPtr<SVGLength> anim_val)
@@ -25,12 +25,10 @@ SVGAnimatedLength::SVGAnimatedLength(JS::Realm& realm, JS::NonnullGCPtr<SVGLengt
 
 SVGAnimatedLength::~SVGAnimatedLength() = default;
 
-JS::ThrowCompletionOr<void> SVGAnimatedLength::initialize(JS::Realm& realm)
+void SVGAnimatedLength::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::SVGAnimatedLengthPrototype>(realm, "SVGAnimatedLength"));
-
-    return {};
 }
 
 void SVGAnimatedLength::visit_edges(Cell::Visitor& visitor)

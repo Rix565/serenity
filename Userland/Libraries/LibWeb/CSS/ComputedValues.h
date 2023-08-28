@@ -32,6 +32,11 @@ struct AspectRatio {
     Optional<Ratio> preferred_ratio;
 };
 
+struct GridAutoFlow {
+    bool row { true };
+    bool dense { false };
+};
+
 class InitialValues {
 public:
     static AspectRatio aspect_ratio() { return AspectRatio { true, {} }; }
@@ -101,12 +106,18 @@ public:
     static CSS::GridTrackPlacement grid_column_start() { return CSS::GridTrackPlacement::make_auto(); }
     static CSS::GridTrackPlacement grid_row_end() { return CSS::GridTrackPlacement::make_auto(); }
     static CSS::GridTrackPlacement grid_row_start() { return CSS::GridTrackPlacement::make_auto(); }
+    static CSS::GridAutoFlow grid_auto_flow() { return CSS::GridAutoFlow {}; }
     static CSS::Size column_gap() { return CSS::Size::make_auto(); }
     static CSS::Size row_gap() { return CSS::Size::make_auto(); }
     static CSS::BorderCollapse border_collapse() { return CSS::BorderCollapse::Separate; }
     static Vector<Vector<String>> grid_template_areas() { return {}; }
     static CSS::Time transition_delay() { return CSS::Time::make_seconds(0); }
     static CSS::ObjectFit object_fit() { return CSS::ObjectFit::Fill; }
+    static Color outline_color() { return Color::Black; }
+    static CSS::Length outline_offset() { return CSS::Length::make_px(0); }
+    static CSS::OutlineStyle outline_style() { return CSS::OutlineStyle::None; }
+    static CSS::Length outline_width() { return CSS::Length::make_px(3); }
+    static CSS::TableLayout table_layout() { return CSS::TableLayout::Auto; }
 };
 
 enum class BackgroundSize {
@@ -271,6 +282,7 @@ public:
     Variant<CSS::VerticalAlign, CSS::LengthPercentage> const& vertical_align() const { return m_noninherited.vertical_align; }
     CSS::GridTrackSizeList const& grid_auto_columns() const { return m_noninherited.grid_auto_columns; }
     CSS::GridTrackSizeList const& grid_auto_rows() const { return m_noninherited.grid_auto_rows; }
+    CSS::GridAutoFlow const& grid_auto_flow() const { return m_noninherited.grid_auto_flow; }
     CSS::GridTrackSizeList const& grid_template_columns() const { return m_noninherited.grid_template_columns; }
     CSS::GridTrackSizeList const& grid_template_rows() const { return m_noninherited.grid_template_rows; }
     CSS::GridTrackPlacement const& grid_column_end() const { return m_noninherited.grid_column_end; }
@@ -323,6 +335,13 @@ public:
     int font_weight() const { return m_inherited.font_weight; }
     CSS::FontVariant font_variant() const { return m_inherited.font_variant; }
     CSS::Time transition_delay() const { return m_noninherited.transition_delay; }
+
+    Color outline_color() const { return m_noninherited.outline_color; }
+    CSS::Length outline_offset() const { return m_noninherited.outline_offset; }
+    CSS::OutlineStyle outline_style() const { return m_noninherited.outline_style; }
+    CSS::Length outline_width() const { return m_noninherited.outline_width; }
+
+    CSS::TableLayout table_layout() const { return m_noninherited.table_layout; }
 
     ComputedValues clone_inherited_values() const
     {
@@ -424,6 +443,7 @@ protected:
         CSS::GridTrackSizeList grid_auto_rows;
         CSS::GridTrackSizeList grid_template_columns;
         CSS::GridTrackSizeList grid_template_rows;
+        CSS::GridAutoFlow grid_auto_flow { InitialValues::grid_auto_flow() };
         CSS::GridTrackPlacement grid_column_end { InitialValues::grid_column_end() };
         CSS::GridTrackPlacement grid_column_start { InitialValues::grid_column_start() };
         CSS::GridTrackPlacement grid_row_end { InitialValues::grid_row_end() };
@@ -434,6 +454,11 @@ protected:
         Gfx::Color stop_color { InitialValues::stop_color() };
         float stop_opacity { InitialValues::stop_opacity() };
         CSS::Time transition_delay { InitialValues::transition_delay() };
+        Color outline_color { InitialValues::outline_color() };
+        CSS::Length outline_offset { InitialValues::outline_offset() };
+        CSS::OutlineStyle outline_style { InitialValues::outline_style() };
+        CSS::Length outline_width { InitialValues::outline_width() };
+        CSS::TableLayout table_layout { InitialValues::table_layout() };
     } m_noninherited;
 };
 
@@ -532,7 +557,9 @@ public:
     void set_row_gap(CSS::Size const& row_gap) { m_noninherited.row_gap = row_gap; }
     void set_border_collapse(CSS::BorderCollapse const& border_collapse) { m_inherited.border_collapse = border_collapse; }
     void set_grid_template_areas(Vector<Vector<String>> const& grid_template_areas) { m_noninherited.grid_template_areas = grid_template_areas; }
+    void set_grid_auto_flow(CSS::GridAutoFlow grid_auto_flow) { m_noninherited.grid_auto_flow = grid_auto_flow; }
     void set_transition_delay(CSS::Time const& transition_delay) { m_noninherited.transition_delay = transition_delay; }
+    void set_table_layout(CSS::TableLayout value) { m_noninherited.table_layout = value; }
 
     void set_fill(SVGPaint value) { m_inherited.fill = value; }
     void set_stroke(SVGPaint value) { m_inherited.stroke = value; }
@@ -543,6 +570,10 @@ public:
     void set_stop_color(Color value) { m_noninherited.stop_color = value; }
     void set_stop_opacity(float value) { m_noninherited.stop_opacity = value; }
     void set_text_anchor(CSS::TextAnchor value) { m_inherited.text_anchor = value; }
+    void set_outline_color(Color value) { m_noninherited.outline_color = value; }
+    void set_outline_offset(CSS::Length value) { m_noninherited.outline_offset = value; }
+    void set_outline_style(CSS::OutlineStyle value) { m_noninherited.outline_style = value; }
+    void set_outline_width(CSS::Length value) { m_noninherited.outline_width = value; }
 };
 
 }

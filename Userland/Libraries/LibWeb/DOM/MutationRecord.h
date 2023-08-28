@@ -16,7 +16,7 @@ class MutationRecord : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(MutationRecord, Bindings::PlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<MutationRecord>> create(JS::Realm&, FlyString const& type, Node const& target, NodeList& added_nodes, NodeList& removed_nodes, Node* previous_sibling, Node* next_sibling, DeprecatedString const& attribute_name, DeprecatedString const& attribute_namespace, DeprecatedString const& old_value);
+    [[nodiscard]] static JS::NonnullGCPtr<MutationRecord> create(JS::Realm&, FlyString const& type, Node const& target, NodeList& added_nodes, NodeList& removed_nodes, Node* previous_sibling, Node* next_sibling, DeprecatedString const& attribute_name, DeprecatedString const& attribute_namespace, DeprecatedString const& old_value);
 
     virtual ~MutationRecord() override;
 
@@ -33,7 +33,7 @@ public:
 private:
     MutationRecord(JS::Realm& realm, FlyString const& type, Node const& target, NodeList& added_nodes, NodeList& removed_nodes, Node* previous_sibling, Node* next_sibling, DeprecatedString const& attribute_name, DeprecatedString const& attribute_namespace, DeprecatedString const& old_value);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     FlyString m_type;

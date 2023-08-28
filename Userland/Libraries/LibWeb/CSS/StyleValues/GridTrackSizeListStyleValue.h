@@ -16,15 +16,15 @@ namespace Web::CSS {
 
 class GridTrackSizeListStyleValue final : public StyleValueWithDefaultOperators<GridTrackSizeListStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<GridTrackSizeListStyleValue>> create(CSS::GridTrackSizeList grid_track_size_list);
+    static ValueComparingNonnullRefPtr<GridTrackSizeListStyleValue> create(CSS::GridTrackSizeList grid_track_size_list);
     virtual ~GridTrackSizeListStyleValue() override = default;
 
-    static ErrorOr<ValueComparingNonnullRefPtr<GridTrackSizeListStyleValue>> make_auto();
-    static ErrorOr<ValueComparingNonnullRefPtr<GridTrackSizeListStyleValue>> make_none();
+    static ValueComparingNonnullRefPtr<GridTrackSizeListStyleValue> make_auto();
+    static ValueComparingNonnullRefPtr<GridTrackSizeListStyleValue> make_none();
 
     CSS::GridTrackSizeList grid_track_size_list() const { return m_grid_track_size_list; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(GridTrackSizeListStyleValue const& other) const { return m_grid_track_size_list == other.m_grid_track_size_list; }
 

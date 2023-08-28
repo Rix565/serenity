@@ -9,6 +9,8 @@
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/StyleProperties.h>
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
+#include <LibWeb/CSS/StyleValues/IdentifierStyleValue.h>
+#include <LibWeb/CSS/StyleValues/LengthStyleValue.h>
 #include <LibWeb/DOM/ElementFactory.h>
 #include <LibWeb/DOM/HTMLCollection.h>
 #include <LibWeb/HTML/HTMLTableColElement.h>
@@ -26,12 +28,10 @@ HTMLTableElement::HTMLTableElement(DOM::Document& document, DOM::QualifiedName q
 
 HTMLTableElement::~HTMLTableElement() = default;
 
-JS::ThrowCompletionOr<void> HTMLTableElement::initialize(JS::Realm& realm)
+void HTMLTableElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLTableElementPrototype>(realm, "HTMLTableElement"));
-
-    return {};
 }
 
 void HTMLTableElement::visit_edges(Cell::Visitor& visitor)
@@ -39,6 +39,11 @@ void HTMLTableElement::visit_edges(Cell::Visitor& visitor)
     Base::visit_edges(visitor);
     visitor.visit(m_rows);
     visitor.visit(m_t_bodies);
+}
+
+static unsigned parse_border(DeprecatedString const& value)
+{
+    return value.to_uint().value_or(0);
 }
 
 void HTMLTableElement::apply_presentational_hints(CSS::StyleProperties& style) const
@@ -58,13 +63,28 @@ void HTMLTableElement::apply_presentational_hints(CSS::StyleProperties& style) c
             // https://html.spec.whatwg.org/multipage/rendering.html#tables-2:rules-for-parsing-a-legacy-colour-value
             auto color = parse_legacy_color_value(value);
             if (color.has_value())
-                style.set_property(CSS::PropertyID::BackgroundColor, CSS::ColorStyleValue::create(color.value()).release_value_but_fixme_should_propagate_errors());
+                style.set_property(CSS::PropertyID::BackgroundColor, CSS::ColorStyleValue::create(color.value()));
             return;
         }
         if (name == HTML::AttributeNames::cellspacing) {
             if (auto parsed_value = parse_dimension_value(value))
                 style.set_property(CSS::PropertyID::BorderSpacing, parsed_value.release_nonnull());
             return;
+        }
+        if (name == HTML::AttributeNames::border) {
+            auto border = parse_border(value);
+            if (!border)
+                return;
+            auto apply_border_style = [&](CSS::PropertyID style_property, CSS::PropertyID width_property, CSS::PropertyID color_property) {
+                auto legacy_line_style = CSS::IdentifierStyleValue::create(CSS::ValueID::Outset);
+                style.set_property(style_property, legacy_line_style);
+                style.set_property(width_property, CSS::LengthStyleValue::create(CSS::Length::make_px(border)));
+                style.set_property(color_property, CSS::ColorStyleValue::create(Color(128, 128, 128)));
+            };
+            apply_border_style(CSS::PropertyID::BorderLeftStyle, CSS::PropertyID::BorderLeftWidth, CSS::PropertyID::BorderLeftColor);
+            apply_border_style(CSS::PropertyID::BorderTopStyle, CSS::PropertyID::BorderTopWidth, CSS::PropertyID::BorderTopColor);
+            apply_border_style(CSS::PropertyID::BorderRightStyle, CSS::PropertyID::BorderRightWidth, CSS::PropertyID::BorderRightColor);
+            apply_border_style(CSS::PropertyID::BorderBottomStyle, CSS::PropertyID::BorderBottomWidth, CSS::PropertyID::BorderBottomColor);
         }
     });
 }
@@ -274,7 +294,7 @@ JS::NonnullGCPtr<DOM::HTMLCollection> HTMLTableElement::t_bodies()
     if (!m_t_bodies) {
         m_t_bodies = DOM::HTMLCollection::create(*this, DOM::HTMLCollection::Scope::Children, [](DOM::Element const& element) {
             return element.local_name() == TagNames::tbody;
-        }).release_value_but_fixme_should_propagate_errors();
+        });
     }
     return *m_t_bodies;
 }
@@ -331,7 +351,7 @@ JS::NonnullGCPtr<DOM::HTMLCollection> HTMLTableElement::rows()
             }
 
             return false;
-        }).release_value_but_fixme_should_propagate_errors();
+        });
     }
     return *m_rows;
 }
@@ -386,6 +406,11 @@ WebIDL::ExceptionOr<void> HTMLTableElement::delete_row(long index)
     auto row_to_remove = rows->item(index);
     row_to_remove->remove(false);
     return {};
+}
+
+unsigned int HTMLTableElement::border() const
+{
+    return parse_border(attribute(HTML::AttributeNames::border));
 }
 
 }

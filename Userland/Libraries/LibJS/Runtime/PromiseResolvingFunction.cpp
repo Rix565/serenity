@@ -13,7 +13,7 @@ namespace JS {
 
 NonnullGCPtr<PromiseResolvingFunction> PromiseResolvingFunction::create(Realm& realm, Promise& promise, AlreadyResolved& already_resolved, FunctionType function)
 {
-    return realm.heap().allocate<PromiseResolvingFunction>(realm, promise, already_resolved, move(function), realm.intrinsics().function_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<PromiseResolvingFunction>(realm, promise, already_resolved, move(function), realm.intrinsics().function_prototype());
 }
 
 PromiseResolvingFunction::PromiseResolvingFunction(Promise& promise, AlreadyResolved& already_resolved, FunctionType native_function, Object& prototype)
@@ -24,12 +24,10 @@ PromiseResolvingFunction::PromiseResolvingFunction(Promise& promise, AlreadyReso
 {
 }
 
-ThrowCompletionOr<void> PromiseResolvingFunction::initialize(Realm& realm)
+void PromiseResolvingFunction::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     define_direct_property(vm().names.length, Value(1), Attribute::Configurable);
-
-    return {};
 }
 
 ThrowCompletionOr<Value> PromiseResolvingFunction::call()

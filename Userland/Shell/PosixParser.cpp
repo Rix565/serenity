@@ -17,7 +17,7 @@
         AK_IGNORE_DIAGNOSTIC("-Wshadow",                                                                   \
                              auto _error = _value_or_error.release_error();)                               \
         if (_error.is_errno() && _error.code() == ENOMEM)                                                  \
-            return make_ref_counted<AST::SyntaxError>(position, "OOM"_short_string);                       \
+            return make_ref_counted<AST::SyntaxError>(position, "OOM"_string);                             \
         return make_ref_counted<AST::SyntaxError>(position, MUST(String::formatted("Error: {}", _error))); \
     }                                                                                                      \
     _value_or_error.release_value();                                                                       \
@@ -664,7 +664,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_complete_command()
         auto position = peek().position;
         auto syntax_error = make_ref_counted<AST::SyntaxError>(
             position.value_or(empty_position()),
-            TRY("Extra tokens after complete command"_string));
+            "Extra tokens after complete command"_string);
 
         if (list)
             list->set_is_syntax_error(*syntax_error);
@@ -769,14 +769,37 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_and_or()
 
 ErrorOr<RefPtr<AST::Node>> Parser::parse_pipeline()
 {
-    return parse_pipe_sequence();
+    while (peek().type == Token::Type::Newline)
+        skip();
+
+    auto is_negated = false;
+    if (peek().type == Token::Type::Bang) {
+        is_negated = true;
+        skip();
+    }
+
+    return parse_pipe_sequence(is_negated);
 }
 
-ErrorOr<RefPtr<AST::Node>> Parser::parse_pipe_sequence()
+ErrorOr<RefPtr<AST::Node>> Parser::parse_pipe_sequence(bool is_negated)
 {
     auto node = TRY(parse_command());
     if (!node)
         return RefPtr<AST::Node> {};
+
+    if (is_negated) {
+        if (is<AST::CastToCommand>(node.ptr())) {
+            node = make_ref_counted<AST::CastToCommand>(
+                node->position(),
+                make_ref_counted<AST::ListConcatenate>(
+                    node->position(),
+                    Vector<NonnullRefPtr<AST::Node>> {
+                        make_ref_counted<AST::BarewordLiteral>(
+                            node->position(),
+                            "not"_string),
+                        *static_cast<AST::CastToCommand&>(*node).inner() }));
+        }
+    }
 
     for (;;) {
         if (peek().type != Token::Type::Pipe)
@@ -945,13 +968,13 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_while_clause()
     if (!condition)
         condition = make_ref_counted<AST::SyntaxError>(
             peek().position.value_or(empty_position()),
-            TRY("Expected condition after 'while'"_string));
+            "Expected condition after 'while'"_string);
 
     auto do_group = TRY(parse_do_group());
     if (!do_group)
         do_group = make_ref_counted<AST::SyntaxError>(
             peek().position.value_or(empty_position()),
-            TRY("Expected 'do' after 'while'"_string));
+            "Expected 'do' after 'while'"_string);
 
     // while foo; bar -> loop { if foo { bar } else { break } }
     auto position = start_position.with_end(peek().position.value_or(empty_position()));
@@ -981,13 +1004,13 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_until_clause()
     if (!condition)
         condition = make_ref_counted<AST::SyntaxError>(
             peek().position.value_or(empty_position()),
-            TRY("Expected condition after 'until'"_string));
+            "Expected condition after 'until'"_string);
 
     auto do_group = TRY(parse_do_group());
     if (!do_group)
         do_group = make_ref_counted<AST::SyntaxError>(
             peek().position.value_or(empty_position()),
-            TRY("Expected 'do' after 'until'"_string));
+            "Expected 'do' after 'until'"_string);
 
     // until foo; bar -> loop { if foo { break } else { bar } }
     auto position = start_position.with_end(peek().position.value_or(empty_position()));
@@ -1191,7 +1214,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_if_clause()
     skip();
     auto main_condition = TRY(parse_compound_list());
     if (!main_condition)
-        main_condition = make_ref_counted<AST::SyntaxError>(empty_position(), TRY("Expected compound list after 'if'"_string));
+        main_condition = make_ref_counted<AST::SyntaxError>(empty_position(), "Expected compound list after 'if'"_string);
 
     RefPtr<AST::SyntaxError> syntax_error;
     if (peek().type != Token::Type::Then) {
@@ -1204,7 +1227,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_if_clause()
 
     auto main_consequence = TRY(parse_compound_list());
     if (!main_consequence)
-        main_consequence = make_ref_counted<AST::SyntaxError>(empty_position(), TRY("Expected compound list after 'then'"_string));
+        main_consequence = make_ref_counted<AST::SyntaxError>(empty_position(), "Expected compound list after 'then'"_string);
 
     auto node = make_ref_counted<AST::IfCond>(start_position, Optional<AST::Position>(), main_condition.release_nonnull(), main_consequence.release_nonnull(), nullptr);
     auto active_node = node;
@@ -1213,7 +1236,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_if_clause()
         skip();
         auto condition = TRY(parse_compound_list());
         if (!condition)
-            condition = make_ref_counted<AST::SyntaxError>(empty_position(), TRY("Expected compound list after 'elif'"_string));
+            condition = make_ref_counted<AST::SyntaxError>(empty_position(), "Expected compound list after 'elif'"_string);
 
         if (peek().type != Token::Type::Then) {
             if (!syntax_error)
@@ -1226,7 +1249,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_if_clause()
 
         auto consequence = TRY(parse_compound_list());
         if (!consequence)
-            consequence = make_ref_counted<AST::SyntaxError>(empty_position(), TRY("Expected compound list after 'then'"_string));
+            consequence = make_ref_counted<AST::SyntaxError>(empty_position(), "Expected compound list after 'then'"_string);
 
         auto new_node = make_ref_counted<AST::IfCond>(start_position, Optional<AST::Position>(), condition.release_nonnull(), consequence.release_nonnull(), nullptr);
 
@@ -1240,7 +1263,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_if_clause()
         skip();
         active_node->false_branch() = TRY(parse_compound_list());
         if (!active_node->false_branch())
-            active_node->false_branch() = make_ref_counted<AST::SyntaxError>(empty_position(), TRY("Expected compound list after 'else'"_string));
+            active_node->false_branch() = make_ref_counted<AST::SyntaxError>(empty_position(), "Expected compound list after 'else'"_string);
         break;
     case Token::Type::Fi:
         skip();
@@ -1282,10 +1305,10 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_subshell()
 
     auto list = TRY(parse_compound_list());
     if (!list)
-        error = make_ref_counted<AST::SyntaxError>(peek().position.value_or(empty_position()), TRY("Expected compound list after ("_string));
+        error = make_ref_counted<AST::SyntaxError>(peek().position.value_or(empty_position()), "Expected compound list after ("_string);
 
     if (peek().type != Token::Type::CloseParen)
-        error = make_ref_counted<AST::SyntaxError>(peek().position.value_or(empty_position()), TRY("Expected ) after compound list"_string));
+        error = make_ref_counted<AST::SyntaxError>(peek().position.value_or(empty_position()), "Expected ) after compound list"_string);
     else
         skip();
 
@@ -1365,7 +1388,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_for_clause()
         name_position = peek().position;
         name = consume().value;
     } else {
-        name = "it"_short_string;
+        name = "it"_string;
         error(peek(), "Expected a variable name, not {}", peek().type_name());
     }
 
@@ -1512,14 +1535,14 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_word()
         auto node = make_ref_counted<AST::ImmediateExpression>(
             token.position.value_or(empty_position()),
             AST::NameWithPosition {
-                TRY("math"_string),
+                "math"_string,
                 token.position.value_or(empty_position()),
             },
             Vector<NonnullRefPtr<AST::Node>> {
                 make_ref_counted<AST::ImmediateExpression>(
                     token.position.value_or(empty_position()),
                     AST::NameWithPosition {
-                        TRY("reexpand"_string),
+                        "reexpand"_string,
                         token.position.value_or(empty_position()),
                     },
                     Vector<NonnullRefPtr<AST::Node>> {
@@ -1594,7 +1617,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_word()
         case ResolvedParameterExpansion::Op::GetLastBackgroundPid:
             node = make_ref_counted<AST::SyntaxError>(
                 token.position.value_or(empty_position()),
-                TRY("$! not implemented"_string));
+                "$! not implemented"_string);
             break;
         case ResolvedParameterExpansion::Op::GetPositionalParameterList:
             node = make_ref_counted<AST::SpecialVariable>(
@@ -1604,7 +1627,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_word()
         case ResolvedParameterExpansion::Op::GetCurrentOptionFlags:
             node = make_ref_counted<AST::SyntaxError>(
                 token.position.value_or(empty_position()),
-                TRY("The current option flags are not available in parameter expansions"_string));
+                "The current option flags are not available in parameter expansions"_string);
             break;
         case ResolvedParameterExpansion::Op::GetPositionalParameterCount:
             node = make_ref_counted<AST::SpecialVariable>(
@@ -1619,7 +1642,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_word()
         case ResolvedParameterExpansion::Op::GetPositionalParameterListAsString:
             node = make_ref_counted<AST::SyntaxError>(
                 token.position.value_or(empty_position()),
-                TRY("$* not implemented"_string));
+                "$* not implemented"_string);
             break;
         case ResolvedParameterExpansion::Op::GetShellProcessId:
             node = make_ref_counted<AST::SpecialVariable>(
@@ -1653,7 +1676,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_word()
             node = make_ref_counted<AST::ImmediateExpression>(
                 token.position.value_or(empty_position()),
                 AST::NameWithPosition {
-                    TRY("reexpand"_string),
+                    "reexpand"_string,
                     token.position.value_or(empty_position()),
                 },
                 Vector { node.release_nonnull() },
@@ -1881,14 +1904,14 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_simple_command()
             // run_with_env -e*(assignments) -- (command)
             nodes.append(make_ref_counted<AST::BarewordLiteral>(
                 empty_position(),
-                TRY("run_with_env"_string)));
+                "run_with_env"_string));
         }
 
         auto position = peek().position.value_or(empty_position());
         nodes.append(make_ref_counted<AST::ImmediateExpression>(
             position,
             AST::NameWithPosition {
-                TRY("reexpand"_string),
+                "reexpand"_string,
                 position,
             },
             Vector<NonnullRefPtr<AST::Node>> {
@@ -1903,7 +1926,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_simple_command()
     if (!definitions.is_empty()) {
         nodes.append(make_ref_counted<AST::BarewordLiteral>(
             empty_position(),
-            "--"_short_string));
+            "--"_string));
     }
 
     // WORD or io_redirect: IO_NUMBER or io_file
@@ -1924,7 +1947,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_simple_command()
                 auto expanded_value = make_ref_counted<AST::ImmediateExpression>(
                     position,
                     AST::NameWithPosition {
-                        TRY("reexpand"_string),
+                        "reexpand"_string,
                         position,
                     },
                     Vector<NonnullRefPtr<AST::Node>> {
@@ -2011,7 +2034,7 @@ ErrorOr<RefPtr<AST::Node>> Parser::parse_io_here(AST::Position start_position, O
 
     auto end_keyword = consume();
     if (!is_one_of(end_keyword.type, Token::Type::Word, Token::Type::Token))
-        return make_ref_counted<AST::SyntaxError>(io_operator_token.position.value_or(start_position), TRY("Expected a heredoc keyword"_string), true);
+        return make_ref_counted<AST::SyntaxError>(io_operator_token.position.value_or(start_position), "Expected a heredoc keyword"_string, true);
 
     auto [end_keyword_text, allow_interpolation] = Lexer::process_heredoc_key(end_keyword);
     RefPtr<AST::SyntaxError> error;

@@ -96,6 +96,7 @@ static constexpr auto s_webdriver_endpoints = Array {
     ROUTE(POST, "/session/:session_id/cookie"sv, add_cookie),
     ROUTE(DELETE, "/session/:session_id/cookie/:name"sv, delete_cookie),
     ROUTE(DELETE, "/session/:session_id/cookie"sv, delete_all_cookies),
+    ROUTE(DELETE, "/session/:session_id/actions"sv, release_actions),
     ROUTE(POST, "/session/:session_id/alert/dismiss"sv, dismiss_alert),
     ROUTE(POST, "/session/:session_id/alert/accept"sv, accept_alert),
     ROUTE(GET, "/session/:session_id/alert/text"sv, get_alert_text),
@@ -170,8 +171,8 @@ static JsonValue make_success_response(JsonValue value)
     return result;
 }
 
-Client::Client(NonnullOwnPtr<Core::BufferedTCPSocket> socket, Core::Object* parent)
-    : Core::Object(parent)
+Client::Client(NonnullOwnPtr<Core::BufferedTCPSocket> socket, Core::EventReceiver* parent)
+    : Core::EventReceiver(parent)
     , m_socket(move(socket))
 {
     m_socket->on_ready_to_read = [this] {

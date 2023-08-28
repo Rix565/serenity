@@ -59,8 +59,8 @@ public:
 
     CSSPixels calculate_min_content_width(Layout::Box const&) const;
     CSSPixels calculate_max_content_width(Layout::Box const&) const;
-    CSSPixels calculate_min_content_height(Layout::Box const&, AvailableSize const& available_width) const;
-    CSSPixels calculate_max_content_height(Layout::Box const&, AvailableSize const& available_width) const;
+    CSSPixels calculate_min_content_height(Layout::Box const&, CSSPixels width) const;
+    CSSPixels calculate_max_content_height(Layout::Box const&, CSSPixels width) const;
 
     CSSPixels calculate_fit_content_height(Layout::Box const&, AvailableSpace const&) const;
     CSSPixels calculate_fit_content_width(Layout::Box const&, AvailableSpace const&) const;
@@ -80,11 +80,11 @@ public:
     [[nodiscard]] CSSPixels box_baseline(Box const&) const;
     [[nodiscard]] CSSPixelRect content_box_rect_in_static_position_ancestor_coordinate_space(Box const&, Box const& ancestor_box) const;
 
-    [[nodiscard]] CSSPixels containing_block_width_for(Box const&) const;
-    [[nodiscard]] CSSPixels containing_block_height_for(Box const&) const;
+    [[nodiscard]] CSSPixels containing_block_width_for(NodeWithStyleAndBoxModelMetrics const&) const;
+    [[nodiscard]] CSSPixels containing_block_height_for(NodeWithStyleAndBoxModelMetrics const&) const;
 
-    [[nodiscard]] AvailableSize containing_block_width_as_available_size(Box const&) const;
-    [[nodiscard]] AvailableSize containing_block_height_as_available_size(Box const&) const;
+    [[nodiscard]] AvailableSize containing_block_width_as_available_size(NodeWithStyleAndBoxModelMetrics const&) const;
+    [[nodiscard]] AvailableSize containing_block_height_as_available_size(NodeWithStyleAndBoxModelMetrics const&) const;
 
     [[nodiscard]] CSSPixels calculate_stretch_fit_width(Box const&, AvailableSize const&) const;
     [[nodiscard]] CSSPixels calculate_stretch_fit_height(Box const&, AvailableSize const&) const;
@@ -96,6 +96,8 @@ public:
     virtual CSSPixelPoint calculate_static_position(Box const&) const;
     bool can_skip_is_anonymous_text_run(Box&);
 
+    void compute_inset(NodeWithStyleAndBoxModelMetrics const&);
+
 protected:
     FormattingContext(Type, LayoutState&, Box const&, FormattingContext* parent = nullptr);
 
@@ -106,7 +108,6 @@ protected:
     [[nodiscard]] bool should_treat_max_height_as_none(Box const&, AvailableSize const&) const;
 
     OwnPtr<FormattingContext> layout_inside(Box const&, LayoutMode, AvailableSpace const&);
-    void compute_inset(Box const& box);
 
     struct SpaceUsedByFloats {
         CSSPixels left { 0 };

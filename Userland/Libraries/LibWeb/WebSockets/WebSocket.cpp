@@ -53,7 +53,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<WebSocket>> WebSocket::construct_impl(JS::R
 {
     auto& vm = realm.vm();
 
-    auto web_socket = MUST_OR_THROW_OOM(realm.heap().allocate<WebSocket>(realm, realm));
+    auto web_socket = realm.heap().allocate<WebSocket>(realm, realm);
     auto& relevant_settings_object = HTML::relevant_settings_object(*web_socket);
 
     // 1. Let baseURL be this's relevant settings object's API base URL.
@@ -69,17 +69,17 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<WebSocket>> WebSocket::construct_impl(JS::R
 
     // 4. If urlRecord’s scheme is "http", then set urlRecord’s scheme to "ws".
     if (url_record.scheme() == "http"sv)
-        url_record.set_scheme("ws"sv);
+        url_record.set_scheme("ws"_string);
     // 5. Otherwise, if urlRecord’s scheme is "https", set urlRecord’s scheme to "wss".
     else if (url_record.scheme() == "https"sv)
-        url_record.set_scheme("wss"sv);
+        url_record.set_scheme("wss"_string);
 
     // 6. If urlRecord’s scheme is not "ws" or "wss", then throw a "SyntaxError" DOMException.
     if (!url_record.scheme().is_one_of("ws"sv, "wss"sv))
         return WebIDL::SyntaxError::create(realm, "Invalid protocol"sv);
 
     // 7. If urlRecord’s fragment is non-null, then throw a "SyntaxError" DOMException.
-    if (!url_record.fragment().is_empty())
+    if (url_record.fragment().has_value())
         return WebIDL::SyntaxError::create(realm, "Presence of URL fragment is invalid"sv);
 
     Vector<String> protocols_sequence;
@@ -128,12 +128,10 @@ WebSocket::WebSocket(JS::Realm& realm)
 
 WebSocket::~WebSocket() = default;
 
-JS::ThrowCompletionOr<void> WebSocket::initialize(JS::Realm& realm)
+void WebSocket::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::WebSocketPrototype>(realm, "WebSocket"));
-
-    return {};
 }
 
 ErrorOr<void> WebSocket::establish_web_socket_connection(AK::URL& url_record, Vector<String>& protocols, HTML::EnvironmentSettingsObject& client)
@@ -266,13 +264,13 @@ void WebSocket::on_open()
     // 1. Change the readyState attribute's value to OPEN (1).
     // 2. Change the extensions attribute's value to the extensions in use, if it is not the null value. [WSP]
     // 3. Change the protocol attribute's value to the subprotocol in use, if it is not the null value. [WSP]
-    dispatch_event(DOM::Event::create(realm(), HTML::EventNames::open).release_value_but_fixme_should_propagate_errors());
+    dispatch_event(DOM::Event::create(realm(), HTML::EventNames::open));
 }
 
 // https://websockets.spec.whatwg.org/#feedback-from-the-protocol
 void WebSocket::on_error()
 {
-    dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error).release_value_but_fixme_should_propagate_errors());
+    dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error));
 }
 
 // https://websockets.spec.whatwg.org/#feedback-from-the-protocol
@@ -284,7 +282,7 @@ void WebSocket::on_close(u16 code, String reason, bool was_clean)
     event_init.was_clean = was_clean;
     event_init.code = code;
     event_init.reason = reason;
-    dispatch_event(HTML::CloseEvent::create(realm(), HTML::EventNames::close, event_init).release_value_but_fixme_should_propagate_errors());
+    dispatch_event(HTML::CloseEvent::create(realm(), HTML::EventNames::close, event_init));
 }
 
 // https://websockets.spec.whatwg.org/#feedback-from-the-protocol
@@ -297,7 +295,7 @@ void WebSocket::on_message(ByteBuffer message, bool is_text)
         HTML::MessageEventInit event_init;
         event_init.data = JS::PrimitiveString::create(vm(), text_message);
         event_init.origin = url().release_value_but_fixme_should_propagate_errors();
-        dispatch_event(HTML::MessageEvent::create(realm(), HTML::EventNames::message, event_init).release_value_but_fixme_should_propagate_errors());
+        dispatch_event(HTML::MessageEvent::create(realm(), HTML::EventNames::message, event_init));
         return;
     }
 
@@ -309,7 +307,7 @@ void WebSocket::on_message(ByteBuffer message, bool is_text)
         HTML::MessageEventInit event_init;
         event_init.data = JS::ArrayBuffer::create(realm(), message);
         event_init.origin = url().release_value_but_fixme_should_propagate_errors();
-        dispatch_event(HTML::MessageEvent::create(realm(), HTML::EventNames::message, event_init).release_value_but_fixme_should_propagate_errors());
+        dispatch_event(HTML::MessageEvent::create(realm(), HTML::EventNames::message, event_init));
         return;
     }
 

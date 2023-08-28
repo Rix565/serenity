@@ -46,7 +46,7 @@ SpreadsheetWidget::SpreadsheetWidget(GUI::Window& parent_window, Vector<NonnullR
 
     auto& help_button = top_bar.add<GUI::Button>();
     help_button.set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-help.png"sv).release_value_but_fixme_should_propagate_errors());
-    help_button.set_tooltip("Functions Help");
+    help_button.set_tooltip_deprecated("Functions Help");
     help_button.set_fixed_size(20, 20);
     help_button.on_click = [&](auto) {
         if (!current_view()) {
@@ -55,7 +55,6 @@ SpreadsheetWidget::SpreadsheetWidget(GUI::Window& parent_window, Vector<NonnullR
             auto docs = sheet_ptr->gather_documentation();
             auto help_window = HelpWindow::the(window());
             help_window->set_docs(move(docs));
-            help_window->set_window_mode(GUI::WindowMode::Modeless);
             help_window->show();
         }
     };
@@ -719,15 +718,15 @@ void SpreadsheetWidget::clipboard_action(bool is_cut)
 
 ErrorOr<void> SpreadsheetWidget::initialize_menubar(GUI::Window& window)
 {
-    auto file_menu = TRY(window.try_add_menu("&File"_short_string));
-    TRY(file_menu->try_add_action(*m_new_action));
-    TRY(file_menu->try_add_action(*m_open_action));
-    TRY(file_menu->try_add_action(*m_save_action));
-    TRY(file_menu->try_add_action(*m_save_as_action));
-    TRY(file_menu->try_add_separator());
-    TRY(file_menu->try_add_action(*m_import_action));
-    TRY(file_menu->try_add_separator());
-    TRY(file_menu->add_recent_files_list([&](auto& action) {
+    auto file_menu = window.add_menu("&File"_string);
+    file_menu->add_action(*m_new_action);
+    file_menu->add_action(*m_open_action);
+    file_menu->add_action(*m_save_action);
+    file_menu->add_action(*m_save_as_action);
+    file_menu->add_separator();
+    file_menu->add_action(*m_import_action);
+    file_menu->add_separator();
+    file_menu->add_recent_files_list([&](auto& action) {
         if (!request_close())
             return;
 
@@ -735,22 +734,22 @@ ErrorOr<void> SpreadsheetWidget::initialize_menubar(GUI::Window& window)
         if (response.is_error())
             return;
         load_file(response.value().filename(), response.value().stream());
-    }));
-    TRY(file_menu->try_add_action(*m_quit_action));
+    });
+    file_menu->add_action(*m_quit_action);
 
-    auto edit_menu = TRY(window.try_add_menu("&Edit"_short_string));
-    TRY(edit_menu->try_add_action(*m_undo_action));
-    TRY(edit_menu->try_add_action(*m_redo_action));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(*m_cut_action));
-    TRY(edit_menu->try_add_action(*m_copy_action));
-    TRY(edit_menu->try_add_action(*m_paste_action));
-    TRY(edit_menu->try_add_action(*m_insert_emoji_action));
+    auto edit_menu = window.add_menu("&Edit"_string);
+    edit_menu->add_action(*m_undo_action);
+    edit_menu->add_action(*m_redo_action);
+    edit_menu->add_separator();
+    edit_menu->add_action(*m_cut_action);
+    edit_menu->add_action(*m_copy_action);
+    edit_menu->add_action(*m_paste_action);
+    edit_menu->add_action(*m_insert_emoji_action);
 
-    auto help_menu = TRY(window.try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(*m_search_action));
-    TRY(help_menu->try_add_action(*m_functions_help_action));
-    TRY(help_menu->try_add_action(*m_about_action));
+    auto help_menu = window.add_menu("&Help"_string);
+    help_menu->add_action(*m_search_action);
+    help_menu->add_action(*m_functions_help_action);
+    help_menu->add_action(*m_about_action);
 
     return {};
 }

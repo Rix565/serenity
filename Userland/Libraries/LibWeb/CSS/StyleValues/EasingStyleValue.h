@@ -17,16 +17,16 @@ namespace Web::CSS {
 
 class EasingStyleValue final : public StyleValueWithDefaultOperators<EasingStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<EasingStyleValue>> create(CSS::EasingFunction easing_function, StyleValueVector&& values)
+    static ValueComparingNonnullRefPtr<EasingStyleValue> create(CSS::EasingFunction easing_function, StyleValueVector&& values)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) EasingStyleValue(easing_function, move(values)));
+        return adopt_ref(*new (nothrow) EasingStyleValue(easing_function, move(values)));
     }
     virtual ~EasingStyleValue() override = default;
 
     CSS::EasingFunction easing_function() const { return m_properties.easing_function; }
     StyleValueVector values() const { return m_properties.values; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(EasingStyleValue const& other) const { return m_properties == other.m_properties; }
 

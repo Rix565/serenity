@@ -99,7 +99,7 @@ static ErrorOr<JsonValue, ExecuteScriptResultType> internal_json_clone_algorithm
     if (value.is_number())
         return JsonValue { value.as_double() };
     if (value.is_string())
-        return JsonValue { TRY_OR_JS_ERROR(value.as_string().deprecated_string()) };
+        return JsonValue { value.as_string().deprecated_string() };
 
     // NOTE: BigInt and Symbol not mentioned anywhere in the WebDriver spec, as it references ES5.
     //       It assumes that all primitives are handled above, and the value is an object for the remaining steps.
@@ -130,7 +130,7 @@ static ErrorOr<JsonValue, ExecuteScriptResultType> internal_json_clone_algorithm
         auto to_json_result = TRY_OR_JS_ERROR(to_json.as_function().internal_call(value, JS::MarkedVector<JS::Value> { vm.heap() }));
         if (!to_json_result.is_string())
             return ExecuteScriptResultType::JavaScriptError;
-        return TRY_OR_JS_ERROR(to_json_result.as_string().deprecated_string());
+        return to_json_result.as_string().deprecated_string();
     }
 
     // -> Otherwise
@@ -331,6 +331,10 @@ ExecuteScriptResultSerialized execute_async_script(Web::Page& page, DeprecatedSt
     auto& vm = window->vm();
     auto start = MonotonicTime::now();
 
+    auto has_timed_out = [&] {
+        return timeout.has_value() && (MonotonicTime::now() - start) > Duration::from_seconds(static_cast<i64>(*timeout));
+    };
+
     // AD-HOC: An execution context is required for Promise creation hooks.
     HTML::TemporaryExecutionContext execution_context { document->relevant_settings_object() };
 
@@ -354,8 +358,10 @@ ExecuteScriptResultSerialized execute_async_script(Web::Page& page, DeprecatedSt
         // NOTE: Prior revisions of this specification did not recognize the return value of the provided script.
         //       In order to preserve legacy behavior, the return value only influences the command if it is a
         //       "thenable"  object or if determining this produces an exception.
-        if (script_result.is_throw_completion())
+        if (script_result.is_throw_completion()) {
+            promise->reject(*script_result.throw_completion().value());
             return;
+        }
 
         // 5. If Type(scriptResult.[[Value]]) is not Object, then abort these steps.
         if (!script_result.value().is_object())
@@ -365,8 +371,10 @@ ExecuteScriptResultSerialized execute_async_script(Web::Page& page, DeprecatedSt
         auto then = script_result.value().as_object().get(vm.names.then);
 
         // 7. If then.[[Type]] is not normal, then reject promise with value then.[[Value]], and abort these steps.
-        if (then.is_throw_completion())
+        if (then.is_throw_completion()) {
+            promise->reject(*then.throw_completion().value());
             return;
+        }
 
         // 8. If IsCallable(then.[[Type]]) is false, then abort these steps.
         if (!then.value().is_function())
@@ -381,7 +389,7 @@ ExecuteScriptResultSerialized execute_async_script(Web::Page& page, DeprecatedSt
         vm.custom_data()->spin_event_loop_until([&] {
             if (script_promise.state() != JS::Promise::State::Pending)
                 return true;
-            if (timeout.has_value() && (MonotonicTime::now() - start) > Duration::from_seconds(static_cast<i64>(*timeout)))
+            if (has_timed_out())
                 return true;
             return false;
         });
@@ -395,11 +403,21 @@ ExecuteScriptResultSerialized execute_async_script(Web::Page& page, DeprecatedSt
             WebIDL::reject_promise(realm, promise_capability, script_promise.result());
     }();
 
-    // FIXME: 6. If promise is still pending and session script timeout milliseconds is reached, return error with error code script timeout.
-
+    // 6. If promise is still pending and session script timeout milliseconds is reached, return error with error code script timeout.
     vm.custom_data()->spin_event_loop_until([&] {
+        if (has_timed_out()) {
+            return true;
+        }
+
         return promise->state() != JS::Promise::State::Pending;
     });
+
+    if (has_timed_out()) {
+        auto error_object = JsonObject {};
+        error_object.set("name", "Error");
+        error_object.set("message", "script timeout");
+        return { ExecuteScriptResultType::Timeout, move(error_object) };
+    }
 
     auto json_value_or_error = json_clone(realm, promise->result());
     if (json_value_or_error.is_error()) {

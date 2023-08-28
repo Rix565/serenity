@@ -22,7 +22,7 @@ class CloseEvent : public DOM::Event {
     WEB_PLATFORM_OBJECT(CloseEvent, DOM::Event);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CloseEvent>> create(JS::Realm&, FlyString const& event_name, CloseEventInit const& event_init = {});
+    [[nodiscard]] static JS::NonnullGCPtr<CloseEvent> create(JS::Realm&, FlyString const& event_name, CloseEventInit const& event_init = {});
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<CloseEvent>> construct_impl(JS::Realm&, FlyString const& event_name, CloseEventInit const& event_init);
 
     virtual ~CloseEvent() override;
@@ -34,7 +34,7 @@ public:
 private:
     CloseEvent(JS::Realm&, FlyString const& event_name, CloseEventInit const& event_init);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     bool m_was_clean { false };
     u16 m_code { 0 };

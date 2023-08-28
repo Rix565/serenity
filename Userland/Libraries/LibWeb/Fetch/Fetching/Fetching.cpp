@@ -65,7 +65,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Infrastructure::FetchController>> fetch(JS:
     auto& vm = realm.vm();
 
     // 1. Assert: request’s mode is "navigate" or processEarlyHintsResponse is null.
-    VERIFY(request.mode() == Infrastructure::Request::Mode::Navigate || !algorithms.process_early_hints_response().has_value());
+    VERIFY(request.mode() == Infrastructure::Request::Mode::Navigate || !algorithms.process_early_hints_response());
 
     // 2. Let taskDestination be null.
     JS::GCPtr<JS::Object> task_destination;
@@ -266,7 +266,7 @@ WebIDL::ExceptionOr<Optional<JS::NonnullGCPtr<PendingResponse>>> main_fetch(JS::
         && false
 
     ) {
-        request->current_url().set_scheme("https"sv);
+        request->current_url().set_scheme("https"_string);
     }
 
     JS::SafeFunction<WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>>()> get_response = [&realm, &vm, &fetch_params, request]() -> WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> {
@@ -466,7 +466,7 @@ WebIDL::ExceptionOr<Optional<JS::NonnullGCPtr<PendingResponse>>> main_fetch(JS::
                     // - should internalResponse to request be blocked due to nosniff
                     || TRY_OR_IGNORE(Infrastructure::should_response_to_request_be_blocked_due_to_nosniff(internal_response, request)) == Infrastructure::RequestOrResponseBlocking::Blocked)) {
                 // then set response and internalResponse to a network error.
-                response = internal_response = Infrastructure::Response::network_error(vm, TRY_OR_IGNORE("Response was blocked"_string));
+                response = internal_response = Infrastructure::Response::network_error(vm, "Response was blocked"_string);
             }
 
             // 20. If response’s type is "opaque", internalResponse’s status is 206, internalResponse’s range-requested
@@ -479,7 +479,7 @@ WebIDL::ExceptionOr<Optional<JS::NonnullGCPtr<PendingResponse>>> main_fetch(JS::
                 && internal_response->status() == 206
                 && internal_response->range_requested()
                 && !request->header_list()->contains("Range"sv.bytes())) {
-                response = internal_response = Infrastructure::Response::network_error(vm, TRY_OR_IGNORE("Response has status 206 and 'range-requested' flag set, but request has no 'Range' header"_string));
+                response = internal_response = Infrastructure::Response::network_error(vm, "Response has status 206 and 'range-requested' flag set, but request has no 'Range' header"_string);
             }
 
             // 21. If response is not a network error and either request’s method is `HEAD` or `CONNECT`, or
@@ -498,7 +498,7 @@ WebIDL::ExceptionOr<Optional<JS::NonnullGCPtr<PendingResponse>>> main_fetch(JS::
                 };
 
                 // 2. If response’s body is null, then run processBodyError and abort these steps.
-                if (!response->body().has_value()) {
+                if (!response->body()) {
                     process_body_error({});
                     return;
                 }
@@ -608,8 +608,8 @@ WebIDL::ExceptionOr<void> fetch_response_handover(JS::Realm& realm, Infrastructu
 
             // 2. If fetchParams’s process response end-of-body is non-null, then run fetchParams’s process response
             //    end-of-body given response.
-            if (fetch_params.algorithms()->process_response_end_of_body().has_value())
-                (*fetch_params.algorithms()->process_response_end_of_body())(response);
+            if (fetch_params.algorithms()->process_response_end_of_body())
+                (fetch_params.algorithms()->process_response_end_of_body())(response);
 
             // 3. If fetchParams’s request’s initiator type is non-null and fetchParams’s request’s client’s global
             //    object is fetchParams’s task destination, then run fetchParams’s controller’s report timing steps
@@ -634,9 +634,9 @@ WebIDL::ExceptionOr<void> fetch_response_handover(JS::Realm& realm, Infrastructu
 
     // 4. If fetchParams’s process response is non-null, then queue a fetch task to run fetchParams’s process response
     //    given response, with fetchParams’s task destination.
-    if (fetch_params.algorithms()->process_response().has_value()) {
+    if (fetch_params.algorithms()->process_response()) {
         Infrastructure::queue_fetch_task(task_destination, [&fetch_params, &response]() {
-            (*fetch_params.algorithms()->process_response())(response);
+            fetch_params.algorithms()->process_response()(response);
         });
     }
 
@@ -644,7 +644,7 @@ WebIDL::ExceptionOr<void> fetch_response_handover(JS::Realm& realm, Infrastructu
     auto internal_response = response.is_network_error() ? JS::NonnullGCPtr { response } : response.unsafe_response();
 
     // 6. If internalResponse’s body is null, then run processResponseEndOfBody.
-    if (!internal_response->body().has_value()) {
+    if (!internal_response->body()) {
         process_response_end_of_body();
     }
     // 7. Otherwise:
@@ -657,22 +657,22 @@ WebIDL::ExceptionOr<void> fetch_response_handover(JS::Realm& realm, Infrastructu
     }
 
     // 8. If fetchParams’s process response consume body is non-null, then:
-    if (fetch_params.algorithms()->process_response_consume_body().has_value()) {
+    if (fetch_params.algorithms()->process_response_consume_body()) {
         // 1. Let processBody given nullOrBytes be this step: run fetchParams’s process response consume body given
         //    response and nullOrBytes.
         auto process_body = [&fetch_params, &response](Variant<ByteBuffer, Empty> const& null_or_bytes) {
-            (*fetch_params.algorithms()->process_response_consume_body())(response, null_or_bytes);
+            (fetch_params.algorithms()->process_response_consume_body())(response, null_or_bytes);
         };
 
         // 2. Let processBodyError be this step: run fetchParams’s process response consume body given response and
         //    failure.
         auto process_body_error = [&fetch_params, &response](auto) {
-            (*fetch_params.algorithms()->process_response_consume_body())(response, Infrastructure::FetchAlgorithms::ConsumeBodyFailureTag {});
+            (fetch_params.algorithms()->process_response_consume_body())(response, Infrastructure::FetchAlgorithms::ConsumeBodyFailureTag {});
         };
 
         // 3. If internalResponse's body is null, then queue a fetch task to run processBody given null, with
         //    fetchParams’s task destination.
-        if (!internal_response->body().has_value()) {
+        if (!internal_response->body()) {
             Infrastructure::queue_fetch_task(task_destination, [process_body = move(process_body)]() {
                 process_body({});
             });
@@ -834,8 +834,8 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> scheme_fetch(JS::Realm& r
 
     // 4. Return a network error.
     auto message = request->current_url().scheme() == "about"sv
-        ? TRY_OR_THROW_OOM(vm, "Request has invalid 'about:' URL, only 'about:blank' can be fetched"_string)
-        : TRY_OR_THROW_OOM(vm, "Request URL has invalid scheme, must be one of 'about', 'blob', 'data', 'file', 'http', or 'https'"_string);
+        ? "Request has invalid 'about:' URL, only 'about:blank' can be fetched"_string
+        : "Request URL has invalid scheme, must be one of 'about', 'blob', 'data', 'file', 'http', or 'https'"_string;
     return PendingResponse::create(vm, request, Infrastructure::Response::network_error(vm, move(message)));
 }
 
@@ -859,7 +859,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> http_fetch(JS::Realm& rea
     // 4. If request’s service-workers mode is "all", then:
     if (request->service_workers_mode() == Infrastructure::Request::ServiceWorkersMode::All) {
         // 1. Let requestForServiceWorker be a clone of request.
-        auto request_for_service_worker = TRY(request->clone(realm));
+        auto request_for_service_worker = request->clone(realm);
 
         // 2. If requestForServiceWorker’s body is non-null, then:
         if (!request_for_service_worker->body().has<Empty>()) {
@@ -983,7 +983,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> http_fetch(JS::Realm& rea
             //       a service worker for that matter, it is applied here.
             if (request->response_tainting() == Infrastructure::Request::ResponseTainting::CORS
                 && !TRY_OR_IGNORE(cors_check(request, *response))) {
-                returned_pending_response->resolve(Infrastructure::Response::network_error(vm, TRY_OR_IGNORE("Request with 'cors' response tainting failed CORS check"_string)));
+                returned_pending_response->resolve(Infrastructure::Response::network_error(vm, "Request with 'cors' response tainting failed CORS check"_string));
                 return;
             }
 
@@ -1001,7 +1001,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> http_fetch(JS::Realm& rea
         if ((request->response_tainting() == Infrastructure::Request::ResponseTainting::Opaque || response->type() == Infrastructure::Response::Type::Opaque)
             && false // FIXME: "and the cross-origin resource policy check with request’s origin, request’s client, request’s destination, and actualResponse returns blocked"
         ) {
-            returned_pending_response->resolve(Infrastructure::Response::network_error(vm, TRY_OR_IGNORE("Response was blocked by cross-origin resource policy check"_string)));
+            returned_pending_response->resolve(Infrastructure::Response::network_error(vm, "Response was blocked by cross-origin resource policy check"_string));
             return;
         }
 
@@ -1018,7 +1018,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> http_fetch(JS::Realm& rea
             // -> "error"
             case Infrastructure::Request::RedirectMode::Error:
                 // Set response to a network error.
-                response = Infrastructure::Response::network_error(vm, TRY_OR_IGNORE("Request with 'error' redirect mode received redirect response"_string));
+                response = Infrastructure::Response::network_error(vm, "Request with 'error' redirect mode received redirect response"_string);
                 break;
             // -> "manual"
             case Infrastructure::Request::RedirectMode::Manual:
@@ -1077,9 +1077,7 @@ WebIDL::ExceptionOr<Optional<JS::NonnullGCPtr<PendingResponse>>> http_redirect_f
         : static_cast<Infrastructure::FilteredResponse const&>(response).internal_response();
 
     // 3. Let locationURL be actualResponse’s location URL given request’s current URL’s fragment.
-    auto const& fragment = request->current_url().fragment();
-    auto fragment_string = fragment.is_null() ? Optional<String> {} : TRY_OR_THROW_OOM(vm, String::from_deprecated_string(fragment));
-    auto location_url_or_error = actual_response->location_url(fragment_string);
+    auto location_url_or_error = actual_response->location_url(request->current_url().fragment());
 
     // 4. If locationURL is null, then return response.
     if (!location_url_or_error.is_error() && !location_url_or_error.value().has_value())
@@ -1120,7 +1118,7 @@ WebIDL::ExceptionOr<Optional<JS::NonnullGCPtr<PendingResponse>>> http_redirect_f
     //     return a network error.
     if (actual_response->status() != 303
         && !request->body().has<Empty>()
-        && request->body().get<Infrastructure::Body>().source().has<Empty>()) {
+        && request->body().get<JS::NonnullGCPtr<Infrastructure::Body>>()->source().has<Empty>()) {
         return PendingResponse::create(vm, request, Infrastructure::Response::network_error(vm, "Request has body but no body source"sv));
     }
 
@@ -1162,7 +1160,7 @@ WebIDL::ExceptionOr<Optional<JS::NonnullGCPtr<PendingResponse>>> http_redirect_f
     //     request’s body’s source.
     // NOTE: request’s body’s source’s nullity has already been checked.
     if (!request->body().has<Empty>()) {
-        auto const& source = request->body().get<Infrastructure::Body>().source();
+        auto const& source = request->body().get<JS::NonnullGCPtr<Infrastructure::Body>>()->source();
         // NOTE: BodyInitOrReadableBytes is a superset of Body::SourceType
         auto converted_source = source.has<ByteBuffer>()
             ? BodyInitOrReadableBytes { source.get<ByteBuffer>() }
@@ -1262,7 +1260,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> http_network_or_cache_fet
             // NOTE: Implementations are encouraged to avoid teeing request’s body’s stream when request’s body’s
             //       source is null as only a single body is needed in that case. E.g., when request’s body’s source
             //       is null, redirects and authentication will end up failing the fetch.
-            http_request = TRY(request->clone(realm));
+            http_request = request->clone(realm);
 
             // 2. Set httpFetchParams to a copy of fetchParams.
             // 3. Set httpFetchParams’s request to httpRequest.
@@ -1294,8 +1292,8 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> http_network_or_cache_fet
             include_credentials = IncludeCredentials::No;
 
         // 5. Let contentLength be httpRequest’s body’s length, if httpRequest’s body is non-null; otherwise null.
-        auto content_length = http_request->body().has<Infrastructure::Body>()
-            ? http_request->body().get<Infrastructure::Body>().length()
+        auto content_length = http_request->body().has<JS::NonnullGCPtr<Infrastructure::Body>>()
+            ? http_request->body().get<JS::NonnullGCPtr<Infrastructure::Body>>()->length()
             : Optional<u64> {};
 
         // 6. Let contentLengthHeaderValue be null.
@@ -1455,7 +1453,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> http_network_or_cache_fet
                 //    true, set authorizationValue to httpRequest’s current URL, converted to an `Authorization` value.
                 else if (http_request->current_url().includes_credentials() && is_authentication_fetch == IsAuthenticationFetch::Yes) {
                     auto const& url = http_request->current_url();
-                    auto payload = TRY_OR_THROW_OOM(vm, String::formatted("{}:{}", url.username(), url.password()));
+                    auto payload = MUST(String::formatted("{}:{}", MUST(url.username()), MUST(url.password())));
                     authorization_value = TRY_OR_THROW_OOM(vm, encode_base64(payload.bytes()));
                 }
 
@@ -1582,13 +1580,13 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> http_network_or_cache_fet
             // 2. If request’s body is non-null, then:
             if (!request->body().has<Empty>()) {
                 // 1. If request’s body’s source is null, then return a network error.
-                if (request->body().get<Infrastructure::Body>().source().has<Empty>()) {
-                    returned_pending_response->resolve(Infrastructure::Response::network_error(vm, TRY_OR_IGNORE("Request has body but no body source"_string)));
+                if (request->body().get<JS::NonnullGCPtr<Infrastructure::Body>>()->source().has<Empty>()) {
+                    returned_pending_response->resolve(Infrastructure::Response::network_error(vm, "Request has body but no body source"_string));
                     return;
                 }
 
                 // 2. Set request’s body to the body of the result of safely extracting request’s body’s source.
-                auto const& source = request->body().get<Infrastructure::Body>().source();
+                auto const& source = request->body().get<JS::NonnullGCPtr<Infrastructure::Body>>()->source();
                 // NOTE: BodyInitOrReadableBytes is a superset of Body::SourceType
                 auto converted_source = source.has<ByteBuffer>()
                     ? BodyInitOrReadableBytes { source.get<ByteBuffer>() }
@@ -1612,10 +1610,10 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> http_network_or_cache_fet
                 auto password = DeprecatedString::empty();
 
                 // 3. Set the username given request’s current URL and username.
-                request->current_url().set_username(move(username));
+                MUST(request->current_url().set_username(username));
 
                 // 4. Set the password given request’s current URL and password.
-                request->current_url().set_password(move(password));
+                MUST(request->current_url().set_password(password));
             }
 
             // 4. Set response to the result of running HTTP-network-or-cache fetch given fetchParams and true.
@@ -1629,7 +1627,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> http_network_or_cache_fet
                 // 1. If request’s window is "no-window", then return a network error.
                 if (request->window().has<Infrastructure::Request::Window>()
                     && request->window().get<Infrastructure::Request::Window>() == Infrastructure::Request::Window::NoWindow) {
-                    returned_pending_response->resolve(Infrastructure::Response::network_error(vm, TRY_OR_IGNORE("Request requires proxy authentication but has 'no-window' set"_string)));
+                    returned_pending_response->resolve(Infrastructure::Response::network_error(vm, "Request requires proxy authentication but has 'no-window' set"_string));
                     return;
                 }
 
@@ -1659,7 +1657,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> http_network_or_cache_fet
                 // - isNewConnectionFetch is false
                 && is_new_connection_fetch == IsNewConnectionFetch::No
                 // - request’s body is null, or request’s body is non-null and request’s body’s source is non-null
-                && (request->body().has<Empty>() || !request->body().get<Infrastructure::Body>().source().has<Empty>())
+                && (request->body().has<Empty>() || !request->body().get<JS::NonnullGCPtr<Infrastructure::Body>>()->source().has<Empty>())
                 // then:
             ) {
                 // 1. If fetchParams is canceled, then return the appropriate network error for fetchParams.
@@ -1740,8 +1738,8 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> nonstandard_resource_load
     load_request.set_method(DeprecatedString::copy(request->method()));
     for (auto const& header : *request->header_list())
         load_request.set_header(DeprecatedString::copy(header.name), DeprecatedString::copy(header.value));
-    if (auto const* body = request->body().get_pointer<Infrastructure::Body>()) {
-        TRY(body->source().visit(
+    if (auto const* body = request->body().get_pointer<JS::NonnullGCPtr<Infrastructure::Body>>()) {
+        TRY((*body)->source().visit(
             [&](ByteBuffer const& byte_buffer) -> WebIDL::ExceptionOr<void> {
                 load_request.set_body(TRY_OR_THROW_OOM(vm, ByteBuffer::copy(byte_buffer)));
                 return {};
@@ -1783,7 +1781,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> nonstandard_resource_load
             auto response = Infrastructure::Response::create(vm);
             // FIXME: This is ugly, ResourceLoader should tell us.
             if (status_code.value_or(0) == 0) {
-                response = Infrastructure::Response::network_error(vm, TRY_OR_IGNORE("HTTP request failed"_string));
+                response = Infrastructure::Response::network_error(vm, "HTTP request failed"_string);
             } else {
                 response->set_type(Infrastructure::Response::Type::Error);
                 response->set_status(status_code.value_or(400));
@@ -1874,12 +1872,12 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> cors_preflight_fetch(JS::
 
             // 3. If either methods or headerNames is failure, return a network error.
             if (methods_or_failure.has<Infrastructure::ExtractHeaderParseFailure>()) {
-                returned_pending_response->resolve(Infrastructure::Response::network_error(vm, TRY_OR_IGNORE("The Access-Control-Allow-Methods in the CORS-preflight response is syntactically invalid"_string)));
+                returned_pending_response->resolve(Infrastructure::Response::network_error(vm, "The Access-Control-Allow-Methods in the CORS-preflight response is syntactically invalid"_string));
                 return;
             }
 
             if (header_names_or_failure.has<Infrastructure::ExtractHeaderParseFailure>()) {
-                returned_pending_response->resolve(Infrastructure::Response::network_error(vm, TRY_OR_IGNORE("The Access-Control-Allow-Headers in the CORS-preflight response is syntactically invalid"_string)));
+                returned_pending_response->resolve(Infrastructure::Response::network_error(vm, "The Access-Control-Allow-Headers in the CORS-preflight response is syntactically invalid"_string));
                 return;
             }
 
@@ -1976,7 +1974,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<PendingResponse>> cors_preflight_fetch(JS::
         }
 
         // 8. Otherwise, return a network error.
-        returned_pending_response->resolve(Infrastructure::Response::network_error(vm, TRY_OR_IGNORE("CORS-preflight check failed"_string)));
+        returned_pending_response->resolve(Infrastructure::Response::network_error(vm, "CORS-preflight check failed"_string));
     });
 
     return returned_pending_response;

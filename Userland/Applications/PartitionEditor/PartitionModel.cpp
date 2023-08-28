@@ -21,15 +21,15 @@ ErrorOr<String> PartitionModel::column_name(int column) const
 {
     switch (column) {
     case Column::Partition:
-        return TRY("Partition"_string);
+        return "Partition"_string;
     case Column::StartBlock:
-        return TRY("Start Block"_string);
+        return "Start Block"_string;
     case Column::EndBlock:
-        return TRY("End Block"_string);
+        return "End Block"_string;
     case Column::TotalBlocks:
-        return TRY("Total Blocks"_string);
+        return "Total Blocks"_string;
     case Column::Size:
-        return "Size"_short_string;
+        return "Size"_string;
     default:
         VERIFY_NOT_REACHED();
     }

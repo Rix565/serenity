@@ -19,9 +19,9 @@ public:
         Space,
         Comma,
     };
-    static ErrorOr<ValueComparingNonnullRefPtr<StyleValueList>> create(StyleValueVector&& values, Separator separator)
+    static ValueComparingNonnullRefPtr<StyleValueList> create(StyleValueVector&& values, Separator separator)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) StyleValueList(move(values), separator));
+        return adopt_ref(*new (nothrow) StyleValueList(move(values), separator));
     }
 
     size_t size() const { return m_properties.values.size(); }
@@ -33,7 +33,7 @@ public:
         return m_properties.values[i];
     }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(StyleValueList const& other) const { return m_properties == other.m_properties; }
 

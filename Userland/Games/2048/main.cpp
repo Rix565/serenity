@@ -144,7 +144,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         case Game::MoveOutcome::Won: {
             update();
             auto want_to_continue = GUI::MessageBox::show(window,
-                DeprecatedString::formatted("You won the game in {} turns with a score of {}. Would you like to continue?", game.turns(), game.score()),
+                String::formatted("You won the game in {} turns with a score of {}. Would you like to continue?", game.turns(), game.score()).release_value_but_fixme_should_propagate_errors(),
                 "Congratulations!"sv,
                 GUI::MessageBox::Type::Question,
                 GUI::MessageBox::InputType::YesNo);
@@ -157,7 +157,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         case Game::MoveOutcome::GameOver:
             update();
             GUI::MessageBox::show(window,
-                DeprecatedString::formatted("You reached {} in {} turns with a score of {}", game.largest_tile(), game.turns(), game.score()),
+                String::formatted("You reached {} in {} turns with a score of {}", game.largest_tile(), game.turns(), game.score()).release_value_but_fixme_should_propagate_errors(),
                 "You lost!"sv,
                 GUI::MessageBox::Type::Information);
             start_a_new_game();
@@ -165,44 +165,44 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         }
     };
 
-    auto game_menu = TRY(window->try_add_menu("&Game"_short_string));
+    auto game_menu = window->add_menu("&Game"_string);
 
-    TRY(game_menu->try_add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
+    game_menu->add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
         start_a_new_game();
-    })));
+    }));
 
-    TRY(game_menu->try_add_action(GUI::CommonActions::make_undo_action([&](auto&) {
+    game_menu->add_action(GUI::CommonActions::make_undo_action([&](auto&) {
         if (undo_stack.is_empty())
             return;
         redo_stack.append(game);
         game = undo_stack.take_last();
         update();
-    })));
+    }));
 
-    TRY(game_menu->try_add_action(GUI::CommonActions::make_redo_action([&](auto&) {
+    game_menu->add_action(GUI::CommonActions::make_redo_action([&](auto&) {
         if (redo_stack.is_empty())
             return;
         undo_stack.append(game);
         game = redo_stack.take_last();
         update();
-    })));
+    }));
 
-    TRY(game_menu->try_add_separator());
-    TRY(game_menu->try_add_action(GUI::Action::create("&Settings", TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/settings.png"sv)), [&](auto&) {
+    game_menu->add_separator();
+    game_menu->add_action(GUI::Action::create("&Settings", TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/settings.png"sv)), [&](auto&) {
         change_settings();
-    })));
+    }));
 
-    TRY(game_menu->try_add_separator());
-    TRY(game_menu->try_add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    game_menu->add_separator();
+    game_menu->add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
-    })));
+    }));
 
-    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+    auto help_menu = window->add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(window));
+    help_menu->add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man6/2048.md"), "/bin/Help");
-    })));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("2048", app_icon, window)));
+    }));
+    help_menu->add_action(GUI::CommonActions::make_about_action("2048", app_icon, window));
 
     window->show();
 

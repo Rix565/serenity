@@ -13,7 +13,7 @@ namespace Web::CSS {
 
 class GridTrackSizeListShorthandStyleValue final : public StyleValueWithDefaultOperators<GridTrackSizeListShorthandStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<GridTrackSizeListShorthandStyleValue>> create(
+    static ValueComparingNonnullRefPtr<GridTrackSizeListShorthandStyleValue> create(
         ValueComparingNonnullRefPtr<GridTemplateAreaStyleValue const> areas,
         ValueComparingNonnullRefPtr<GridTrackSizeListStyleValue const> rows,
         ValueComparingNonnullRefPtr<GridTrackSizeListStyleValue const> columns);
@@ -23,7 +23,7 @@ public:
     auto columns() const { return m_properties.columns; }
     auto areas() const { return m_properties.areas; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(GridTrackSizeListShorthandStyleValue const& other) const { return m_properties == other.m_properties; }
 

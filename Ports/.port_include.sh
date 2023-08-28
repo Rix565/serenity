@@ -80,7 +80,7 @@ host_env() {
     enable_ccache
 }
 
-packagesdb="${DESTDIR}/usr/Ports/packages.db"
+installedpackagesdb="${DESTDIR}/usr/Ports/installed.db"
 
 makeopts=("-j${MAKEJOBS}")
 installopts=()
@@ -224,7 +224,7 @@ install_icon() {
     fi
 
     for icon_size in "16x16" "32x32"; do
-        index=$(run identify "$icon" | grep "$icon_size" | grep -oE "\[[0-9]+\]" | tr -d "[]" | head -n1)
+        index=$(run identify -format '%p;%wx%h\n' "$icon" | grep "$icon_size" | cut -d";" -f1 | head -n1)
         if [ -n "$index" ]; then
             run convert "${icon}[${index}]" "app-${icon_size}.png"
         else
@@ -310,79 +310,65 @@ do_download_file() {
     fi
 }
 
-# FIXME: Don't allow overriding fetch, support multiple protocols instead. See #20004
-func_defined fetch || fetch() {
-    pre_fetch
+fetch_simple() {
+    url="${1}"
+    checksum="${2}"
+
+    filename="$(basename "${url}")"
 
     tried_download_again=0
 
     while true; do
-        OLDIFS=$IFS
-        IFS=$'\n'
-        for f in $files; do
-            IFS=$OLDIFS
-            read url filename auth_sum<<< $(echo "$f")
-            do_download_file "$url" "${PORT_META_DIR}/${filename}"
-        done
+        do_download_file "${url}" "${PORT_META_DIR}/${filename}"
 
-        verification_failed=0
+        actual_checksum="$(sha256sum "${PORT_META_DIR}/${filename}" | cut -f1 -d' ')"
 
-        OLDIFS=$IFS
-        IFS=$'\n'
-        for f in $files; do
-            IFS=$OLDIFS
-            read url filename auth_sum<<< $(echo "$f")
-
-            # check sha256sum if given
-            echo "Expecting sha256sum: $auth_sum"
-            calc_sum="$(sha256sum "${PORT_META_DIR}/${filename}" | cut -f1 -d' ')"
-            echo "sha256sum($filename) = '$calc_sum'"
-            if [ "$calc_sum" != "$auth_sum" ]; then
-                # remove downloaded file to re-download on next run
-                rm -f "${PORT_META_DIR}/${filename}"
-                echo "sha256sums mismatching, removed erroneous download."
-                if [ $tried_download_again -eq 1 ]; then
-                    echo "Please run script again."
-                    exit 1
-                fi
-                echo "Trying to download the files again."
-                tried_download_again=1
-                verification_failed=1
-            fi
-        done
-
-        if [ $verification_failed -ne 1 ]; then
+        if [ "${actual_checksum}" = "${checksum}" ]; then
             break
         fi
+
+        echo "SHA256 checksum of downloaded file '${filename}' does not match!"
+        echo "Expected: ${checksum}"
+        echo "Actual:   ${actual_checksum}"
+        rm -f "${PORT_META_DIR}/${filename}"
+        echo "Removed erroneous download."
+        if [ "${tried_download_again}" -eq 1 ]; then
+            echo "Please run script again."
+            exit 1
+        fi
+        echo "Trying to download the file again."
+        tried_download_again=1
     done
 
-    # extract
-    OLDIFS=$IFS
-    IFS=$'\n'
-    for f in $files; do
-        IFS=$OLDIFS
-        read url filename auth_sum<<< $(echo "$f")
+    if [ ! -f "$workdir"/.${filename}_extracted ]; then
+        case "$filename" in
+            *.tar.gz|*.tar.bz|*.tar.bz2|*.tar.xz|*.tar.lz|*.tar.zst|.tbz*|*.txz|*.tgz)
+                run_nocd tar -xf "${PORT_META_DIR}/${filename}"
+                run touch ".${filename}_extracted"
+                ;;
+            *.gz)
+                run_nocd gunzip "${PORT_META_DIR}/${filename}"
+                run touch ".${filename}_extracted"
+                ;;
+            *.zip)
+                run_nocd bsdtar xf "${PORT_META_DIR}/${filename}" || run_nocd unzip -qo "${PORT_META_DIR}/${filename}"
+                run touch ".${filename}_extracted"
+                ;;
+            *)
+                echo "Note: no case for file $filename."
+                cp "${PORT_META_DIR}/${filename}" ./
+                ;;
+        esac
+    fi
+}
 
-        if [ ! -f "$workdir"/.${filename}_extracted ]; then
-            case "$filename" in
-                *.tar.gz|*.tar.bz|*.tar.bz2|*.tar.xz|*.tar.lz|*.tar.zst|.tbz*|*.txz|*.tgz)
-                    run_nocd tar -xf "${PORT_META_DIR}/${filename}"
-                    run touch .${filename}_extracted
-                    ;;
-                *.gz)
-                    run_nocd gunzip "${PORT_META_DIR}/${filename}"
-                    run touch .${filename}_extracted
-                    ;;
-                *.zip)
-                    run_nocd bsdtar xf "${PORT_META_DIR}/${filename}" || run_nocd unzip -qo "${PORT_META_DIR}/${filename}"
-                    run touch .${filename}_extracted
-                    ;;
-                *)
-                    echo "Note: no case for file $filename."
-                    cp "${PORT_META_DIR}/${filename}" ./
-                    ;;
-            esac
-        fi
+# FIXME: Don't allow overriding fetch, support multiple protocols instead. See #20004
+func_defined fetch || fetch() {
+    pre_fetch
+
+    for f in "${files[@]}"; do
+        read url auth_sum <<< $(echo "${f}")
+        fetch_simple "${url}" "${auth_sum}"
     done
 
     post_fetch
@@ -435,11 +421,9 @@ clean() {
     rm -rf "${PORT_BUILD_DIR}/"*
 }
 clean_dist() {
-    OLDIFS=$IFS
-    IFS=$'\n'
-    for f in $files; do
-        IFS=$OLDIFS
-        read url filename hash <<< $(echo "$f")
+    for f in "${files[@]}"; do
+        read url hash <<< "$f"
+        filename=$(basename "$url")
         rm -f "${PORT_META_DIR}/${filename}"
     done
 }
@@ -454,27 +438,27 @@ addtodb() {
         return
     fi
     if [ "${1:-}" = "--auto" ]; then
-        echo "auto $port $version" >> "$packagesdb"
+        echo "auto $port $version" >> "$installedpackagesdb"
     else
-        echo "manual $port $version" >> "$packagesdb"
+        echo "manual $port $version" >> "$installedpackagesdb"
     fi
     if [ "${#depends[@]}" -gt 0 ]; then
-        echo "dependency $port ${depends[@]}" >> "$packagesdb"
+        echo "dependency $port ${depends[@]}" >> "$installedpackagesdb"
     fi
     echo "Successfully installed $port $version."
 }
-ensure_packagesdb() {
-    if [ ! -f "$packagesdb" ]; then
-        mkdir -p "$(dirname $packagesdb)"
-        touch "$packagesdb"
+ensure_installedpackagesdb() {
+    if [ ! -f "$installedpackagesdb" ]; then
+        mkdir -p "$(dirname $installedpackagesdb)"
+        touch "$installedpackagesdb"
     fi
 }
 package_install_state() {
     local port=$1
     local version=${2:-}
 
-    ensure_packagesdb
-    grep -E "^(auto|manual) $port $version" "$packagesdb" | cut -d' ' -f1
+    ensure_installedpackagesdb
+    grep -E "^(auto|manual) $port $version" "$installedpackagesdb" | cut -d' ' -f1
 }
 installdepends() {
     for depend in "${depends[@]}"; do
@@ -514,8 +498,8 @@ uninstall() {
         esac
     done
     # Without || true, mv will not be executed if you are uninstalling your only remaining port.
-    grep -v "^manual $port " "$packagesdb" > packages.db.tmp || true
-    mv packages.db.tmp "$packagesdb"
+    grep -v "^manual $port " "$installedpackagesdb" > installed.db.tmp || true
+    mv installed.db.tmp "$installedpackagesdb"
 }
 do_installdepends() {
     buildstep_intro "Installing dependencies of $port..."

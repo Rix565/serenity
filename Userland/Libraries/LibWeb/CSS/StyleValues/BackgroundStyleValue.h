@@ -15,7 +15,7 @@ namespace Web::CSS {
 
 class BackgroundStyleValue final : public StyleValueWithDefaultOperators<BackgroundStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<BackgroundStyleValue>> create(
+    static ValueComparingNonnullRefPtr<BackgroundStyleValue> create(
         ValueComparingNonnullRefPtr<StyleValue const> color,
         ValueComparingNonnullRefPtr<StyleValue const> image,
         ValueComparingNonnullRefPtr<StyleValue const> position,
@@ -25,7 +25,7 @@ public:
         ValueComparingNonnullRefPtr<StyleValue const> origin,
         ValueComparingNonnullRefPtr<StyleValue const> clip)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) BackgroundStyleValue(move(color), move(image), move(position), move(size), move(repeat), move(attachment), move(origin), move(clip)));
+        return adopt_ref(*new (nothrow) BackgroundStyleValue(move(color), move(image), move(position), move(size), move(repeat), move(attachment), move(origin), move(clip)));
     }
     virtual ~BackgroundStyleValue() override;
 
@@ -40,7 +40,7 @@ public:
     auto repeat() const { return m_properties.repeat; }
     auto size() const { return m_properties.size; }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     bool properties_equal(BackgroundStyleValue const& other) const { return m_properties == other.m_properties; }
 

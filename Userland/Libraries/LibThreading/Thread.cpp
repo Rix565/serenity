@@ -12,15 +12,9 @@
 namespace Threading {
 
 Thread::Thread(Function<intptr_t()> action, StringView thread_name)
-    : Core::Object(nullptr)
-    , m_action(move(action))
+    : m_action(move(action))
     , m_thread_name(thread_name.is_null() ? ""sv : thread_name)
 {
-    register_property("thread_name", [&] { return JsonValue { m_thread_name }; });
-#if defined(AK_OS_SERENITY) || defined(AK_OS_LINUX)
-    // FIXME: Print out a pretty TID for BSD and macOS platforms, too
-    register_property("tid", [&] { return JsonValue { m_tid }; });
-#endif
 }
 
 Thread::~Thread()
@@ -29,8 +23,6 @@ Thread::~Thread()
         dbgln("Destroying {} while it is still running undetached!", *this);
         [[maybe_unused]] auto res = join();
     }
-    if (m_state == ThreadState::Detached)
-        dbgln("Bug! {} in state {} is being destroyed; AK/Function will crash shortly!", *this, m_state.load());
 }
 
 ErrorOr<void> Thread::set_priority(int priority)
@@ -86,7 +78,8 @@ void Thread::start()
         // FIXME: Use pthread_attr_t to start a thread detached if that was requested by the user before the call to start().
         nullptr,
         [](void* arg) -> void* {
-            Thread* self = static_cast<Thread*>(arg);
+            auto self = adopt_ref(*static_cast<Thread*>(arg));
+
             auto exit_code = self->m_action();
 
             auto expected = Threading::ThreadState::Running;
@@ -106,7 +99,7 @@ void Thread::start()
 
             return reinterpret_cast<void*>(exit_code);
         },
-        static_cast<void*>(this));
+        &NonnullRefPtr(*this).leak_ref());
 
     VERIFY(rc == 0);
 #ifdef AK_OS_SERENITY

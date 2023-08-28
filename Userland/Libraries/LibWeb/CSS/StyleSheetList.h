@@ -16,7 +16,7 @@ class StyleSheetList : public Bindings::LegacyPlatformObject {
     WEB_PLATFORM_OBJECT(StyleSheetList, Bindings::LegacyPlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<StyleSheetList>> create(DOM::Document& document);
+    [[nodiscard]] static JS::NonnullGCPtr<StyleSheetList> create(DOM::Document&);
 
     void add_sheet(CSSStyleSheet&);
     void remove_sheet(CSSStyleSheet&);
@@ -42,7 +42,7 @@ public:
 private:
     explicit StyleSheetList(DOM::Document&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     // ^Bindings::LegacyPlatformObject

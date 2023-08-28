@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <syscall.h>
 #include <time.h>
 #include <unistd.h>
@@ -547,13 +548,13 @@ int pthread_setname_np(pthread_t thread, char const* name)
 {
     if (!name)
         return EFAULT;
-    int rc = syscall(SC_set_thread_name, thread, name, strlen(name));
+    int rc = prctl(PR_SET_THREAD_NAME, thread, name, strlen(name));
     __RETURN_PTHREAD_ERROR(rc);
 }
 
 int pthread_getname_np(pthread_t thread, char* buffer, size_t buffer_size)
 {
-    int rc = syscall(SC_get_thread_name, thread, buffer, buffer_size);
+    int rc = prctl(PR_GET_THREAD_NAME, thread, buffer, buffer_size);
     __RETURN_PTHREAD_ERROR(rc);
 }
 
@@ -852,7 +853,7 @@ int pthread_rwlock_unlock(pthread_rwlock_t* lockval_p)
         auto desired = current & ~(writer_locked_mask | writer_intent_mask);
         AK::atomic_store(lockp, desired, AK::MemoryOrder::memory_order_release);
         // Then wake both readers and writers, if any.
-        auto rc = futex(lockp, FUTEX_WAKE_BITSET | FUTEX_PRIVATE_FLAG, current, nullptr, nullptr, (current & writer_wake_mask) | reader_wake_mask);
+        auto rc = futex(lockp, FUTEX_WAKE_BITSET | FUTEX_PRIVATE_FLAG, UINT32_MAX, nullptr, nullptr, (current & writer_wake_mask) | reader_wake_mask);
         if (rc < 0)
             return errno;
         return 0;

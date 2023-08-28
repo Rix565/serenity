@@ -16,12 +16,10 @@ SVGCircleElement::SVGCircleElement(DOM::Document& document, DOM::QualifiedName q
 {
 }
 
-JS::ThrowCompletionOr<void> SVGCircleElement::initialize(JS::Realm& realm)
+void SVGCircleElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::SVGCircleElementPrototype>(realm, "SVGCircleElement"));
-
-    return {};
 }
 
 void SVGCircleElement::attribute_changed(DeprecatedFlyString const& name, DeprecatedString const& value)
@@ -84,9 +82,9 @@ JS::NonnullGCPtr<SVGAnimatedLength> SVGCircleElement::cx() const
 {
     // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
     // FIXME: Create a proper animated value when animations are supported.
-    auto base_length = SVGLength::create(realm(), 0, m_center_x.value_or(0)).release_value_but_fixme_should_propagate_errors();
-    auto anim_length = SVGLength::create(realm(), 0, m_center_x.value_or(0)).release_value_but_fixme_should_propagate_errors();
-    return SVGAnimatedLength::create(realm(), move(base_length), move(anim_length)).release_value_but_fixme_should_propagate_errors();
+    auto base_length = SVGLength::create(realm(), 0, m_center_x.value_or(0));
+    auto anim_length = SVGLength::create(realm(), 0, m_center_x.value_or(0));
+    return SVGAnimatedLength::create(realm(), move(base_length), move(anim_length));
 }
 
 // https://www.w3.org/TR/SVG11/shapes.html#CircleElementCYAttribute
@@ -94,9 +92,9 @@ JS::NonnullGCPtr<SVGAnimatedLength> SVGCircleElement::cy() const
 {
     // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
     // FIXME: Create a proper animated value when animations are supported.
-    auto base_length = SVGLength::create(realm(), 0, m_center_y.value_or(0)).release_value_but_fixme_should_propagate_errors();
-    auto anim_length = SVGLength::create(realm(), 0, m_center_y.value_or(0)).release_value_but_fixme_should_propagate_errors();
-    return SVGAnimatedLength::create(realm(), move(base_length), move(anim_length)).release_value_but_fixme_should_propagate_errors();
+    auto base_length = SVGLength::create(realm(), 0, m_center_y.value_or(0));
+    auto anim_length = SVGLength::create(realm(), 0, m_center_y.value_or(0));
+    return SVGAnimatedLength::create(realm(), move(base_length), move(anim_length));
 }
 
 // https://www.w3.org/TR/SVG11/shapes.html#CircleElementRAttribute
@@ -104,9 +102,9 @@ JS::NonnullGCPtr<SVGAnimatedLength> SVGCircleElement::r() const
 {
     // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
     // FIXME: Create a proper animated value when animations are supported.
-    auto base_length = SVGLength::create(realm(), 0, m_radius.value_or(0)).release_value_but_fixme_should_propagate_errors();
-    auto anim_length = SVGLength::create(realm(), 0, m_radius.value_or(0)).release_value_but_fixme_should_propagate_errors();
-    return SVGAnimatedLength::create(realm(), move(base_length), move(anim_length)).release_value_but_fixme_should_propagate_errors();
+    auto base_length = SVGLength::create(realm(), 0, m_radius.value_or(0));
+    auto anim_length = SVGLength::create(realm(), 0, m_radius.value_or(0));
+    return SVGAnimatedLength::create(realm(), move(base_length), move(anim_length));
 }
 
 }

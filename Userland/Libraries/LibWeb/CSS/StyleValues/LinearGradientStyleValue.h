@@ -38,13 +38,13 @@ public:
         WebKit
     };
 
-    static ErrorOr<ValueComparingNonnullRefPtr<LinearGradientStyleValue>> create(GradientDirection direction, Vector<LinearColorStopListElement> color_stop_list, GradientType type, GradientRepeating repeating)
+    static ValueComparingNonnullRefPtr<LinearGradientStyleValue> create(GradientDirection direction, Vector<LinearColorStopListElement> color_stop_list, GradientType type, GradientRepeating repeating)
     {
         VERIFY(color_stop_list.size() >= 2);
-        return adopt_nonnull_ref_or_enomem(new (nothrow) LinearGradientStyleValue(direction, move(color_stop_list), type, repeating));
+        return adopt_ref(*new (nothrow) LinearGradientStyleValue(direction, move(color_stop_list), type, repeating));
     }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
     virtual ~LinearGradientStyleValue() override = default;
     virtual bool equals(StyleValue const& other) const override;
 
@@ -57,7 +57,7 @@ public:
 
     float angle_degrees(CSSPixelSize gradient_size) const;
 
-    void resolve_for_size(Layout::Node const&, CSSPixelSize) const override;
+    void resolve_for_size(Layout::NodeWithStyleAndBoxModelMetrics const&, CSSPixelSize) const override;
 
     bool is_paintable() const override { return true; }
     void paint(PaintContext& context, DevicePixelRect const& dest_rect, CSS::ImageRendering image_rendering) const override;

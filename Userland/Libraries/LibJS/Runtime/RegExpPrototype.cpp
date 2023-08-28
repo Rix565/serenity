@@ -27,10 +27,10 @@ RegExpPrototype::RegExpPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> RegExpPrototype::initialize(Realm& realm)
+void RegExpPrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.names.toString, to_string, 0, attr);
@@ -51,8 +51,6 @@ ThrowCompletionOr<void> RegExpPrototype::initialize(Realm& realm)
     define_native_accessor(realm, vm.names.flagName, flag_name, {}, Attribute::Configurable);
     JS_ENUMERATE_REGEXP_FLAGS
 #undef __JS_ENUMERATE
-
-    return {};
 }
 
 // Non-standard abstraction around steps used by multiple prototypes.
@@ -279,7 +277,7 @@ static ThrowCompletionOr<Value> regexp_builtin_exec(VM& vm, RegExpObject& regexp
 
     // 28. Let matchedValue be ! GetMatchString(S, match).
     // 29. Perform ! CreateDataPropertyOrThrow(A, "0", matchedValue).
-    MUST(array->create_data_property_or_throw(0, PrimitiveString::create(vm, TRY(Utf16String::create(vm, match.view.u16_view())))));
+    MUST(array->create_data_property_or_throw(0, PrimitiveString::create(vm, Utf16String::create(match.view.u16_view()))));
 
     // 30. If R contains any GroupName, then
     //     a. Let groups be OrdinaryObjectCreate(null).
@@ -304,7 +302,7 @@ static ThrowCompletionOr<Value> regexp_builtin_exec(VM& vm, RegExpObject& regexp
             // ii. Append undefined to indices.
             indices.append({});
             // iii. Append capture to indices.
-            captured_values.append(TRY(Utf16String::create(vm)));
+            captured_values.append(Utf16String::create());
         }
         // c. Else,
         else {
@@ -315,7 +313,7 @@ static ThrowCompletionOr<Value> regexp_builtin_exec(VM& vm, RegExpObject& regexp
             //     2. Set captureEnd to ! GetStringIndex(S, Input, captureEnd).
             // iv. Let capture be the Match { [[StartIndex]]: captureStart, [[EndIndex]: captureEnd }.
             // v. Let capturedValue be ! GetMatchString(S, capture).
-            auto capture_as_utf16_string = TRY(Utf16String::create(vm, capture.view.u16_view()));
+            auto capture_as_utf16_string = Utf16String::create(capture.view.u16_view());
             captured_value = PrimitiveString::create(vm, capture_as_utf16_string);
             // vi. Append capture to indices.
             indices.append(Match::create(capture));
@@ -354,7 +352,7 @@ static ThrowCompletionOr<Value> regexp_builtin_exec(VM& vm, RegExpObject& regexp
         // i. If the value of R’s [[LegacyFeaturesEnabled]] internal slot is true, then
         if (regexp_object.legacy_features_enabled()) {
             // a. Perform UpdateLegacyRegExpStaticProperties(%RegExp%, S, lastIndex, e, capturedValues).
-            TRY(update_legacy_regexp_static_properties(vm, realm.intrinsics().regexp_constructor(), string, match_indices.start_index, match_indices.end_index, captured_values));
+            update_legacy_regexp_static_properties(realm.intrinsics().regexp_constructor(), string, match_indices.start_index, match_indices.end_index, captured_values);
         }
         // ii. Else,
         else {
@@ -397,7 +395,7 @@ ThrowCompletionOr<Value> regexp_exec(VM& vm, Object& regexp_object, Utf16String 
 
         // b. If Type(result) is neither Object nor Null, throw a TypeError exception.
         if (!result.is_object() && !result.is_null())
-            return vm.throw_completion<TypeError>(ErrorType::NotAnObjectOrNull, TRY_OR_THROW_OOM(vm, result.to_string_without_side_effects()));
+            return vm.throw_completion<TypeError>(ErrorType::NotAnObjectOrNull, result.to_string_without_side_effects());
 
         // c. Return result.
         return result;
@@ -870,7 +868,7 @@ JS_DEFINE_NATIVE_FUNCTION(RegExpPrototype::source)
     if (!is<RegExpObject>(*regexp_object)) {
         // a. If SameValue(R, %RegExp.prototype%) is true, return "(?:)".
         if (same_value(regexp_object, realm.intrinsics().regexp_prototype()))
-            return MUST_OR_THROW_OOM(PrimitiveString::create(vm, "(?:)"sv));
+            return PrimitiveString::create(vm, "(?:)"_string);
 
         // b. Otherwise, throw a TypeError exception.
         return vm.throw_completion<TypeError>(ErrorType::NotAnObjectOfType, "RegExp");
@@ -987,7 +985,7 @@ JS_DEFINE_NATIVE_FUNCTION(RegExpPrototype::symbol_split)
         auto substring = string.substring_view(last_match_end, next_search_from - last_match_end);
 
         // 2. Perform ! CreateDataPropertyOrThrow(A, ! ToString(𝔽(lengthA)), T).
-        MUST(array->create_data_property_or_throw(array_length, PrimitiveString::create(vm, TRY(Utf16String::create(vm, substring)))));
+        MUST(array->create_data_property_or_throw(array_length, PrimitiveString::create(vm, Utf16String::create(substring))));
 
         // 3. Set lengthA to lengthA + 1.
         ++array_length;
@@ -1033,7 +1031,7 @@ JS_DEFINE_NATIVE_FUNCTION(RegExpPrototype::symbol_split)
     auto substring = string.substring_view(last_match_end);
 
     // 21. Perform ! CreateDataPropertyOrThrow(A, ! ToString(𝔽(lengthA)), T).
-    MUST(array->create_data_property_or_throw(array_length, PrimitiveString::create(vm, TRY(Utf16String::create(vm, substring)))));
+    MUST(array->create_data_property_or_throw(array_length, PrimitiveString::create(vm, Utf16String::create(substring))));
 
     // 22. Return A.
     return array;
@@ -1105,7 +1103,7 @@ JS_DEFINE_NATIVE_FUNCTION(RegExpPrototype::compile)
     if (pattern.is_object() && is<RegExpObject>(pattern.as_object())) {
         // a. If flags is not undefined, throw a TypeError exception.
         if (!flags.is_undefined())
-            return vm.throw_completion<TypeError>(ErrorType::NotUndefined, TRY_OR_THROW_OOM(vm, flags.to_string_without_side_effects()));
+            return vm.throw_completion<TypeError>(ErrorType::NotUndefined, flags.to_string_without_side_effects());
 
         auto& regexp_pattern = static_cast<RegExpObject&>(pattern.as_object());
 

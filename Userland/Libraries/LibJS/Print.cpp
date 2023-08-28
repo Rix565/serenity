@@ -274,8 +274,8 @@ ErrorOr<void> print_error(JS::PrintContext& print_context, JS::Object const& obj
     if (name.is_accessor() || message.is_accessor()) {
         TRY(print_value(print_context, &object, seen_objects));
     } else {
-        auto name_string = TRY(name.to_string_without_side_effects());
-        auto message_string = TRY(message.to_string_without_side_effects());
+        auto name_string = name.to_string_without_side_effects();
+        auto message_string = message.to_string_without_side_effects();
         TRY(print_type(print_context, name_string));
         if (!message_string.is_empty())
             TRY(js_out(print_context, " \033[31;1m{}\033[0m", message_string));
@@ -847,13 +847,11 @@ ErrorOr<void> print_intl_segmenter(JS::PrintContext& print_context, JS::Intl::Se
 
 ErrorOr<void> print_intl_segments(JS::PrintContext& print_context, JS::Intl::Segments const& segments, HashTable<JS::Object*>& seen_objects)
 {
-    auto segments_string = JS::Utf16String::create(segments.vm(), segments.segments_string());
-    if (segments_string.is_error())
-        return Error::from_errno(ENOMEM);
+    auto segments_string = JS::Utf16String::create(segments.segments_string());
 
     TRY(print_type(print_context, "Segments"sv));
     out("\n  string: ");
-    TRY(print_value(print_context, JS::PrimitiveString::create(segments.vm(), segments_string.release_value()), seen_objects));
+    TRY(print_value(print_context, JS::PrimitiveString::create(segments.vm(), move(segments_string)), seen_objects));
     out("\n  segmenter: ");
     TRY(print_value(print_context, &segments.segments_segmenter(), seen_objects));
     return {};
@@ -1071,7 +1069,7 @@ ErrorOr<void> print_value(JS::PrintContext& print_context, JS::Value value, Hash
     else if (value.is_negative_zero())
         TRY(js_out(print_context, "-"));
 
-    auto contents = TRY(value.to_string_without_side_effects());
+    auto contents = value.to_string_without_side_effects();
     if (value.is_string())
         TRY(js_out(print_context, "{}", TRY(escape_for_string_literal(contents))));
     else

@@ -33,22 +33,22 @@ class Response final
     WEB_PLATFORM_OBJECT(Response, Bindings::PlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> create(JS::Realm&, JS::NonnullGCPtr<Infrastructure::Response>, Headers::Guard);
+    [[nodiscard]] static JS::NonnullGCPtr<Response> create(JS::Realm&, JS::NonnullGCPtr<Infrastructure::Response>, Headers::Guard);
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> construct_impl(JS::Realm&, Optional<BodyInit> const& body = {}, ResponseInit const& init = {});
 
     virtual ~Response() override;
 
     // ^BodyMixin
     virtual ErrorOr<Optional<MimeSniff::MimeType>> mime_type_impl() const override;
-    virtual Optional<Infrastructure::Body&> body_impl() override;
-    virtual Optional<Infrastructure::Body const&> body_impl() const override;
+    virtual JS::GCPtr<Infrastructure::Body> body_impl() override;
+    virtual JS::GCPtr<Infrastructure::Body const> body_impl() const override;
     virtual Bindings::PlatformObject& as_platform_object() override { return *this; }
     virtual Bindings::PlatformObject const& as_platform_object() const override { return *this; }
 
     [[nodiscard]] JS::NonnullGCPtr<Infrastructure::Response> response() const { return m_response; }
 
     // JS API functions
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> error(JS::VM&);
+    [[nodiscard]] static JS::NonnullGCPtr<Response> error(JS::VM&);
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> redirect(JS::VM&, String const& url, u16 status);
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<Response>> json(JS::VM&, JS::Value data, ResponseInit const& init = {});
     [[nodiscard]] Bindings::ResponseType type() const;
@@ -66,7 +66,7 @@ public:
 private:
     Response(JS::Realm&, JS::NonnullGCPtr<Infrastructure::Response>);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     WebIDL::ExceptionOr<void> initialize_response(ResponseInit const&, Optional<Infrastructure::BodyWithType> const&);

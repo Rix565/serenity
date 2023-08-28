@@ -44,13 +44,13 @@ public:
 
     using Size = Variant<Extent, CircleSize, EllipseSize>;
 
-    static ErrorOr<ValueComparingNonnullRefPtr<RadialGradientStyleValue>> create(EndingShape ending_shape, Size size, PositionValue position, Vector<LinearColorStopListElement> color_stop_list, GradientRepeating repeating)
+    static ValueComparingNonnullRefPtr<RadialGradientStyleValue> create(EndingShape ending_shape, Size size, PositionValue position, Vector<LinearColorStopListElement> color_stop_list, GradientRepeating repeating)
     {
         VERIFY(color_stop_list.size() >= 2);
-        return adopt_nonnull_ref_or_enomem(new (nothrow) RadialGradientStyleValue(ending_shape, size, position, move(color_stop_list), repeating));
+        return adopt_ref(*new (nothrow) RadialGradientStyleValue(ending_shape, size, position, move(color_stop_list), repeating));
     }
 
-    virtual ErrorOr<String> to_string() const override;
+    virtual String to_string() const override;
 
     void paint(PaintContext&, DevicePixelRect const& dest_rect, CSS::ImageRendering) const override;
 
@@ -63,7 +63,7 @@ public:
 
     bool is_paintable() const override { return true; }
 
-    void resolve_for_size(Layout::Node const&, CSSPixelSize) const override;
+    void resolve_for_size(Layout::NodeWithStyleAndBoxModelMetrics const&, CSSPixelSize) const override;
 
     Gfx::FloatSize resolve_size(Layout::Node const&, Gfx::FloatPoint, Gfx::FloatRect const&) const;
 

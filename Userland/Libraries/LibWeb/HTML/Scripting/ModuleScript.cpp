@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/ModuleRequest.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/Fetching.h>
@@ -38,7 +37,7 @@ WebIDL::ExceptionOr<JS::GCPtr<JavaScriptModuleScript>> JavaScriptModuleScript::c
     auto& realm = settings_object.realm();
 
     // 2. Let script be a new module script that this algorithm will subsequently initialize.
-    auto script = MUST_OR_THROW_OOM(realm.heap().allocate<JavaScriptModuleScript>(realm, move(base_url), filename, settings_object));
+    auto script = realm.heap().allocate<JavaScriptModuleScript>(realm, move(base_url), filename, settings_object);
 
     // 3. Set script's settings object to settings.
     // NOTE: This was already done when constructing.
@@ -135,9 +134,6 @@ JS::Promise* JavaScriptModuleScript::run(PreventErrorReporting)
         // 1. Let record be script's record.
         auto record = m_record;
         VERIFY(record);
-
-        auto interpreter = JS::Interpreter::create_with_existing_realm(settings.realm());
-        JS::VM::InterpreterExecutionScope scope(*interpreter);
 
         // 2. Set evaluationPromise to record.Evaluate().
         auto elevation_promise_or_error = record->evaluate(vm());

@@ -12,7 +12,7 @@
 #include <Kernel/Library/StdLib.h>
 
 namespace Kernel {
-ErrorOr<NonnullLockRefPtr<NVMeQueue>> NVMeQueue::try_create(NVMeController& device, u16 qid, u8 irq, u32 q_depth, OwnPtr<Memory::Region> cq_dma_region, OwnPtr<Memory::Region> sq_dma_region, Memory::TypedMapping<DoorbellRegister volatile> db_regs, QueueType queue_type)
+ErrorOr<NonnullLockRefPtr<NVMeQueue>> NVMeQueue::try_create(NVMeController& device, u16 qid, u8 irq, u32 q_depth, OwnPtr<Memory::Region> cq_dma_region, OwnPtr<Memory::Region> sq_dma_region, Doorbell db_regs, QueueType queue_type)
 {
     // Note: Allocate DMA region for RW operation. For now the requests don't exceed more than 4096 bytes (Storage device takes care of it)
     RefPtr<Memory::PhysicalPage> rw_dma_page;
@@ -30,7 +30,7 @@ ErrorOr<NonnullLockRefPtr<NVMeQueue>> NVMeQueue::try_create(NVMeController& devi
     return queue;
 }
 
-UNMAP_AFTER_INIT NVMeQueue::NVMeQueue(NonnullOwnPtr<Memory::Region> rw_dma_region, Memory::PhysicalPage const& rw_dma_page, u16 qid, u32 q_depth, OwnPtr<Memory::Region> cq_dma_region, OwnPtr<Memory::Region> sq_dma_region, Memory::TypedMapping<DoorbellRegister volatile> db_regs)
+UNMAP_AFTER_INIT NVMeQueue::NVMeQueue(NonnullOwnPtr<Memory::Region> rw_dma_region, Memory::PhysicalPage const& rw_dma_page, u16 qid, u32 q_depth, OwnPtr<Memory::Region> cq_dma_region, OwnPtr<Memory::Region> sq_dma_region, Doorbell db_regs)
     : m_rw_dma_region(move(rw_dma_region))
     , m_qid(qid)
     , m_admin_queue(qid == 0)
@@ -101,7 +101,6 @@ void NVMeQueue::submit_sqe(NVMeSubmission& sub)
     }
 
     dbgln_if(NVME_DEBUG, "NVMe: Submission with command identifier {}. SQ_TAIL: {}", sub.cmdid, m_sq_tail);
-    full_memory_barrier();
     update_sq_doorbell();
 }
 

@@ -29,6 +29,13 @@ public:
         LessPrecision,
     };
 
+    enum class ComputedRoundingPriority {
+        Invalid,
+        Auto,
+        MorePrecision,
+        LessPrecision,
+    };
+
     enum class RoundingMode {
         Invalid,
         Ceil,
@@ -87,6 +94,10 @@ public:
     StringView rounding_type_string() const;
     void set_rounding_type(RoundingType rounding_type) { m_rounding_type = rounding_type; }
 
+    ComputedRoundingPriority computed_rounding_priority() const { return m_computed_rounding_priority; }
+    StringView computed_rounding_priority_string() const;
+    void set_computed_rounding_priority(ComputedRoundingPriority computed_rounding_priority) { m_computed_rounding_priority = computed_rounding_priority; }
+
     RoundingMode rounding_mode() const { return m_rounding_mode; }
     StringView rounding_mode_string() const;
     void set_rounding_mode(StringView rounding_mode);
@@ -102,17 +113,18 @@ protected:
     explicit NumberFormatBase(Object& prototype);
 
 private:
-    String m_locale;                                                              // [[Locale]]
-    String m_data_locale;                                                         // [[DataLocale]]
-    int m_min_integer_digits { 0 };                                               // [[MinimumIntegerDigits]]
-    Optional<int> m_min_fraction_digits {};                                       // [[MinimumFractionDigits]]
-    Optional<int> m_max_fraction_digits {};                                       // [[MaximumFractionDigits]]
-    Optional<int> m_min_significant_digits {};                                    // [[MinimumSignificantDigits]]
-    Optional<int> m_max_significant_digits {};                                    // [[MaximumSignificantDigits]]
-    RoundingType m_rounding_type { RoundingType::Invalid };                       // [[RoundingType]]
-    RoundingMode m_rounding_mode { RoundingMode::Invalid };                       // [[RoundingMode]]
-    int m_rounding_increment { 1 };                                               // [[RoundingIncrement]]
-    TrailingZeroDisplay m_trailing_zero_display { TrailingZeroDisplay::Invalid }; // [[TrailingZeroDisplay]]
+    String m_locale;                                                                             // [[Locale]]
+    String m_data_locale;                                                                        // [[DataLocale]]
+    int m_min_integer_digits { 0 };                                                              // [[MinimumIntegerDigits]]
+    Optional<int> m_min_fraction_digits {};                                                      // [[MinimumFractionDigits]]
+    Optional<int> m_max_fraction_digits {};                                                      // [[MaximumFractionDigits]]
+    Optional<int> m_min_significant_digits {};                                                   // [[MinimumSignificantDigits]]
+    Optional<int> m_max_significant_digits {};                                                   // [[MaximumSignificantDigits]]
+    RoundingType m_rounding_type { RoundingType::Invalid };                                      // [[RoundingType]]
+    ComputedRoundingPriority m_computed_rounding_priority { ComputedRoundingPriority::Invalid }; // [[ComputedRoundingPriority]]
+    RoundingMode m_rounding_mode { RoundingMode::Invalid };                                      // [[RoundingMode]]
+    int m_rounding_increment { 1 };                                                              // [[RoundingIncrement]]
+    TrailingZeroDisplay m_trailing_zero_display { TrailingZeroDisplay::Invalid };                // [[TrailingZeroDisplay]]
 };
 
 class NumberFormat final : public NumberFormatBase {
@@ -284,9 +296,9 @@ ThrowCompletionOr<Array*> format_numeric_to_parts(VM&, NumberFormat&, Mathematic
 ThrowCompletionOr<RawFormatResult> to_raw_precision(VM&, MathematicalValue const& number, int min_precision, int max_precision, NumberFormat::UnsignedRoundingMode unsigned_rounding_mode);
 ThrowCompletionOr<RawFormatResult> to_raw_fixed(VM&, MathematicalValue const& number, int min_fraction, int max_fraction, int rounding_increment, NumberFormat::UnsignedRoundingMode unsigned_rounding_mode);
 ThrowCompletionOr<Optional<Variant<StringView, String>>> get_number_format_pattern(VM&, NumberFormat&, MathematicalValue const& number, ::Locale::NumberFormat& found_pattern);
-ThrowCompletionOr<Optional<StringView>> get_notation_sub_pattern(VM&, NumberFormat&, int exponent);
+Optional<StringView> get_notation_sub_pattern(NumberFormat&, int exponent);
 ThrowCompletionOr<int> compute_exponent(VM&, NumberFormat&, MathematicalValue number);
-ThrowCompletionOr<int> compute_exponent_for_magnitude(VM&, NumberFormat&, int magnitude);
+int compute_exponent_for_magnitude(NumberFormat&, int magnitude);
 ThrowCompletionOr<MathematicalValue> to_intl_mathematical_value(VM&, Value value);
 NumberFormat::UnsignedRoundingMode get_unsigned_rounding_mode(NumberFormat::RoundingMode, bool is_negative);
 RoundingDecision apply_unsigned_rounding_mode(MathematicalValue const& x, MathematicalValue const& r1, MathematicalValue const& r2, NumberFormat::UnsignedRoundingMode unsigned_rounding_mode);

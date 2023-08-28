@@ -128,7 +128,7 @@ ErrorOr<void> MainWidget::create_actions()
         if (auto result = initialize({}, move(maybe_font.value())); result.is_error())
             show_error(result.release_error(), "Initializing new font failed"sv);
     });
-    m_new_action->set_status_tip(TRY("Create a new font"_string));
+    m_new_action->set_status_tip("Create a new font"_string);
 
     m_open_action = GUI::CommonActions::make_open_action([this](auto&) {
         if (!request_close())
@@ -221,7 +221,7 @@ ErrorOr<void> MainWidget::create_actions()
         if (m_font_preview_window)
             m_font_preview_window->show();
     });
-    m_open_preview_action->set_status_tip(TRY("Preview the current font"_string));
+    m_open_preview_action->set_status_tip("Preview the current font"_string);
 
     bool show_metadata = Config::read_bool("FontEditor"sv, "Layout"sv, "ShowMetadata"sv, true);
     m_font_metadata_groupbox->set_visible(show_metadata);
@@ -230,7 +230,7 @@ ErrorOr<void> MainWidget::create_actions()
         Config::write_bool("FontEditor"sv, "Layout"sv, "ShowMetadata"sv, action.is_checked());
     });
     m_show_metadata_action->set_checked(show_metadata);
-    m_show_metadata_action->set_status_tip(TRY("Show or hide metadata about the current font"_string));
+    m_show_metadata_action->set_status_tip("Show or hide metadata about the current font"_string);
 
     bool show_unicode_blocks = Config::read_bool("FontEditor"sv, "Layout"sv, "ShowUnicodeBlocks"sv, true);
     m_unicode_block_container->set_visible(show_unicode_blocks);
@@ -243,7 +243,7 @@ ErrorOr<void> MainWidget::create_actions()
         Config::write_bool("FontEditor"sv, "Layout"sv, "ShowUnicodeBlocks"sv, action.is_checked());
     });
     m_show_unicode_blocks_action->set_checked(show_unicode_blocks);
-    m_show_unicode_blocks_action->set_status_tip(TRY("Show or hide the Unicode block list"_string));
+    m_show_unicode_blocks_action->set_status_tip("Show or hide the Unicode block list"_string);
 
     bool show_toolbar = Config::read_bool("FontEditor"sv, "Layout"sv, "ShowToolbar"sv, true);
     m_toolbar_container->set_visible(show_toolbar);
@@ -252,7 +252,7 @@ ErrorOr<void> MainWidget::create_actions()
         Config::write_bool("FontEditor"sv, "Layout"sv, "ShowToolbar"sv, action.is_checked());
     });
     m_show_toolbar_action->set_checked(show_toolbar);
-    m_show_toolbar_action->set_status_tip(TRY("Show or hide the toolbar"_string));
+    m_show_toolbar_action->set_status_tip("Show or hide the toolbar"_string);
 
     bool show_statusbar = Config::read_bool("FontEditor"sv, "Layout"sv, "ShowStatusbar"sv, true);
     m_statusbar->set_visible(show_statusbar);
@@ -262,7 +262,7 @@ ErrorOr<void> MainWidget::create_actions()
         Config::write_bool("FontEditor"sv, "Layout"sv, "ShowStatusbar"sv, action.is_checked());
     });
     m_show_statusbar_action->set_checked(show_statusbar);
-    m_show_statusbar_action->set_status_tip(TRY("Show or hide the status bar"_string));
+    m_show_statusbar_action->set_status_tip("Show or hide the status bar"_string);
 
     bool highlight_modifications = Config::read_bool("FontEditor"sv, "GlyphMap"sv, "HighlightModifications"sv, true);
     m_glyph_map_widget->set_highlight_modifications(highlight_modifications);
@@ -271,7 +271,7 @@ ErrorOr<void> MainWidget::create_actions()
         Config::write_bool("FontEditor"sv, "GlyphMap"sv, "HighlightModifications"sv, action.is_checked());
     });
     m_highlight_modifications_action->set_checked(highlight_modifications);
-    m_highlight_modifications_action->set_status_tip(TRY("Show or hide highlights on modified glyphs"_string));
+    m_highlight_modifications_action->set_status_tip("Show or hide highlights on modified glyphs"_string);
 
     bool show_system_emoji = Config::read_bool("FontEditor"sv, "GlyphMap"sv, "ShowSystemEmoji"sv, true);
     m_glyph_map_widget->set_show_system_emoji(show_system_emoji);
@@ -280,7 +280,7 @@ ErrorOr<void> MainWidget::create_actions()
         Config::write_bool("FontEditor"sv, "GlyphMap"sv, "ShowSystemEmoji"sv, action.is_checked());
     });
     m_show_system_emoji_action->set_checked(show_system_emoji);
-    m_show_system_emoji_action->set_status_tip(TRY("Show or hide system emoji"_string));
+    m_show_system_emoji_action->set_status_tip("Show or hide system emoji"_string);
 
     m_go_to_glyph_action = GUI::Action::create("&Go to Glyph...", { Mod_Ctrl, Key_G }, g_resources.go_to_glyph, [this](auto&) {
         String input;
@@ -296,17 +296,17 @@ ErrorOr<void> MainWidget::create_actions()
             m_glyph_map_widget->scroll_to_glyph(code_point);
         }
     });
-    m_go_to_glyph_action->set_status_tip(TRY("Go to the specified code point"_string));
+    m_go_to_glyph_action->set_status_tip("Go to the specified code point"_string);
 
     m_previous_glyph_action = GUI::Action::create("Pre&vious Glyph", { Mod_Alt, Key_Left }, g_resources.previous_glyph, [this](auto&) {
         m_glyph_map_widget->select_previous_existing_glyph();
     });
-    m_previous_glyph_action->set_status_tip(TRY("Seek the previous visible glyph"_string));
+    m_previous_glyph_action->set_status_tip("Seek the previous visible glyph"_string);
 
     m_next_glyph_action = GUI::Action::create("&Next Glyph", { Mod_Alt, Key_Right }, g_resources.next_glyph, [this](auto&) {
         m_glyph_map_widget->select_next_existing_glyph();
     });
-    m_next_glyph_action->set_status_tip(TRY("Seek the next visible glyph"_string));
+    m_next_glyph_action->set_status_tip("Seek the next visible glyph"_string);
 
     i32 scale = Config::read_i32("FontEditor"sv, "GlyphEditor"sv, "Scale"sv, 10);
     m_glyph_editor_widget->set_scale(scale);
@@ -314,17 +314,17 @@ ErrorOr<void> MainWidget::create_actions()
         set_scale_and_save(5);
     });
     m_scale_five_action->set_checked(scale == 5);
-    m_scale_five_action->set_status_tip(TRY("Scale the editor in proportion to the current font"_string));
+    m_scale_five_action->set_status_tip("Scale the editor in proportion to the current font"_string);
     m_scale_ten_action = GUI::Action::create_checkable("1000%", { Mod_Ctrl, Key_2 }, [this](auto&) {
         set_scale_and_save(10);
     });
     m_scale_ten_action->set_checked(scale == 10);
-    m_scale_ten_action->set_status_tip(TRY("Scale the editor in proportion to the current font"_string));
+    m_scale_ten_action->set_status_tip("Scale the editor in proportion to the current font"_string);
     m_scale_fifteen_action = GUI::Action::create_checkable("1500%", { Mod_Ctrl, Key_3 }, [this](auto&) {
         set_scale_and_save(15);
     });
     m_scale_fifteen_action->set_checked(scale == 15);
-    m_scale_fifteen_action->set_status_tip(TRY("Scale the editor in proportion to the current font"_string));
+    m_scale_fifteen_action->set_status_tip("Scale the editor in proportion to the current font"_string);
 
     m_glyph_editor_scale_actions.add_action(*m_scale_five_action);
     m_glyph_editor_scale_actions.add_action(*m_scale_ten_action);
@@ -370,7 +370,7 @@ ErrorOr<void> MainWidget::create_actions()
         }
         GUI::Clipboard::the().set_plain_text(builder.to_deprecated_string());
     });
-    m_copy_text_action->set_status_tip(TRY("Copy to clipboard as text"_string));
+    m_copy_text_action->set_status_tip("Copy to clipboard as text"_string);
 
     return {};
 }
@@ -378,33 +378,33 @@ ErrorOr<void> MainWidget::create_actions()
 ErrorOr<void> MainWidget::create_toolbars()
 {
     auto& toolbar = *find_descendant_of_type_named<GUI::Toolbar>("toolbar");
-    (void)TRY(toolbar.try_add_action(*m_new_action));
-    (void)TRY(toolbar.try_add_action(*m_open_action));
-    (void)TRY(toolbar.try_add_action(*m_save_action));
-    TRY(toolbar.try_add_separator());
-    (void)TRY(toolbar.try_add_action(*m_cut_action));
-    (void)TRY(toolbar.try_add_action(*m_copy_action));
-    (void)TRY(toolbar.try_add_action(*m_paste_action));
-    (void)TRY(toolbar.try_add_action(*m_delete_action));
-    TRY(toolbar.try_add_separator());
-    (void)TRY(toolbar.try_add_action(*m_undo_action));
-    (void)TRY(toolbar.try_add_action(*m_redo_action));
-    TRY(toolbar.try_add_separator());
-    (void)TRY(toolbar.try_add_action(*m_open_preview_action));
-    TRY(toolbar.try_add_separator());
-    (void)TRY(toolbar.try_add_action(*m_previous_glyph_action));
-    (void)TRY(toolbar.try_add_action(*m_next_glyph_action));
-    (void)TRY(toolbar.try_add_action(*m_go_to_glyph_action));
+    toolbar.add_action(*m_new_action);
+    toolbar.add_action(*m_open_action);
+    toolbar.add_action(*m_save_action);
+    toolbar.add_separator();
+    toolbar.add_action(*m_cut_action);
+    toolbar.add_action(*m_copy_action);
+    toolbar.add_action(*m_paste_action);
+    toolbar.add_action(*m_delete_action);
+    toolbar.add_separator();
+    toolbar.add_action(*m_undo_action);
+    toolbar.add_action(*m_redo_action);
+    toolbar.add_separator();
+    toolbar.add_action(*m_open_preview_action);
+    toolbar.add_separator();
+    toolbar.add_action(*m_previous_glyph_action);
+    toolbar.add_action(*m_next_glyph_action);
+    toolbar.add_action(*m_go_to_glyph_action);
 
     auto& glyph_transform_toolbar = *find_descendant_of_type_named<GUI::Toolbar>("glyph_transform_toolbar");
-    (void)TRY(glyph_transform_toolbar.try_add_action(*m_flip_horizontal_action));
-    (void)TRY(glyph_transform_toolbar.try_add_action(*m_flip_vertical_action));
-    (void)TRY(glyph_transform_toolbar.try_add_action(*m_rotate_counterclockwise_action));
-    (void)TRY(glyph_transform_toolbar.try_add_action(*m_rotate_clockwise_action));
+    glyph_transform_toolbar.add_action(*m_flip_horizontal_action);
+    glyph_transform_toolbar.add_action(*m_flip_vertical_action);
+    glyph_transform_toolbar.add_action(*m_rotate_counterclockwise_action);
+    glyph_transform_toolbar.add_action(*m_rotate_clockwise_action);
 
     auto& glyph_mode_toolbar = *find_descendant_of_type_named<GUI::Toolbar>("glyph_mode_toolbar");
-    (void)TRY(glyph_mode_toolbar.try_add_action(*m_paint_glyph_action));
-    (void)TRY(glyph_mode_toolbar.try_add_action(*m_move_glyph_action));
+    glyph_mode_toolbar.add_action(*m_paint_glyph_action);
+    glyph_mode_toolbar.add_action(*m_move_glyph_action);
 
     return {};
 }
@@ -733,13 +733,13 @@ ErrorOr<void> MainWidget::initialize(StringView path, RefPtr<Gfx::BitmapFont>&& 
 
 ErrorOr<void> MainWidget::initialize_menubar(GUI::Window& window)
 {
-    auto file_menu = TRY(window.try_add_menu("&File"_short_string));
-    TRY(file_menu->try_add_action(*m_new_action));
-    TRY(file_menu->try_add_action(*m_open_action));
-    TRY(file_menu->try_add_action(*m_save_action));
-    TRY(file_menu->try_add_action(*m_save_as_action));
-    TRY(file_menu->try_add_separator());
-    TRY(file_menu->add_recent_files_list([this](auto& action) {
+    auto file_menu = window.add_menu("&File"_string);
+    file_menu->add_action(*m_new_action);
+    file_menu->add_action(*m_open_action);
+    file_menu->add_action(*m_save_action);
+    file_menu->add_action(*m_save_as_action);
+    file_menu->add_separator();
+    file_menu->add_recent_files_list([this](auto& action) {
         if (!request_close())
             return;
         auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(this->window(), action.text());
@@ -748,57 +748,57 @@ ErrorOr<void> MainWidget::initialize_menubar(GUI::Window& window)
         auto file = response.release_value();
         if (auto result = open_file(file.filename(), file.release_stream()); result.is_error())
             show_error(result.release_error(), "Opening"sv, file.filename());
-    }));
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([this](auto&) {
+    });
+    file_menu->add_action(GUI::CommonActions::make_quit_action([this](auto&) {
         if (!request_close())
             return;
         GUI::Application::the()->quit();
-    })));
+    }));
 
-    auto edit_menu = TRY(window.try_add_menu("&Edit"_short_string));
-    TRY(edit_menu->try_add_action(*m_undo_action));
-    TRY(edit_menu->try_add_action(*m_redo_action));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(*m_cut_action));
-    TRY(edit_menu->try_add_action(*m_copy_action));
-    TRY(edit_menu->try_add_action(*m_paste_action));
-    TRY(edit_menu->try_add_action(*m_delete_action));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(*m_select_all_action));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(*m_copy_text_action));
+    auto edit_menu = window.add_menu("&Edit"_string);
+    edit_menu->add_action(*m_undo_action);
+    edit_menu->add_action(*m_redo_action);
+    edit_menu->add_separator();
+    edit_menu->add_action(*m_cut_action);
+    edit_menu->add_action(*m_copy_action);
+    edit_menu->add_action(*m_paste_action);
+    edit_menu->add_action(*m_delete_action);
+    edit_menu->add_separator();
+    edit_menu->add_action(*m_select_all_action);
+    edit_menu->add_separator();
+    edit_menu->add_action(*m_copy_text_action);
 
     m_context_menu = edit_menu;
 
-    auto go_menu = TRY(window.try_add_menu("&Go"_short_string));
-    TRY(go_menu->try_add_action(*m_previous_glyph_action));
-    TRY(go_menu->try_add_action(*m_next_glyph_action));
-    TRY(go_menu->try_add_action(*m_go_to_glyph_action));
+    auto go_menu = window.add_menu("&Go"_string);
+    go_menu->add_action(*m_previous_glyph_action);
+    go_menu->add_action(*m_next_glyph_action);
+    go_menu->add_action(*m_go_to_glyph_action);
 
-    auto view_menu = TRY(window.try_add_menu("&View"_short_string));
-    auto layout_menu = TRY(view_menu->try_add_submenu("&Layout"_short_string));
-    TRY(layout_menu->try_add_action(*m_show_toolbar_action));
-    TRY(layout_menu->try_add_action(*m_show_statusbar_action));
-    TRY(layout_menu->try_add_action(*m_show_metadata_action));
-    TRY(layout_menu->try_add_action(*m_show_unicode_blocks_action));
-    TRY(view_menu->try_add_separator());
-    TRY(view_menu->try_add_action(*m_open_preview_action));
-    TRY(view_menu->try_add_separator());
-    TRY(view_menu->try_add_action(*m_highlight_modifications_action));
-    TRY(view_menu->try_add_action(*m_show_system_emoji_action));
-    TRY(view_menu->try_add_separator());
-    auto scale_menu = TRY(view_menu->try_add_submenu("&Scale"_short_string));
+    auto view_menu = window.add_menu("&View"_string);
+    auto layout_menu = view_menu->add_submenu("&Layout"_string);
+    layout_menu->add_action(*m_show_toolbar_action);
+    layout_menu->add_action(*m_show_statusbar_action);
+    layout_menu->add_action(*m_show_metadata_action);
+    layout_menu->add_action(*m_show_unicode_blocks_action);
+    view_menu->add_separator();
+    view_menu->add_action(*m_open_preview_action);
+    view_menu->add_separator();
+    view_menu->add_action(*m_highlight_modifications_action);
+    view_menu->add_action(*m_show_system_emoji_action);
+    view_menu->add_separator();
+    auto scale_menu = view_menu->add_submenu("&Scale"_string);
     scale_menu->set_icon(g_resources.scale_editor);
-    TRY(scale_menu->try_add_action(*m_scale_five_action));
-    TRY(scale_menu->try_add_action(*m_scale_ten_action));
-    TRY(scale_menu->try_add_action(*m_scale_fifteen_action));
+    scale_menu->add_action(*m_scale_five_action);
+    scale_menu->add_action(*m_scale_ten_action);
+    scale_menu->add_action(*m_scale_fifteen_action);
 
-    auto help_menu = TRY(window.try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(&window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+    auto help_menu = window.add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(&window));
+    help_menu->add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Applications/FontEditor.md"), "/bin/Help");
-    })));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Font Editor", TRY(GUI::Icon::try_create_default_icon("app-font-editor"sv)), &window)));
+    }));
+    help_menu->add_action(GUI::CommonActions::make_about_action("Font Editor", TRY(GUI::Icon::try_create_default_icon("app-font-editor"sv)), &window));
 
     return {};
 }

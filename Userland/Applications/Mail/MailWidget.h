@@ -19,7 +19,7 @@ class MailWidget final : public GUI::Widget {
 public:
     virtual ~MailWidget() override = default;
 
-    bool connect_and_login();
+    ErrorOr<bool> connect_and_login();
 
     void on_window_close();
 
@@ -41,6 +41,7 @@ private:
     OwnPtr<IMAP::Client> m_imap_client;
 
     RefPtr<GUI::TreeView> m_mailbox_list;
+    RefPtr<InboxModel> m_individual_mailbox_model;
     RefPtr<GUI::TableView> m_individual_mailbox_view;
     RefPtr<WebView::OutOfProcessWebView> m_web_view;
     RefPtr<GUI::Statusbar> m_statusbar;

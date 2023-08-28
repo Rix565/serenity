@@ -86,8 +86,8 @@ private:
         m_root_container->set_layout<GUI::VerticalBoxLayout>(4, 0);
         m_root_container->set_frame_style(Gfx::FrameStyle::Window);
 
-        m_percent_box = m_root_container->add<GUI::CheckBox>("\xE2\x84\xB9"_short_string);
-        m_percent_box->set_tooltip(show_percent() ? "Hide percent" : "Show percent");
+        m_percent_box = m_root_container->add<GUI::CheckBox>("\xE2\x84\xB9"_string);
+        m_percent_box->set_tooltip_deprecated(show_percent() ? "Hide percent" : "Show percent");
         m_percent_box->set_checked(show_percent());
         m_percent_box->on_checked = [&](bool show_percent) {
             set_show_percent(show_percent);
@@ -109,11 +109,11 @@ private:
             update();
         };
 
-        m_mute_box = m_root_container->add<GUI::CheckBox>("\xE2\x9D\x8C"_short_string);
+        m_mute_box = m_root_container->add<GUI::CheckBox>("\xE2\x9D\x8C"_string);
         m_mute_box->set_checked(m_audio_muted);
-        m_mute_box->set_tooltip(m_audio_muted ? "Unmute" : "Mute");
+        m_mute_box->set_tooltip_deprecated(m_audio_muted ? "Unmute" : "Mute");
         m_mute_box->on_checked = [&](bool is_muted) {
-            m_mute_box->set_tooltip(is_muted ? "Unmute" : "Mute");
+            m_mute_box->set_tooltip_deprecated(is_muted ? "Unmute" : "Mute");
             m_audio_client->set_main_mix_muted(is_muted);
             GUI::Application::the()->hide_tooltip();
         };
@@ -129,7 +129,7 @@ public:
     {
         m_show_percent = show_percent;
         m_percent_box->set_checked(show_percent);
-        m_percent_box->set_tooltip(show_percent ? "Hide percent" : "Show percent");
+        m_percent_box->set_tooltip_deprecated(show_percent ? "Hide percent" : "Show percent");
         if (show_percent)
             window()->resize(44, 16);
         else

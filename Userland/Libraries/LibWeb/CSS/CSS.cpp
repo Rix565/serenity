@@ -14,10 +14,10 @@
 namespace Web::CSS {
 
 // https://www.w3.org/TR/cssom-1/#dom-css-escape
-WebIDL::ExceptionOr<String> escape(JS::VM& vm, StringView identifier)
+WebIDL::ExceptionOr<String> escape(JS::VM&, StringView identifier)
 {
     // The escape(ident) operation must return the result of invoking serialize an identifier of ident.
-    return TRY_OR_THROW_OOM(vm, serialize_an_identifier(identifier));
+    return serialize_an_identifier(identifier);
 }
 
 // https://www.w3.org/TR/css-conditional-3/#dom-css-supports
@@ -28,7 +28,7 @@ bool supports(JS::VM& vm, StringView property, StringView value)
     // 1. If property is an ASCII case-insensitive match for any defined CSS property that the UA supports,
     //    and value successfully parses according to that property’s grammar, return true.
     if (auto property_id = property_id_from_string(property); property_id.has_value()) {
-        if (parse_css_value(Parser::ParsingContext { realm }, value, property_id.value()).release_value_but_fixme_should_propagate_errors())
+        if (parse_css_value(Parser::ParsingContext { realm }, value, property_id.value()))
             return true;
     }
 

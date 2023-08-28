@@ -85,10 +85,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     });
 
     auto entry_context_menu = TRY(GUI::Menu::try_create());
-    TRY(entry_context_menu->try_add_action(delete_action));
-    TRY(entry_context_menu->try_add_action(debug_dump_action));
+    entry_context_menu->add_action(delete_action);
+    entry_context_menu->add_action(debug_dump_action);
     entry_context_menu->add_separator();
-    TRY(entry_context_menu->try_add_action(clear_action));
+    entry_context_menu->add_action(clear_action);
     table_view->on_context_menu_request = [&](GUI::ModelIndex const&, GUI::ContextMenuEvent const& event) {
         delete_action->set_enabled(!table_view->selection().is_empty());
         debug_dump_action->set_enabled(!table_view->selection().is_empty());
@@ -101,7 +101,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     applet_window->set_window_type(GUI::WindowType::Applet);
     applet_window->set_has_alpha_channel(true);
     auto icon_widget = TRY(applet_window->set_main_widget<GUI::ImageWidget>());
-    icon_widget->set_tooltip("Clipboard History");
+    icon_widget->set_tooltip_deprecated("Clipboard History");
     icon_widget->load_from_file("/res/icons/16x16/edit-copy.png"sv);
     icon_widget->on_click = [&main_window = *main_window] {
         main_window.show();

@@ -16,15 +16,15 @@ namespace Web::CSS {
 
 class TimeStyleValue : public StyleValueWithDefaultOperators<TimeStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<TimeStyleValue>> create(Time time)
+    static ValueComparingNonnullRefPtr<TimeStyleValue> create(Time time)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) TimeStyleValue(move(time)));
+        return adopt_ref(*new (nothrow) TimeStyleValue(move(time)));
     }
     virtual ~TimeStyleValue() override = default;
 
     Time const& time() const { return m_time; }
 
-    virtual ErrorOr<String> to_string() const override { return m_time.to_string(); }
+    virtual String to_string() const override { return m_time.to_string(); }
 
     bool properties_equal(TimeStyleValue const& other) const { return m_time == other.m_time; }
 

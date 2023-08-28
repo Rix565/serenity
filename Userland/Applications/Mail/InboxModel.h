@@ -13,6 +13,8 @@
 struct InboxEntry {
     DeprecatedString from;
     DeprecatedString subject;
+    DeprecatedString date;
+    bool seen;
 };
 
 class InboxModel final : public GUI::Model {
@@ -20,6 +22,7 @@ public:
     enum Column {
         From,
         Subject,
+        Date,
         __Count
     };
 
@@ -29,6 +32,8 @@ public:
     }
 
     virtual ~InboxModel() override = default;
+
+    void set_seen(int row, bool);
 
     virtual int row_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override;
     virtual int column_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override { return Column::__Count; }

@@ -6,10 +6,17 @@
  */
 
 #include "InboxModel.h"
+#include <LibGfx/Font/FontDatabase.h>
 
 InboxModel::InboxModel(Vector<InboxEntry> entries)
     : m_entries(move(entries))
 {
+}
+
+void InboxModel::set_seen(int row, bool seen)
+{
+    m_entries[row].seen = seen;
+    did_update(DontInvalidateIndices);
 }
 
 int InboxModel::row_count(GUI::ModelIndex const&) const
@@ -21,9 +28,11 @@ ErrorOr<String> InboxModel::column_name(int column_index) const
 {
     switch (column_index) {
     case Column::From:
-        return "From"_short_string;
+        return "From"_string;
     case Subject:
-        return "Subject"_short_string;
+        return "Subject"_string;
+    case Date:
+        return "Date"_string;
     default:
         VERIFY_NOT_REACHED();
     }
@@ -37,6 +46,16 @@ GUI::Variant InboxModel::data(GUI::ModelIndex const& index, GUI::ModelRole role)
             return value.from;
         if (index.column() == Column::Subject)
             return value.subject;
+        if (index.column() == Column::Date)
+            return value.date;
+    }
+    if (role == GUI::ModelRole::TextAlignment) {
+        if (index.column() == Column::Date)
+            return Gfx::TextAlignment::CenterRight;
+    }
+    if (role == GUI::ModelRole::Font) {
+        if (!value.seen)
+            return Gfx::FontDatabase::default_font().bold_variant();
     }
     return {};
 }

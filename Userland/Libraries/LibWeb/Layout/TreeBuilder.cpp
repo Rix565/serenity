@@ -18,12 +18,14 @@
 #include <LibWeb/DOM/ParentNode.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/Dump.h>
+#include <LibWeb/HTML/HTMLButtonElement.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/HTMLProgressElement.h>
 #include <LibWeb/Layout/ListItemBox.h>
 #include <LibWeb/Layout/ListItemMarkerBox.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/Progress.h>
+#include <LibWeb/Layout/TableGrid.h>
 #include <LibWeb/Layout/TableWrapper.h>
 #include <LibWeb/Layout/TextNode.h>
 #include <LibWeb/Layout/TreeBuilder.h>
@@ -189,12 +191,23 @@ ErrorOr<void> TreeBuilder::create_pseudo_element_if_needed(DOM::Element& element
     if (!pseudo_element_node)
         return {};
 
-    pseudo_element_node->set_generated(true);
+    auto generated_for = Node::GeneratedFor::NotGenerated;
+    if (pseudo_element == CSS::Selector::PseudoElement::Before) {
+        generated_for = Node::GeneratedFor::PseudoBefore;
+    } else if (pseudo_element == CSS::Selector::PseudoElement::After) {
+        generated_for = Node::GeneratedFor::PseudoAfter;
+    } else {
+        VERIFY_NOT_REACHED();
+    }
+
+    pseudo_element_node->set_generated_for(generated_for, element);
+
     // FIXME: Handle images, and multiple values
     if (pseudo_element_content.type == CSS::ContentData::Type::String) {
-        auto text = document.heap().allocate<DOM::Text>(document.realm(), document, pseudo_element_content.data.to_deprecated_string()).release_allocated_value_but_fixme_should_propagate_errors();
+        auto text = document.heap().allocate<DOM::Text>(document.realm(), document, pseudo_element_content.data.to_deprecated_string());
         auto text_node = document.heap().allocate_without_realm<Layout::TextNode>(document, *text);
-        text_node->set_generated(true);
+        text_node->set_generated_for(generated_for, element);
+
         push_parent(verify_cast<NodeWithStyle>(*pseudo_element_node));
         insert_node_into_inline_or_block_ancestor(*text_node, text_node->display(), AppendOrPrepend::Append);
         pop_parent();
@@ -206,6 +219,27 @@ ErrorOr<void> TreeBuilder::create_pseudo_element_if_needed(DOM::Element& element
     insert_node_into_inline_or_block_ancestor(*pseudo_element_node, pseudo_element_display, mode);
 
     return {};
+}
+
+static bool is_ignorable_whitespace(Layout::Node const& node)
+{
+    if (node.is_text_node() && static_cast<TextNode const&>(node).text_for_rendering().is_whitespace())
+        return true;
+
+    if (node.is_anonymous() && node.is_block_container() && static_cast<BlockContainer const&>(node).children_are_inline()) {
+        bool contains_only_white_space = true;
+        node.for_each_in_inclusive_subtree_of_type<TextNode>([&contains_only_white_space](auto& text_node) {
+            if (!text_node.text_for_rendering().is_whitespace()) {
+                contains_only_white_space = false;
+                return IterationDecision::Break;
+            }
+            return IterationDecision::Continue;
+        });
+        if (contains_only_white_space)
+            return true;
+    }
+
+    return false;
 }
 
 ErrorOr<void> TreeBuilder::create_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& context)
@@ -319,11 +353,11 @@ ErrorOr<void> TreeBuilder::create_layout_tree(DOM::Node& dom_node, TreeBuilder::
         auto& progress = static_cast<HTML::HTMLProgressElement&>(dom_node);
         if (!progress.using_system_appearance()) {
             auto bar_style = TRY(style_computer.compute_style(progress, CSS::Selector::PseudoElement::ProgressBar));
-            bar_style->set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::FlowRoot)).release_value_but_fixme_should_propagate_errors());
+            bar_style->set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::FlowRoot)));
             auto value_style = TRY(style_computer.compute_style(progress, CSS::Selector::PseudoElement::ProgressValue));
-            value_style->set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::Block)).release_value_but_fixme_should_propagate_errors());
+            value_style->set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::Block)));
             auto position = progress.position();
-            value_style->set_property(CSS::PropertyID::Width, CSS::PercentageStyleValue::create(CSS::Percentage(position >= 0 ? round_to<int>(100 * position) : 0)).release_value_but_fixme_should_propagate_errors());
+            value_style->set_property(CSS::PropertyID::Width, CSS::PercentageStyleValue::create(CSS::Percentage(position >= 0 ? round_to<int>(100 * position) : 0)));
             auto bar_display = bar_style->display();
             auto value_display = value_style->display();
             auto progress_bar = DOM::Element::create_layout_node_for_display_type(document, bar_display, bar_style, nullptr);
@@ -337,6 +371,49 @@ ErrorOr<void> TreeBuilder::create_layout_tree(DOM::Node& dom_node, TreeBuilder::
             progress.set_pseudo_element_node({}, CSS::Selector::PseudoElement::ProgressBar, progress_bar);
             progress.set_pseudo_element_node({}, CSS::Selector::PseudoElement::ProgressValue, progress_value);
         }
+    }
+
+    // https://html.spec.whatwg.org/multipage/rendering.html#button-layout
+    // If the element is an input element, or if it is a button element and its computed value for
+    // 'display' is not 'inline-grid', 'grid', 'inline-flex', or 'flex', then the element's box has
+    // a child anonymous button content box with the following behaviors:
+    if (is<HTML::HTMLButtonElement>(dom_node) && !display.is_grid_inside() && !display.is_flex_inside()) {
+        auto& parent = *dom_node.layout_node();
+
+        // If the box does not overflow in the vertical axis, then it is centered vertically.
+        auto table_computed_values = parent.computed_values().clone_inherited_values();
+        static_cast<CSS::MutableComputedValues&>(table_computed_values).set_display(CSS::Display::from_short(CSS::Display::Short::Table));
+        static_cast<CSS::MutableComputedValues&>(table_computed_values).set_height(CSS::Size::make_percentage(CSS::Percentage(100)));
+
+        auto cell_computed_values = parent.computed_values().clone_inherited_values();
+        static_cast<CSS::MutableComputedValues&>(cell_computed_values).set_display(CSS::Display { CSS::Display::Internal::TableCell });
+        static_cast<CSS::MutableComputedValues&>(cell_computed_values).set_vertical_align(CSS::VerticalAlign::Middle);
+
+        auto row_computed_values = parent.computed_values().clone_inherited_values();
+        static_cast<CSS::MutableComputedValues&>(row_computed_values).set_display(CSS::Display { CSS::Display::Internal::TableRow });
+
+        auto table_wrapper = parent.heap().template allocate_without_realm<BlockContainer>(parent.document(), nullptr, move(table_computed_values));
+        auto cell_wrapper = parent.heap().template allocate_without_realm<BlockContainer>(parent.document(), nullptr, move(cell_computed_values));
+        auto row_wrapper = parent.heap().template allocate_without_realm<Box>(parent.document(), nullptr, move(row_computed_values));
+
+        cell_wrapper->set_line_height(parent.line_height());
+        cell_wrapper->set_font(parent.font());
+        cell_wrapper->set_children_are_inline(parent.children_are_inline());
+        row_wrapper->set_children_are_inline(false);
+
+        Vector<JS::Handle<Node>> sequence;
+        for (auto child = parent.first_child(); child; child = child->next_sibling()) {
+            sequence.append(*child);
+        }
+
+        for (auto& node : sequence) {
+            parent.remove_child(*node);
+            cell_wrapper->append_child(*node);
+        }
+
+        row_wrapper->append_child(*cell_wrapper);
+        table_wrapper->append_child(*row_wrapper);
+        parent.append_child(*table_wrapper);
     }
 
     return {};
@@ -381,7 +458,8 @@ void TreeBuilder::fixup_tables(NodeWithStyle& root)
 {
     remove_irrelevant_boxes(root);
     generate_missing_child_wrappers(root);
-    generate_missing_parents(root);
+    auto table_root_boxes = generate_missing_parents(root);
+    missing_cells_fixup(table_root_boxes);
 }
 
 void TreeBuilder::remove_irrelevant_boxes(NodeWithStyle& root)
@@ -468,27 +546,6 @@ static bool is_not_table_cell(Node const& node)
     return !is_table_cell(node);
 }
 
-static bool is_ignorable_whitespace(Layout::Node const& node)
-{
-    if (node.is_text_node() && static_cast<TextNode const&>(node).text_for_rendering().is_whitespace())
-        return true;
-
-    if (node.is_anonymous() && node.is_block_container() && static_cast<BlockContainer const&>(node).children_are_inline()) {
-        bool contains_only_white_space = true;
-        node.for_each_in_inclusive_subtree_of_type<TextNode>([&contains_only_white_space](auto& text_node) {
-            if (!text_node.text_for_rendering().is_whitespace()) {
-                contains_only_white_space = false;
-                return IterationDecision::Break;
-            }
-            return IterationDecision::Continue;
-        });
-        if (contains_only_white_space)
-            return true;
-    }
-
-    return false;
-}
-
 template<typename Matcher, typename Callback>
 static void for_each_sequence_of_consecutive_children_matching(NodeWithStyle& parent, Matcher matcher, Callback callback)
 {
@@ -572,7 +629,7 @@ void TreeBuilder::generate_missing_child_wrappers(NodeWithStyle& root)
     });
 }
 
-void TreeBuilder::generate_missing_parents(NodeWithStyle& root)
+Vector<JS::Handle<Box>> TreeBuilder::generate_missing_parents(NodeWithStyle& root)
 {
     Vector<JS::Handle<Box>> table_roots_to_wrap;
     root.for_each_in_inclusive_subtree_of_type<Box>([&](auto& parent) {
@@ -622,6 +679,57 @@ void TreeBuilder::generate_missing_parents(NodeWithStyle& root)
         else
             parent.append_child(*wrapper);
     }
+
+    return table_roots_to_wrap;
 }
 
+template<typename Matcher, typename Callback>
+static void for_each_child_box_matching(Box& parent, Matcher matcher, Callback callback)
+{
+    parent.for_each_child_of_type<Box>([&](Box& child_box) {
+        if (matcher(child_box))
+            callback(child_box);
+    });
+}
+
+static void fixup_row(Box& row_box, TableGrid const& table_grid, size_t row_index)
+{
+    bool missing_cells_run_has_started = false;
+    for (size_t column_index = 0; column_index < table_grid.column_count(); ++column_index) {
+        if (table_grid.occupancy_grid().contains({ column_index, row_index })) {
+            VERIFY(!missing_cells_run_has_started);
+            continue;
+        }
+        missing_cells_run_has_started = true;
+        auto row_computed_values = row_box.computed_values().clone_inherited_values();
+        auto& cell_computed_values = static_cast<CSS::MutableComputedValues&>(row_computed_values);
+        cell_computed_values.set_display(Web::CSS::Display { CSS::Display::Internal::TableCell });
+        // Ensure that the cell (with zero content height) will have the same height as the row by setting vertical-align to middle.
+        cell_computed_values.set_vertical_align(CSS::VerticalAlign::Middle);
+        auto cell_box = row_box.heap().template allocate_without_realm<BlockContainer>(row_box.document(), nullptr, cell_computed_values);
+        row_box.append_child(cell_box);
+    }
+}
+
+void TreeBuilder::missing_cells_fixup(Vector<JS::Handle<Box>> const& table_root_boxes)
+{
+    // Implements https://www.w3.org/TR/css-tables-3/#missing-cells-fixup.
+    for (auto& table_box : table_root_boxes) {
+        auto table_grid = TableGrid::calculate_row_column_grid(*table_box);
+        size_t row_index = 0;
+        for_each_child_box_matching(*table_box, TableGrid::is_table_row_group, [&](auto& row_group_box) {
+            for_each_child_box_matching(row_group_box, is_table_row, [&](auto& row_box) {
+                fixup_row(row_box, table_grid, row_index);
+                ++row_index;
+                return IterationDecision::Continue;
+            });
+        });
+
+        for_each_child_box_matching(*table_box, is_table_row, [&](auto& row_box) {
+            fixup_row(row_box, table_grid, row_index);
+            ++row_index;
+            return IterationDecision::Continue;
+        });
+    }
+}
 }

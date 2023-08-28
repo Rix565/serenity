@@ -9,6 +9,7 @@
 #include <LibWeb/DOM/ElementFactory.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/ShadowRoot.h>
+#include <LibWeb/Layout/Box.h>
 #include <LibWeb/Namespace.h>
 #include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/SVGSVGElement.h>
@@ -21,23 +22,21 @@ SVGUseElement::SVGUseElement(DOM::Document& document, DOM::QualifiedName qualifi
 {
 }
 
-JS::ThrowCompletionOr<void> SVGUseElement::initialize(JS::Realm& realm)
+void SVGUseElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::SVGUseElementPrototype>(realm, "SVGUseElement"));
 
     // The shadow tree is open (inspectable by script), but read-only.
-    auto shadow_root = TRY(heap().allocate<DOM::ShadowRoot>(realm, document(), *this, Bindings::ShadowRootMode::Open));
+    auto shadow_root = heap().allocate<DOM::ShadowRoot>(realm, document(), *this, Bindings::ShadowRootMode::Open);
 
     // The user agent must create a use-element shadow tree whose host is the ‘use’ element itself
     set_shadow_root(shadow_root);
 
-    m_document_observer = TRY(realm.heap().allocate<DOM::DocumentObserver>(realm, realm, document()));
+    m_document_observer = realm.heap().allocate<DOM::DocumentObserver>(realm, realm, document());
     m_document_observer->document_completely_loaded = [this]() {
         clone_element_tree_as_our_shadow_tree(referenced_element());
     };
-
-    return {};
 }
 
 void SVGUseElement::visit_edges(Cell::Visitor& visitor)
@@ -58,6 +57,8 @@ void SVGUseElement::attribute_changed(DeprecatedFlyString const& name, Deprecate
     } else if (name == SVG::AttributeNames::href) {
         // FIXME: Support the xlink:href attribute as a fallback
         m_referenced_id = parse_id_from_href(value);
+
+        clone_element_tree_as_our_shadow_tree(referenced_element());
     }
 }
 
@@ -138,9 +139,9 @@ JS::NonnullGCPtr<SVGAnimatedLength> SVGUseElement::x() const
 {
     // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
     // FIXME: Create a proper animated value when animations are supported.
-    auto base_length = SVGLength::create(realm(), 0, m_x.value_or(0)).release_value_but_fixme_should_propagate_errors();
-    auto anim_length = SVGLength::create(realm(), 0, m_x.value_or(0)).release_value_but_fixme_should_propagate_errors();
-    return SVGAnimatedLength::create(realm(), move(base_length), move(anim_length)).release_value_but_fixme_should_propagate_errors();
+    auto base_length = SVGLength::create(realm(), 0, m_x.value_or(0));
+    auto anim_length = SVGLength::create(realm(), 0, m_x.value_or(0));
+    return SVGAnimatedLength::create(realm(), move(base_length), move(anim_length));
 }
 
 // https://www.w3.org/TR/SVG11/shapes.html#RectElementYAttribute
@@ -148,9 +149,9 @@ JS::NonnullGCPtr<SVGAnimatedLength> SVGUseElement::y() const
 {
     // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
     // FIXME: Create a proper animated value when animations are supported.
-    auto base_length = SVGLength::create(realm(), 0, m_y.value_or(0)).release_value_but_fixme_should_propagate_errors();
-    auto anim_length = SVGLength::create(realm(), 0, m_y.value_or(0)).release_value_but_fixme_should_propagate_errors();
-    return SVGAnimatedLength::create(realm(), move(base_length), move(anim_length)).release_value_but_fixme_should_propagate_errors();
+    auto base_length = SVGLength::create(realm(), 0, m_y.value_or(0));
+    auto anim_length = SVGLength::create(realm(), 0, m_y.value_or(0));
+    return SVGAnimatedLength::create(realm(), move(base_length), move(anim_length));
 }
 
 JS::NonnullGCPtr<SVGAnimatedLength> SVGUseElement::width() const
@@ -172,6 +173,11 @@ JS::GCPtr<SVGElement> SVGUseElement::instance_root() const
 JS::GCPtr<SVGElement> SVGUseElement::animated_instance_root() const
 {
     return instance_root();
+}
+
+JS::GCPtr<Layout::Node> SVGUseElement::create_layout_node(NonnullRefPtr<CSS::StyleProperties> style)
+{
+    return heap().allocate_without_realm<Layout::Box>(document(), this, move(style));
 }
 
 }

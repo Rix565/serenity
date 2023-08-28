@@ -412,13 +412,13 @@ void HexEditorWidget::update_inspector_values(size_t position)
 
 ErrorOr<void> HexEditorWidget::initialize_menubar(GUI::Window& window)
 {
-    auto file_menu = TRY(window.try_add_menu("&File"_short_string));
-    TRY(file_menu->try_add_action(*m_new_action));
-    TRY(file_menu->try_add_action(*m_open_action));
-    TRY(file_menu->try_add_action(*m_save_action));
-    TRY(file_menu->try_add_action(*m_save_as_action));
-    TRY(file_menu->try_add_separator());
-    TRY(file_menu->add_recent_files_list([&](auto& action) {
+    auto file_menu = window.add_menu("&File"_string);
+    file_menu->add_action(*m_new_action);
+    file_menu->add_action(*m_open_action);
+    file_menu->add_action(*m_save_action);
+    file_menu->add_action(*m_save_as_action);
+    file_menu->add_separator();
+    file_menu->add_recent_files_list([&](auto& action) {
         auto path = action.text();
         auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(&window, path);
         if (response.is_error())
@@ -426,29 +426,29 @@ ErrorOr<void> HexEditorWidget::initialize_menubar(GUI::Window& window)
 
         auto file = response.release_value();
         open_file(file.filename(), file.release_stream());
-    }));
-    TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([this](auto&) {
+    });
+    file_menu->add_action(GUI::CommonActions::make_quit_action([this](auto&) {
         if (!request_close())
             return;
         GUI::Application::the()->quit();
-    })));
+    }));
 
-    auto edit_menu = TRY(window.try_add_menu("&Edit"_short_string));
-    TRY(edit_menu->try_add_action(*m_undo_action));
-    TRY(edit_menu->try_add_action(*m_redo_action));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(GUI::CommonActions::make_select_all_action([this](auto&) {
+    auto edit_menu = window.add_menu("&Edit"_string);
+    edit_menu->add_action(*m_undo_action);
+    edit_menu->add_action(*m_redo_action);
+    edit_menu->add_separator();
+    edit_menu->add_action(GUI::CommonActions::make_select_all_action([this](auto&) {
         m_editor->select_all();
         m_editor->update();
-    })));
-    TRY(edit_menu->try_add_action(*m_fill_selection_action));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(*m_copy_hex_action));
-    TRY(edit_menu->try_add_action(*m_copy_text_action));
-    TRY(edit_menu->try_add_action(*m_copy_as_c_code_action));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(*m_find_action));
-    TRY(edit_menu->try_add_action(GUI::Action::create("Find &Next", { Mod_None, Key_F3 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/find-next.png"sv)), [&](const GUI::Action&) {
+    }));
+    edit_menu->add_action(*m_fill_selection_action);
+    edit_menu->add_separator();
+    edit_menu->add_action(*m_copy_hex_action);
+    edit_menu->add_action(*m_copy_text_action);
+    edit_menu->add_action(*m_copy_as_c_code_action);
+    edit_menu->add_separator();
+    edit_menu->add_action(*m_find_action);
+    edit_menu->add_action(GUI::Action::create("Find &Next", { Mod_None, Key_F3 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/find-next.png"sv)), [&](const GUI::Action&) {
         if (m_search_text.is_empty() || m_search_buffer.is_empty()) {
             GUI::MessageBox::show(&window, "Nothing to search for"sv, "Not Found"sv, GUI::MessageBox::Type::Warning);
             return;
@@ -461,9 +461,9 @@ ErrorOr<void> HexEditorWidget::initialize_menubar(GUI::Window& window)
         }
         m_editor->update();
         m_last_found_index = result.value();
-    })));
+    }));
 
-    TRY(edit_menu->try_add_action(GUI::Action::create("Find All &Strings", { Mod_Ctrl | Mod_Shift, Key_F }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"sv)), [&](const GUI::Action&) {
+    edit_menu->add_action(GUI::Action::create("Find All &Strings", { Mod_Ctrl | Mod_Shift, Key_F }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"sv)), [&](const GUI::Action&) {
         int min_length = 4;
         auto matches = m_editor->find_all_strings(min_length);
         m_search_results->set_model(*new SearchResultsModel(move(matches)));
@@ -476,11 +476,11 @@ ErrorOr<void> HexEditorWidget::initialize_menubar(GUI::Window& window)
 
         set_search_results_visible(true);
         m_editor->update();
-    })));
-    TRY(edit_menu->try_add_separator());
-    TRY(edit_menu->try_add_action(*m_goto_offset_action));
+    }));
+    edit_menu->add_separator();
+    edit_menu->add_action(*m_goto_offset_action);
 
-    auto view_menu = TRY(window.try_add_menu("&View"_short_string));
+    auto view_menu = window.add_menu("&View"_string);
 
     auto show_toolbar = Config::read_bool("HexEditor"sv, "Layout"sv, "ShowToolbar"sv, true);
     m_layout_toolbar_action->set_checked(show_toolbar);
@@ -492,17 +492,17 @@ ErrorOr<void> HexEditorWidget::initialize_menubar(GUI::Window& window)
     auto show_value_inspector = Config::read_bool("HexEditor"sv, "Layout"sv, "ShowValueInspector"sv, false);
     set_value_inspector_visible(show_value_inspector);
 
-    TRY(view_menu->try_add_action(*m_layout_toolbar_action));
-    TRY(view_menu->try_add_action(*m_layout_search_results_action));
-    TRY(view_menu->try_add_action(*m_layout_value_inspector_action));
-    TRY(view_menu->try_add_separator());
+    view_menu->add_action(*m_layout_toolbar_action);
+    view_menu->add_action(*m_layout_search_results_action);
+    view_menu->add_action(*m_layout_value_inspector_action);
+    view_menu->add_separator();
 
     auto bytes_per_row = Config::read_i32("HexEditor"sv, "Layout"sv, "BytesPerRow"sv, 16);
     m_editor->set_bytes_per_row(bytes_per_row);
     m_editor->update();
 
     m_bytes_per_row_actions.set_exclusive(true);
-    auto bytes_per_row_menu = TRY(view_menu->try_add_submenu(TRY("Bytes per &Row"_string)));
+    auto bytes_per_row_menu = view_menu->add_submenu("Bytes per &Row"_string);
     for (int i = 8; i <= 32; i += 8) {
         auto action = GUI::Action::create_checkable(DeprecatedString::number(i), [this, i](auto&) {
             m_editor->set_bytes_per_row(i);
@@ -510,13 +510,13 @@ ErrorOr<void> HexEditorWidget::initialize_menubar(GUI::Window& window)
             Config::write_i32("HexEditor"sv, "Layout"sv, "BytesPerRow"sv, i);
         });
         m_bytes_per_row_actions.add_action(action);
-        TRY(bytes_per_row_menu->try_add_action(action));
+        bytes_per_row_menu->add_action(action);
         if (i == bytes_per_row)
             action->set_checked(true);
     }
 
     m_value_inspector_mode_actions.set_exclusive(true);
-    auto inspector_mode_menu = TRY(view_menu->try_add_submenu(TRY("Value Inspector &Mode"_string)));
+    auto inspector_mode_menu = view_menu->add_submenu("Value Inspector &Mode"_string);
     auto little_endian_mode = GUI::Action::create_checkable("&Little Endian", [&](auto& action) {
         m_value_inspector_little_endian = action.is_checked();
         update_inspector_values(m_editor->selection_start_offset());
@@ -524,7 +524,7 @@ ErrorOr<void> HexEditorWidget::initialize_menubar(GUI::Window& window)
         Config::write_bool("HexEditor"sv, "Layout"sv, "UseLittleEndianInValueInspector"sv, m_value_inspector_little_endian);
     });
     m_value_inspector_mode_actions.add_action(little_endian_mode);
-    TRY(inspector_mode_menu->try_add_action(little_endian_mode));
+    inspector_mode_menu->add_action(little_endian_mode);
 
     auto big_endian_mode = GUI::Action::create_checkable("&Big Endian", [this](auto& action) {
         m_value_inspector_little_endian = !action.is_checked();
@@ -533,7 +533,7 @@ ErrorOr<void> HexEditorWidget::initialize_menubar(GUI::Window& window)
         Config::write_bool("HexEditor"sv, "Layout"sv, "UseLittleEndianInValueInspector"sv, m_value_inspector_little_endian);
     });
     m_value_inspector_mode_actions.add_action(big_endian_mode);
-    TRY(inspector_mode_menu->try_add_action(big_endian_mode));
+    inspector_mode_menu->add_action(big_endian_mode);
 
     auto use_little_endian = Config::read_bool("HexEditor"sv, "Layout"sv, "UseLittleEndianInValueInspector"sv, true);
     m_value_inspector_little_endian = use_little_endian;
@@ -541,12 +541,12 @@ ErrorOr<void> HexEditorWidget::initialize_menubar(GUI::Window& window)
     little_endian_mode->set_checked(use_little_endian);
     big_endian_mode->set_checked(!use_little_endian);
 
-    auto help_menu = TRY(window.try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(&window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+    auto help_menu = window.add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(&window));
+    help_menu->add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man1/Applications/HexEditor.md"), "/bin/Help");
-    })));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Hex Editor", GUI::Icon::default_icon("app-hex-editor"sv), &window)));
+    }));
+    help_menu->add_action(GUI::CommonActions::make_about_action("Hex Editor", GUI::Icon::default_icon("app-hex-editor"sv), &window));
 
     return {};
 }

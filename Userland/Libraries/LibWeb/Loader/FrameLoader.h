@@ -25,7 +25,12 @@ public:
     };
 
     static void set_default_favicon_path(DeprecatedString);
+    static DeprecatedString resource_directory_url();
+    static void set_resource_directory_url(DeprecatedString);
+    static DeprecatedString error_page_url();
     static void set_error_page_url(DeprecatedString);
+    static DeprecatedString directory_page_url();
+    static void set_directory_page_url(DeprecatedString);
 
     explicit FrameLoader(HTML::BrowsingContext&);
     ~FrameLoader();

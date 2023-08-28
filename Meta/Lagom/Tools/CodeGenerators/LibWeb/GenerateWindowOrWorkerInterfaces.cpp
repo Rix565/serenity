@@ -92,7 +92,7 @@ class @legacy_constructor_class@;)~~~");
     };
 
     for (auto& interface : exposed_interfaces) {
-        auto gen = TRY(generator.fork());
+        auto gen = generator.fork();
 
         if (interface.is_namespace)
             add_namespace(gen, interface.namespace_class);
@@ -123,7 +123,7 @@ static ErrorOr<void> generate_intrinsic_definitions(StringView output_path, Vect
 #include <LibWeb/Bindings/Intrinsics.h>)~~~");
 
     for (auto& interface : exposed_interfaces) {
-        auto gen = TRY(generator.fork());
+        auto gen = generator.fork();
         gen.set("namespace_class", interface.namespace_class);
         gen.set("prototype_class", interface.prototype_class);
         gen.set("constructor_class", interface.constructor_class);
@@ -157,7 +157,7 @@ namespace Web::Bindings {
 template<>
 void Intrinsics::create_web_namespace<@namespace_class@>(JS::Realm& realm)
 {
-    auto namespace_object = heap().allocate<@namespace_class@>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
+    auto namespace_object = heap().allocate<@namespace_class@>(realm, realm);
     m_namespaces.set("@interface_name@"sv, namespace_object);
 
     [[maybe_unused]] static constexpr u8 attr = JS::Attribute::Writable | JS::Attribute::Configurable;)~~~");
@@ -178,7 +178,7 @@ void Intrinsics::create_web_namespace<@namespace_class@>(JS::Realm& realm)
 )~~~");
     };
 
-    auto add_interface = [&](SourceGenerator& gen, StringView name, StringView prototype_class, StringView constructor_class, Optional<LegacyConstructor> const& legacy_constructor) {
+    auto add_interface = [](SourceGenerator& gen, StringView name, StringView prototype_class, StringView constructor_class, Optional<LegacyConstructor> const& legacy_constructor) {
         gen.set("interface_name", name);
         gen.set("prototype_class", prototype_class);
         gen.set("constructor_class", constructor_class);
@@ -189,24 +189,24 @@ void Intrinsics::create_web_prototype_and_constructor<@prototype_class@>(JS::Rea
 {
     auto& vm = realm.vm();
 
-    auto prototype = heap().allocate<@prototype_class@>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
+    auto prototype = heap().allocate<@prototype_class@>(realm, realm);
     m_prototypes.set("@interface_name@"sv, prototype);
 
-    auto constructor = heap().allocate<@constructor_class@>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
+    auto constructor = heap().allocate<@constructor_class@>(realm, realm);
     m_constructors.set("@interface_name@"sv, constructor);
 
     prototype->define_direct_property(vm.names.constructor, constructor.ptr(), JS::Attribute::Writable | JS::Attribute::Configurable);
-    constructor->define_direct_property(vm.names.name, JS::PrimitiveString::create(vm, "@interface_name@"sv).release_allocated_value_but_fixme_should_propagate_errors(), JS::Attribute::Configurable);
+    constructor->define_direct_property(vm.names.name, JS::PrimitiveString::create(vm, "@interface_name@"_string), JS::Attribute::Configurable);
 )~~~");
 
         if (legacy_constructor.has_value()) {
             gen.set("legacy_interface_name", legacy_constructor->name);
             gen.set("legacy_constructor_class", legacy_constructor->constructor_class);
             gen.append(R"~~~(
-    auto legacy_constructor = heap().allocate<@legacy_constructor_class@>(realm, realm).release_allocated_value_but_fixme_should_propagate_errors();
+    auto legacy_constructor = heap().allocate<@legacy_constructor_class@>(realm, realm);
     m_constructors.set("@legacy_interface_name@"sv, legacy_constructor);
 
-    legacy_constructor->define_direct_property(vm.names.name, JS::PrimitiveString::create(vm, "@legacy_interface_name@"sv).release_allocated_value_but_fixme_should_propagate_errors(), JS::Attribute::Configurable);)~~~");
+    legacy_constructor->define_direct_property(vm.names.name, JS::PrimitiveString::create(vm, "@legacy_interface_name@"_string), JS::Attribute::Configurable);)~~~");
         }
 
         gen.append(R"~~~(
@@ -215,7 +215,7 @@ void Intrinsics::create_web_prototype_and_constructor<@prototype_class@>(JS::Rea
     };
 
     for (auto& interface : exposed_interfaces) {
-        auto gen = TRY(generator.fork());
+        auto gen = generator.fork();
 
         if (interface.is_namespace)
             add_namespace(gen, interface.name, interface.namespace_class);
@@ -274,7 +274,7 @@ static ErrorOr<void> generate_exposed_interface_implementation(StringView class_
 #include <LibWeb/Bindings/@global_object_name@ExposedInterfaces.h>
 )~~~");
     for (auto& interface : exposed_interfaces) {
-        auto gen = TRY(generator.fork());
+        auto gen = generator.fork();
         gen.set("namespace_class", interface.namespace_class);
         gen.set("prototype_class", interface.prototype_class);
         gen.set("constructor_class", interface.constructor_class);
@@ -327,7 +327,7 @@ void add_@global_object_snake_name@_exposed_interfaces(JS::Object& global)
     };
 
     for (auto& interface : exposed_interfaces) {
-        auto gen = TRY(generator.fork());
+        auto gen = generator.fork();
 
         if (interface.is_namespace)
             add_namespace(gen, interface.name, interface.namespace_class);
@@ -434,6 +434,8 @@ static ErrorOr<ExposedTo> parse_exposure_set(IDL::Interface& interface)
     auto exposed = maybe_exposed.value().trim_whitespace();
     if (exposed == "*"sv)
         return ExposedTo::All;
+    if (exposed == "Nobody"sv)
+        return ExposedTo::Nobody;
     if (exposed == "Window"sv)
         return ExposedTo::Window;
     if (exposed == "Worker"sv)
@@ -477,10 +479,8 @@ ErrorOr<void> add_to_interface_sets(IDL::Interface& interface, Vector<IDL::Inter
 {
     // TODO: Add service worker exposed and audio worklet exposed
     auto whom = TRY(parse_exposure_set(interface));
-    VERIFY(whom != ExposedTo::Nobody);
 
-    if ((whom & ExposedTo::Window) || (whom & ExposedTo::DedicatedWorker) || (whom & ExposedTo::SharedWorker))
-        intrinsics.append(interface);
+    intrinsics.append(interface);
 
     if (whom & ExposedTo::Window)
         window_exposed.append(interface);

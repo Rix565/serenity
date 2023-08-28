@@ -44,28 +44,10 @@ public:
     Heap const& heap() const { return m_heap; }
 
     Bytecode::Interpreter& bytecode_interpreter();
-    Bytecode::Interpreter* bytecode_interpreter_if_exists();
-
-    Interpreter& interpreter();
-    Interpreter* interpreter_if_exists();
-
-    void push_interpreter(Interpreter&);
-    void pop_interpreter(Interpreter&);
 
     void dump_backtrace() const;
 
-    class InterpreterExecutionScope {
-    public:
-        InterpreterExecutionScope(Interpreter&);
-        ~InterpreterExecutionScope();
-
-        Interpreter& interpreter() { return m_interpreter; }
-
-    private:
-        Interpreter& m_interpreter;
-    };
-
-    void gather_roots(HashTable<Cell*>&);
+    void gather_roots(HashMap<Cell*, HeapRootTypeOrLocation>&);
 
 #define __JS_ENUMERATE(SymbolName, snake_name)                  \
     NonnullGCPtr<Symbol> well_known_symbol_##snake_name() const \
@@ -239,7 +221,6 @@ public:
 
     CustomData* custom_data() { return m_custom_data; }
 
-    ThrowCompletionOr<void> destructuring_assignment_evaluation(NonnullRefPtr<BindingPattern const> const& target, Value value);
     ThrowCompletionOr<void> binding_initialization(DeprecatedFlyString const& target, Value value, Environment* environment);
     ThrowCompletionOr<void> binding_initialization(NonnullRefPtr<BindingPattern const> const& target, Value value, Environment* environment);
 
@@ -249,7 +230,6 @@ public:
     void restore_execution_context_stack();
 
     // Do not call this method unless you are sure this is the only and first module to be loaded in this vm.
-    ThrowCompletionOr<void> link_and_eval_module(Badge<Interpreter>, SourceTextModule& module);
     ThrowCompletionOr<void> link_and_eval_module(Badge<Bytecode::Interpreter>, SourceTextModule& module);
 
     ScriptOrModule get_active_script_or_module() const;
@@ -304,7 +284,6 @@ private:
     HashMap<DeprecatedString, GCPtr<PrimitiveString>> m_deprecated_string_cache;
 
     Heap m_heap;
-    Vector<Interpreter*> m_interpreters;
 
     Vector<ExecutionContext*> m_execution_context_stack;
 
@@ -343,5 +322,17 @@ private:
 
     OwnPtr<Bytecode::Interpreter> m_bytecode_interpreter;
 };
+
+template<typename GlobalObjectType, typename... Args>
+[[nodiscard]] static NonnullOwnPtr<ExecutionContext> create_simple_execution_context(VM& vm, Args&&... args)
+{
+    auto root_execution_context = MUST(Realm::initialize_host_defined_realm(
+        vm,
+        [&](Realm& realm_) -> GlobalObject* {
+            return vm.heap().allocate_without_realm<GlobalObjectType>(realm_, forward<Args>(args)...);
+        },
+        nullptr));
+    return root_execution_context;
+}
 
 }

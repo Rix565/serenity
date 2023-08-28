@@ -19,7 +19,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Module>> Module::construct_impl(JS::Realm& 
     auto& vm = realm.vm();
 
     auto index = TRY(Detail::parse_module(vm, bytes.cell()));
-    return MUST_OR_THROW_OOM(vm.heap().allocate<Module>(realm, realm, index));
+    return vm.heap().allocate<Module>(realm, realm, index);
 }
 
 Module::Module(JS::Realm& realm, size_t index)
@@ -28,12 +28,10 @@ Module::Module(JS::Realm& realm, size_t index)
 {
 }
 
-JS::ThrowCompletionOr<void> Module::initialize(JS::Realm& realm)
+void Module::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::ModulePrototype>(realm, "WebAssembly.Module"sv));
-
-    return {};
 }
 
 Wasm::Module const& Module::module() const

@@ -60,7 +60,7 @@ ErrorOr<void> BackgroundSettingsWidget::create_frame()
     m_wallpaper_view->set_model(GUI::FileSystemModel::create("/res/wallpapers"));
     m_wallpaper_view->set_model_column(GUI::FileSystemModel::Column::Name);
     m_wallpaper_view->on_selection_change = [this] {
-        String path = String::from_utf8_short_string(""sv);
+        String path;
         if (!m_wallpaper_view->selection().is_empty()) {
             auto index = m_wallpaper_view->selection().first();
             auto path_or_error = String::from_deprecated_string(static_cast<GUI::FileSystemModel*>(m_wallpaper_view->model())->full_path(index));
@@ -83,7 +83,7 @@ ErrorOr<void> BackgroundSettingsWidget::create_frame()
     });
     m_context_menu->add_action(*m_show_in_file_manager_action);
 
-    TRY(m_context_menu->try_add_separator());
+    m_context_menu->add_separator();
     m_copy_action = GUI::CommonActions::make_copy_action(
         [this](auto&) {
             auto wallpaper = m_monitor_widget->wallpaper();

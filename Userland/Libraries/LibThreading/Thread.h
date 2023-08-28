@@ -8,11 +8,12 @@
 #pragma once
 
 #include <AK/Assertions.h>
+#include <AK/AtomicRefCounted.h>
 #include <AK/DeprecatedString.h>
 #include <AK/DistinctNumeric.h>
 #include <AK/Function.h>
 #include <AK/Result.h>
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <pthread.h>
 
 namespace Threading {
@@ -41,10 +42,19 @@ enum class ThreadState : u8 {
     Joined,
 };
 
-class Thread final : public Core::Object {
-    C_OBJECT(Thread);
-
+class Thread final
+    : public AtomicRefCounted<Thread>
+    , public Weakable<Thread> {
 public:
+    static NonnullRefPtr<Thread> construct(Function<intptr_t()> action, StringView thread_name = {})
+    {
+        return adopt_ref(*new Thread(move(action), thread_name));
+    }
+    static ErrorOr<NonnullRefPtr<Thread>> try_create(Function<intptr_t()> action, StringView thread_name = {})
+    {
+        return adopt_nonnull_ref_or_enomem(new (nothrow) Thread(move(action), thread_name));
+    }
+
     virtual ~Thread();
 
     ErrorOr<void> set_priority(int priority);

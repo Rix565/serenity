@@ -55,8 +55,8 @@ CellTypeDialog::CellTypeDialog(Vector<Position> const& positions, Sheet& sheet, 
     auto& buttonbox = main_widget->add<GUI::Widget>();
     buttonbox.set_shrink_to_fit(true);
     buttonbox.set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 10);
-    buttonbox.add_spacer().release_value_but_fixme_should_propagate_errors();
-    auto& ok_button = buttonbox.add<GUI::Button>("OK"_short_string);
+    buttonbox.add_spacer();
+    auto& ok_button = buttonbox.add<GUI::Button>("OK"_string);
     ok_button.set_fixed_width(80);
     ok_button.on_click = [&](auto) { done(ExecResult::OK); };
 }
@@ -132,7 +132,7 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, Vector<Position> const& po
         m_conditional_formats = cell.conditional_formats();
     }
 
-    auto& type_tab = tabs.add_tab<GUI::Widget>("Type"_short_string);
+    auto& type_tab = tabs.add_tab<GUI::Widget>("Type"_string);
     type_tab.set_layout<GUI::HorizontalBoxLayout>(4);
     {
         auto& left_side = type_tab.add<GUI::Widget>();
@@ -153,11 +153,11 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, Vector<Position> const& po
 
             m_type = CellType::get_by_name(g_types.at(index.row()));
             if (auto* editor = right_side.find_descendant_of_type_named<GUI::TextEditor>("format_editor"))
-                editor->set_tooltip(m_type->metadata_hint(MetadataName::Format));
+                editor->set_tooltip_deprecated(m_type->metadata_hint(MetadataName::Format));
         };
 
         {
-            auto& checkbox = right_side.add<GUI::CheckBox>("Override max length"_string.release_value_but_fixme_should_propagate_errors());
+            auto& checkbox = right_side.add<GUI::CheckBox>("Override max length"_string);
             auto& spinbox = right_side.add<GUI::SpinBox>();
             checkbox.set_checked(m_length != -1);
             spinbox.set_min(0);
@@ -177,7 +177,7 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, Vector<Position> const& po
             };
         }
         {
-            auto& checkbox = right_side.add<GUI::CheckBox>("Override display format"_string.release_value_but_fixme_should_propagate_errors());
+            auto& checkbox = right_side.add<GUI::CheckBox>("Override display format"_string);
             auto& editor = right_side.add<GUI::TextEditor>();
             checkbox.set_checked(!m_format.is_empty());
             editor.set_name("format_editor");
@@ -197,7 +197,7 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, Vector<Position> const& po
         }
     }
 
-    auto& alignment_tab = tabs.add_tab<GUI::Widget>("Alignment"_string.release_value_but_fixme_should_propagate_errors());
+    auto& alignment_tab = tabs.add_tab<GUI::Widget>("Alignment"_string);
     alignment_tab.set_layout<GUI::VerticalBoxLayout>(4);
     {
         // FIXME: Frame?
@@ -209,7 +209,7 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, Vector<Position> const& po
 
             auto& horizontal_alignment_label = horizontal_alignment_selection_container.add<GUI::Label>();
             horizontal_alignment_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
-            horizontal_alignment_label.set_text("Horizontal text alignment"_string.release_value_but_fixme_should_propagate_errors());
+            horizontal_alignment_label.set_text("Horizontal text alignment"_string);
 
             auto& horizontal_combobox = alignment_tab.add<GUI::ComboBox>();
             horizontal_combobox.set_only_allow_values_from_model(true);
@@ -240,7 +240,7 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, Vector<Position> const& po
 
             auto& vertical_alignment_label = vertical_alignment_container.add<GUI::Label>();
             vertical_alignment_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
-            vertical_alignment_label.set_text("Vertical text alignment"_string.release_value_but_fixme_should_propagate_errors());
+            vertical_alignment_label.set_text("Vertical text alignment"_string);
 
             auto& vertical_combobox = alignment_tab.add<GUI::ComboBox>();
             vertical_combobox.set_only_allow_values_from_model(true);
@@ -264,7 +264,7 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, Vector<Position> const& po
         }
     }
 
-    auto& colors_tab = tabs.add_tab<GUI::Widget>("Color"_short_string);
+    auto& colors_tab = tabs.add_tab<GUI::Widget>("Color"_string);
     colors_tab.set_layout<GUI::VerticalBoxLayout>(4);
     {
         // Static formatting
@@ -281,7 +281,7 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, Vector<Position> const& po
 
                 auto& foreground_label = foreground_container.add<GUI::Label>();
                 foreground_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
-                foreground_label.set_text("Static foreground color"_string.release_value_but_fixme_should_propagate_errors());
+                foreground_label.set_text("Static foreground color"_string);
 
                 auto& foreground_selector = foreground_container.add<GUI::ColorInput>();
                 if (m_static_format.foreground_color.has_value())
@@ -300,7 +300,7 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, Vector<Position> const& po
 
                 auto& background_label = background_container.add<GUI::Label>();
                 background_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
-                background_label.set_text("Static background color"_string.release_value_but_fixme_should_propagate_errors());
+                background_label.set_text("Static background color"_string);
 
                 auto& background_selector = background_container.add<GUI::ColorInput>();
                 if (m_static_format.background_color.has_value())
@@ -312,7 +312,7 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, Vector<Position> const& po
         }
     }
 
-    auto& conditional_fmt_tab = tabs.add_tab<GUI::Widget>("Conditional format"_string.release_value_but_fixme_should_propagate_errors());
+    auto& conditional_fmt_tab = tabs.add_tab<GUI::Widget>("Conditional format"_string);
     conditional_fmt_tab.load_from_gml(cond_fmt_gml).release_value_but_fixme_should_propagate_errors();
     {
         auto& view = *conditional_fmt_tab.find_descendant_of_type_named<Spreadsheet::ConditionsView>("conditions_view");

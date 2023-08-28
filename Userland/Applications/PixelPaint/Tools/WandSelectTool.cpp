@@ -73,17 +73,17 @@ ErrorOr<GUI::Widget*> WandSelectTool::get_properties_widget()
     }
 
     auto properties_widget = TRY(GUI::Widget::try_create());
-    (void)TRY(properties_widget->try_set_layout<GUI::VerticalBoxLayout>());
+    properties_widget->set_layout<GUI::VerticalBoxLayout>();
 
     auto threshold_container = TRY(properties_widget->try_add<GUI::Widget>());
     threshold_container->set_fixed_height(20);
-    (void)TRY(threshold_container->try_set_layout<GUI::HorizontalBoxLayout>());
+    threshold_container->set_layout<GUI::HorizontalBoxLayout>();
 
-    auto threshold_label = TRY(threshold_container->try_add<GUI::Label>(TRY("Threshold:"_string)));
+    auto threshold_label = TRY(threshold_container->try_add<GUI::Label>("Threshold:"_string));
     threshold_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
     threshold_label->set_fixed_size(80, 20);
 
-    auto threshold_slider = TRY(threshold_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "%"_short_string));
+    auto threshold_slider = TRY(threshold_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "%"_string));
     threshold_slider->set_range(0, 100);
     threshold_slider->set_value(m_threshold);
 
@@ -94,10 +94,10 @@ ErrorOr<GUI::Widget*> WandSelectTool::get_properties_widget()
 
     auto mode_container = TRY(properties_widget->try_add<GUI::Widget>());
     mode_container->set_fixed_height(20);
-    (void)TRY(mode_container->try_set_layout<GUI::HorizontalBoxLayout>());
+    mode_container->set_layout<GUI::HorizontalBoxLayout>();
 
     auto mode_label = TRY(mode_container->try_add<GUI::Label>());
-    mode_label->set_text("Mode:"_short_string);
+    mode_label->set_text("Mode:"_string);
     mode_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
     mode_label->set_fixed_size(80, 20);
 

@@ -39,7 +39,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::unveil("/res", "r"));
     TRY(Core::System::unveil(nullptr, nullptr));
 
-    auto click_tip = TRY("Tip: click the board to toggle individual cells, or click+drag to toggle multiple cells"_string);
+    auto click_tip = "Tip: click the board to toggle individual cells, or click+drag to toggle multiple cells"_string;
 
     auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-gameoflife"sv));
 
@@ -60,7 +60,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     main_toolbar.layout()->set_margins({ 0, 6 });
 
     auto& board_widget_container = *main_widget->find_descendant_of_type_named<GUI::Widget>("board_widget_container");
-    TRY(board_widget_container.try_set_layout<GUI::VerticalBoxLayout>(GUI::Margins {}, 0));
+    board_widget_container.set_layout<GUI::VerticalBoxLayout>(GUI::Margins {}, 0);
     auto board_widget = TRY(board_widget_container.try_add<BoardWidget>(board_rows, board_columns));
     board_widget->randomize_cells();
 
@@ -104,61 +104,61 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     });
 
     toggle_running_action->set_checkable(true);
-    auto toggle_running_toolbar_button = TRY(main_toolbar.try_add_action(toggle_running_action));
+    auto& toggle_running_toolbar_button = main_toolbar.add_action(toggle_running_action);
 
     auto run_one_generation_action = GUI::Action::create("Run &Next Generation", { Mod_Ctrl, Key_Equal }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/go-forward.png"sv)), [&](const GUI::Action&) {
         statusbar.set_text(click_tip);
         board_widget->run_generation();
     });
-    (void)TRY(main_toolbar.try_add_action(run_one_generation_action));
+    main_toolbar.add_action(run_one_generation_action);
 
     auto clear_board_action = GUI::Action::create("&Clear board", { Mod_Ctrl, Key_N }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/delete.png"sv)), [&](auto&) {
         statusbar.set_text(click_tip);
         board_widget->clear_cells();
         board_widget->update();
     });
-    (void)TRY(main_toolbar.try_add_action(clear_board_action));
+    main_toolbar.add_action(clear_board_action);
 
     auto randomize_cells_action = GUI::Action::create("&Randomize board", { Mod_Ctrl, Key_R }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"sv)), [&](auto&) {
         statusbar.set_text(click_tip);
         board_widget->randomize_cells();
         board_widget->update();
     });
-    (void)TRY(main_toolbar.try_add_action(randomize_cells_action));
+    main_toolbar.add_action(randomize_cells_action);
 
     auto rotate_pattern_action = GUI::Action::create("&Rotate pattern", { 0, Key_R }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/redo.png"sv)), [&](auto&) {
         board_widget->selected_pattern()->rotate_clockwise();
     });
     rotate_pattern_action->set_enabled(false);
-    (void)TRY(main_toolbar.try_add_action(rotate_pattern_action));
+    main_toolbar.add_action(rotate_pattern_action);
 
-    auto game_menu = TRY(window->try_add_menu("&Game"_short_string));
+    auto game_menu = window->add_menu("&Game"_string);
 
-    TRY(game_menu->try_add_action(clear_board_action));
-    TRY(game_menu->try_add_action(randomize_cells_action));
-    TRY(game_menu->try_add_separator());
-    TRY(game_menu->try_add_action(toggle_running_action));
-    TRY(game_menu->try_add_action(run_one_generation_action));
-    TRY(game_menu->try_add_separator());
-    TRY(game_menu->try_add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    game_menu->add_action(clear_board_action);
+    game_menu->add_action(randomize_cells_action);
+    game_menu->add_separator();
+    game_menu->add_action(toggle_running_action);
+    game_menu->add_action(run_one_generation_action);
+    game_menu->add_separator();
+    game_menu->add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
-    })));
+    }));
 
-    auto help_menu = TRY(window->try_add_menu("&Help"_short_string));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_command_palette_action(window)));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+    auto help_menu = window->add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(window));
+    help_menu->add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_scheme("/usr/share/man/man6/GameOfLife.md"), "/bin/Help");
-    })));
-    TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Game of Life", app_icon, window)));
+    }));
+    help_menu->add_action(GUI::CommonActions::make_about_action("Game of Life", app_icon, window));
 
     board_widget->on_running_state_change = [&]() {
         if (board_widget->is_running()) {
-            statusbar.set_text("Running..."_string.release_value_but_fixme_should_propagate_errors());
-            toggle_running_toolbar_button->set_icon(*paused_icon);
+            statusbar.set_text("Running..."_string);
+            toggle_running_toolbar_button.set_icon(*paused_icon);
             main_widget->set_override_cursor(Gfx::StandardCursor::None);
         } else {
             statusbar.set_text(click_tip);
-            toggle_running_toolbar_button->set_icon(*play_icon);
+            toggle_running_toolbar_button.set_icon(*play_icon);
             main_widget->set_override_cursor(Gfx::StandardCursor::Drag);
         }
 
@@ -177,7 +177,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     board_widget->on_stall = [&] {
         toggle_running_action->activate();
-        statusbar.set_text("Stalled..."_string.release_value_but_fixme_should_propagate_errors());
+        statusbar.set_text("Stalled..."_string);
     };
 
     board_widget->on_cell_toggled = [&](auto, auto, auto) {

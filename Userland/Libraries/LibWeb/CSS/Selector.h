@@ -11,6 +11,8 @@
 #include <AK/RefCounted.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
+#include <LibWeb/CSS/PseudoClass.h>
+#include <LibWeb/CSS/ValueID.h>
 
 namespace Web::CSS {
 
@@ -50,11 +52,11 @@ public:
             int offset = { 0 };  // "B"
 
             // https://www.w3.org/TR/css-syntax-3/#serializing-anb
-            ErrorOr<String> serialize() const
+            String serialize() const
             {
                 // 1. If A is zero, return the serialization of B.
                 if (step_size == 0) {
-                    return String::formatted("{}", offset);
+                    return MUST(String::number(offset));
                 }
 
                 // 2. Otherwise, let result initially be an empty string.
@@ -63,67 +65,29 @@ public:
                 // 3.
                 // - A is 1: Append "n" to result.
                 if (step_size == 1)
-                    TRY(result.try_append('n'));
+                    result.append('n');
                 // - A is -1: Append "-n" to result.
                 else if (step_size == -1)
-                    TRY(result.try_append("-n"sv));
+                    result.append("-n"sv);
                 // - A is non-zero: Serialize A and append it to result, then append "n" to result.
                 else if (step_size != 0)
-                    TRY(result.try_appendff("{}n", step_size));
+                    result.appendff("{}n", step_size);
 
                 // 4.
                 // - B is greater than zero: Append "+" to result, then append the serialization of B to result.
                 if (offset > 0)
-                    TRY(result.try_appendff("+{}", offset));
+                    result.appendff("+{}", offset);
                 // - B is less than zero: Append the serialization of B to result.
                 if (offset < 0)
-                    TRY(result.try_appendff("{}", offset));
+                    result.appendff("{}", offset);
 
                 // 5. Return result.
-                return result.to_string();
+                return MUST(result.to_string());
             }
         };
 
-        struct PseudoClass {
-            enum class Type {
-                Link,
-                Visited,
-                Hover,
-                Focus,
-                FocusWithin,
-                FirstChild,
-                LastChild,
-                OnlyChild,
-                NthChild,
-                NthLastChild,
-                Empty,
-                Root,
-                Host,
-                FirstOfType,
-                LastOfType,
-                OnlyOfType,
-                NthOfType,
-                NthLastOfType,
-                Disabled,
-                Enabled,
-                Checked,
-                Indeterminate,
-                Is,
-                Not,
-                Where,
-                Active,
-                Lang,
-                Scope,
-                Defined,
-                Playing,
-                Paused,
-                Seeking,
-                Muted,
-                VolumeLocked,
-                Buffering,
-                Stalled,
-            };
-            Type type;
+        struct PseudoClassSelector {
+            PseudoClass type;
 
             // FIXME: We don't need this field on every single SimpleSelector, but it's also annoying to malloc it somewhere.
             // Only used when "pseudo_class" is "NthChild" or "NthLastChild".
@@ -133,6 +97,34 @@ public:
 
             // Used for :lang(en-gb,dk)
             Vector<FlyString> languages {};
+
+            // Used by :dir()
+            Optional<ValueID> identifier {};
+        };
+
+        struct Name {
+            Name(FlyString n)
+                : name(move(n))
+                , lowercase_name(name.to_string().to_lowercase().release_value_but_fixme_should_propagate_errors())
+            {
+            }
+
+            FlyString name;
+            FlyString lowercase_name;
+        };
+
+        // Equivalent to `<wq-name>`
+        // https://www.w3.org/TR/selectors-4/#typedef-wq-name
+        struct QualifiedName {
+            enum class NamespaceType {
+                Default, // `E`
+                None,    // `|E`
+                Any,     // `*|E`
+                Named,   // `ns|E`
+            };
+            NamespaceType namespace_type { NamespaceType::Default };
+            FlyString namespace_ {};
+            Name name;
         };
 
         struct Attribute {
@@ -151,29 +143,18 @@ public:
                 CaseInsensitiveMatch,
             };
             MatchType match_type;
-            FlyString name {};
+            QualifiedName qualified_name;
             String value {};
             CaseType case_type;
         };
 
-        struct Name {
-            Name(FlyString n)
-                : name(move(n))
-                , lowercase_name(name.to_string().to_lowercase().release_value_but_fixme_should_propagate_errors())
-            {
-            }
-
-            FlyString name;
-            FlyString lowercase_name;
-        };
-
         Type type;
-        Variant<Empty, Attribute, PseudoClass, PseudoElement, Name> value {};
+        Variant<Empty, Attribute, PseudoClassSelector, PseudoElement, Name, QualifiedName> value {};
 
         Attribute const& attribute() const { return value.get<Attribute>(); }
         Attribute& attribute() { return value.get<Attribute>(); }
-        PseudoClass const& pseudo_class() const { return value.get<PseudoClass>(); }
-        PseudoClass& pseudo_class() { return value.get<PseudoClass>(); }
+        PseudoClassSelector const& pseudo_class() const { return value.get<PseudoClassSelector>(); }
+        PseudoClassSelector& pseudo_class() { return value.get<PseudoClassSelector>(); }
         PseudoElement const& pseudo_element() const { return value.get<PseudoElement>(); }
         PseudoElement& pseudo_element() { return value.get<PseudoElement>(); }
 
@@ -181,8 +162,10 @@ public:
         FlyString& name() { return value.get<Name>().name; }
         FlyString const& lowercase_name() const { return value.get<Name>().lowercase_name; }
         FlyString& lowercase_name() { return value.get<Name>().lowercase_name; }
+        QualifiedName const& qualified_name() const { return value.get<QualifiedName>(); }
+        QualifiedName& qualified_name() { return value.get<QualifiedName>(); }
 
-        ErrorOr<String> serialize() const;
+        String serialize() const;
     };
 
     enum class Combinator {
@@ -211,7 +194,7 @@ public:
     Vector<CompoundSelector> const& compound_selectors() const { return m_compound_selectors; }
     Optional<PseudoElement> pseudo_element() const { return m_pseudo_element; }
     u32 specificity() const;
-    ErrorOr<String> serialize() const;
+    String serialize() const;
 
 private:
     explicit Selector(Vector<CompoundSelector>&&);
@@ -250,86 +233,7 @@ constexpr StringView pseudo_element_name(Selector::PseudoElement pseudo_element)
 
 Optional<Selector::PseudoElement> pseudo_element_from_string(StringView);
 
-constexpr StringView pseudo_class_name(Selector::SimpleSelector::PseudoClass::Type pseudo_class)
-{
-    switch (pseudo_class) {
-    case Selector::SimpleSelector::PseudoClass::Type::Link:
-        return "link"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Visited:
-        return "visited"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Hover:
-        return "hover"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Focus:
-        return "focus"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::FocusWithin:
-        return "focus-within"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::FirstChild:
-        return "first-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::LastChild:
-        return "last-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::OnlyChild:
-        return "only-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Empty:
-        return "empty"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Root:
-        return "root"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Host:
-        return "host"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::FirstOfType:
-        return "first-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::LastOfType:
-        return "last-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::OnlyOfType:
-        return "only-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::NthOfType:
-        return "nth-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::NthLastOfType:
-        return "nth-last-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Disabled:
-        return "disabled"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Enabled:
-        return "enabled"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Checked:
-        return "checked"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Indeterminate:
-        return "indeterminate"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Active:
-        return "active"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::NthChild:
-        return "nth-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::NthLastChild:
-        return "nth-last-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Is:
-        return "is"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Not:
-        return "not"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Where:
-        return "where"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Lang:
-        return "lang"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Scope:
-        return "scope"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Defined:
-        return "defined"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Playing:
-        return "playing"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Paused:
-        return "paused"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Seeking:
-        return "seeking"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Muted:
-        return "muted"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::VolumeLocked:
-        return "volume-locked"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Buffering:
-        return "buffering"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Stalled:
-        return "stalled"sv;
-    }
-    VERIFY_NOT_REACHED();
-}
-
-ErrorOr<String> serialize_a_group_of_selectors(Vector<NonnullRefPtr<Selector>> const& selectors);
+String serialize_a_group_of_selectors(Vector<NonnullRefPtr<Selector>> const& selectors);
 
 }
 
@@ -339,7 +243,7 @@ template<>
 struct Formatter<Web::CSS::Selector> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder& builder, Web::CSS::Selector const& selector)
     {
-        return Formatter<StringView>::format(builder, TRY(selector.serialize()));
+        return Formatter<StringView>::format(builder, selector.serialize());
     }
 };
 

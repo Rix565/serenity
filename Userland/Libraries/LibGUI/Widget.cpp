@@ -31,23 +31,33 @@
 #include <LibGfx/SystemTheme.h>
 #include <unistd.h>
 
-REGISTER_CORE_OBJECT(GUI, Widget)
+REGISTER_GUI_OBJECT(GUI, Widget)
 
 namespace GUI {
 
 Widget::Widget()
-    : Core::Object(nullptr)
-    , m_background_role(Gfx::ColorRole::Window)
+    : m_background_role(Gfx::ColorRole::Window)
     , m_foreground_role(Gfx::ColorRole::WindowText)
     , m_font(Gfx::FontDatabase::default_font())
     , m_palette(Application::the()->palette().impl())
 {
+    REGISTER_READONLY_STRING_PROPERTY("class_name", class_name);
+    REGISTER_DEPRECATED_STRING_PROPERTY("name", name, set_name);
+
+    register_property(
+        "address", [this] { return FlatPtr(this); },
+        [](auto&) { return false; });
+
+    register_property(
+        "parent", [this] { return FlatPtr(this->parent()); },
+        [](auto&) { return false; });
+
     REGISTER_RECT_PROPERTY("relative_rect", relative_rect, set_relative_rect);
     REGISTER_BOOL_PROPERTY("fill_with_background_color", fill_with_background_color, set_fill_with_background_color);
     REGISTER_BOOL_PROPERTY("visible", is_visible, set_visible);
     REGISTER_BOOL_PROPERTY("focused", is_focused, set_focus);
     REGISTER_BOOL_PROPERTY("enabled", is_enabled, set_enabled);
-    REGISTER_DEPRECATED_STRING_PROPERTY("tooltip", tooltip, set_tooltip);
+    REGISTER_STRING_PROPERTY("tooltip", tooltip, set_tooltip);
 
     REGISTER_UI_SIZE_PROPERTY("min_size", min_size, set_min_size);
     REGISTER_READONLY_UI_SIZE_PROPERTY("effective_min_size", effective_min_size);
@@ -72,12 +82,13 @@ Widget::Widget()
     REGISTER_INT_PROPERTY("x", x, set_x);
     REGISTER_INT_PROPERTY("y", y, set_y);
 
-    REGISTER_DEPRECATED_STRING_PROPERTY("font", m_font->family, set_font_family);
+    REGISTER_STRING_PROPERTY("font", font_family, set_font_family);
     REGISTER_INT_PROPERTY("font_size", m_font->presentation_size, set_font_size);
     REGISTER_FONT_WEIGHT_PROPERTY("font_weight", m_font->weight, set_font_weight);
 
     REGISTER_STRING_PROPERTY("title", title, set_title);
 
+    REGISTER_BOOL_PROPERTY("font_fixed_width", is_font_fixed_width, set_font_fixed_width)
     register_property(
         "font_type", [this] { return m_font->is_fixed_width() ? "FixedWidth" : "Normal"; },
         [this](auto& value) {
@@ -239,7 +250,7 @@ void Widget::child_event(Core::ChildEvent& event)
         }
         update();
     }
-    return Core::Object::child_event(event);
+    return Core::EventReceiver::child_event(event);
 }
 
 void Widget::set_relative_rect(Gfx::IntRect const& a_rect)
@@ -337,7 +348,7 @@ void Widget::event(Core::Event& event)
     case Event::AppletAreaRectChange:
         return applet_area_rect_change_event(static_cast<AppletAreaRectChangeEvent&>(event));
     default:
-        return Core::Object::event(event);
+        return Core::EventReceiver::event(event);
     }
 }
 
@@ -404,11 +415,6 @@ void Widget::handle_paint_event(PaintEvent& event)
     if (app && app->hover_debugging_enabled() && this == window()->hovered_widget()) {
         Painter painter(*this);
         painter.draw_rect(rect(), Color::Red);
-    }
-
-    if (is_being_inspected()) {
-        Painter painter(*this);
-        painter.draw_rect(rect(), Color::Magenta);
     }
 }
 
@@ -813,9 +819,9 @@ void Widget::set_font(Gfx::Font const* font)
     update();
 }
 
-void Widget::set_font_family(DeprecatedString const& family)
+void Widget::set_font_family(String const& family)
 {
-    set_font(Gfx::FontDatabase::the().get(family, m_font->presentation_size(), m_font->weight(), m_font->width(), m_font->slope()));
+    set_font(Gfx::FontDatabase::the().get(family.to_deprecated_string(), m_font->presentation_size(), m_font->weight(), m_font->width(), m_font->slope()));
 }
 
 void Widget::set_font_size(unsigned size)
@@ -834,6 +840,11 @@ void Widget::set_font_fixed_width(bool fixed_width)
         set_font(Gfx::FontDatabase::the().get(Gfx::FontDatabase::the().default_fixed_width_font().family(), m_font->presentation_size(), m_font->weight(), m_font->width(), m_font->slope()));
     else
         set_font(Gfx::FontDatabase::the().get(Gfx::FontDatabase::the().default_font().family(), m_font->presentation_size(), m_font->weight(), m_font->width(), m_font->slope()));
+}
+
+bool Widget::is_font_fixed_width()
+{
+    return font().is_fixed_width();
 }
 
 void Widget::set_min_size(UISize const& size)
@@ -1079,16 +1090,6 @@ Gfx::Palette Widget::palette() const
     return Gfx::Palette(*m_palette);
 }
 
-void Widget::did_begin_inspection()
-{
-    update();
-}
-
-void Widget::did_end_inspection()
-{
-    update();
-}
-
 void Widget::set_grabbable_margins(Margins const& margins)
 {
     if (m_grabbable_margins == margins)
@@ -1106,7 +1107,12 @@ Gfx::IntRect Widget::relative_non_grabbable_rect() const
     return rect;
 }
 
-void Widget::set_tooltip(DeprecatedString tooltip)
+void Widget::set_tooltip_deprecated(DeprecatedString tooltip)
+{
+    set_tooltip(String::from_deprecated_string(move(tooltip)).release_value_but_fixme_should_propagate_errors());
+}
+
+void Widget::set_tooltip(String tooltip)
 {
     m_tooltip = move(tooltip);
     if (Application::the()->tooltip_source_widget() == this)
@@ -1116,7 +1122,7 @@ void Widget::set_tooltip(DeprecatedString tooltip)
 void Widget::show_or_hide_tooltip()
 {
     if (has_tooltip())
-        Application::the()->show_tooltip(m_tooltip, this);
+        Application::the()->show_tooltip(m_tooltip.to_deprecated_string(), this);
     else
         Application::the()->hide_tooltip();
 }
@@ -1139,7 +1145,7 @@ void Widget::set_override_cursor(AK::Variant<Gfx::StandardCursor, NonnullRefPtr<
 
 ErrorOr<void> Widget::load_from_gml(StringView gml_string)
 {
-    return load_from_gml(gml_string, [](DeprecatedString const& class_name) -> ErrorOr<NonnullRefPtr<Core::Object>> {
+    return load_from_gml(gml_string, [](StringView class_name) -> ErrorOr<NonnullRefPtr<Core::EventReceiver>> {
         dbgln("Class '{}' not registered", class_name);
         return Error::from_string_literal("Class not registered");
     });
@@ -1170,8 +1176,8 @@ ErrorOr<void> Widget::load_from_gml_ast(NonnullRefPtr<GUI::GML::Node const> ast,
             return Error::from_string_literal("Invalid layout class name");
         }
 
-        auto& layout_class = *Core::ObjectClassRegistration::find("GUI::Layout"sv);
-        if (auto* registration = Core::ObjectClassRegistration::find(class_name)) {
+        auto& layout_class = *GUI::ObjectClassRegistration::find("GUI::Layout"sv);
+        if (auto* registration = GUI::ObjectClassRegistration::find(class_name)) {
             auto layout = TRY(registration->construct());
             if (!registration->is_derived_from(layout_class)) {
                 dbgln("Invalid layout class: '{}'", class_name.to_deprecated_string());
@@ -1188,7 +1194,7 @@ ErrorOr<void> Widget::load_from_gml_ast(NonnullRefPtr<GUI::GML::Node const> ast,
         });
     }
 
-    auto& widget_class = *Core::ObjectClassRegistration::find("GUI::Widget"sv);
+    auto& widget_class = *GUI::ObjectClassRegistration::find("GUI::Widget"sv);
     bool is_tab_widget = is<TabWidget>(*this);
     TRY(object.try_for_each_child_object([&](auto const& child_data) -> ErrorOr<void> {
         auto class_name = child_data.name();
@@ -1198,10 +1204,10 @@ ErrorOr<void> Widget::load_from_gml_ast(NonnullRefPtr<GUI::GML::Node const> ast,
             if (!this->layout()) {
                 return Error::from_string_literal("Specified GUI::Layout::Spacer in GML, but the parent has no Layout.");
             }
-            this->layout()->add_spacer();
+            add_spacer();
         } else {
-            RefPtr<Core::Object> child;
-            if (auto* registration = Core::ObjectClassRegistration::find(class_name)) {
+            RefPtr<Core::EventReceiver> child;
+            if (auto* registration = GUI::ObjectClassRegistration::find(class_name)) {
                 child = TRY(registration->construct());
                 if (!registration->is_derived_from(widget_class)) {
                     dbgln("Invalid widget class: '{}'", class_name);
@@ -1258,10 +1264,15 @@ bool Widget::is_visible_for_timer_purposes() const
     return is_visible() && Object::is_visible_for_timer_purposes();
 }
 
-ErrorOr<void> Widget::add_spacer()
+void Widget::add_spacer()
 {
     VERIFY(layout());
-    return layout()->try_add_spacer();
+    return layout()->add_spacer();
+}
+
+String Widget::font_family() const
+{
+    return String::from_deprecated_string(m_font->family()).release_value_but_fixme_should_propagate_errors();
 }
 
 }

@@ -22,19 +22,19 @@ void GMLPreviewWidget::load_gml(DeprecatedString const& gml)
 
     if (gml.is_empty()) {
         auto& label = add<GUI::Label>();
-        label.set_text("Open a .gml file to show the preview"_string.release_value_but_fixme_should_propagate_errors());
+        label.set_text("Open a .gml file to show the preview"_string);
 
         return;
     }
 
     // FIXME: Parsing errors happen while the user is typing. What should we do about them?
-    (void)load_from_gml(gml, [](DeprecatedString const& name) -> ErrorOr<NonnullRefPtr<Core::Object>> {
+    (void)load_from_gml(gml, [](StringView name) -> ErrorOr<NonnullRefPtr<Core::EventReceiver>> {
         return GUI::Label::try_create(TRY(String::formatted("{} is not registered as a GML element!", name)));
     });
 
     if (children().is_empty()) {
         auto& label = add<GUI::Label>();
-        label.set_text("Failed to load GML!"_string.release_value_but_fixme_should_propagate_errors());
+        label.set_text("Failed to load GML!"_string);
     }
 }
 

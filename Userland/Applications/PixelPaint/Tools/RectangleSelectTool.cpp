@@ -158,19 +158,19 @@ ErrorOr<GUI::Widget*> RectangleSelectTool::get_properties_widget()
     }
 
     auto properties_widget = TRY(GUI::Widget::try_create());
-    (void)TRY(properties_widget->try_set_layout<GUI::VerticalBoxLayout>());
+    properties_widget->set_layout<GUI::VerticalBoxLayout>();
 
     auto feather_container = TRY(properties_widget->try_add<GUI::Widget>());
     feather_container->set_fixed_height(20);
-    (void)TRY(feather_container->try_set_layout<GUI::HorizontalBoxLayout>());
+    feather_container->set_layout<GUI::HorizontalBoxLayout>();
 
     auto feather_label = TRY(feather_container->try_add<GUI::Label>());
-    feather_label->set_text(TRY("Feather:"_string));
+    feather_label->set_text("Feather:"_string);
     feather_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
     feather_label->set_fixed_size(80, 20);
 
     int const feather_slider_max = 100;
-    auto feather_slider = TRY(feather_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "%"_short_string));
+    auto feather_slider = TRY(feather_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "%"_string));
     feather_slider->set_range(0, feather_slider_max);
     feather_slider->set_value((int)floorf(m_edge_feathering * (float)feather_slider_max));
 
@@ -181,10 +181,10 @@ ErrorOr<GUI::Widget*> RectangleSelectTool::get_properties_widget()
 
     auto mode_container = TRY(properties_widget->try_add<GUI::Widget>());
     mode_container->set_fixed_height(20);
-    (void)TRY(mode_container->try_set_layout<GUI::HorizontalBoxLayout>());
+    mode_container->set_layout<GUI::HorizontalBoxLayout>();
 
     auto mode_label = TRY(mode_container->try_add<GUI::Label>());
-    mode_label->set_text("Mode:"_short_string);
+    mode_label->set_text("Mode:"_string);
     mode_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
     mode_label->set_fixed_size(80, 20);
 

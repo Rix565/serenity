@@ -18,12 +18,10 @@ HTMLHeadingElement::HTMLHeadingElement(DOM::Document& document, DOM::QualifiedNa
 
 HTMLHeadingElement::~HTMLHeadingElement() = default;
 
-JS::ThrowCompletionOr<void> HTMLHeadingElement::initialize(JS::Realm& realm)
+void HTMLHeadingElement::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::HTMLHeadingElementPrototype>(realm, "HTMLHeadingElement"));
-
-    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/rendering.html#tables-2
@@ -33,13 +31,13 @@ void HTMLHeadingElement::apply_presentational_hints(CSS::StyleProperties& style)
     for_each_attribute([&](auto& name, auto& value) {
         if (name.equals_ignoring_ascii_case("align"sv)) {
             if (value == "left"sv)
-                style.set_property(CSS::PropertyID::TextAlign, CSS::IdentifierStyleValue::create(CSS::ValueID::Left).release_value_but_fixme_should_propagate_errors());
+                style.set_property(CSS::PropertyID::TextAlign, CSS::IdentifierStyleValue::create(CSS::ValueID::Left));
             else if (value == "right"sv)
-                style.set_property(CSS::PropertyID::TextAlign, CSS::IdentifierStyleValue::create(CSS::ValueID::Right).release_value_but_fixme_should_propagate_errors());
+                style.set_property(CSS::PropertyID::TextAlign, CSS::IdentifierStyleValue::create(CSS::ValueID::Right));
             else if (value == "center"sv)
-                style.set_property(CSS::PropertyID::TextAlign, CSS::IdentifierStyleValue::create(CSS::ValueID::Center).release_value_but_fixme_should_propagate_errors());
+                style.set_property(CSS::PropertyID::TextAlign, CSS::IdentifierStyleValue::create(CSS::ValueID::Center));
             else if (value == "justify"sv)
-                style.set_property(CSS::PropertyID::TextAlign, CSS::IdentifierStyleValue::create(CSS::ValueID::Justify).release_value_but_fixme_should_propagate_errors());
+                style.set_property(CSS::PropertyID::TextAlign, CSS::IdentifierStyleValue::create(CSS::ValueID::Justify));
         }
     });
 }

@@ -72,20 +72,16 @@ public:
 
     bool is_valid() const { return m_valid; }
 
-    enum class ApplyPercentDecoding {
-        Yes,
-        No
-    };
-    DeprecatedString const& scheme() const { return m_scheme; }
-    DeprecatedString username(ApplyPercentDecoding = ApplyPercentDecoding::Yes) const;
-    DeprecatedString password(ApplyPercentDecoding = ApplyPercentDecoding::Yes) const;
+    String const& scheme() const { return m_scheme; }
+    ErrorOr<String> username() const;
+    ErrorOr<String> password() const;
     Host const& host() const { return m_host; }
     ErrorOr<String> serialized_host() const;
-    DeprecatedString basename(ApplyPercentDecoding = ApplyPercentDecoding::Yes) const;
-    DeprecatedString query(ApplyPercentDecoding = ApplyPercentDecoding::No) const;
-    DeprecatedString fragment(ApplyPercentDecoding = ApplyPercentDecoding::Yes) const;
+    DeprecatedString basename() const;
+    Optional<String> const& query() const { return m_query; }
+    Optional<String> const& fragment() const { return m_fragment; }
     Optional<u16> port() const { return m_port; }
-    DeprecatedString path_segment_at_index(size_t index, ApplyPercentDecoding = ApplyPercentDecoding::Yes) const;
+    DeprecatedString path_segment_at_index(size_t index) const;
     size_t path_segment_count() const { return m_paths.size(); }
 
     u16 port_or_default() const { return m_port.value_or(default_port_for_scheme(m_scheme)); }
@@ -95,27 +91,23 @@ public:
     bool includes_credentials() const { return !m_username.is_empty() || !m_password.is_empty(); }
     bool is_special() const { return is_special_scheme(m_scheme); }
 
-    enum class ApplyPercentEncoding {
-        Yes,
-        No
-    };
-    void set_scheme(DeprecatedString);
-    void set_username(DeprecatedString, ApplyPercentEncoding = ApplyPercentEncoding::Yes);
-    void set_password(DeprecatedString, ApplyPercentEncoding = ApplyPercentEncoding::Yes);
+    void set_scheme(String);
+    ErrorOr<void> set_username(StringView);
+    ErrorOr<void> set_password(StringView);
     void set_host(Host);
     void set_port(Optional<u16>);
-    void set_paths(Vector<DeprecatedString>, ApplyPercentEncoding = ApplyPercentEncoding::Yes);
-    void set_query(DeprecatedString, ApplyPercentEncoding = ApplyPercentEncoding::Yes);
-    void set_fragment(DeprecatedString fragment, ApplyPercentEncoding = ApplyPercentEncoding::Yes);
+    void set_paths(Vector<DeprecatedString> const&);
+    void set_query(Optional<String> query) { m_query = move(query); }
+    void set_fragment(Optional<String> fragment) { m_fragment = move(fragment); }
     void set_cannot_be_a_base_url(bool value) { m_cannot_be_a_base_url = value; }
-    void append_path(DeprecatedString, ApplyPercentEncoding = ApplyPercentEncoding::Yes);
+    void append_path(StringView);
     void append_slash()
     {
         // NOTE: To indicate that we want to end the path with a slash, we have to append an empty path segment.
-        append_path("", ApplyPercentEncoding::No);
+        m_paths.append("");
     }
 
-    DeprecatedString serialize_path(ApplyPercentDecoding = ApplyPercentDecoding::Yes) const;
+    DeprecatedString serialize_path() const;
     DeprecatedString serialize(ExcludeFragment = ExcludeFragment::No) const;
     DeprecatedString serialize_for_display() const;
     DeprecatedString to_deprecated_string() const { return serialize(); }
@@ -153,6 +145,9 @@ public:
 
     static bool code_point_is_in_percent_encode_set(u32 code_point, URL::PercentEncodeSet);
 
+    String const& raw_username() const { return m_username; }
+    String const& raw_password() const { return m_password; }
+
 private:
     bool compute_validity() const;
 
@@ -162,13 +157,13 @@ private:
     bool m_valid { false };
 
     // A URL’s scheme is an ASCII string that identifies the type of URL and can be used to dispatch a URL for further processing after parsing. It is initially the empty string.
-    DeprecatedString m_scheme;
+    String m_scheme;
 
     // A URL’s username is an ASCII string identifying a username. It is initially the empty string.
-    DeprecatedString m_username;
+    String m_username;
 
     // A URL’s password is an ASCII string identifying a password. It is initially the empty string.
-    DeprecatedString m_password;
+    String m_password;
 
     // A URL’s host is null or a host. It is initially null.
     Host m_host;
@@ -178,14 +173,13 @@ private:
 
     // A URL’s path is either a URL path segment or a list of zero or more URL path segments, usually identifying a location. It is initially « ».
     // A URL path segment is an ASCII string. It commonly refers to a directory or a file, but has no predefined meaning.
-    DeprecatedString m_path;
     Vector<DeprecatedString> m_paths;
 
     // A URL’s query is either null or an ASCII string. It is initially null.
-    DeprecatedString m_query;
+    Optional<String> m_query;
 
     // A URL’s fragment is either null or an ASCII string that can be used for further processing on the resource the URL’s other components identify. It is initially null.
-    DeprecatedString m_fragment;
+    Optional<String> m_fragment;
 
     bool m_cannot_be_a_base_url { false };
 };

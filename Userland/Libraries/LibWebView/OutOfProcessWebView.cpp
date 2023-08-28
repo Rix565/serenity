@@ -10,9 +10,6 @@
 #include <LibFileSystemAccessClient/Client.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Desktop.h>
-#include <LibGUI/Dialog.h>
-#include <LibGUI/InputBox.h>
-#include <LibGUI/MessageBox.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/Scrollbar.h>
 #include <LibGUI/Window.h>
@@ -25,13 +22,59 @@ REGISTER_WIDGET(WebView, OutOfProcessWebView)
 
 namespace WebView {
 
-OutOfProcessWebView::OutOfProcessWebView(UseJavaScriptBytecode use_javascript_bytecode)
-    : ViewImplementation(use_javascript_bytecode)
+OutOfProcessWebView::OutOfProcessWebView()
 {
     set_should_hide_unnecessary_scrollbars(true);
     set_focus_policy(GUI::FocusPolicy::StrongFocus);
 
     create_client();
+
+    on_did_layout = [this](auto content_size) {
+        set_content_size(content_size);
+    };
+
+    on_ready_to_paint = [this]() {
+        update();
+    };
+
+    on_request_file = [this](auto const& path, auto request_id) {
+        auto file = FileSystemAccessClient::Client::the().request_file_read_only_approved(window(), path);
+
+        if (file.is_error())
+            client().async_handle_file_return(file.error().code(), {}, request_id);
+        else
+            client().async_handle_file_return(0, IPC::File(file.value().stream()), request_id);
+    };
+
+    on_scroll_by_delta = [this](auto x_delta, auto y_delta) {
+        horizontal_scrollbar().increase_slider_by(x_delta);
+        vertical_scrollbar().increase_slider_by(y_delta);
+    };
+
+    on_scroll_to_point = [this](auto position) {
+        horizontal_scrollbar().set_value(position.x());
+        vertical_scrollbar().set_value(position.y());
+    };
+
+    on_scroll_into_view = [this](auto rect) {
+        scroll_into_view(rect, true, true);
+    };
+
+    on_cursor_change = [this](auto cursor) {
+        set_override_cursor(cursor);
+    };
+
+    on_enter_tooltip_area = [](auto, auto tooltip) {
+        GUI::Application::the()->show_tooltip(tooltip, nullptr);
+    };
+
+    on_leave_tooltip_area = []() {
+        GUI::Application::the()->hide_tooltip();
+    };
+
+    on_finish_handling_input_event = [this](auto event_was_accepted) {
+        did_finish_handling_input_event(event_was_accepted);
+    };
 }
 
 OutOfProcessWebView::~OutOfProcessWebView() = default;
@@ -46,8 +89,6 @@ void OutOfProcessWebView::create_client(EnableCallgrindProfiling)
             handle_web_content_process_crash();
         });
     };
-
-    client().async_set_use_javascript_bytecode(use_javascript_bytecode() == UseJavaScriptBytecode::Yes);
 
     m_client_state.client_handle = Web::Crypto::generate_random_uuid().release_value_but_fixme_should_propagate_errors();
     client().async_set_window_handle(m_client_state.client_handle);
@@ -137,11 +178,11 @@ void OutOfProcessWebView::mouseup_event(GUI::MouseEvent& event)
     enqueue_input_event(event);
 
     if (event.button() == GUI::MouseButton::Backward) {
-        if (on_back_button)
-            on_back_button();
+        if (on_navigate_back)
+            on_navigate_back();
     } else if (event.button() == GUI::MouseButton::Forward) {
-        if (on_forward_button)
-            on_forward_button();
+        if (on_navigate_forward)
+            on_navigate_forward();
     }
 }
 
@@ -170,135 +211,6 @@ void OutOfProcessWebView::theme_change_event(GUI::ThemeChangeEvent& event)
 void OutOfProcessWebView::screen_rects_change_event(GUI::ScreenRectsChangeEvent& event)
 {
     client().async_update_screen_rects(event.rects(), event.main_screen_index());
-}
-
-void OutOfProcessWebView::notify_server_did_paint(Badge<WebContentClient>, i32 bitmap_id, Gfx::IntSize size)
-{
-    if (m_client_state.back_bitmap.id == bitmap_id) {
-        m_client_state.has_usable_bitmap = true;
-        m_client_state.back_bitmap.pending_paints--;
-        m_client_state.back_bitmap.last_painted_size = size;
-        swap(m_client_state.back_bitmap, m_client_state.front_bitmap);
-        // We don't need the backup bitmap anymore, so drop it.
-        m_backup_bitmap = nullptr;
-        update();
-
-        if (m_client_state.got_repaint_requests_while_painting) {
-            m_client_state.got_repaint_requests_while_painting = false;
-            request_repaint();
-        }
-    }
-}
-
-void OutOfProcessWebView::notify_server_did_invalidate_content_rect(Badge<WebContentClient>, [[maybe_unused]] Gfx::IntRect const& content_rect)
-{
-    request_repaint();
-}
-
-void OutOfProcessWebView::notify_server_did_change_selection(Badge<WebContentClient>)
-{
-    request_repaint();
-}
-
-void OutOfProcessWebView::notify_server_did_request_cursor_change(Badge<WebContentClient>, Gfx::StandardCursor cursor)
-{
-    set_override_cursor(cursor);
-}
-
-void OutOfProcessWebView::notify_server_did_layout(Badge<WebContentClient>, Gfx::IntSize content_size)
-{
-    set_content_size(content_size);
-}
-
-void OutOfProcessWebView::notify_server_did_request_scroll(Badge<WebContentClient>, i32 x_delta, i32 y_delta)
-{
-    horizontal_scrollbar().increase_slider_by(x_delta);
-    vertical_scrollbar().increase_slider_by(y_delta);
-}
-
-void OutOfProcessWebView::notify_server_did_request_scroll_to(Badge<WebContentClient>, Gfx::IntPoint scroll_position)
-{
-    horizontal_scrollbar().set_value(scroll_position.x());
-    vertical_scrollbar().set_value(scroll_position.y());
-}
-
-void OutOfProcessWebView::notify_server_did_request_scroll_into_view(Badge<WebContentClient>, Gfx::IntRect const& rect)
-{
-    scroll_into_view(rect, true, true);
-}
-
-void OutOfProcessWebView::notify_server_did_enter_tooltip_area(Badge<WebContentClient>, Gfx::IntPoint, DeprecatedString const& title)
-{
-    GUI::Application::the()->show_tooltip(title, nullptr);
-}
-
-void OutOfProcessWebView::notify_server_did_leave_tooltip_area(Badge<WebContentClient>)
-{
-    GUI::Application::the()->hide_tooltip();
-}
-
-void OutOfProcessWebView::notify_server_did_request_alert(Badge<WebContentClient>, String const& message)
-{
-    m_dialog = GUI::MessageBox::create(window(), message, "Alert"sv, GUI::MessageBox::Type::Information, GUI::MessageBox::InputType::OK).release_value_but_fixme_should_propagate_errors();
-    m_dialog->set_icon(window()->icon());
-    m_dialog->exec();
-
-    client().async_alert_closed();
-    m_dialog = nullptr;
-}
-
-void OutOfProcessWebView::notify_server_did_request_confirm(Badge<WebContentClient>, String const& message)
-{
-    m_dialog = GUI::MessageBox::create(window(), message, "Confirm"sv, GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::OKCancel).release_value_but_fixme_should_propagate_errors();
-    m_dialog->set_icon(window()->icon());
-
-    client().async_confirm_closed(m_dialog->exec() == GUI::Dialog::ExecResult::OK);
-    m_dialog = nullptr;
-}
-
-void OutOfProcessWebView::notify_server_did_request_prompt(Badge<WebContentClient>, String const& message, String const& default_)
-{
-    String mutable_value = default_;
-    m_dialog = GUI::InputBox::create(window(), mutable_value, message, "Prompt"sv, GUI::InputType::Text).release_value_but_fixme_should_propagate_errors();
-    m_dialog->set_icon(window()->icon());
-
-    if (m_dialog->exec() == GUI::InputBox::ExecResult::OK) {
-        auto const& dialog = static_cast<GUI::InputBox const&>(*m_dialog);
-        auto response = dialog.text_value();
-
-        client().async_prompt_closed(move(response));
-    } else {
-        client().async_prompt_closed({});
-    }
-
-    m_dialog = nullptr;
-}
-
-void OutOfProcessWebView::notify_server_did_request_set_prompt_text(Badge<WebContentClient>, String const& message)
-{
-    if (m_dialog && is<GUI::InputBox>(*m_dialog))
-        static_cast<GUI::InputBox&>(*m_dialog).set_text_value(message);
-}
-
-void OutOfProcessWebView::notify_server_did_request_accept_dialog(Badge<WebContentClient>)
-{
-    if (m_dialog)
-        m_dialog->done(GUI::Dialog::ExecResult::OK);
-}
-
-void OutOfProcessWebView::notify_server_did_request_dismiss_dialog(Badge<WebContentClient>)
-{
-    if (m_dialog)
-        m_dialog->done(GUI::Dialog::ExecResult::Cancel);
-}
-
-void OutOfProcessWebView::notify_server_did_request_file(Badge<WebContentClient>, DeprecatedString const& path, i32 request_id)
-{
-    auto file = FileSystemAccessClient::Client::the().request_file_read_only_approved(window(), path);
-    if (file.is_error())
-        client().async_handle_file_return(file.error().code(), {}, request_id);
-    else
-        client().async_handle_file_return(0, IPC::File(file.value().stream()), request_id);
 }
 
 void OutOfProcessWebView::did_scroll()
@@ -426,9 +338,12 @@ void OutOfProcessWebView::process_next_input_event()
             case GUI::Event::Type::MouseMove:
                 client().async_mouse_move(to_content_position(event.position()), event.button(), event.buttons(), event.modifiers());
                 break;
-            case GUI::Event::Type::MouseWheel:
-                client().async_mouse_wheel(to_content_position(event.position()), event.button(), event.buttons(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y());
+            case GUI::Event::Type::MouseWheel: {
+                // FIXME: This wheel delta step size multiplier is used to remain the old scroll behaviour, in future use system step size.
+                constexpr int scroll_step_size = 24;
+                client().async_mouse_wheel(to_content_position(event.position()), event.button(), event.buttons(), event.modifiers(), event.wheel_delta_x() * scroll_step_size, event.wheel_delta_y() * scroll_step_size);
                 break;
+            }
             case GUI::Event::Type::MouseDoubleClick:
                 client().async_doubleclick(to_content_position(event.position()), event.button(), event.buttons(), event.modifiers());
                 break;
@@ -439,7 +354,7 @@ void OutOfProcessWebView::process_next_input_event()
         });
 }
 
-void OutOfProcessWebView::notify_server_did_finish_handling_input_event(bool event_was_accepted)
+void OutOfProcessWebView::did_finish_handling_input_event(bool event_was_accepted)
 {
     VERIFY(m_is_awaiting_response_for_input_event);
 

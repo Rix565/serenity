@@ -14,7 +14,7 @@ namespace Web::DOM {
 
 // FIXME: Just like HTMLCollection, LiveNodeList currently does no caching.
 
-class LiveNodeList final : public NodeList {
+class LiveNodeList : public NodeList {
     WEB_PLATFORM_OBJECT(LiveNodeList, NodeList);
 
 public:
@@ -23,7 +23,7 @@ public:
         Descendants,
     };
 
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<NodeList>> create(JS::Realm&, Node& root, Scope, Function<bool(Node const&)> filter);
+    [[nodiscard]] static JS::NonnullGCPtr<NodeList> create(JS::Realm&, Node& root, Scope, Function<bool(Node const&)> filter);
     virtual ~LiveNodeList() override;
 
     virtual u32 length() const override;
@@ -31,9 +31,12 @@ public:
 
     virtual bool is_supported_property_index(u32) const override;
 
-private:
+protected:
     LiveNodeList(JS::Realm&, Node& root, Scope, Function<bool(Node const&)> filter);
 
+    Node* first_matching(Function<bool(Node const&)> const& filter) const;
+
+private:
     virtual void visit_edges(Cell::Visitor&) override;
 
     JS::MarkedVector<Node*> collection() const;

@@ -55,19 +55,10 @@ bool Box::is_scroll_container() const
         || overflow_value_makes_box_a_scroll_container(computed_values().overflow_y());
 }
 
-bool Box::is_scrollable() const
+bool Box::is_user_scrollable() const
 {
     // FIXME: Support horizontal scroll as well (overflow-x)
-    return computed_values().overflow_y() == CSS::Overflow::Scroll;
-}
-
-void Box::set_scroll_offset(CSSPixelPoint offset)
-{
-    // FIXME: If there is horizontal and vertical scroll ignore only part of the new offset
-    if (offset.y() < 0 || m_scroll_offset == offset)
-        return;
-    m_scroll_offset = offset;
-    set_needs_display();
+    return computed_values().overflow_y() == CSS::Overflow::Scroll || computed_values().overflow_y() == CSS::Overflow::Auto;
 }
 
 void Box::set_needs_display()
@@ -86,6 +77,11 @@ JS::GCPtr<Painting::Paintable> Box::create_paintable() const
     return Painting::PaintableBox::create(*this);
 }
 
+Painting::PaintableBox* Box::paintable_box()
+{
+    return static_cast<Painting::PaintableBox*>(Node::paintable());
+}
+
 Painting::PaintableBox const* Box::paintable_box() const
 {
     return static_cast<Painting::PaintableBox const*>(Node::paintable());
@@ -96,7 +92,7 @@ Optional<float> Box::preferred_aspect_ratio() const
     auto computed_aspect_ratio = computed_values().aspect_ratio();
     if (computed_aspect_ratio.use_natural_aspect_ratio_if_available && natural_aspect_ratio().has_value())
         return natural_aspect_ratio();
-    return computed_aspect_ratio.preferred_ratio.map([](CSS::Ratio const& ratio) { return ratio.value(); });
+    return computed_aspect_ratio.preferred_ratio.map([](CSS::Ratio const& ratio) { return static_cast<float>(ratio.value()); });
 }
 
 }

@@ -13,10 +13,10 @@ namespace Web::CSS {
 
 class DisplayStyleValue : public StyleValueWithDefaultOperators<DisplayStyleValue> {
 public:
-    static ErrorOr<ValueComparingNonnullRefPtr<DisplayStyleValue>> create(Display const&);
+    static ValueComparingNonnullRefPtr<DisplayStyleValue> create(Display const&);
     virtual ~DisplayStyleValue() override = default;
 
-    virtual ErrorOr<String> to_string() const override { return m_display.to_string(); }
+    virtual String to_string() const override { return m_display.to_string(); }
 
     Display display() const { return m_display; }
 

@@ -9,6 +9,8 @@
 #include <AK/Badge.h>
 #include <AK/DeprecatedString.h>
 #include <AK/Function.h>
+#include <AK/JsonObject.h>
+#include <AK/JsonParser.h>
 #include <AK/LexicalPath.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/Platform.h>
@@ -43,22 +45,20 @@
 #if !defined(AK_OS_SERENITY)
 #    include <Ladybird/HelperProcess.h>
 #    include <Ladybird/Utilities.h>
-#    include <QCoreApplication>
 #endif
 
 class HeadlessWebContentView final : public WebView::ViewImplementation {
 public:
-    static ErrorOr<NonnullOwnPtr<HeadlessWebContentView>> create(Core::AnonymousBuffer theme, Gfx::IntSize const& window_size, StringView web_driver_ipc_path, WebView::IsLayoutTestMode is_layout_test_mode = WebView::IsLayoutTestMode::No, WebView::UseJavaScriptBytecode use_javascript_bytecode = WebView::UseJavaScriptBytecode::No)
+    static ErrorOr<NonnullOwnPtr<HeadlessWebContentView>> create(Core::AnonymousBuffer theme, Gfx::IntSize const& window_size, StringView web_driver_ipc_path, WebView::IsLayoutTestMode is_layout_test_mode = WebView::IsLayoutTestMode::No)
     {
-        auto view = TRY(adopt_nonnull_own_or_enomem(new (nothrow) HeadlessWebContentView(use_javascript_bytecode)));
+        auto view = TRY(adopt_nonnull_own_or_enomem(new (nothrow) HeadlessWebContentView));
 
 #if defined(AK_OS_SERENITY)
         view->m_client_state.client = TRY(WebView::WebContentClient::try_create(*view));
         (void)is_layout_test_mode;
-        (void)use_javascript_bytecode;
 #else
         auto candidate_web_content_paths = TRY(get_paths_for_helper_process("WebContent"sv));
-        view->m_client_state.client = TRY(launch_web_content_process(*view, candidate_web_content_paths, WebView::EnableCallgrindProfiling::No, is_layout_test_mode, use_javascript_bytecode, UseLagomNetworking::No));
+        view->m_client_state.client = TRY(launch_web_content_process(*view, candidate_web_content_paths, WebView::EnableCallgrindProfiling::No, is_layout_test_mode, Ladybird::UseLagomNetworking::No));
 #endif
 
         view->client().async_update_system_theme(move(theme));
@@ -84,6 +84,11 @@ public:
         return String::from_deprecated_string(client().dump_layout_tree());
     }
 
+    ErrorOr<String> dump_paint_tree()
+    {
+        return String::from_deprecated_string(client().dump_paint_tree());
+    }
+
     ErrorOr<String> dump_text()
     {
         return String::from_deprecated_string(client().dump_text());
@@ -95,39 +100,8 @@ public:
     }
 
 private:
-    HeadlessWebContentView(WebView::UseJavaScriptBytecode use_javascript_bytecode)
-        : WebView::ViewImplementation(use_javascript_bytecode)
-    {
-    }
+    HeadlessWebContentView() = default;
 
-    void notify_server_did_layout(Badge<WebView::WebContentClient>, Gfx::IntSize) override { }
-    void notify_server_did_paint(Badge<WebView::WebContentClient>, i32, Gfx::IntSize) override { }
-    void notify_server_did_invalidate_content_rect(Badge<WebView::WebContentClient>, Gfx::IntRect const&) override { }
-    void notify_server_did_change_selection(Badge<WebView::WebContentClient>) override { }
-    void notify_server_did_request_cursor_change(Badge<WebView::WebContentClient>, Gfx::StandardCursor) override { }
-    void notify_server_did_request_scroll(Badge<WebView::WebContentClient>, i32, i32) override { }
-    void notify_server_did_request_scroll_to(Badge<WebView::WebContentClient>, Gfx::IntPoint) override { }
-    void notify_server_did_request_scroll_into_view(Badge<WebView::WebContentClient>, Gfx::IntRect const&) override { }
-    void notify_server_did_enter_tooltip_area(Badge<WebView::WebContentClient>, Gfx::IntPoint, DeprecatedString const&) override { }
-    void notify_server_did_leave_tooltip_area(Badge<WebView::WebContentClient>) override { }
-    void notify_server_did_request_alert(Badge<WebView::WebContentClient>, String const&) override { }
-    void notify_server_did_request_confirm(Badge<WebView::WebContentClient>, String const&) override { }
-    void notify_server_did_request_prompt(Badge<WebView::WebContentClient>, String const&, String const&) override { }
-    void notify_server_did_request_set_prompt_text(Badge<WebView::WebContentClient>, String const&) override { }
-    void notify_server_did_request_accept_dialog(Badge<WebView::WebContentClient>) override { }
-    void notify_server_did_request_dismiss_dialog(Badge<WebView::WebContentClient>) override { }
-
-    void notify_server_did_request_file(Badge<WebView::WebContentClient>, DeprecatedString const& path, i32 request_id) override
-    {
-        auto file = Core::File::open(path, Core::File::OpenMode::Read);
-
-        if (file.is_error())
-            client().async_handle_file_return(file.error().code(), {}, request_id);
-        else
-            client().async_handle_file_return(0, IPC::File(*file.value()), request_id);
-    }
-
-    void notify_server_did_finish_handling_input_event(bool) override { }
     void update_zoom() override { }
     void create_client(WebView::EnableCallgrindProfiling) override { }
 
@@ -184,9 +158,16 @@ static ErrorOr<URL> format_url(StringView url)
 enum class TestMode {
     Layout,
     Text,
+    Ref,
 };
 
-static ErrorOr<String> run_one_test(HeadlessWebContentView& view, StringView input_path, StringView expectation_path, TestMode mode, int timeout_in_milliseconds = 15000)
+enum class TestResult {
+    Pass,
+    Fail,
+    Timeout,
+};
+
+static ErrorOr<TestResult> run_dump_test(HeadlessWebContentView& view, StringView input_path, StringView expectation_path, TestMode mode, int timeout_in_milliseconds = 15000)
 {
     Core::EventLoop loop;
     bool did_timeout = false;
@@ -197,7 +178,6 @@ static ErrorOr<String> run_one_test(HeadlessWebContentView& view, StringView inp
     }));
 
     view.load(URL::create_with_file_scheme(TRY(FileSystem::real_path(input_path)).to_deprecated_string()));
-    (void)expectation_path;
 
     String result;
 
@@ -207,7 +187,11 @@ static ErrorOr<String> run_one_test(HeadlessWebContentView& view, StringView inp
             //       It also causes a lot more code to run, which is good for finding bugs. :^)
             (void)view.take_screenshot();
 
-            result = view.dump_layout_tree().release_value_but_fixme_should_propagate_errors();
+            StringBuilder builder;
+            builder.append(view.dump_layout_tree().release_value_but_fixme_should_propagate_errors());
+            builder.append("\n"sv);
+            builder.append(view.dump_paint_tree().release_value_but_fixme_should_propagate_errors());
+            result = builder.to_string().release_value_but_fixme_should_propagate_errors();
             loop.quit(0);
         };
     } else if (mode == TestMode::Text) {
@@ -221,25 +205,7 @@ static ErrorOr<String> run_one_test(HeadlessWebContentView& view, StringView inp
     loop.exec();
 
     if (did_timeout)
-        return Error::from_errno(ETIMEDOUT);
-
-    return result;
-}
-
-enum class TestResult {
-    Pass,
-    Fail,
-    Timeout,
-};
-
-static ErrorOr<TestResult> run_test(HeadlessWebContentView& view, StringView input_path, StringView expectation_path, TestMode mode)
-{
-    auto result = run_one_test(view, input_path, expectation_path, mode);
-
-    if (result.is_error() && result.error().code() == ETIMEDOUT)
         return TestResult::Timeout;
-    if (result.is_error())
-        return result.release_error();
 
     auto expectation_file_or_error = Core::File::open(expectation_path, Core::File::OpenMode::Read);
     if (expectation_file_or_error.is_error()) {
@@ -251,7 +217,7 @@ static ErrorOr<TestResult> run_test(HeadlessWebContentView& view, StringView inp
 
     auto expectation = TRY(String::from_utf8(StringView(TRY(expectation_file->read_until_eof()).bytes())));
 
-    auto actual = result.release_value();
+    auto actual = result;
     auto actual_trimmed = TRY(actual.trim("\n"sv, TrimMode::Right));
     auto expectation_trimmed = TRY(expectation.trim("\n"sv, TrimMode::Right));
 
@@ -275,6 +241,58 @@ static ErrorOr<TestResult> run_test(HeadlessWebContentView& view, StringView inp
     return TestResult::Fail;
 }
 
+static ErrorOr<TestResult> run_ref_test(HeadlessWebContentView& view, StringView input_path, StringView expectation_path, int timeout_in_milliseconds = 15000)
+{
+    Core::EventLoop loop;
+    bool did_timeout = false;
+
+    auto timeout_timer = TRY(Core::Timer::create_single_shot(5000, [&] {
+        did_timeout = true;
+        loop.quit(0);
+    }));
+
+    view.load(URL::create_with_file_scheme(TRY(FileSystem::real_path(input_path)).to_deprecated_string()));
+    auto expectation_real_path = TRY(FileSystem::real_path(expectation_path)).to_deprecated_string();
+
+    RefPtr<Gfx::Bitmap> actual_screenshot, expectation_screenshot;
+    view.on_load_finish = [&](auto const&) {
+        if (actual_screenshot) {
+            expectation_screenshot = view.take_screenshot();
+            loop.quit(0);
+        } else {
+            actual_screenshot = view.take_screenshot();
+            view.load(URL::create_with_file_scheme(expectation_real_path));
+        }
+    };
+
+    timeout_timer->start(timeout_in_milliseconds);
+    loop.exec();
+
+    if (did_timeout)
+        return TestResult::Timeout;
+
+    VERIFY(actual_screenshot);
+    VERIFY(expectation_screenshot);
+
+    if (actual_screenshot->visually_equals(*expectation_screenshot))
+        return TestResult::Pass;
+
+    return TestResult::Fail;
+}
+
+static ErrorOr<TestResult> run_test(HeadlessWebContentView& view, StringView input_path, StringView expectation_path, TestMode mode)
+{
+    switch (mode) {
+    case TestMode::Text:
+    case TestMode::Layout:
+        return run_dump_test(view, input_path, expectation_path, mode);
+    case TestMode::Ref:
+        return run_ref_test(view, input_path, expectation_path);
+    default:
+        VERIFY_NOT_REACHED();
+    }
+}
+
 struct Test {
     String input_path;
     String expectation_path;
@@ -282,14 +300,14 @@ struct Test {
     Optional<TestResult> result;
 };
 
-static ErrorOr<void> collect_tests(Vector<Test>& tests, StringView path, StringView trail, TestMode mode)
+static ErrorOr<void> collect_dump_tests(Vector<Test>& tests, StringView path, StringView trail, TestMode mode)
 {
     Core::DirIterator it(TRY(String::formatted("{}/input/{}", path, trail)).to_deprecated_string(), Core::DirIterator::Flags::SkipDots);
     while (it.has_next()) {
         auto name = it.next_path();
         auto input_path = TRY(FileSystem::real_path(TRY(String::formatted("{}/input/{}/{}", path, trail, name))));
         if (FileSystem::is_directory(input_path)) {
-            TRY(collect_tests(tests, path, TRY(String::formatted("{}/{}", trail, name)), mode));
+            TRY(collect_dump_tests(tests, path, TRY(String::formatted("{}/{}", trail, name)), mode));
             continue;
         }
         if (!name.ends_with(".html"sv))
@@ -302,13 +320,37 @@ static ErrorOr<void> collect_tests(Vector<Test>& tests, StringView path, StringV
     return {};
 }
 
+static ErrorOr<void> collect_ref_tests(Vector<Test>& tests, StringView path)
+{
+    auto manifest_path = TRY(String::formatted("{}/manifest.json", path));
+    auto manifest_file_or_error = Core::File::open(manifest_path, Core::File::OpenMode::Read);
+    if (manifest_file_or_error.is_error()) {
+        warnln("Failed opening '{}': {}", manifest_path, manifest_file_or_error.error());
+        return manifest_file_or_error.release_error();
+    }
+
+    auto manifest_file = manifest_file_or_error.release_value();
+    auto manifest = TRY(String::from_utf8(StringView(TRY(manifest_file->read_until_eof()).bytes())));
+    auto manifest_json = TRY(JsonParser(manifest).parse());
+    TRY(manifest_json.as_object().try_for_each_member([&](DeprecatedString const& key, AK::JsonValue const& value) -> ErrorOr<void> {
+        TRY(String::from_deprecated_string(key));
+        auto input_path = TRY(String::formatted("{}/{}", path, key));
+        auto expectation_path = TRY(String::formatted("{}/{}", path, value.to_deprecated_string()));
+        tests.append({ input_path, expectation_path, TestMode::Ref, {} });
+        return {};
+    }));
+
+    return {};
+}
+
 static ErrorOr<int> run_tests(HeadlessWebContentView& view, StringView test_root_path)
 {
     view.clear_content_filters();
 
     Vector<Test> tests;
-    TRY(collect_tests(tests, TRY(String::formatted("{}/Layout", test_root_path)), "."sv, TestMode::Layout));
-    TRY(collect_tests(tests, TRY(String::formatted("{}/Text", test_root_path)), "."sv, TestMode::Text));
+    TRY(collect_dump_tests(tests, TRY(String::formatted("{}/Layout", test_root_path)), "."sv, TestMode::Layout));
+    TRY(collect_dump_tests(tests, TRY(String::formatted("{}/Text", test_root_path)), "."sv, TestMode::Text));
+    TRY(collect_ref_tests(tests, TRY(String::formatted("{}/Ref", test_root_path))));
 
     size_t pass_count = 0;
     size_t fail_count = 0;
@@ -365,9 +407,6 @@ static ErrorOr<int> run_tests(HeadlessWebContentView& view, StringView test_root
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-#if !defined(AK_OS_SERENITY)
-    QCoreApplication app(arguments.argc, arguments.argv);
-#endif
     Core::EventLoop event_loop;
 
     int screenshot_timeout = 1;
@@ -377,7 +416,6 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     bool dump_layout_tree = false;
     bool dump_text = false;
     bool is_layout_test_mode = false;
-    bool use_ast_interpreter = false;
     StringView test_root_path;
 
     Core::ArgsParser args_parser;
@@ -389,7 +427,6 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_option(resources_folder, "Path of the base resources folder (defaults to /res)", "resources", 'r', "resources-root-path");
     args_parser.add_option(web_driver_ipc_path, "Path to the WebDriver IPC socket", "webdriver-ipc-path", 0, "path");
     args_parser.add_option(is_layout_test_mode, "Enable layout test mode", "layout-test-mode", 0);
-    args_parser.add_option(use_ast_interpreter, "Enable JavaScript AST interpreter (deprecated)", "ast", 0);
     args_parser.add_positional_argument(url, "URL to open", "url", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
 
@@ -411,7 +448,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         is_layout_test_mode = true;
     }
 
-    auto view = TRY(HeadlessWebContentView::create(move(theme), window_size, web_driver_ipc_path, is_layout_test_mode ? WebView::IsLayoutTestMode::Yes : WebView::IsLayoutTestMode::No, use_ast_interpreter ? WebView::UseJavaScriptBytecode::No : WebView::UseJavaScriptBytecode::Yes));
+    auto view = TRY(HeadlessWebContentView::create(move(theme), window_size, web_driver_ipc_path, is_layout_test_mode ? WebView::IsLayoutTestMode::Yes : WebView::IsLayoutTestMode::No));
     RefPtr<Core::Timer> timer;
 
     if (!test_root_path.is_empty()) {
@@ -422,8 +459,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         view->on_load_finish = [&](auto const&) {
             (void)view->take_screenshot();
             auto layout_tree = view->dump_layout_tree().release_value_but_fixme_should_propagate_errors();
+            auto paint_tree = view->dump_paint_tree().release_value_but_fixme_should_propagate_errors();
 
-            out("{}", layout_tree);
+            out("{}\n{}", layout_tree, paint_tree);
             fflush(stdout);
 
             event_loop.quit(0);

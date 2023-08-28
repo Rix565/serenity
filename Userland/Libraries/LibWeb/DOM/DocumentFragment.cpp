@@ -14,12 +14,10 @@ DocumentFragment::DocumentFragment(Document& document)
 {
 }
 
-JS::ThrowCompletionOr<void> DocumentFragment::initialize(JS::Realm& realm)
+void DocumentFragment::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     set_prototype(&Bindings::ensure_web_prototype<Bindings::DocumentFragmentPrototype>(realm, "DocumentFragment"));
-
-    return {};
 }
 
 void DocumentFragment::visit_edges(Cell::Visitor& visitor)
@@ -37,7 +35,7 @@ void DocumentFragment::set_host(Web::DOM::Element* element)
 WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> DocumentFragment::construct_impl(JS::Realm& realm)
 {
     auto& window = verify_cast<HTML::Window>(realm.global_object());
-    return MUST_OR_THROW_OOM(realm.heap().allocate<DocumentFragment>(realm, window.associated_document()));
+    return realm.heap().allocate<DocumentFragment>(realm, window.associated_document());
 }
 
 }

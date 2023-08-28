@@ -29,7 +29,7 @@ public:
     [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, DeprecatedString);
     [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, DeprecatedFlyString const&);
     [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, PrimitiveString&, PrimitiveString&);
-    static ThrowCompletionOr<NonnullGCPtr<PrimitiveString>> create(VM&, StringView);
+    [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, StringView);
 
     virtual ~PrimitiveString();
 
@@ -38,15 +38,15 @@ public:
 
     bool is_empty() const;
 
-    ThrowCompletionOr<String> utf8_string() const;
-    ThrowCompletionOr<StringView> utf8_string_view() const;
+    [[nodiscard]] String utf8_string() const;
+    [[nodiscard]] StringView utf8_string_view() const;
     bool has_utf8_string() const { return m_utf8_string.has_value(); }
 
-    ThrowCompletionOr<DeprecatedString> deprecated_string() const;
+    [[nodiscard]] DeprecatedString deprecated_string() const;
     bool has_deprecated_string() const { return m_deprecated_string.has_value(); }
 
-    ThrowCompletionOr<Utf16String> utf16_string() const;
-    ThrowCompletionOr<Utf16View> utf16_string_view() const;
+    [[nodiscard]] Utf16String utf16_string() const;
+    [[nodiscard]] Utf16View utf16_string_view() const;
     bool has_utf16_string() const { return m_utf16_string.has_value(); }
 
     ThrowCompletionOr<Optional<Value>> get(VM&, PropertyKey const&) const;
@@ -63,7 +63,7 @@ private:
         UTF8,
         UTF16,
     };
-    ThrowCompletionOr<void> resolve_rope_if_needed(EncodingPreference) const;
+    void resolve_rope_if_needed(EncodingPreference) const;
 
     mutable bool m_is_rope { false };
 

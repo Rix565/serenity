@@ -22,10 +22,10 @@ ObjectConstructor::ObjectConstructor(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> ObjectConstructor::initialize(Realm& realm)
+void ObjectConstructor::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    MUST_OR_THROW_OOM(NativeFunction::initialize(realm));
+    Base::initialize(realm);
 
     // 20.1.2.19 Object.prototype, https://tc39.es/ecma262/#sec-object.prototype
     define_direct_property(vm.names.prototype, realm.intrinsics().object_prototype(), 0);
@@ -56,8 +56,6 @@ ThrowCompletionOr<void> ObjectConstructor::initialize(Realm& realm)
     define_native_function(realm, vm.names.assign, assign, 2, attr);
 
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
-
-    return {};
 }
 
 // 20.1.1.1 Object ( [ value ] ), https://tc39.es/ecma262/#sec-object-value
@@ -208,7 +206,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::define_property)
 {
     // 1. If O is not an Object, throw a TypeError exception.
     if (!vm.argument(0).is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, vm.argument(0).to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, vm.argument(0).to_string_without_side_effects());
 
     auto object = MUST(vm.argument(0).to_object(vm));
 
@@ -278,7 +276,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::from_entries)
     // 6. Return ? AddEntriesFromIterable(obj, iterable, adder).
     (void)TRY(get_iterator_values(vm, iterable, [&](Value iterator_value) -> Optional<Completion> {
         if (!iterator_value.is_object())
-            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, DeprecatedString::formatted("Iterator value {}", TRY_OR_THROW_OOM(vm, iterator_value.to_string_without_side_effects())));
+            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, DeprecatedString::formatted("Iterator value {}", iterator_value.to_string_without_side_effects()));
 
         auto key = TRY(iterator_value.as_object().get(0));
         auto value = TRY(iterator_value.as_object().get(1));

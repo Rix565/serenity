@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGfx/Font/ScaledFont.h>
 #include <LibPDF/CommonNames.h>
 #include <LibPDF/Fonts/Type0Font.h>
 
@@ -36,8 +37,38 @@ PDFErrorOr<Gfx::FloatPoint> CIDFontType0::draw_string(Gfx::Painter&, Gfx::FloatP
 
 class CIDFontType2 : public CIDFontType {
 public:
+    static PDFErrorOr<NonnullOwnPtr<CIDFontType2>> create(Document*, NonnullRefPtr<DictObject> const& descendant, float font_size);
+
     PDFErrorOr<Gfx::FloatPoint> draw_string(Gfx::Painter&, Gfx::FloatPoint, DeprecatedString const&, Color const&, float, float, float, float) override;
 };
+
+PDFErrorOr<NonnullOwnPtr<CIDFontType2>> CIDFontType2::create(Document* document, NonnullRefPtr<DictObject> const& descendant, float font_size)
+{
+    auto descriptor = TRY(descendant->get_dict(document, CommonNames::FontDescriptor));
+
+    if (descendant->contains(CommonNames::CIDToGIDMap)) {
+        auto value = TRY(descendant->get_object(document, CommonNames::CIDToGIDMap));
+        if (value->is<StreamObject>()) {
+            TODO();
+        } else if (value->cast<NameObject>()->name() != "Identity") {
+            TODO();
+        }
+    }
+
+    RefPtr<Gfx::Font> font;
+    if (descriptor->contains(CommonNames::FontFile2)) {
+        auto font_file_stream = TRY(descriptor->get_stream(document, CommonNames::FontFile2));
+        float point_size = (font_size * POINTS_PER_INCH) / DEFAULT_DPI;
+        // FIXME: Load font_file_stream->bytes() as TTF data, similar to TrueTypeFont::initialize().
+        //        Unfortunately, TTF data in Type0 CIDFontType2 fonts don't contain the "cmap" table
+        //        that's mandatory per TTF spec and the PDF stores that mapping in CIDToGIDMap instead.
+        //        OpenType::Font::try_load currently rejects TTF data without "cmap" data.
+        (void)font_file_stream;
+        (void)point_size;
+    }
+
+    return TRY(adopt_nonnull_own_or_enomem(new (nothrow) CIDFontType2()));
+}
 
 PDFErrorOr<Gfx::FloatPoint> CIDFontType2::draw_string(Gfx::Painter&, Gfx::FloatPoint, DeprecatedString const&, Color const&, float, float, float, float)
 {
@@ -84,12 +115,10 @@ PDFErrorOr<void> Type0Font::initialize(Document* document, NonnullRefPtr<DictObj
         m_cid_font_type = TRY(try_make<CIDFontType0>());
     } else if (subtype == CommonNames::CIDFontType2) {
         // TrueType-based
-        m_cid_font_type = TRY(try_make<CIDFontType2>());
+        m_cid_font_type = TRY(CIDFontType2::create(document, descendant_font, font_size));
     } else {
         return Error { Error::Type::MalformedPDF, "invalid /Subtype for Type 0 font" };
     }
-
-    auto font_descriptor = TRY(descendant_font->get_dict(document, CommonNames::FontDescriptor));
 
     u16 default_width = 1000;
     if (descendant_font->contains(CommonNames::DW))
@@ -122,15 +151,6 @@ PDFErrorOr<void> Type0Font::initialize(Document* document, NonnullRefPtr<DictObj
         }
     }
 
-    if (dict->contains(CommonNames::CIDToGIDMap)) {
-        auto value = TRY(dict->get_object(document, CommonNames::CIDToGIDMap));
-        if (value->is<StreamObject>()) {
-            TODO();
-        } else if (value->cast<NameObject>()->name() != "Identity") {
-            TODO();
-        }
-    }
-
     m_system_info = move(system_info);
     m_widths = move(widths);
     m_missing_width = default_width;
@@ -155,6 +175,25 @@ void Type0Font::set_font_size(float)
 
 PDFErrorOr<Gfx::FloatPoint> Type0Font::draw_string(Gfx::Painter& painter, Gfx::FloatPoint glyph_position, DeprecatedString const& string, Color const& paint_color, float font_size, float character_spacing, float word_spacing, float horizontal_scaling)
 {
+    // Type0 fonts map bytes to character IDs ("CIDs"), and then CIDs to glyphs.
+
+    // ISO 32000 (PDF 2.0) 9.7.6.2 CMap mapping describes how to map bytes to CIDs:
+    // "The Encoding entry of a Type 0 font dictionary specifies a CMap [...]
+    //  A sequence of one or more bytes shall be extracted from the string and matched against
+    //  the codespace ranges in the CMap. That is, the first byte shall be matched against 1-byte codespace ranges;
+    //  if no match is found, a second byte shall be extracted, and the 2-byte code shall be matched against 2-byte
+    //  codespace ranges [...]"
+
+    // 9.7.5.2 Predefined CMaps:
+    // "When the current font is a Type 0 font whose Encoding entry is Identity-H or Identity-V,
+    //  the string to be shown shall contain pairs of bytes representing CIDs, high-order byte first."
+    // Type0Font::initialize() currently rejects everything except Identity-H.
+    // FIXME: Support more.
+    if (string.length() % 2 != 0)
+        return Error::malformed_error("Identity-H but length not multiple of 2");
+
+    // FIXME: Map string data to CIDs, then call m_cid_font_type with CIDs.
+
     return m_cid_font_type->draw_string(painter, glyph_position, string, paint_color, font_size, character_spacing, word_spacing, horizontal_scaling);
 }
 

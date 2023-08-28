@@ -29,14 +29,14 @@ CalendarPrototype::CalendarPrototype(Realm& realm)
 {
 }
 
-ThrowCompletionOr<void> CalendarPrototype::initialize(Realm& realm)
+void CalendarPrototype::initialize(Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
     // 12.4.2 Temporal.Calendar.prototype[ @@toStringTag ], https://tc39.es/proposal-temporal/#sec-temporal.calendar.prototype-@@tostringtag
-    define_direct_property(vm.well_known_symbol_to_string_tag(), MUST_OR_THROW_OOM(PrimitiveString::create(vm, "Temporal.Calendar"sv)), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Temporal.Calendar"_string), Attribute::Configurable);
 
     define_native_accessor(realm, vm.names.id, id_getter, {}, Attribute::Configurable);
 
@@ -65,8 +65,6 @@ ThrowCompletionOr<void> CalendarPrototype::initialize(Realm& realm)
     define_native_function(realm, vm.names.toJSON, to_json, 0, attr);
     define_native_function(realm, vm.names.era, era, 1, attr);
     define_native_function(realm, vm.names.eraYear, era_year, 1, attr);
-
-    return {};
 }
 
 // 12.4.3 get Temporal.Calendar.prototype.id, https://tc39.es/proposal-temporal/#sec-get-temporal.calendar.prototype.id
@@ -94,7 +92,7 @@ JS_DEFINE_NATIVE_FUNCTION(CalendarPrototype::date_from_fields)
     // 4. If Type(fields) is not Object, throw a TypeError exception.
     auto fields = vm.argument(0);
     if (!fields.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, fields.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, fields.to_string_without_side_effects());
 
     // 5. Set options to ? GetOptionsObject(options).
     auto const* options = TRY(get_options_object(vm, vm.argument(1)));
@@ -120,7 +118,7 @@ JS_DEFINE_NATIVE_FUNCTION(CalendarPrototype::year_month_from_fields)
     // 4. If Type(fields) is not Object, throw a TypeError exception.
     auto fields = vm.argument(0);
     if (!fields.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, fields.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, fields.to_string_without_side_effects());
 
     // 5. Set options to ? GetOptionsObject(options).
     auto const* options = TRY(get_options_object(vm, vm.argument(1)));
@@ -146,7 +144,7 @@ JS_DEFINE_NATIVE_FUNCTION(CalendarPrototype::month_day_from_fields)
     // 4. If Type(fields) is not Object, throw a TypeError exception.
     auto fields = vm.argument(0);
     if (!fields.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, fields.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, fields.to_string_without_side_effects());
 
     // 5. Set options to ? GetOptionsObject(options).
     auto const* options = TRY(get_options_object(vm, vm.argument(1)));
@@ -216,7 +214,7 @@ JS_DEFINE_NATIVE_FUNCTION(CalendarPrototype::date_until)
 
     // 8. If largestUnit is "auto", set largestUnit to "day".
     if (largest_unit == "auto")
-        largest_unit = "day"_short_string;
+        largest_unit = "day"_string;
 
     // 9. Let result be DifferenceISODate(one.[[ISOYear]], one.[[ISOMonth]], one.[[ISODay]], two.[[ISOYear]], two.[[ISOMonth]], two.[[ISODay]], largestUnit).
     auto result = difference_iso_date(vm, one->iso_year(), one->iso_month(), one->iso_day(), two->iso_year(), two->iso_month(), two->iso_day(), *largest_unit);
@@ -555,13 +553,13 @@ JS_DEFINE_NATIVE_FUNCTION(CalendarPrototype::fields)
         // ii. If Type(nextValue) is not String, then
         if (!next_value.is_string()) {
             // 1. Let completion be ThrowCompletion(a newly created TypeError object).
-            auto completion = vm.throw_completion<TypeError>(ErrorType::TemporalInvalidCalendarFieldValue, TRY_OR_THROW_OOM(vm, next_value.to_string_without_side_effects()));
+            auto completion = vm.throw_completion<TypeError>(ErrorType::TemporalInvalidCalendarFieldValue, next_value.to_string_without_side_effects());
 
             // 2. Return ? IteratorClose(iteratorRecord, completion).
             return *TRY(iterator_close(vm, iterator_record, move(completion)));
         }
 
-        auto next_value_string = TRY(next_value.as_string().utf8_string());
+        auto next_value_string = next_value.as_string().utf8_string();
 
         // iii. If fieldNames contains nextValue, then
         if (field_names.contains_slow(next_value)) {

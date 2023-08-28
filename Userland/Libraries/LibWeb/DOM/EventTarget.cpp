@@ -7,10 +7,10 @@
 
 #include <AK/StringBuilder.h>
 #include <Kernel/API/KeyCode.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Parser.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/ECMAScriptFunctionObject.h>
+#include <LibJS/Runtime/GlobalEnvironment.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/ObjectEnvironment.h>
 #include <LibJS/Runtime/VM.h>
@@ -49,19 +49,17 @@ EventTarget::~EventTarget() = default;
 WebIDL::ExceptionOr<JS::NonnullGCPtr<EventTarget>> EventTarget::construct_impl(JS::Realm& realm)
 {
     // The new EventTarget() constructor steps are to do nothing.
-    return MUST_OR_THROW_OOM(realm.heap().allocate<EventTarget>(realm, realm));
+    return realm.heap().allocate<EventTarget>(realm, realm);
 }
 
-JS::ThrowCompletionOr<void> EventTarget::initialize(JS::Realm& realm)
+void EventTarget::initialize(JS::Realm& realm)
 {
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
 
     // FIXME: We can't do this for HTML::Window currently, as this will run when creating the initial global object.
     //        During this time, the ESO is not setup, so it will cause a nullptr dereference in host_defined_intrinsics.
     if (!is<HTML::Window>(this))
         set_prototype(&Bindings::ensure_web_prototype<Bindings::EventTargetPrototype>(realm, "EventTarget"));
-
-    return {};
 }
 
 void EventTarget::visit_edges(Cell::Visitor& visitor)
@@ -583,7 +581,7 @@ void EventTarget::activate_event_handler(FlyString const& name, HTML::EventHandl
     // 5. Let listener be a new event listener whose type is the event handler event type corresponding to eventHandler and callback is callback.
     auto listener = realm.heap().allocate_without_realm<DOMEventListener>();
     listener->type = name;
-    listener->callback = IDLEventListener::create(realm, *callback).release_value_but_fixme_should_propagate_errors();
+    listener->callback = IDLEventListener::create(realm, *callback);
 
     // 6. Add an event listener with eventTarget and listener.
     add_an_event_listener(*listener);

@@ -18,6 +18,7 @@
 #include <LibWeb/CSS/Parser/TokenStream.h>
 #include <LibWeb/CSS/Selector.h>
 #include <LibWeb/CSS/StyleProperties.h>
+#include <LibWeb/FontCache.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::CSS {
@@ -67,6 +68,8 @@ public:
     DOM::Document& document() { return m_document; }
     DOM::Document const& document() const { return m_document; }
 
+    FontCache& font_cache() const { return m_font_cache; }
+
     NonnullRefPtr<StyleProperties> create_document_style() const;
 
     ErrorOr<NonnullRefPtr<StyleProperties>> compute_style(DOM::Element&, Optional<CSS::Selector::PseudoElement> = {}) const;
@@ -90,6 +93,8 @@ public:
     void did_load_font(FlyString const& family_name);
 
     void load_fonts_from_sheet(CSSStyleSheet const&);
+
+    RefPtr<Gfx::Font const> compute_font_for_style_values(DOM::Element const* element, Optional<CSS::Selector::PseudoElement> pseudo_element, StyleValue const& font_family, StyleValue const& font_size, StyleValue const& font_style, StyleValue const& font_weight, StyleValue const& font_stretch) const;
 
     struct AnimationKey {
         CSS::CSSStyleDeclaration const* source_declaration;
@@ -134,10 +139,7 @@ private:
     };
 
     class FontLoader;
-    struct MatchingFontCandidate {
-        FontFaceKey key;
-        FontLoader* loader;
-    };
+    struct MatchingFontCandidate;
 
     ErrorOr<RefPtr<StyleProperties>> compute_style_impl(DOM::Element&, Optional<CSS::Selector::PseudoElement>, ComputeStyleMode) const;
     ErrorOr<void> compute_cascaded_values(StyleProperties&, DOM::Element&, Optional<CSS::Selector::PseudoElement>, bool& did_match_any_pseudo_element_rules, ComputeStyleMode) const;
@@ -146,12 +148,12 @@ private:
     RefPtr<Gfx::Font const> font_matching_algorithm(FontFaceKey const& key, float font_size_in_pt) const;
     void compute_font(StyleProperties&, DOM::Element const*, Optional<CSS::Selector::PseudoElement>) const;
     void compute_defaulted_values(StyleProperties&, DOM::Element const*, Optional<CSS::Selector::PseudoElement>) const;
-    ErrorOr<void> absolutize_values(StyleProperties&, DOM::Element const*, Optional<CSS::Selector::PseudoElement>) const;
+    void absolutize_values(StyleProperties&, DOM::Element const*, Optional<CSS::Selector::PseudoElement>) const;
     void transform_box_type_if_needed(StyleProperties&, DOM::Element const&, Optional<CSS::Selector::PseudoElement>) const;
 
     void compute_defaulted_property_value(StyleProperties&, DOM::Element const*, CSS::PropertyID, Optional<CSS::Selector::PseudoElement>) const;
 
-    RefPtr<StyleValue> resolve_unresolved_style_value(DOM::Element&, Optional<CSS::Selector::PseudoElement>, PropertyID, UnresolvedStyleValue const&) const;
+    NonnullRefPtr<StyleValue> resolve_unresolved_style_value(DOM::Element&, Optional<CSS::Selector::PseudoElement>, PropertyID, UnresolvedStyleValue const&) const;
     bool expand_variables(DOM::Element&, Optional<CSS::Selector::PseudoElement>, StringView property_name, HashMap<FlyString, NonnullRefPtr<PropertyDependencyNode>>& dependencies, Parser::TokenStream<Parser::ComponentValue>& source, Vector<Parser::ComponentValue>& dest) const;
     bool expand_unresolved_values(DOM::Element&, StringView property_name, Parser::TokenStream<Parser::ComponentValue>& source, Vector<Parser::ComponentValue>& dest) const;
 
@@ -166,6 +168,7 @@ private:
 
     struct MatchingRuleSet {
         Vector<MatchingRule> user_agent_rules;
+        Vector<MatchingRule> user_rules;
         Vector<MatchingRule> author_rules;
     };
 
@@ -173,8 +176,6 @@ private:
 
     void build_rule_cache();
     void build_rule_cache_if_needed() const;
-
-    Vector<MatchingRule> filter_namespace_rules(DOM::Element const&, Vector<MatchingRule> const&) const;
 
     JS::NonnullGCPtr<DOM::Document> m_document;
 
@@ -202,7 +203,11 @@ private:
     void ensure_animation_timer() const;
 
     OwnPtr<RuleCache> m_author_rule_cache;
+    OwnPtr<RuleCache> m_user_rule_cache;
     OwnPtr<RuleCache> m_user_agent_rule_cache;
+    JS::Handle<CSSStyleSheet> m_user_style_sheet;
+
+    mutable FontCache m_font_cache;
 
     HashMap<FontFaceKey, NonnullOwnPtr<FontLoader>> m_loaded_fonts;
 

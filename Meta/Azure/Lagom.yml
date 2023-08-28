@@ -51,7 +51,7 @@ jobs:
         os: '${{ parameters.os }}'
         arch: 'Lagom'
         toolchain: '$(toolchain)'
-        download_cache_path: 'Meta/Lagom/Build'
+        download_cache_path: 'Meta/Lagom/caches'
         serenity_ccache_path: '$(SERENITY_CCACHE_DIR)'
         with_remote_data_caches: true
         ${{ if eq(parameters.os, 'macOS') }}:
@@ -158,6 +158,23 @@ jobs:
         env:
           SERENITY_SOURCE_DIR: '$(Build.SourcesDirectory)'
           QT_QPA_PLATFORM: 'offscreen'
+
+    - ${{ if and(eq(parameters.fuzzer, 'NoFuzz'), eq(parameters.os, 'macOS') ) }}:
+      - script: |
+          set -e
+          cmake -DENABLE_QT=OFF -B Build
+        displayName: 'Enable the Ladybird AppKit chrome'
+        workingDirectory: $(Build.SourcesDirectory)/Meta/Lagom
+        env:
+          CCACHE_DIR: '$(SERENITY_CCACHE_DIR)'
+
+      - script: |
+          set -e
+          cmake --build .
+        displayName: 'Build Ladybird AppKit chrome'
+        workingDirectory: $(Build.SourcesDirectory)/Meta/Lagom/Build
+        env:
+          CCACHE_DIR: '$(SERENITY_CCACHE_DIR)'
 
     - ${{ if eq(parameters.lagom_lints, true) }}:
       - script: |

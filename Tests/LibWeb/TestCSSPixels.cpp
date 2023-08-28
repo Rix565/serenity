@@ -31,6 +31,11 @@ TEST_CASE(division1)
     CSSPixels b(5);
     CSSPixels c = a / b;
     EXPECT_EQ(c, CSSPixels(2));
+
+    a = CSSPixels::from_raw(0x3FFF'FFFF); // int_max / 2
+    b = CSSPixels(0.25);
+    EXPECT(!a.might_be_saturated());
+    EXPECT((a / b).might_be_saturated());
 }
 
 TEST_CASE(multiplication1)
@@ -39,6 +44,24 @@ TEST_CASE(multiplication1)
     CSSPixels b(4);
     CSSPixels c = a * b;
     EXPECT_EQ(c, CSSPixels(12));
+
+    // Temporary overflow
+    a = CSSPixels::from_raw(0xFFFF'FFFF >> (CSSPixels::fractional_bits + 1));
+    b = 1;
+    EXPECT_EQ((a * b), a);
+
+    // Rounding
+    a = CSSPixels::from_raw(0b01'000001);
+    b = CSSPixels::from_raw(0b01'100000);
+    EXPECT_EQ(a * b, CSSPixels(a.to_double() * b.to_double()));
+    EXPECT_EQ(a * -b, CSSPixels(a.to_double() * -b.to_double()));
+
+    EXPECT_EQ(
+        CSSPixels::from_raw(0b01'0000011) * CSSPixels::from_raw(0b00'010000),
+        CSSPixels::from_raw(0b00'0100001));
+    EXPECT_EQ(
+        CSSPixels::from_raw(0b01'0000111) * CSSPixels::from_raw(0b00'010000),
+        CSSPixels::from_raw(0b00'0100010));
 }
 
 TEST_CASE(addition2)
@@ -85,6 +108,50 @@ TEST_CASE(saturated_subtraction)
 {
     auto value = CSSPixels(INFINITY);
     EXPECT_EQ(value - -1, CSSPixels(INFINITY));
+}
+
+TEST_CASE(multiplication_uses_i64_for_raw_values)
+{
+    CSSPixels a(1200);
+    CSSPixels b(647);
+    CSSPixels c = a * b;
+    EXPECT_EQ(c, CSSPixels(776400));
+}
+
+TEST_CASE(rounding)
+{
+    EXPECT_EQ(ceil(CSSPixels(0)), CSSPixels(0));
+    EXPECT_EQ(ceil(CSSPixels(0.5)), CSSPixels(1));
+    EXPECT_EQ(ceil(CSSPixels(1.3)), CSSPixels(2));
+    EXPECT_EQ(ceil(CSSPixels(1.5)), CSSPixels(2));
+    EXPECT_EQ(ceil(CSSPixels(1.7)), CSSPixels(2));
+
+    EXPECT_EQ(ceil(CSSPixels(-0.5)), CSSPixels(0));
+    EXPECT_EQ(ceil(CSSPixels(-1.3)), CSSPixels(-1));
+    EXPECT_EQ(ceil(CSSPixels(-1.5)), CSSPixels(-1));
+    EXPECT_EQ(ceil(CSSPixels(-1.7)), CSSPixels(-1));
+
+    EXPECT_EQ(floor(CSSPixels(0)), CSSPixels(0));
+    EXPECT_EQ(floor(CSSPixels(0.5)), CSSPixels(0));
+    EXPECT_EQ(floor(CSSPixels(1.3)), CSSPixels(1));
+    EXPECT_EQ(floor(CSSPixels(1.5)), CSSPixels(1));
+    EXPECT_EQ(floor(CSSPixels(1.7)), CSSPixels(1));
+
+    EXPECT_EQ(floor(CSSPixels(-0.5)), CSSPixels(-1));
+    EXPECT_EQ(floor(CSSPixels(-1.3)), CSSPixels(-2));
+    EXPECT_EQ(floor(CSSPixels(-1.5)), CSSPixels(-2));
+    EXPECT_EQ(floor(CSSPixels(-1.7)), CSSPixels(-2));
+
+    EXPECT_EQ(round(CSSPixels(0)), CSSPixels(0));
+    EXPECT_EQ(round(CSSPixels(0.5)), CSSPixels(1));
+    EXPECT_EQ(round(CSSPixels(1.3)), CSSPixels(1));
+    EXPECT_EQ(round(CSSPixels(1.5)), CSSPixels(2));
+    EXPECT_EQ(round(CSSPixels(1.7)), CSSPixels(2));
+
+    EXPECT_EQ(round(CSSPixels(-0.5)), CSSPixels(-1));
+    EXPECT_EQ(round(CSSPixels(-1.3)), CSSPixels(-1));
+    EXPECT_EQ(round(CSSPixels(-1.5)), CSSPixels(-2));
+    EXPECT_EQ(round(CSSPixels(-1.7)), CSSPixels(-2));
 }
 
 }

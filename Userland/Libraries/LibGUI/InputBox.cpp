@@ -128,12 +128,12 @@ void InputBox::on_done(ExecResult result)
 ErrorOr<void> InputBox::build()
 {
     auto main_widget = TRY(set_main_widget<Widget>());
-    TRY(main_widget->try_set_layout<VerticalBoxLayout>(6, 6));
+    main_widget->set_layout<VerticalBoxLayout>(6, 6);
     main_widget->set_fill_with_background_color(true);
 
     if (!m_prompt.is_empty()) {
         auto prompt_container = TRY(main_widget->try_add<Widget>());
-        TRY(prompt_container->try_set_layout<HorizontalBoxLayout>(0, 8));
+        prompt_container->set_layout<HorizontalBoxLayout>(0, 8);
         if (m_icon) {
             auto image_widget = TRY(prompt_container->try_add<ImageWidget>());
             image_widget->set_bitmap(m_icon);
@@ -158,10 +158,10 @@ ErrorOr<void> InputBox::build()
     }
 
     auto button_container = TRY(main_widget->try_add<Widget>());
-    TRY(button_container->try_set_layout<HorizontalBoxLayout>(0, 6));
-    TRY(button_container->add_spacer());
+    button_container->set_layout<HorizontalBoxLayout>(0, 6);
+    button_container->add_spacer();
 
-    m_ok_button = TRY(button_container->try_add<DialogButton>("OK"_short_string));
+    m_ok_button = TRY(button_container->try_add<DialogButton>("OK"_string));
     m_ok_button->on_click = [this](auto) {
         if (m_spinbox)
             m_spinbox->set_value_from_current_text();
@@ -169,7 +169,7 @@ ErrorOr<void> InputBox::build()
     };
     m_ok_button->set_default(true);
 
-    m_cancel_button = TRY(button_container->try_add<DialogButton>("Cancel"_short_string));
+    m_cancel_button = TRY(button_container->try_add<DialogButton>("Cancel"_string));
     m_cancel_button->on_click = [this](auto) { done(ExecResult::Cancel); };
 
     auto guarantee_width = [this, button_container] {

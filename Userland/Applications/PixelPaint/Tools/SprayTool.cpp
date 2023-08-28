@@ -94,17 +94,17 @@ ErrorOr<GUI::Widget*> SprayTool::get_properties_widget()
 {
     if (!m_properties_widget) {
         auto properties_widget = TRY(GUI::Widget::try_create());
-        (void)TRY(properties_widget->try_set_layout<GUI::VerticalBoxLayout>());
+        properties_widget->set_layout<GUI::VerticalBoxLayout>();
 
         auto size_container = TRY(properties_widget->try_add<GUI::Widget>());
         size_container->set_fixed_height(20);
-        (void)TRY(size_container->try_set_layout<GUI::HorizontalBoxLayout>());
+        size_container->set_layout<GUI::HorizontalBoxLayout>();
 
-        auto size_label = TRY(size_container->try_add<GUI::Label>("Size:"_short_string));
+        auto size_label = TRY(size_container->try_add<GUI::Label>("Size:"_string));
         size_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
         size_label->set_fixed_size(80, 20);
 
-        auto size_slider = TRY(size_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "px"_short_string));
+        auto size_slider = TRY(size_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "px"_string));
         size_slider->set_range(1, 20);
         size_slider->set_value(m_thickness);
 
@@ -115,13 +115,13 @@ ErrorOr<GUI::Widget*> SprayTool::get_properties_widget()
 
         auto density_container = TRY(properties_widget->try_add<GUI::Widget>());
         density_container->set_fixed_height(20);
-        (void)TRY(density_container->try_set_layout<GUI::HorizontalBoxLayout>());
+        density_container->set_layout<GUI::HorizontalBoxLayout>();
 
-        auto density_label = TRY(density_container->try_add<GUI::Label>(TRY("Density:"_string)));
+        auto density_label = TRY(density_container->try_add<GUI::Label>("Density:"_string));
         density_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
         density_label->set_fixed_size(80, 20);
 
-        auto density_slider = TRY(density_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "%"_short_string));
+        auto density_slider = TRY(density_container->try_add<GUI::ValueSlider>(Orientation::Horizontal, "%"_string));
         density_slider->set_range(1, 100);
         density_slider->set_value(m_density);
 

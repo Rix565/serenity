@@ -16,7 +16,7 @@
 #include <LibDesktop/Launcher.h>
 #include <LibGUI/Clipboard.h>
 #include <LibGUI/FileIconProvider.h>
-#include <LibJS/Interpreter.h>
+#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Script.h>
 #include <errno.h>
@@ -97,14 +97,14 @@ void CalculatorProvider::query(DeprecatedString const& query, Function<void(Vect
         return;
 
     auto vm = JS::VM::create().release_value_but_fixme_should_propagate_errors();
-    auto interpreter = JS::Interpreter::create<JS::GlobalObject>(*vm);
+    auto root_execution_context = JS::create_simple_execution_context<JS::GlobalObject>(*vm);
 
     auto source_code = query.substring(1);
-    auto parse_result = JS::Script::parse(source_code, interpreter->realm());
+    auto parse_result = JS::Script::parse(source_code, *root_execution_context->realm);
     if (parse_result.is_error())
         return;
 
-    auto completion = interpreter->run(parse_result.value());
+    auto completion = vm->bytecode_interpreter().run(parse_result.value());
     if (completion.is_error())
         return;
 
@@ -113,7 +113,7 @@ void CalculatorProvider::query(DeprecatedString const& query, Function<void(Vect
     if (!result.is_number()) {
         calculation = "0";
     } else {
-        calculation = result.to_string_without_side_effects().release_value_but_fixme_should_propagate_errors().to_deprecated_string();
+        calculation = result.to_string_without_side_effects().to_deprecated_string();
     }
 
     Vector<NonnullRefPtr<Result>> results;
@@ -247,7 +247,7 @@ void URLProvider::query(DeprecatedString const& query, Function<void(Vector<Nonn
     URL url = URL(query);
 
     if (url.scheme().is_empty())
-        url.set_scheme("http");
+        url.set_scheme("http"_string);
     if (url.host().has<Empty>() || url.host() == String {})
         url.set_host(String::from_deprecated_string(query).release_value_but_fixme_should_propagate_errors());
     if (url.path_segment_count() == 0)

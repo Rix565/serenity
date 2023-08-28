@@ -23,6 +23,9 @@ void Request::visit_edges(JS::Cell::Visitor& visitor)
     Base::visit_edges(visitor);
     visitor.visit(m_header_list);
     visitor.visit(m_client);
+    m_body.visit(
+        [&](JS::NonnullGCPtr<Body>& body) { visitor.visit(body); },
+        [](auto&) {});
     m_reserved_client.visit(
         [&](JS::GCPtr<HTML::EnvironmentSettingsObject> const& value) { visitor.visit(value); },
         [](auto const&) {});
@@ -202,7 +205,7 @@ ErrorOr<ByteBuffer> Request::byte_serialize_origin() const
 }
 
 // https://fetch.spec.whatwg.org/#concept-request-clone
-WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> Request::clone(JS::Realm& realm) const
+JS::NonnullGCPtr<Request> Request::clone(JS::Realm& realm) const
 {
     // To clone a request request, run these steps:
     auto& vm = realm.vm();
@@ -249,8 +252,8 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Request>> Request::clone(JS::Realm& realm) 
     new_request->set_timing_allow_failed(m_timing_allow_failed);
 
     // 2. If request’s body is non-null, set newRequest’s body to the result of cloning request’s body.
-    if (auto const* body = m_body.get_pointer<Body>())
-        new_request->set_body(TRY(body->clone(realm)));
+    if (auto const* body = m_body.get_pointer<JS::NonnullGCPtr<Body>>())
+        new_request->set_body((*body)->clone(realm));
 
     // 3. Return newRequest.
     return new_request;
@@ -361,12 +364,12 @@ bool Request::cross_origin_embedder_policy_allows_credentials() const
     // FIXME: 3. If request’s client’s policy container’s embedder policy’s value is not "credentialless", then return true.
 
     // 4. If request’s origin is same origin with request’s current URL’s origin and request does not have a redirect-tainted origin, then return true.
-    // FIXME: Actually use the given origins once we have https://url.spec.whatwg.org/#concept-url-origin.
-    if (HTML::Origin().is_same_origin(HTML::Origin()) && !has_redirect_tainted_origin())
-        return true;
-
     // 5. Return false.
-    return false;
+    auto const* request_origin = m_origin.get_pointer<HTML::Origin>();
+    if (request_origin == nullptr)
+        return false;
+
+    return request_origin->is_same_origin(URL::url_origin(current_url())) && !has_redirect_tainted_origin();
 }
 
 }

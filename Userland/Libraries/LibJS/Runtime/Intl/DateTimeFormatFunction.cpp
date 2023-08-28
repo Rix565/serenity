@@ -16,7 +16,7 @@ namespace JS::Intl {
 // 11.5.4 DateTime Format Functions, https://tc39.es/ecma402/#sec-datetime-format-functions
 NonnullGCPtr<DateTimeFormatFunction> DateTimeFormatFunction::create(Realm& realm, DateTimeFormat& date_time_format)
 {
-    return realm.heap().allocate<DateTimeFormatFunction>(realm, date_time_format, realm.intrinsics().function_prototype()).release_allocated_value_but_fixme_should_propagate_errors();
+    return realm.heap().allocate<DateTimeFormatFunction>(realm, date_time_format, realm.intrinsics().function_prototype());
 }
 
 DateTimeFormatFunction::DateTimeFormatFunction(DateTimeFormat& date_time_format, Object& prototype)
@@ -25,15 +25,13 @@ DateTimeFormatFunction::DateTimeFormatFunction(DateTimeFormat& date_time_format,
 {
 }
 
-ThrowCompletionOr<void> DateTimeFormatFunction::initialize(Realm& realm)
+void DateTimeFormatFunction::initialize(Realm& realm)
 {
     auto& vm = this->vm();
 
-    MUST_OR_THROW_OOM(Base::initialize(realm));
+    Base::initialize(realm);
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
     define_direct_property(vm.names.name, PrimitiveString::create(vm, String {}), Attribute::Configurable);
-
-    return {};
 }
 
 ThrowCompletionOr<Value> DateTimeFormatFunction::call()

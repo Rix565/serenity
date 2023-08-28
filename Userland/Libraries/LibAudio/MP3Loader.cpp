@@ -22,28 +22,36 @@ MP3LoaderPlugin::MP3LoaderPlugin(NonnullOwnPtr<SeekableStream> stream)
 {
 }
 
+MaybeLoaderError MP3LoaderPlugin::skip_id3(SeekableStream& stream)
+{
+    // FIXME: This is a bit of a hack until we have a proper ID3 reader and MP3 demuxer.
+    // Based on https://mutagen-specs.readthedocs.io/en/latest/id3/id3v2.2.html
+    char identifier_buffer[3] = { 0, 0, 0 };
+    auto read_identifier = StringView(TRY(stream.read_some({ &identifier_buffer[0], sizeof(identifier_buffer) })));
+    if (read_identifier == "ID3"sv) {
+        [[maybe_unused]] auto version = TRY(stream.read_value<u8>());
+        [[maybe_unused]] auto revision = TRY(stream.read_value<u8>());
+        [[maybe_unused]] auto flags = TRY(stream.read_value<u8>());
+        auto size = 0;
+        for (auto i = 0; i < 4; i++) {
+            // Each byte has a zeroed most significant bit to prevent it from looking like a sync code.
+            auto byte = TRY(stream.read_value<u8>());
+            size <<= 7;
+            size |= byte & 0x7F;
+        }
+        TRY(stream.seek(size, SeekMode::FromCurrentPosition));
+    } else if (read_identifier != "TAG"sv) {
+        MUST(stream.seek(-static_cast<int>(read_identifier.length()), SeekMode::FromCurrentPosition));
+    }
+    return {};
+}
+
 bool MP3LoaderPlugin::sniff(SeekableStream& stream)
 {
-    auto maybe_bit_stream = try_make<BigEndianInputBitStream>(MaybeOwned<Stream>(stream));
-    if (maybe_bit_stream.is_error())
+    auto skip_id3_result = skip_id3(stream);
+    if (skip_id3_result.is_error())
         return false;
-    auto bit_stream = maybe_bit_stream.release_value();
-
-    auto synchronization_result = synchronize(*bit_stream, 0);
-    if (synchronization_result.is_error())
-        return false;
-    auto maybe_mp3 = stream.read_value<BigEndian<u16>>();
-    if (maybe_mp3.is_error())
-        return false;
-
-    ErrorOr<int> id = bit_stream->read_bit();
-    if (id.is_error() || id.value() != 1)
-        return false;
-    auto raw_layer = bit_stream->read_bits(2);
-    if (raw_layer.is_error())
-        return false;
-    auto layer = MP3::Tables::LayerNumberLookup[raw_layer.value()];
-    return layer == 3;
+    return !synchronize_and_read_header(stream, 0).is_error();
 }
 
 ErrorOr<NonnullOwnPtr<LoaderPlugin>, LoaderError> MP3LoaderPlugin::create(NonnullOwnPtr<SeekableStream> stream)
@@ -55,21 +63,16 @@ ErrorOr<NonnullOwnPtr<LoaderPlugin>, LoaderError> MP3LoaderPlugin::create(Nonnul
 
 MaybeLoaderError MP3LoaderPlugin::initialize()
 {
-    m_bitstream = TRY(try_make<BigEndianInputBitStream>(MaybeOwned<Stream>(*m_stream)));
+    TRY(build_seek_table());
 
-    TRY(synchronize());
-
-    auto header = TRY(read_header());
-    if (header.id != 1 || header.layer != 3)
-        return LoaderError { LoaderError::Category::Format, "Only MPEG-1 layer 3 supported." };
+    TRY(seek(0));
+    auto header = TRY(synchronize_and_read_header());
 
     m_sample_rate = header.samplerate;
     m_num_channels = header.channel_count();
     m_loaded_samples = 0;
 
-    TRY(build_seek_table());
-
-    TRY(m_stream->seek(0, SeekMode::SetPosition));
+    TRY(seek(0));
 
     return {};
 }
@@ -77,11 +80,9 @@ MaybeLoaderError MP3LoaderPlugin::initialize()
 MaybeLoaderError MP3LoaderPlugin::reset()
 {
     TRY(seek(0));
-    m_current_frame = {};
     m_synthesis_buffer = {};
     m_loaded_samples = 0;
     TRY(m_bit_reservoir.discard(m_bit_reservoir.used_buffer_size()));
-    m_bitstream->align_to_byte_boundary();
     return {};
 }
 
@@ -92,10 +93,8 @@ MaybeLoaderError MP3LoaderPlugin::seek(int const position)
         TRY(m_stream->seek(seek_entry->byte_offset, SeekMode::SetPosition));
         m_loaded_samples = seek_entry->sample_index;
     }
-    m_current_frame = {};
     m_synthesis_buffer = {};
     TRY(m_bit_reservoir.discard(m_bit_reservoir.used_buffer_size()));
-    m_bitstream->align_to_byte_boundary();
     return {};
 }
 
@@ -106,36 +105,30 @@ ErrorOr<Vector<FixedArray<Sample>>, LoaderError> MP3LoaderPlugin::load_chunks(si
     while (samples_to_read > 0) {
         FixedArray<Sample> samples = TRY(FixedArray<Sample>::create(MP3::frame_size));
 
-        if (!m_current_frame.has_value()) {
-            auto maybe_frame = read_next_frame();
-            if (maybe_frame.is_error()) {
-                if (m_stream->is_eof()) {
-                    return Vector<FixedArray<Sample>> {};
-                }
-                return maybe_frame.release_error();
-            }
-            m_current_frame = maybe_frame.release_value();
-            if (!m_current_frame.has_value())
-                break;
+        auto maybe_frame = read_next_frame();
+        if (maybe_frame.is_error()) {
+            if (m_stream->is_eof())
+                return Vector<FixedArray<Sample>> {};
+            return maybe_frame.release_error();
         }
+        auto frame = maybe_frame.release_value();
 
-        bool const is_stereo = m_current_frame->header.channel_count() == 2;
+        bool const is_stereo = frame.header.channel_count() == 2;
         size_t current_frame_read = 0;
         for (; current_frame_read < MP3::granule_size; current_frame_read++) {
-            auto const left_sample = m_current_frame->channels[0].granules[0].pcm[current_frame_read / 32][current_frame_read % 32];
-            auto const right_sample = is_stereo ? m_current_frame->channels[1].granules[0].pcm[current_frame_read / 32][current_frame_read % 32] : left_sample;
+            auto const left_sample = frame.channels[0].granules[0].pcm[current_frame_read / 32][current_frame_read % 32];
+            auto const right_sample = is_stereo ? frame.channels[1].granules[0].pcm[current_frame_read / 32][current_frame_read % 32] : left_sample;
             samples[current_frame_read] = Sample { left_sample, right_sample };
             samples_to_read--;
         }
         for (; current_frame_read < MP3::frame_size; current_frame_read++) {
-            auto const left_sample = m_current_frame->channels[0].granules[1].pcm[(current_frame_read - MP3::granule_size) / 32][(current_frame_read - MP3::granule_size) % 32];
-            auto const right_sample = is_stereo ? m_current_frame->channels[1].granules[1].pcm[(current_frame_read - MP3::granule_size) / 32][(current_frame_read - MP3::granule_size) % 32] : left_sample;
+            auto const left_sample = frame.channels[0].granules[1].pcm[(current_frame_read - MP3::granule_size) / 32][(current_frame_read - MP3::granule_size) % 32];
+            auto const right_sample = is_stereo ? frame.channels[1].granules[1].pcm[(current_frame_read - MP3::granule_size) / 32][(current_frame_read - MP3::granule_size) % 32] : left_sample;
             samples[current_frame_read] = Sample { left_sample, right_sample };
             samples_to_read--;
         }
         m_loaded_samples += samples.size();
         TRY(frames.try_append(move(samples)));
-        m_current_frame = {};
     }
 
     return frames;
@@ -143,96 +136,102 @@ ErrorOr<Vector<FixedArray<Sample>>, LoaderError> MP3LoaderPlugin::load_chunks(si
 
 MaybeLoaderError MP3LoaderPlugin::build_seek_table()
 {
+    VERIFY(MUST(m_stream->tell()) == 0);
+    TRY(skip_id3(*m_stream));
+
     int sample_count = 0;
     size_t frame_count = 0;
     m_seek_table = {};
 
-    m_bitstream->align_to_byte_boundary();
+    while (true) {
+        auto error_or_header = synchronize_and_read_header();
+        if (error_or_header.is_error())
+            break;
 
-    while (!synchronize().is_error()) {
-        auto const frame_pos = -2 + TRY(m_stream->seek(0, SeekMode::FromCurrentPosition));
-
-        auto error_or_header = read_header();
-        if (error_or_header.is_error() || error_or_header.value().id != 1 || error_or_header.value().layer != 3) {
-            continue;
+        if (frame_count % 10 == 0) {
+            auto frame_pos = TRY(m_stream->tell()) - error_or_header.value().header_size;
+            TRY(m_seek_table.insert_seek_point({ static_cast<u64>(sample_count), frame_pos }));
         }
+
         frame_count++;
         sample_count += MP3::frame_size;
 
-        if (frame_count % 10 == 0)
-            TRY(m_seek_table.insert_seek_point({ static_cast<u64>(sample_count), frame_pos }));
-
-        TRY(m_stream->seek(error_or_header.value().frame_size - 6, SeekMode::FromCurrentPosition));
-
-        // TODO: This is just here to clear the bitstream buffer.
-        // Bitstream should have a method to sync its state to the underlying stream.
-        m_bitstream->align_to_byte_boundary();
+        TRY(m_stream->seek(error_or_header.value().frame_size - error_or_header.value().header_size, SeekMode::FromCurrentPosition));
     }
     m_total_samples = sample_count;
     return {};
 }
 
-ErrorOr<MP3::Header, LoaderError> MP3LoaderPlugin::read_header()
+ErrorOr<MP3::Header, LoaderError> MP3LoaderPlugin::read_header(SeekableStream& stream, size_t sample_index)
 {
+    auto bitstream = BigEndianInputBitStream(MaybeOwned<Stream>(stream));
+    if (TRY(bitstream.read_bits(4)) != 0xF)
+        return LoaderError { LoaderError::Category::Format, sample_index, "Frame header did not start with sync code." };
     MP3::Header header;
-    header.id = TRY(m_bitstream->read_bit());
-    header.layer = MP3::Tables::LayerNumberLookup[TRY(m_bitstream->read_bits(2))];
+    header.id = TRY(bitstream.read_bit());
+    header.layer = MP3::Tables::LayerNumberLookup[TRY(bitstream.read_bits(2))];
     if (header.layer <= 0)
-        return LoaderError { LoaderError::Category::Format, m_loaded_samples, "Frame header contains invalid layer number." };
-    header.protection_bit = TRY(m_bitstream->read_bit());
-    header.bitrate = MP3::Tables::BitratesPerLayerLookup[header.layer - 1][TRY(m_bitstream->read_bits(4))];
+        return LoaderError { LoaderError::Category::Format, sample_index, "Frame header contains invalid layer number." };
+    header.protection_bit = TRY(bitstream.read_bit());
+    header.bitrate = MP3::Tables::BitratesPerLayerLookup[header.layer - 1][TRY(bitstream.read_bits(4))];
     if (header.bitrate <= 0)
-        return LoaderError { LoaderError::Category::Format, m_loaded_samples, "Frame header contains invalid bitrate." };
-    header.samplerate = MP3::Tables::SampleratesLookup[TRY(m_bitstream->read_bits(2))];
+        return LoaderError { LoaderError::Category::Format, sample_index, "Frame header contains invalid bitrate." };
+    header.samplerate = MP3::Tables::SampleratesLookup[TRY(bitstream.read_bits(2))];
     if (header.samplerate <= 0)
-        return LoaderError { LoaderError::Category::Format, m_loaded_samples, "Frame header contains invalid samplerate." };
-    header.padding_bit = TRY(m_bitstream->read_bit());
-    header.private_bit = TRY(m_bitstream->read_bit());
-    header.mode = static_cast<MP3::Mode>(TRY(m_bitstream->read_bits(2)));
-    header.mode_extension = static_cast<MP3::ModeExtension>(TRY(m_bitstream->read_bits(2)));
-    header.copyright_bit = TRY(m_bitstream->read_bit());
-    header.original_bit = TRY(m_bitstream->read_bit());
-    header.emphasis = static_cast<MP3::Emphasis>(TRY(m_bitstream->read_bits(2)));
-    if (!header.protection_bit)
-        header.crc16 = TRY(m_bitstream->read_bits<u16>(16));
+        return LoaderError { LoaderError::Category::Format, sample_index, "Frame header contains invalid samplerate." };
+    header.padding_bit = TRY(bitstream.read_bit());
+    header.private_bit = TRY(bitstream.read_bit());
+    header.mode = static_cast<MP3::Mode>(TRY(bitstream.read_bits(2)));
+    header.mode_extension = static_cast<MP3::ModeExtension>(TRY(bitstream.read_bits(2)));
+    header.copyright_bit = TRY(bitstream.read_bit());
+    header.original_bit = TRY(bitstream.read_bit());
+    header.emphasis = static_cast<MP3::Emphasis>(TRY(bitstream.read_bits(2)));
+    header.header_size = 4;
+    if (!header.protection_bit) {
+        header.crc16 = TRY(bitstream.read_bits<u16>(16));
+        header.header_size += 2;
+    }
     header.frame_size = 144 * header.bitrate * 1000 / header.samplerate + header.padding_bit;
-    header.slot_count = header.frame_size - ((header.channel_count() == 2 ? 32 : 17) + (header.protection_bit ? 0 : 2) + 4);
+    header.slot_count = header.frame_size - ((header.channel_count() == 2 ? 32 : 17) + header.header_size);
     return header;
 }
 
-MaybeLoaderError MP3LoaderPlugin::synchronize(BigEndianInputBitStream& stream, size_t sample_index)
+ErrorOr<MP3::Header, LoaderError> MP3LoaderPlugin::synchronize_and_read_header(SeekableStream& stream, size_t sample_index)
 {
-    size_t one_counter = 0;
-    while (one_counter < 12 && !stream.is_eof()) {
-        bool const bit = TRY(stream.read_bit());
-        one_counter = bit ? one_counter + 1 : 0;
-        if (!bit) {
-            stream.align_to_byte_boundary();
+    while (!stream.is_eof()) {
+        bool last_was_all_set = false;
+
+        while (!stream.is_eof()) {
+            u8 byte = TRY(stream.read_value<u8>());
+            if (last_was_all_set && (byte & 0xF0) == 0xF0) {
+                // Seek back, since there is still data we have not consumed within the current byte.
+                // read_header() will consume and check these 4 bits itself and then continue reading
+                // the rest of the data from there.
+                TRY(stream.seek(-1, SeekMode::FromCurrentPosition));
+                break;
+            }
+            last_was_all_set = byte == 0xFF;
         }
+
+        auto header_start = TRY(stream.tell());
+        auto header_result = read_header(stream, sample_index);
+        if (header_result.is_error() || header_result.value().id != 1 || header_result.value().layer != 3) {
+            TRY(stream.seek(header_start, SeekMode::SetPosition));
+            continue;
+        }
+        return header_result.value();
     }
-    if (one_counter != 12)
-        return LoaderError { LoaderError::Category::Format, sample_index, "Failed to synchronize." };
-    return {};
+    return LoaderError { LoaderError::Category::Format, sample_index, "Failed to synchronize." };
 }
 
-MaybeLoaderError MP3LoaderPlugin::synchronize()
+ErrorOr<MP3::Header, LoaderError> MP3LoaderPlugin::synchronize_and_read_header()
 {
-    return MP3LoaderPlugin::synchronize(*m_bitstream, m_loaded_samples);
+    return MP3LoaderPlugin::synchronize_and_read_header(*m_stream, m_loaded_samples);
 }
 
 ErrorOr<MP3::MP3Frame, LoaderError> MP3LoaderPlugin::read_next_frame()
 {
-    // Note: This will spin until we find a correct frame, or we reach eof.
-    //       In the second case, the error will bubble up from read_frame_data().
-    while (true) {
-        TRY(synchronize());
-        MP3::Header header = TRY(read_header());
-        if (header.id != 1 || header.layer != 3) {
-            continue;
-        }
-
-        return read_frame_data(header);
-    }
+    return read_frame_data(TRY(synchronize_and_read_header()));
 }
 
 ErrorOr<MP3::MP3Frame, LoaderError> MP3LoaderPlugin::read_frame_data(MP3::Header const& header)
@@ -247,7 +246,7 @@ ErrorOr<MP3::MP3Frame, LoaderError> MP3LoaderPlugin::read_frame_data(MP3::Header
     auto& buffer = maybe_buffer.value();
 
     size_t old_reservoir_size = m_bit_reservoir.used_buffer_size();
-    TRY(m_bitstream->read_until_filled(buffer));
+    TRY(m_stream->read_until_filled(buffer));
     TRY(m_bit_reservoir.write_until_depleted(buffer));
 
     // If we don't have enough data in the reservoir to process this frame, skip it (but keep the data).
@@ -326,46 +325,48 @@ ErrorOr<MP3::MP3Frame, LoaderError> MP3LoaderPlugin::read_frame_data(MP3::Header
 
 MaybeLoaderError MP3LoaderPlugin::read_side_information(MP3::MP3Frame& frame)
 {
-    frame.main_data_begin = TRY(m_bitstream->read_bits(9));
+    auto bitstream = BigEndianInputBitStream(MaybeOwned<Stream>(*m_stream));
+
+    frame.main_data_begin = TRY(bitstream.read_bits(9));
 
     if (frame.header.channel_count() == 1) {
-        frame.private_bits = TRY(m_bitstream->read_bits(5));
+        frame.private_bits = TRY(bitstream.read_bits(5));
     } else {
-        frame.private_bits = TRY(m_bitstream->read_bits(3));
+        frame.private_bits = TRY(bitstream.read_bits(3));
     }
 
     for (size_t channel_index = 0; channel_index < frame.header.channel_count(); channel_index++) {
         for (size_t scale_factor_selection_info_band = 0; scale_factor_selection_info_band < 4; scale_factor_selection_info_band++) {
-            frame.channels[channel_index].scale_factor_selection_info[scale_factor_selection_info_band] = TRY(m_bitstream->read_bit());
+            frame.channels[channel_index].scale_factor_selection_info[scale_factor_selection_info_band] = TRY(bitstream.read_bit());
         }
     }
 
     for (size_t granule_index = 0; granule_index < 2; granule_index++) {
         for (size_t channel_index = 0; channel_index < frame.header.channel_count(); channel_index++) {
             auto& granule = frame.channels[channel_index].granules[granule_index];
-            granule.part_2_3_length = TRY(m_bitstream->read_bits(12));
-            granule.big_values = TRY(m_bitstream->read_bits(9));
-            granule.global_gain = TRY(m_bitstream->read_bits(8));
-            granule.scalefac_compress = TRY(m_bitstream->read_bits(4));
-            granule.window_switching_flag = TRY(m_bitstream->read_bit());
+            granule.part_2_3_length = TRY(bitstream.read_bits(12));
+            granule.big_values = TRY(bitstream.read_bits(9));
+            granule.global_gain = TRY(bitstream.read_bits(8));
+            granule.scalefac_compress = TRY(bitstream.read_bits(4));
+            granule.window_switching_flag = TRY(bitstream.read_bit());
             if (granule.window_switching_flag) {
-                granule.block_type = static_cast<MP3::BlockType>(TRY(m_bitstream->read_bits(2)));
-                granule.mixed_block_flag = TRY(m_bitstream->read_bit());
+                granule.block_type = static_cast<MP3::BlockType>(TRY(bitstream.read_bits(2)));
+                granule.mixed_block_flag = TRY(bitstream.read_bit());
                 for (size_t region = 0; region < 2; region++)
-                    granule.table_select[region] = TRY(m_bitstream->read_bits(5));
+                    granule.table_select[region] = TRY(bitstream.read_bits(5));
                 for (size_t window = 0; window < 3; window++)
-                    granule.sub_block_gain[window] = TRY(m_bitstream->read_bits(3));
+                    granule.sub_block_gain[window] = TRY(bitstream.read_bits(3));
                 granule.region0_count = (granule.block_type == MP3::BlockType::Short && !granule.mixed_block_flag) ? 8 : 7;
                 granule.region1_count = 36;
             } else {
                 for (size_t region = 0; region < 3; region++)
-                    granule.table_select[region] = TRY(m_bitstream->read_bits(5));
-                granule.region0_count = TRY(m_bitstream->read_bits(4));
-                granule.region1_count = TRY(m_bitstream->read_bits(3));
+                    granule.table_select[region] = TRY(bitstream.read_bits(5));
+                granule.region0_count = TRY(bitstream.read_bits(4));
+                granule.region1_count = TRY(bitstream.read_bits(3));
             }
-            granule.preflag = TRY(m_bitstream->read_bit());
-            granule.scalefac_scale = TRY(m_bitstream->read_bit());
-            granule.count1table_select = TRY(m_bitstream->read_bit());
+            granule.preflag = TRY(bitstream.read_bit());
+            granule.scalefac_scale = TRY(bitstream.read_bit());
+            granule.count1table_select = TRY(bitstream.read_bit());
         }
     }
     return {};

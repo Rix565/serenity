@@ -23,8 +23,8 @@ class CSSRuleList : public Bindings::LegacyPlatformObject {
     WEB_PLATFORM_OBJECT(CSSRuleList, Bindings::LegacyPlatformObject);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSRuleList>> create(JS::Realm&, JS::MarkedVector<CSSRule*> const&);
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSRuleList>> create_empty(JS::Realm&);
+    [[nodiscard]] static JS::NonnullGCPtr<CSSRuleList> create(JS::Realm&, JS::MarkedVector<CSSRule*> const&);
+    [[nodiscard]] static JS::NonnullGCPtr<CSSRuleList> create_empty(JS::Realm&);
 
     ~CSSRuleList() = default;
 
@@ -66,7 +66,7 @@ public:
 private:
     explicit CSSRuleList(JS::Realm&);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     // ^Bindings::LegacyPlatformObject

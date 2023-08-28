@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -32,8 +33,10 @@ struct BorderRadiusData {
 
     inline void shrink(CSSPixels horizontal, CSSPixels vertical)
     {
-        horizontal_radius = max(CSSPixels(0), horizontal_radius - horizontal);
-        vertical_radius = max(CSSPixels(0), vertical_radius - vertical);
+        if (horizontal_radius != 0)
+            horizontal_radius = max(CSSPixels(0), horizontal_radius - horizontal);
+        if (vertical_radius != 0)
+            vertical_radius = max(CSSPixels(0), vertical_radius - vertical);
     }
 };
 
@@ -55,6 +58,11 @@ struct BorderRadiiData {
         bottom_right.shrink(right, bottom);
         bottom_left.shrink(left, bottom);
     }
+
+    inline void inflate(CSSPixels top, CSSPixels right, CSSPixels bottom, CSSPixels left)
+    {
+        shrink(-top, -right, -bottom, -left);
+    }
 };
 
 BorderRadiiData normalized_border_radii_data(Layout::Node const&, CSSPixelRect const&, CSS::BorderRadiusData top_left_radius, CSS::BorderRadiusData top_right_radius, CSS::BorderRadiusData bottom_right_radius, CSS::BorderRadiusData bottom_left_radius);
@@ -72,10 +80,13 @@ struct BordersData {
     CSS::BorderData left;
 };
 
+// Returns OptionalNone if there is no outline to paint.
+Optional<BordersData> borders_data_for_outline(Layout::Node const&, Color outline_color, CSS::OutlineStyle outline_style, CSSPixels outline_width);
+
 RefPtr<Gfx::Bitmap> get_cached_corner_bitmap(DevicePixelSize corners_size);
 
 void paint_border(PaintContext& context, BorderEdge edge, DevicePixelRect const& rect, Gfx::AntiAliasingPainter::CornerRadius const& radius, Gfx::AntiAliasingPainter::CornerRadius const& opposite_radius, BordersData const& borders_data, Gfx::Path& path, bool last);
-void paint_all_borders(PaintContext& context, CSSPixelRect const& bordered_rect, BorderRadiiData const& border_radii_data, BordersData const&);
+void paint_all_borders(PaintContext& context, DevicePixelRect const& border_rect, BorderRadiiData const& border_radii_data, BordersData const&);
 
 Gfx::Color border_color(BorderEdge edge, BordersData const& borders_data);
 

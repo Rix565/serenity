@@ -9,7 +9,7 @@
 
 namespace Kernel {
 
-ErrorOr<FlatPtr> Process::sys$prctl(int option, FlatPtr arg1, FlatPtr arg2)
+ErrorOr<FlatPtr> Process::sys$prctl(int option, FlatPtr arg1, FlatPtr arg2, FlatPtr arg3)
 {
     VERIFY_NO_PROCESS_BIG_LOCK(this);
     return with_mutable_protected_data([&](auto& protected_data) -> ErrorOr<FlatPtr> {
@@ -52,30 +52,47 @@ ErrorOr<FlatPtr> Process::sys$prctl(int option, FlatPtr arg1, FlatPtr arg2)
         case PR_SET_PROCESS_NAME: {
             TRY(require_promise(Pledge::proc));
             Userspace<char const*> buffer = arg1;
-            int user_buffer_size = static_cast<int>(arg2);
-            if (user_buffer_size < 0)
-                return EINVAL;
-            if (user_buffer_size > 256)
-                return ENAMETOOLONG;
-            size_t buffer_size = static_cast<size_t>(user_buffer_size);
-            auto name = TRY(try_copy_kstring_from_user(buffer, buffer_size));
+            size_t buffer_size = static_cast<size_t>(arg2);
+            Process::Name process_name {};
+            TRY(try_copy_name_from_user_into_fixed_string_buffer(buffer, process_name, buffer_size));
             // NOTE: Reject empty and whitespace-only names, as they only confuse users.
-            if (name->view().is_whitespace())
+            if (process_name.representable_view().is_whitespace())
                 return EINVAL;
-            set_name(move(name));
+            set_name(process_name.representable_view());
             return 0;
         }
         case PR_GET_PROCESS_NAME: {
             TRY(require_promise(Pledge::stdio));
             Userspace<char*> buffer = arg1;
-            int user_buffer_size = arg2;
-            if (user_buffer_size < 0)
-                return EINVAL;
             size_t buffer_size = static_cast<size_t>(arg2);
             TRY(m_name.with([&buffer, buffer_size](auto& name) -> ErrorOr<void> {
-                if (name->length() + 1 > buffer_size)
-                    return ENAMETOOLONG;
-                return copy_to_user(buffer, name->characters(), name->length() + 1);
+                VERIFY(!name.representable_view().is_null());
+                return copy_fixed_string_buffer_including_null_char_to_user(buffer, buffer_size, name);
+            }));
+            return 0;
+        }
+        case PR_SET_THREAD_NAME: {
+            TRY(require_promise(Pledge::stdio));
+            int thread_id = static_cast<int>(arg1);
+            Userspace<char const*> buffer = arg2;
+            size_t buffer_size = static_cast<size_t>(arg3);
+
+            Thread::Name thread_name {};
+            TRY(try_copy_name_from_user_into_fixed_string_buffer(buffer, thread_name, buffer_size));
+            auto thread = TRY(get_thread_from_thread_list(thread_id));
+            thread->set_name(thread_name.representable_view());
+            return 0;
+        }
+        case PR_GET_THREAD_NAME: {
+            TRY(require_promise(Pledge::thread));
+            int thread_id = static_cast<int>(arg1);
+            Userspace<char*> buffer = arg2;
+            size_t buffer_size = static_cast<size_t>(arg3);
+            auto thread = TRY(get_thread_from_thread_list(thread_id));
+
+            TRY(thread->name().with([&](auto& thread_name) -> ErrorOr<void> {
+                VERIFY(!thread_name.representable_view().is_null());
+                return copy_fixed_string_buffer_including_null_char_to_user(buffer, buffer_size, thread_name);
             }));
             return 0;
         }

@@ -52,18 +52,18 @@ public:
 ErrorOr<NonnullRefPtr<ProcessMemoryMapWidget>> ProcessMemoryMapWidget::try_create()
 {
     auto widget = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) ProcessMemoryMapWidget()));
-    TRY(widget->try_set_layout<GUI::VerticalBoxLayout>(4));
+    widget->set_layout<GUI::VerticalBoxLayout>(4);
     widget->m_table_view = TRY(widget->try_add<GUI::TableView>());
 
     Vector<GUI::JsonArrayModel::FieldSpec> pid_vm_fields;
     TRY(pid_vm_fields.try_empend(
-        "Address"_short_string, Gfx::TextAlignment::CenterLeft,
+        "Address"_string, Gfx::TextAlignment::CenterLeft,
         [](auto& object) { return DeprecatedString::formatted("{:p}", object.get_u64("address"sv).value_or(0)); },
         [](auto& object) { return object.get_u64("address"sv).value_or(0); }));
-    TRY(pid_vm_fields.try_empend("size", "Size"_short_string, Gfx::TextAlignment::CenterRight));
-    TRY(pid_vm_fields.try_empend("amount_resident", TRY("Resident"_string), Gfx::TextAlignment::CenterRight));
-    TRY(pid_vm_fields.try_empend("amount_dirty", "Dirty"_short_string, Gfx::TextAlignment::CenterRight));
-    TRY(pid_vm_fields.try_empend("Access"_short_string, Gfx::TextAlignment::CenterLeft, [](auto& object) {
+    TRY(pid_vm_fields.try_empend("size", "Size"_string, Gfx::TextAlignment::CenterRight));
+    TRY(pid_vm_fields.try_empend("amount_resident", "Resident"_string, Gfx::TextAlignment::CenterRight));
+    TRY(pid_vm_fields.try_empend("amount_dirty", "Dirty"_string, Gfx::TextAlignment::CenterRight));
+    TRY(pid_vm_fields.try_empend("Access"_string, Gfx::TextAlignment::CenterLeft, [](auto& object) {
         StringBuilder builder;
         if (object.get_bool("readable"sv).value_or(false))
             builder.append('R');
@@ -79,19 +79,19 @@ ErrorOr<NonnullRefPtr<ProcessMemoryMapWidget>> ProcessMemoryMapWidget::try_creat
             builder.append('T');
         return builder.to_deprecated_string();
     }));
-    TRY(pid_vm_fields.try_empend(TRY("VMObject type"_string), Gfx::TextAlignment::CenterLeft, [](auto& object) {
+    TRY(pid_vm_fields.try_empend("VMObject type"_string, Gfx::TextAlignment::CenterLeft, [](auto& object) {
         auto type = object.get_deprecated_string("vmobject"sv).value_or({});
         if (type.ends_with("VMObject"sv))
             type = type.substring(0, type.length() - 8);
         return type;
     }));
-    TRY(pid_vm_fields.try_empend(TRY("Purgeable"_string), Gfx::TextAlignment::CenterLeft, [](auto& object) {
+    TRY(pid_vm_fields.try_empend("Purgeable"_string, Gfx::TextAlignment::CenterLeft, [](auto& object) {
         if (object.get_bool("volatile"sv).value_or(false))
             return "Volatile";
         return "Non-volatile";
     }));
     TRY(pid_vm_fields.try_empend(
-        TRY("Page map"_string), Gfx::TextAlignment::CenterLeft,
+        "Page map"_string, Gfx::TextAlignment::CenterLeft,
         [](auto&) {
             return GUI::Variant();
         },
@@ -102,8 +102,8 @@ ErrorOr<NonnullRefPtr<ProcessMemoryMapWidget>> ProcessMemoryMapWidget::try_creat
             auto pagemap = object.get_deprecated_string("pagemap"sv).value_or({});
             return pagemap;
         }));
-    TRY(pid_vm_fields.try_empend("cow_pages", "# CoW"_short_string, Gfx::TextAlignment::CenterRight));
-    TRY(pid_vm_fields.try_empend("name", "Name"_short_string, Gfx::TextAlignment::CenterLeft));
+    TRY(pid_vm_fields.try_empend("cow_pages", "# CoW"_string, Gfx::TextAlignment::CenterRight));
+    TRY(pid_vm_fields.try_empend("name", "Name"_string, Gfx::TextAlignment::CenterLeft));
     widget->m_json_model = GUI::JsonArrayModel::create({}, move(pid_vm_fields));
     widget->m_table_view->set_model(TRY(GUI::SortingProxyModel::create(*widget->m_json_model)));
 

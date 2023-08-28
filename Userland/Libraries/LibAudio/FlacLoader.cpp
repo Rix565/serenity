@@ -384,10 +384,9 @@ LoaderSamples FlacLoaderPlugin::next_frame()
             dbgln("FLAC Warning: Inserting seek point for sample {} failed: {}", sample_index, maybe_error.release_error());
     }
 
-    auto checksum_stream = TRY(try_make<Crypto::Checksum::ChecksummingStream<FlacFrameHeaderCRC>>(MaybeOwned<Stream>(*m_stream)));
-    BigEndianInputBitStream bit_stream { MaybeOwned<Stream> { *checksum_stream } };
-
-    // TODO: Check the CRC-16 checksum by keeping track of read data.
+    auto frame_checksum_stream = TRY(try_make<Crypto::Checksum::ChecksummingStream<IBMCRC>>(MaybeOwned<Stream>(*m_stream)));
+    auto header_checksum_stream = TRY(try_make<Crypto::Checksum::ChecksummingStream<FlacFrameHeaderCRC>>(MaybeOwned<Stream>(*frame_checksum_stream)));
+    BigEndianInputBitStream bit_stream { MaybeOwned<Stream> { *header_checksum_stream } };
 
     // 11.22. FRAME_HEADER
     u16 sync_code = TRY(bit_stream.read_bits<u16>(14));
@@ -431,21 +430,23 @@ LoaderSamples FlacLoaderPlugin::next_frame()
     }
 
     // It does not matter whether we extract the checksum from the digest here, or extract the digest 0x00 after processing the checksum.
-    auto const calculated_checksum = checksum_stream->digest();
+    auto const calculated_header_checksum = header_checksum_stream->digest();
     // 11.22.11. FRAME CRC
-    u8 specified_checksum = TRY(bit_stream.read_bits<u8>(8));
+    u8 specified_header_checksum = TRY(bit_stream.read_bits<u8>(8));
     VERIFY(bit_stream.is_aligned_to_byte_boundary());
-    if (specified_checksum != calculated_checksum)
-        dbgln("FLAC frame {}: Calculated header checksum {:02x} is different from specified checksum {:02x}", m_current_sample_or_frame, calculated_checksum, specified_checksum);
+    if (specified_header_checksum != calculated_header_checksum)
+        dbgln("FLAC frame {}: Calculated header checksum {:02x} is different from specified checksum {:02x}", m_current_sample_or_frame, calculated_header_checksum, specified_header_checksum);
 
-    dbgln_if(AFLACLOADER_DEBUG, "Frame: {} samples, {}bit {}Hz, channeltype {:x}, {} number {}, header checksum {:02x}{}", sample_count, bit_depth, frame_sample_rate, channel_type_num, blocking_strategy ? "sample" : "frame", m_current_sample_or_frame, specified_checksum, specified_checksum != calculated_checksum ? " (checksum error)"sv : ""sv);
+    dbgln_if(AFLACLOADER_DEBUG, "Frame: {} samples, {}bit {}Hz, channeltype {:x}, {} number {}, header checksum {:02x}{}", sample_count, bit_depth, frame_sample_rate, channel_type_num, blocking_strategy ? "sample" : "frame", m_current_sample_or_frame, specified_header_checksum, specified_header_checksum != calculated_header_checksum ? " (checksum error)"sv : ""sv);
 
     m_current_frame = FlacFrameHeader {
-        sample_count,
-        frame_sample_rate,
-        channel_type,
-        bit_depth,
-        specified_checksum,
+        .sample_rate = frame_sample_rate,
+        .sample_count = static_cast<u16>(sample_count),
+        .sample_or_frame_index = static_cast<u32>(m_current_sample_or_frame),
+        .blocking_strategy = static_cast<BlockingStrategy>(blocking_strategy),
+        .channels = channel_type,
+        .bit_depth = bit_depth,
+        .checksum = specified_header_checksum,
     };
 
     u8 subframe_count = frame_channel_type_to_channel_count(channel_type);
@@ -466,9 +467,11 @@ LoaderSamples FlacLoaderPlugin::next_frame()
     bit_stream.align_to_byte_boundary();
 
     // 11.23. FRAME_FOOTER
-    // TODO: check checksum, see above
-    [[maybe_unused]] u16 footer_checksum = TRY(bit_stream.read_bits<u16>(16));
-    dbgln_if(AFLACLOADER_DEBUG, "Subframe footer checksum: {}", footer_checksum);
+    auto const calculated_frame_checksum = frame_checksum_stream->digest();
+    auto const specified_frame_checksum = TRY(bit_stream.read_bits<u16>(16));
+    if (calculated_frame_checksum != specified_frame_checksum)
+        dbgln("FLAC frame {}: Calculated frame checksum {:04x} is different from specified checksum {:04x}", m_current_sample_or_frame, calculated_frame_checksum, specified_frame_checksum);
+    dbgln_if(AFLACLOADER_DEBUG, "Subframe footer checksum: {:04x}{}", specified_frame_checksum, specified_frame_checksum != calculated_frame_checksum ? " (checksum error)"sv : ""sv);
 
     FixedArray<Sample> samples;
 
@@ -692,7 +695,7 @@ ErrorOr<void, LoaderError> FlacLoaderPlugin::parse_subframe(Vector<i64>& samples
     case FlacSubframeType::Constant: {
         // 11.26. SUBFRAME_CONSTANT
         u64 constant_value = TRY(bit_input.read_bits<u64>(subframe_header.bits_per_sample - subframe_header.wasted_bits_per_sample));
-        dbgln_if(AFLACLOADER_DEBUG, "Constant subframe: {}", constant_value);
+        dbgln_if(AFLACLOADER_DEBUG, "  Constant subframe: {}", constant_value);
 
         VERIFY(subframe_header.bits_per_sample - subframe_header.wasted_bits_per_sample != 0);
         i64 constant = sign_extend(static_cast<u64>(constant_value), subframe_header.bits_per_sample - subframe_header.wasted_bits_per_sample);
@@ -702,17 +705,17 @@ ErrorOr<void, LoaderError> FlacLoaderPlugin::parse_subframe(Vector<i64>& samples
         break;
     }
     case FlacSubframeType::Fixed: {
-        dbgln_if(AFLACLOADER_DEBUG, "Fixed LPC subframe order {}", subframe_header.order);
+        dbgln_if(AFLACLOADER_DEBUG, "  Fixed LPC subframe order {}", subframe_header.order);
         samples = TRY(decode_fixed_lpc(subframe_header, bit_input));
         break;
     }
     case FlacSubframeType::Verbatim: {
-        dbgln_if(AFLACLOADER_DEBUG, "Verbatim subframe");
+        dbgln_if(AFLACLOADER_DEBUG, "  Verbatim subframe");
         samples = TRY(decode_verbatim(subframe_header, bit_input));
         break;
     }
     case FlacSubframeType::LPC: {
-        dbgln_if(AFLACLOADER_DEBUG, "Custom LPC subframe order {}", subframe_header.order);
+        dbgln_if(AFLACLOADER_DEBUG, "  Custom LPC subframe order {}", subframe_header.order);
         TRY(decode_custom_lpc(samples, subframe_header, bit_input));
         break;
     }
@@ -787,7 +790,7 @@ ErrorOr<void, LoaderError> FlacLoaderPlugin::decode_custom_lpc(Vector<i64>& deco
         coefficients.unchecked_append(coefficient);
     }
 
-    dbgln_if(AFLACLOADER_DEBUG, "{}-bit {} shift coefficients: {}", lpc_precision, lpc_shift, coefficients);
+    dbgln_if(AFLACLOADER_DEBUG, "    {}-bit {} shift coefficients: {}", lpc_precision, lpc_shift, coefficients);
 
     TRY(decode_residual(decoded, subframe, bit_input));
 
@@ -830,7 +833,7 @@ ErrorOr<Vector<i64>, LoaderError> FlacLoaderPlugin::decode_fixed_lpc(FlacSubfram
 
     TRY(decode_residual(decoded, subframe, bit_input));
 
-    dbgln_if(AFLACLOADER_DEBUG, "decoded length {}, {} order predictor", decoded.size(), subframe.order);
+    dbgln_if(AFLACLOADER_DEBUG, "    decoded length {}, {} order predictor, now at file offset {:x}", decoded.size(), subframe.order, TRY(m_stream->tell()));
 
     // Skip these comments if you don't care about the neat math behind fixed LPC :^)
     // These coefficients for the recursive prediction formula are the only ones that can be resolved to polynomial predictor functions.
@@ -849,6 +852,7 @@ ErrorOr<Vector<i64>, LoaderError> FlacLoaderPlugin::decode_fixed_lpc(FlacSubfram
     // http://mi.eng.cam.ac.uk/reports/svr-ftp/auto-pdf/robinson_tr156.pdf page 4
     // The coefficients for order 4 are undocumented in the original FLAC specification(s), but can now be found in
     // https://datatracker.ietf.org/doc/html/draft-ietf-cellar-flac-03#section-10.2.5
+    // FIXME: Share this code with predict_fixed_lpc().
     switch (subframe.order) {
     case 0:
         // s_0(t) = 0
@@ -889,6 +893,8 @@ MaybeLoaderError FlacLoaderPlugin::decode_residual(Vector<i64>& decoded, FlacSub
     auto residual_mode = static_cast<FlacResidualMode>(TRY(bit_input.read_bits<u8>(2)));
     u8 partition_order = TRY(bit_input.read_bits<u8>(4));
     size_t partitions = 1 << partition_order;
+
+    dbgln_if(AFLACLOADER_DEBUG, "    {}-bit Rice partitions, {} total (order {})", residual_mode == FlacResidualMode::Rice4Bit ? "4"sv : "5"sv, partitions, partition_order);
 
     if (partitions > m_current_frame->sample_count)
         return LoaderError { LoaderError::Category::Format, static_cast<size_t>(m_current_sample_or_frame), "Too many Rice partitions, each partition must contain at least one sample" };

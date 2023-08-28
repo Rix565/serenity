@@ -65,7 +65,7 @@ ShutdownDialog::ShutdownDialog()
     auto& right_container = content_container.add<GUI::Widget>();
     right_container.set_layout<GUI::VerticalBoxLayout>(GUI::Margins { 12, 12, 8, 0 });
 
-    auto& label = right_container.add<GUI::Label>("What would you like to do?"_string.release_value_but_fixme_should_propagate_errors());
+    auto& label = right_container.add<GUI::Label>("What would you like to do?"_string);
     label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
     label.set_fixed_height(22);
     label.set_font(Gfx::FontDatabase::default_font().bold_variant());
@@ -86,19 +86,19 @@ ShutdownDialog::ShutdownDialog()
         }
     }
 
-    right_container.add_spacer().release_value_but_fixme_should_propagate_errors();
+    right_container.add_spacer();
 
     auto& button_container = right_container.add<GUI::Widget>();
     button_container.set_fixed_height(23);
     button_container.set_layout<GUI::HorizontalBoxLayout>(GUI::Margins {}, 5);
-    button_container.add_spacer().release_value_but_fixme_should_propagate_errors();
-    auto& ok_button = button_container.add<GUI::Button>("OK"_short_string);
+    button_container.add_spacer();
+    auto& ok_button = button_container.add<GUI::Button>("OK"_string);
     ok_button.set_fixed_size(80, 23);
     ok_button.on_click = [this](auto) {
         done(ExecResult::OK);
     };
     ok_button.set_default(true);
-    auto& cancel_button = button_container.add<GUI::Button>("Cancel"_short_string);
+    auto& cancel_button = button_container.add<GUI::Button>("Cancel"_string);
     cancel_button.set_fixed_size(80, 23);
     cancel_button.on_click = [this](auto) {
         done(ExecResult::Cancel);

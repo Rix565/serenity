@@ -19,6 +19,7 @@
 #include <Kernel/Net/TCPSocket.h>
 #include <Kernel/Security/Random.h>
 #include <Kernel/Tasks/Process.h>
+#include <Kernel/Time/TimeManagement.h>
 
 namespace Kernel {
 
@@ -165,8 +166,9 @@ void TCPSocket::release_for_accept(NonnullRefPtr<TCPSocket> socket)
 
 TCPSocket::TCPSocket(int protocol, NonnullOwnPtr<DoubleBuffer> receive_buffer, NonnullOwnPtr<KBuffer> scratch_buffer)
     : IPv4Socket(SOCK_STREAM, protocol, move(receive_buffer), move(scratch_buffer))
+    , m_last_ack_sent_time(TimeManagement::the().monotonic_time())
+    , m_last_retransmit_time(TimeManagement::the().monotonic_time())
 {
-    m_last_retransmit_time = kgettimeofday();
 }
 
 TCPSocket::~TCPSocket()
@@ -208,6 +210,18 @@ ErrorOr<size_t> TCPSocket::protocol_send(UserOrKernelBuffer const& data, size_t 
     if (routing_decision.is_zero())
         return set_so_error(EHOSTUNREACH);
     size_t mss = routing_decision.adapter->mtu() - sizeof(IPv4Packet) - sizeof(TCPPacket);
+
+    // RFC 896 (Nagle’s algorithm): https://www.ietf.org/rfc/rfc0896
+    // "The solution is to inhibit the sending of new TCP  segments when
+    //  new  outgoing  data  arrives  from  the  user  if  any previously
+    //  transmitted data on the connection remains unacknowledged.   This
+    //  inhibition  is  to be unconditional; no timers, tests for size of
+    //  data received, or other conditions are required."
+    // FIXME: Make this configurable via TCP_NODELAY.
+    auto has_unacked_data = m_unacked_packets.with_shared([&](auto const& packets) { return packets.size > 0; });
+    if (has_unacked_data && data_length < mss)
+        return 0;
+
     data_length = min(data_length, mss);
     TRY(send_tcp_packet(TCPFlags::PSH | TCPFlags::ACK, &data, data_length, &routing_decision));
     return data_length;
@@ -258,7 +272,7 @@ ErrorOr<void> TCPSocket::send_tcp_packet(u16 flags, UserOrKernelBuffer const* pa
 
     if (flags & TCPFlags::ACK) {
         m_last_ack_number_sent = m_ack_number;
-        m_last_ack_sent_time = kgettimeofday();
+        m_last_ack_sent_time = TimeManagement::the().monotonic_time();
         tcp_packet.set_ack_number(m_ack_number);
     }
 
@@ -358,7 +372,7 @@ bool TCPSocket::should_delay_next_ack() const
         return false;
 
     // RFC 1122 says we should not delay ACKs for more than 500 milliseconds.
-    if (kgettimeofday() >= m_last_ack_sent_time + Duration::from_milliseconds(500))
+    if (TimeManagement::the().monotonic_time(TimePrecision::Precise) >= m_last_ack_sent_time + Duration::from_milliseconds(500))
         return false;
 
     return true;
@@ -585,7 +599,7 @@ void TCPSocket::dequeue_for_retransmit()
 
 void TCPSocket::retransmit_packets()
 {
-    auto now = kgettimeofday();
+    auto now = TimeManagement::the().monotonic_time();
 
     // RFC6298 says we should have at least one second between retransmits. According to
     // RFC1122 we must do exponential backoff - even for SYN packets.

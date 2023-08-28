@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2023, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
  * Copyright (c) 2022-2023, Martin Falisse <mfalisse@outlook.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -59,7 +60,7 @@ CSSPixels GridFormattingContext::resolve_definite_track_size(CSS::GridSize const
     switch (grid_size.type()) {
     case CSS::GridSize::Type::LengthPercentage: {
         if (!grid_size.length_percentage().is_auto()) {
-            return grid_size.css_size().to_px(grid_container(), available_space.width.to_px());
+            return grid_size.css_size().to_px(grid_container(), available_space.width.to_px_or_zero());
         }
         break;
     }
@@ -119,7 +120,7 @@ int GridFormattingContext::count_of_repeated_auto_fill_or_fit_tracks(Vector<CSS:
             sum_of_grid_track_sizes += min(resolve_definite_track_size(track_sizing_function.grid_size(), available_space), resolve_definite_track_size(track_sizing_function.grid_size(), available_space));
         }
     }
-    return max(1, static_cast<int>((get_free_space(available_space, GridDimension::Column).to_px() / sum_of_grid_track_sizes).to_double()));
+    return max(1, static_cast<int>((get_free_space(available_space, GridDimension::Column).to_px_or_zero() / sum_of_grid_track_sizes).to_double()));
 
     // For the purpose of finding the number of auto-repeated tracks in a standalone axis, the UA must
     // floor the track size to a UA-specified value to avoid division by zero. It is suggested that this
@@ -128,10 +129,21 @@ int GridFormattingContext::count_of_repeated_auto_fill_or_fit_tracks(Vector<CSS:
 
 void GridFormattingContext::place_item_with_row_and_column_position(Box const& child_box)
 {
-    int row_start = child_box.computed_values().grid_row_start().raw_value() - 1;
-    int row_end = child_box.computed_values().grid_row_end().raw_value() - 1;
-    int column_start = child_box.computed_values().grid_column_start().raw_value() - 1;
-    int column_end = child_box.computed_values().grid_column_end().raw_value() - 1;
+    auto const& grid_row_start = child_box.computed_values().grid_row_start();
+    auto const& grid_row_end = child_box.computed_values().grid_row_end();
+    auto const& grid_column_start = child_box.computed_values().grid_column_start();
+    auto const& grid_column_end = child_box.computed_values().grid_column_end();
+
+    int row_start = 0, row_end = 0, column_start = 0, column_end = 0;
+
+    if (grid_row_start.has_line_number())
+        row_start = child_box.computed_values().grid_row_start().line_number() - 1;
+    if (grid_row_end.has_line_number())
+        row_end = child_box.computed_values().grid_row_end().line_number() - 1;
+    if (grid_column_start.has_line_number())
+        column_start = child_box.computed_values().grid_column_start().line_number() - 1;
+    if (grid_column_end.has_line_number())
+        column_end = child_box.computed_values().grid_column_end().line_number() - 1;
 
     // https://www.w3.org/TR/css-grid-2/#line-placement
     // 8.3. Line-based Placement: the grid-row-start, grid-column-start, grid-row-end, and grid-column-end properties
@@ -162,16 +174,16 @@ void GridFormattingContext::place_item_with_row_and_column_position(Box const& c
     // grid-column-start line.
     size_t row_span = 1;
     size_t column_span = 1;
-    if (child_box.computed_values().grid_row_start().is_position() && child_box.computed_values().grid_row_end().is_span())
-        row_span = child_box.computed_values().grid_row_end().raw_value();
-    if (child_box.computed_values().grid_column_start().is_position() && child_box.computed_values().grid_column_end().is_span())
-        column_span = child_box.computed_values().grid_column_end().raw_value();
-    if (child_box.computed_values().grid_row_end().is_position() && child_box.computed_values().grid_row_start().is_span()) {
-        row_span = child_box.computed_values().grid_row_start().raw_value();
+    if (grid_row_start.has_line_number() && grid_row_end.is_span())
+        row_span = grid_row_end.span();
+    if (grid_column_start.has_line_number() && grid_column_end.is_span())
+        column_span = grid_column_end.span();
+    if (grid_row_end.has_line_number() && child_box.computed_values().grid_row_start().is_span()) {
+        row_span = grid_row_start.span();
         row_start = row_end - row_span;
     }
-    if (child_box.computed_values().grid_column_end().is_position() && child_box.computed_values().grid_column_start().is_span()) {
-        column_span = child_box.computed_values().grid_column_start().raw_value();
+    if (grid_column_end.has_line_number() && grid_column_start.is_span()) {
+        column_span = grid_column_start.span();
         column_start = column_end - column_span;
     }
 
@@ -188,36 +200,39 @@ void GridFormattingContext::place_item_with_row_and_column_position(Box const& c
     // https://www.w3.org/TR/css-grid-2/#common-uses-named-lines
     // 8.1.3. Named Lines and Spans
     // Instead of counting lines by number, lines can be referenced by their line name:
-    if (child_box.computed_values().grid_column_end().has_line_name()) {
-        if (auto maybe_grid_area = m_grid_areas.get(child_box.computed_values().grid_column_end().line_name()); maybe_grid_area.has_value())
+    if (grid_column_end.has_identifier()) {
+        if (auto maybe_grid_area = m_grid_areas.get(grid_column_end.identifier()); maybe_grid_area.has_value())
             column_end = maybe_grid_area->column_end;
-        else if (auto line_name_index = get_line_index_by_line_name(child_box.computed_values().grid_column_end().line_name(), grid_container().computed_values().grid_template_columns()); line_name_index > -1)
+        else if (auto line_name_index = get_line_index_by_line_name(grid_column_end.identifier(), grid_container().computed_values().grid_template_columns()); line_name_index > -1)
             column_end = line_name_index;
         else
             column_end = 1;
         column_start = column_end - 1;
     }
-    if (child_box.computed_values().grid_column_start().has_line_name()) {
-        if (auto maybe_grid_area = m_grid_areas.get(child_box.computed_values().grid_column_end().line_name()); maybe_grid_area.has_value())
+
+    if (grid_column_start.has_identifier()) {
+        if (auto maybe_grid_area = m_grid_areas.get(grid_column_start.identifier()); maybe_grid_area.has_value())
             column_start = maybe_grid_area->column_start;
-        else if (auto line_name_index = get_line_index_by_line_name(child_box.computed_values().grid_column_start().line_name(), grid_container().computed_values().grid_template_columns()); line_name_index > -1)
+        else if (auto line_name_index = get_line_index_by_line_name(grid_column_start.identifier(), grid_container().computed_values().grid_template_columns()); line_name_index > -1)
             column_start = line_name_index;
         else
             column_start = 0;
     }
-    if (child_box.computed_values().grid_row_end().has_line_name()) {
-        if (auto maybe_grid_area = m_grid_areas.get(child_box.computed_values().grid_row_end().line_name()); maybe_grid_area.has_value())
+
+    if (grid_row_end.has_identifier()) {
+        if (auto maybe_grid_area = m_grid_areas.get(grid_row_end.identifier()); maybe_grid_area.has_value())
             row_end = maybe_grid_area->row_end;
-        else if (auto line_name_index = get_line_index_by_line_name(child_box.computed_values().grid_row_end().line_name(), grid_container().computed_values().grid_template_rows()); line_name_index > -1)
+        else if (auto line_name_index = get_line_index_by_line_name(grid_row_end.identifier(), grid_container().computed_values().grid_template_rows()); line_name_index > -1)
             row_end = line_name_index;
         else
             row_end = 1;
         row_start = row_end - 1;
     }
-    if (child_box.computed_values().grid_row_start().has_line_name()) {
-        if (auto maybe_grid_area = m_grid_areas.get(child_box.computed_values().grid_row_end().line_name()); maybe_grid_area.has_value())
+
+    if (grid_row_start.has_identifier()) {
+        if (auto maybe_grid_area = m_grid_areas.get(grid_row_start.identifier()); maybe_grid_area.has_value())
             row_start = maybe_grid_area->row_start;
-        else if (auto line_name_index = get_line_index_by_line_name(child_box.computed_values().grid_row_start().line_name(), grid_container().computed_values().grid_template_rows()); line_name_index > -1)
+        else if (auto line_name_index = get_line_index_by_line_name(grid_row_start.identifier(), grid_container().computed_values().grid_template_rows()); line_name_index > -1)
             row_start = line_name_index;
         else
             row_start = 0;
@@ -231,13 +246,13 @@ void GridFormattingContext::place_item_with_row_and_column_position(Box const& c
     // If the placement for a grid item contains two lines, and the start line is further end-ward than
     // the end line, swap the two lines. If the start line is equal to the end line, remove the end
     // line.
-    if (child_box.computed_values().grid_row_start().is_position() && child_box.computed_values().grid_row_end().is_position()) {
+    if (grid_row_start.is_positioned() && grid_row_end.is_positioned()) {
         if (row_start > row_end)
             swap(row_start, row_end);
         if (row_start != row_end)
             row_span = row_end - row_start;
     }
-    if (child_box.computed_values().grid_column_start().is_position() && child_box.computed_values().grid_column_end().is_position()) {
+    if (grid_column_start.is_positioned() && grid_column_end.is_positioned()) {
         if (column_start > column_end)
             swap(column_start, column_end);
         if (column_start != column_end)
@@ -246,10 +261,10 @@ void GridFormattingContext::place_item_with_row_and_column_position(Box const& c
 
     // If the placement contains two spans, remove the one contributed by the end grid-placement
     // property.
-    if (child_box.computed_values().grid_row_start().is_span() && child_box.computed_values().grid_row_end().is_span())
-        row_span = child_box.computed_values().grid_row_start().raw_value();
-    if (child_box.computed_values().grid_column_start().is_span() && child_box.computed_values().grid_column_end().is_span())
-        column_span = child_box.computed_values().grid_column_start().raw_value();
+    if (grid_row_start.is_span() && grid_row_end.is_span())
+        row_span = grid_row_start.span();
+    if (grid_column_start.is_span() && grid_column_end.is_span())
+        column_span = grid_column_start.span();
 
     // FIXME: If the placement contains only a span for a named line, replace it with a span of 1.
 
@@ -265,8 +280,16 @@ void GridFormattingContext::place_item_with_row_and_column_position(Box const& c
 
 void GridFormattingContext::place_item_with_row_position(Box const& child_box)
 {
-    int row_start = child_box.computed_values().grid_row_start().raw_value() - 1;
-    int row_end = child_box.computed_values().grid_row_end().raw_value() - 1;
+    auto const& grid_row_start = child_box.computed_values().grid_row_start();
+    auto const& grid_row_end = child_box.computed_values().grid_row_end();
+    auto const& grid_column_start = child_box.computed_values().grid_column_start();
+
+    int row_start = 0, row_end = 0;
+
+    if (grid_row_start.has_line_number())
+        row_start = grid_row_start.line_number() - 1;
+    if (grid_row_end.has_line_number())
+        row_end = grid_row_end.line_number() - 1;
 
     // https://www.w3.org/TR/css-grid-2/#line-placement
     // 8.3. Line-based Placement: the grid-row-start, grid-column-start, grid-row-end, and grid-column-end properties
@@ -294,10 +317,10 @@ void GridFormattingContext::place_item_with_row_position(Box const& child_box)
     // grid-column-end: span 2 indicates the second grid line in the endward direction from the
     // grid-column-start line.
     size_t row_span = 1;
-    if (child_box.computed_values().grid_row_start().is_position() && child_box.computed_values().grid_row_end().is_span())
-        row_span = child_box.computed_values().grid_row_end().raw_value();
-    if (child_box.computed_values().grid_row_end().is_position() && child_box.computed_values().grid_row_start().is_span()) {
-        row_span = child_box.computed_values().grid_row_start().raw_value();
+    if (grid_row_start.has_line_number() && grid_row_end.is_span())
+        row_span = grid_row_end.span();
+    if (grid_row_end.has_line_number() && grid_row_start.is_span()) {
+        row_span = grid_row_start.span();
         row_start = row_end - row_span;
         // FIXME: Remove me once have implemented spans overflowing into negative indexes, e.g., grid-row: span 2 / 1
         if (row_start < 0)
@@ -317,19 +340,20 @@ void GridFormattingContext::place_item_with_row_position(Box const& child_box)
     // https://www.w3.org/TR/css-grid-2/#common-uses-named-lines
     // 8.1.3. Named Lines and Spans
     // Instead of counting lines by number, lines can be referenced by their line name:
-    if (child_box.computed_values().grid_row_end().has_line_name()) {
-        if (auto maybe_grid_area = m_grid_areas.get(child_box.computed_values().grid_row_end().line_name()); maybe_grid_area.has_value())
+    if (grid_row_end.has_identifier()) {
+        if (auto maybe_grid_area = m_grid_areas.get(grid_row_end.identifier()); maybe_grid_area.has_value())
             row_end = maybe_grid_area->row_end;
-        else if (auto line_name_index = get_line_index_by_line_name(child_box.computed_values().grid_row_end().line_name(), grid_container().computed_values().grid_template_rows()); line_name_index > -1)
-            row_end = line_name_index;
+        else if (auto line_name_index = get_line_index_by_line_name(grid_row_end.identifier(), grid_container().computed_values().grid_template_rows()); line_name_index > -1)
+            row_end = line_name_index - 1;
         else
             row_end = 1;
         row_start = row_end - 1;
     }
-    if (child_box.computed_values().grid_row_start().has_line_name()) {
-        if (auto maybe_grid_area = m_grid_areas.get(child_box.computed_values().grid_row_end().line_name()); maybe_grid_area.has_value())
+
+    if (grid_row_start.has_identifier()) {
+        if (auto maybe_grid_area = m_grid_areas.get(grid_row_start.identifier()); maybe_grid_area.has_value())
             row_start = maybe_grid_area->row_start;
-        else if (auto line_name_index = get_line_index_by_line_name(child_box.computed_values().grid_row_start().line_name(), grid_container().computed_values().grid_template_rows()); line_name_index > -1)
+        else if (auto line_name_index = get_line_index_by_line_name(grid_row_start.identifier(), grid_container().computed_values().grid_template_rows()); line_name_index > -1)
             row_start = line_name_index;
         else
             row_start = 0;
@@ -343,25 +367,25 @@ void GridFormattingContext::place_item_with_row_position(Box const& child_box)
     // If the placement for a grid item contains two lines, and the start line is further end-ward than
     // the end line, swap the two lines. If the start line is equal to the end line, remove the end
     // line.
-    if (child_box.computed_values().grid_row_start().is_position() && child_box.computed_values().grid_row_end().is_position()) {
+    if (grid_row_start.is_positioned() && grid_row_end.is_positioned()) {
         if (row_start > row_end)
             swap(row_start, row_end);
         if (row_start != row_end)
             row_span = row_end - row_start;
     }
     // FIXME: Have yet to find the spec for this.
-    if (!child_box.computed_values().grid_row_start().is_position() && child_box.computed_values().grid_row_end().is_position() && row_end == 0)
+    if (!grid_row_start.is_positioned() && grid_row_end.is_positioned() && row_end == 0)
         row_start = 0;
 
     // If the placement contains two spans, remove the one contributed by the end grid-placement
     // property.
-    if (child_box.computed_values().grid_row_start().is_span() && child_box.computed_values().grid_row_end().is_span())
-        row_span = child_box.computed_values().grid_row_start().raw_value();
+    if (grid_row_start.is_span() && grid_row_end.is_span())
+        row_span = grid_row_start.span();
 
     // FIXME: If the placement contains only a span for a named line, replace it with a span of 1.
 
     int column_start = 0;
-    size_t column_span = child_box.computed_values().grid_column_start().is_span() ? child_box.computed_values().grid_column_start().raw_value() : 1;
+    size_t column_span = grid_column_start.is_span() ? grid_column_start.span() : 1;
     bool found_available_column = false;
     for (size_t column_index = column_start; column_index < m_occupation_grid.column_count(); column_index++) {
         if (!m_occupation_grid.is_occupied(column_index, row_start)) {
@@ -385,15 +409,21 @@ void GridFormattingContext::place_item_with_row_position(Box const& child_box)
 
 void GridFormattingContext::place_item_with_column_position(Box const& child_box, int& auto_placement_cursor_x, int& auto_placement_cursor_y)
 {
-    int column_start;
-    if (child_box.computed_values().grid_column_start().raw_value() > 0) {
-        column_start = child_box.computed_values().grid_column_start().raw_value() - 1;
-    } else {
+    auto const& grid_row_start = child_box.computed_values().grid_row_start();
+    auto const& grid_column_start = child_box.computed_values().grid_column_start();
+    auto const& grid_column_end = child_box.computed_values().grid_column_end();
+
+    int column_start = 0;
+    if (grid_column_start.has_line_number() && grid_column_start.line_number() > 0) {
+        column_start = grid_column_start.line_number() - 1;
+    } else if (grid_column_start.has_line_number()) {
         // NOTE: Negative indexes count from the end side of the explicit grid
-        column_start = m_explicit_columns_line_count + child_box.computed_values().grid_column_start().raw_value();
+        column_start = m_explicit_columns_line_count + grid_column_start.line_number();
     }
 
-    int column_end = child_box.computed_values().grid_column_end().raw_value() - 1;
+    int column_end = 0;
+    if (grid_column_end.has_line_number())
+        column_end = grid_column_end.line_number() - 1;
 
     // https://www.w3.org/TR/css-grid-2/#line-placement
     // 8.3. Line-based Placement: the grid-row-start, grid-column-start, grid-row-end, and grid-column-end properties
@@ -421,18 +451,18 @@ void GridFormattingContext::place_item_with_column_position(Box const& child_box
     // grid-column-end: span 2 indicates the second grid line in the endward direction from the
     // grid-column-start line.
     size_t column_span = 1;
-    size_t row_span = child_box.computed_values().grid_row_start().is_span() ? child_box.computed_values().grid_row_start().raw_value() : 1;
-    if (child_box.computed_values().grid_column_start().is_position() && child_box.computed_values().grid_column_end().is_span())
-        column_span = child_box.computed_values().grid_column_end().raw_value();
-    if (child_box.computed_values().grid_column_end().is_position() && child_box.computed_values().grid_column_start().is_span()) {
-        column_span = child_box.computed_values().grid_column_start().raw_value();
+    size_t row_span = grid_row_start.is_span() ? grid_row_start.span() : 1;
+    if (grid_column_start.has_line_number() && grid_column_end.is_span())
+        column_span = grid_column_end.span();
+    if (grid_column_end.has_line_number() && grid_column_start.is_span()) {
+        column_span = grid_column_start.span();
         column_start = column_end - column_span;
         // FIXME: Remove me once have implemented spans overflowing into negative indexes, e.g., grid-column: span 2 / 1
         if (column_start < 0)
             column_start = 0;
     }
     // FIXME: Have yet to find the spec for this.
-    if (!child_box.computed_values().grid_column_start().is_position() && child_box.computed_values().grid_column_end().is_position() && column_end == 0)
+    if (!grid_column_start.is_positioned() && grid_column_end.is_positioned() && column_end == 0)
         column_start = 0;
 
     // If a name is given as a <custom-ident>, only lines with that name are counted. If not enough
@@ -448,22 +478,24 @@ void GridFormattingContext::place_item_with_column_position(Box const& child_box
     // https://www.w3.org/TR/css-grid-2/#common-uses-named-lines
     // 8.1.3. Named Lines and Spans
     // Instead of counting lines by number, lines can be referenced by their line name:
-    if (child_box.computed_values().grid_column_end().has_line_name()) {
-        if (auto maybe_grid_area = m_grid_areas.get(child_box.computed_values().grid_column_end().line_name()); maybe_grid_area.has_value())
+    if (grid_column_end.has_identifier()) {
+        if (auto maybe_grid_area = m_grid_areas.get(grid_column_end.identifier()); maybe_grid_area.has_value())
             column_end = maybe_grid_area->column_end;
-        else if (auto line_name_index = get_line_index_by_line_name(child_box.computed_values().grid_column_end().line_name(), grid_container().computed_values().grid_template_columns()); line_name_index > -1)
+        else if (auto line_name_index = get_line_index_by_line_name(grid_column_end.identifier(), grid_container().computed_values().grid_template_columns()); line_name_index > -1)
             column_end = line_name_index;
         else
             column_end = 1;
         column_start = column_end - 1;
     }
-    if (child_box.computed_values().grid_column_start().has_line_name()) {
-        if (auto maybe_grid_area = m_grid_areas.get(child_box.computed_values().grid_column_end().line_name()); maybe_grid_area.has_value())
+
+    if (grid_column_start.has_identifier()) {
+        if (auto maybe_grid_area = m_grid_areas.get(grid_column_start.identifier()); maybe_grid_area.has_value())
             column_start = maybe_grid_area->column_start;
-        else if (auto line_name_index = get_line_index_by_line_name(child_box.computed_values().grid_column_start().line_name(), grid_container().computed_values().grid_template_columns()); line_name_index > -1)
+        else if (auto line_name_index = get_line_index_by_line_name(grid_column_start.identifier(), grid_container().computed_values().grid_template_columns()); line_name_index > -1) {
             column_start = line_name_index;
-        else
+        } else {
             column_start = 0;
+        }
     }
 
     // If there are multiple lines of the same name, they effectively establish a named set of grid
@@ -474,7 +506,7 @@ void GridFormattingContext::place_item_with_column_position(Box const& child_box
     // If the placement for a grid item contains two lines, and the start line is further end-ward than
     // the end line, swap the two lines. If the start line is equal to the end line, remove the end
     // line.
-    if (child_box.computed_values().grid_column_start().is_position() && child_box.computed_values().grid_column_end().is_position()) {
+    if (grid_column_start.is_positioned() && grid_column_end.is_positioned()) {
         if (column_start > column_end)
             swap(column_start, column_end);
         if (column_start != column_end)
@@ -483,8 +515,8 @@ void GridFormattingContext::place_item_with_column_position(Box const& child_box
 
     // If the placement contains two spans, remove the one contributed by the end grid-placement
     // property.
-    if (child_box.computed_values().grid_column_start().is_span() && child_box.computed_values().grid_column_end().is_span())
-        column_span = child_box.computed_values().grid_column_start().raw_value();
+    if (grid_column_start.is_span() && grid_column_end.is_span())
+        column_span = grid_column_start.span();
 
     // FIXME: If the placement contains only a span for a named line, replace it with a span of 1.
 
@@ -516,23 +548,30 @@ void GridFormattingContext::place_item_with_column_position(Box const& child_box
 
 void GridFormattingContext::place_item_with_no_declared_position(Box const& child_box, int& auto_placement_cursor_x, int& auto_placement_cursor_y)
 {
+    auto const& grid_row_start = child_box.computed_values().grid_row_start();
+    auto const& grid_row_end = child_box.computed_values().grid_row_end();
+    auto const& grid_column_start = child_box.computed_values().grid_column_start();
+    auto const& grid_column_end = child_box.computed_values().grid_column_end();
+
     // 4.1.2.1. Increment the column position of the auto-placement cursor until either this item's grid
     // area does not overlap any occupied grid cells, or the cursor's column position, plus the item's
     // column span, overflow the number of columns in the implicit grid, as determined earlier in this
     // algorithm.
     auto column_start = 0;
     size_t column_span = 1;
-    if (child_box.computed_values().grid_column_start().is_span())
-        column_span = child_box.computed_values().grid_column_start().raw_value();
-    else if (child_box.computed_values().grid_column_end().is_span())
-        column_span = child_box.computed_values().grid_column_end().raw_value();
+    if (grid_column_start.is_span())
+        column_span = grid_column_start.span();
+    else if (grid_column_end.is_span())
+        column_span = grid_column_end.span();
     auto row_start = 0;
     size_t row_span = 1;
-    if (child_box.computed_values().grid_row_start().is_span())
-        row_span = child_box.computed_values().grid_row_start().raw_value();
-    else if (child_box.computed_values().grid_row_end().is_span())
-        row_span = child_box.computed_values().grid_row_end().raw_value();
+    if (grid_row_start.is_span())
+        row_span = grid_row_start.span();
+    else if (grid_row_end.is_span())
+        row_span = grid_row_end.span();
     auto found_unoccupied_area = false;
+
+    auto const& auto_flow = grid_container().computed_values().grid_auto_flow();
 
     while (true) {
         while (auto_placement_cursor_x <= m_occupation_grid.max_column_index()) {
@@ -562,9 +601,13 @@ void GridFormattingContext::place_item_with_no_declared_position(Box const& chil
         // row position (creating new rows in the implicit grid as necessary), set its column position to the
         // start-most column line in the implicit grid, and return to the previous step.
         if (!found_unoccupied_area) {
-            auto_placement_cursor_x = m_occupation_grid.min_column_index();
-            auto_placement_cursor_y++;
-            row_start = auto_placement_cursor_y;
+            if (auto_flow.row) {
+                auto_placement_cursor_x = m_occupation_grid.min_column_index();
+                auto_placement_cursor_y++;
+            } else {
+                m_occupation_grid.set_max_column_index(auto_placement_cursor_x);
+                auto_placement_cursor_y = m_occupation_grid.min_row_index();
+            }
         }
     }
 
@@ -665,7 +708,7 @@ void GridFormattingContext::initialize_gap_tracks(AvailableSpace const& availabl
     // the specified size, which is spanned by any grid items that span across its corresponding grid
     // line.
     if (!grid_container().computed_values().column_gap().is_auto() && m_grid_columns.size() > 0) {
-        auto column_gap_width = grid_container().computed_values().column_gap().to_px(grid_container(), available_space.width.to_px());
+        auto column_gap_width = grid_container().computed_values().column_gap().to_px(grid_container(), available_space.width.to_px_or_zero());
         m_column_gap_tracks.ensure_capacity(m_grid_columns.size() - 1);
         for (size_t column_index = 0; column_index < m_grid_columns.size(); column_index++) {
             m_grid_columns_and_gaps.append(m_grid_columns[column_index]);
@@ -680,7 +723,7 @@ void GridFormattingContext::initialize_gap_tracks(AvailableSpace const& availabl
         }
     }
     if (!grid_container().computed_values().row_gap().is_auto() && m_grid_rows.size() > 0) {
-        auto row_gap_height = grid_container().computed_values().row_gap().to_px(grid_container(), available_space.height.to_px());
+        auto row_gap_height = grid_container().computed_values().row_gap().to_px(grid_container(), available_space.height.to_px_or_zero());
         m_row_gap_tracks.ensure_capacity(m_grid_rows.size() - 1);
         for (size_t row_index = 0; row_index < m_grid_rows.size(); row_index++) {
             m_grid_rows_and_gaps.append(m_grid_rows[row_index]);
@@ -710,13 +753,13 @@ void GridFormattingContext::initialize_track_sizes(AvailableSpace const& availab
             continue;
 
         if (track.min_track_sizing_function.is_fixed(available_size)) {
-            track.base_size = track.min_track_sizing_function.css_size().to_px(grid_container(), available_size.to_px());
+            track.base_size = track.min_track_sizing_function.css_size().to_px(grid_container(), available_size.to_px_or_zero());
         } else if (track.min_track_sizing_function.is_intrinsic(available_size)) {
             track.base_size = 0;
         }
 
         if (track.max_track_sizing_function.is_fixed(available_size)) {
-            track.growth_limit = track.max_track_sizing_function.css_size().to_px(grid_container(), available_size.to_px());
+            track.growth_limit = track.max_track_sizing_function.css_size().to_px(grid_container(), available_size.to_px_or_zero());
         } else if (track.max_track_sizing_function.is_flexible_length()) {
             track.growth_limit = {};
         } else if (track.max_track_sizing_function.is_intrinsic(available_size)) {
@@ -754,9 +797,8 @@ void GridFormattingContext::resolve_intrinsic_track_sizes(AvailableSpace const& 
     size_t max_item_span = 1;
     for (auto& item : m_grid_items)
         max_item_span = max(item.span(dimension), max_item_span);
-    for (size_t span = 2; span <= max_item_span; span++) {
-        increase_sizes_to_accommodate_spanning_items_crossing_content_sized_tracks(available_space, dimension, 2);
-    }
+    for (size_t span = 2; span <= max_item_span; span++)
+        increase_sizes_to_accommodate_spanning_items_crossing_content_sized_tracks(available_space, dimension, span);
 
     // 4. Increase sizes to accommodate spanning items crossing flexible tracks: Next, repeat the previous
     // step instead considering (together, rather than grouped by span size) all items that do span a
@@ -798,9 +840,7 @@ void GridFormattingContext::distribute_extra_space_across_spanned_tracks_base_si
     auto extra_space = max(CSSPixels(0), item_size_contribution - spanned_tracks_sizes_sum);
 
     // 2. Distribute space up to limits:
-    // FIXME: If a fixed-point type were used to represent CSS pixels, it would be possible to compare with 0
-    //        instead of epsilon.
-    while (extra_space > CSSPixels::epsilon()) {
+    while (true) {
         auto all_frozen = all_of(affected_tracks, [](auto const& track) { return track.base_size_frozen; });
         if (all_frozen)
             break;
@@ -809,6 +849,8 @@ void GridFormattingContext::distribute_extra_space_across_spanned_tracks_base_si
         // equally among such tracks, freezing a track’s item-incurred increase as its affected size + item-incurred
         // increase reaches its limit
         CSSPixels increase_per_track = extra_space / affected_tracks.size();
+        if (increase_per_track == 0)
+            break;
         for (auto& track : affected_tracks) {
             if (track.base_size_frozen)
                 continue;
@@ -888,9 +930,7 @@ void GridFormattingContext::distribute_extra_space_across_spanned_tracks_growth_
     auto extra_space = max(CSSPixels(0), item_size_contribution - spanned_tracks_sizes_sum);
 
     // 2. Distribute space up to limits:
-    // FIXME: If a fixed-point type were used to represent CSS pixels, it would be possible to compare with 0
-    //        instead of epsilon.
-    while (extra_space > CSSPixels::epsilon()) {
+    while (true) {
         auto all_frozen = all_of(affected_tracks, [](auto const& track) { return track.growth_limit_frozen; });
         if (all_frozen)
             break;
@@ -899,6 +939,8 @@ void GridFormattingContext::distribute_extra_space_across_spanned_tracks_growth_
         // equally among such tracks, freezing a track’s item-incurred increase as its affected size + item-incurred
         // increase reaches its limit
         CSSPixels increase_per_track = extra_space / affected_tracks.size();
+        if (increase_per_track == 0)
+            break;
         for (auto& track : affected_tracks) {
             if (track.growth_limit_frozen)
                 continue;
@@ -1057,6 +1099,7 @@ void GridFormattingContext::increase_sizes_to_accommodate_spanning_items_crossin
 
         for (auto& track : spanned_tracks) {
             track.base_size += track.planned_increase;
+            track.planned_increase = 0;
         }
 
         // 4. If at this point any track’s growth limit is now less than its base size, increase its growth limit to
@@ -1079,12 +1122,12 @@ void GridFormattingContext::maximize_tracks(AvailableSpace const& available_spac
         // For the purpose of this step: if sizing the grid container under a max-content constraint, the
         // free space is infinite; if sizing under a min-content constraint, the free space is zero.
         auto free_space = get_free_space(available_space, dimension);
-        if (free_space.is_max_content()) {
-            return INFINITY;
+        if (free_space.is_max_content() || free_space.is_indefinite()) {
+            return CSSPixels::max();
         } else if (free_space.is_min_content()) {
             return 0;
         } else {
-            return free_space.to_px();
+            return free_space.to_px_or_zero();
         }
     };
 
@@ -1156,14 +1199,14 @@ void GridFormattingContext::expand_flexible_tracks(AvailableSpace const& availab
     auto flex_fraction = [&]() {
         auto free_space = get_free_space(available_space, dimension);
         // If the free space is zero or if sizing the grid container under a min-content constraint:
-        if (free_space.to_px() == 0 || available_size.is_min_content()) {
+        if ((free_space.is_definite() && free_space.to_px_or_zero() == 0) || available_size.is_min_content()) {
             // The used flex fraction is zero.
             return CSSPixels(0);
             // Otherwise, if the free space is a definite length:
         } else if (free_space.is_definite()) {
             // The used flex fraction is the result of finding the size of an fr using all of the grid tracks and a space
             // to fill of the available grid space.
-            return find_the_size_of_an_fr(tracks_and_gaps, available_size.to_px());
+            return find_the_size_of_an_fr(tracks_and_gaps, available_size.to_px_or_zero());
         } else {
             // Otherwise, if the free space is an indefinite length:
             // The used flex fraction is the maximum of:
@@ -1173,7 +1216,7 @@ void GridFormattingContext::expand_flexible_tracks(AvailableSpace const& availab
             for (auto& track : tracks) {
                 if (track.max_track_sizing_function.is_flexible_length()) {
                     if (track.max_track_sizing_function.flex_factor() > 1) {
-                        result = max(result, track.base_size / track.max_track_sizing_function.flex_factor());
+                        result = max(result, CSSPixels::nearest_value_for(track.base_size / track.max_track_sizing_function.flex_factor()));
                     } else {
                         result = max(result, track.base_size);
                     }
@@ -1201,8 +1244,8 @@ void GridFormattingContext::expand_flexible_tracks(AvailableSpace const& availab
     // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater than
     // the track’s base size, set its base size to that product.
     for (auto& track : tracks_and_gaps) {
-        if (track.max_track_sizing_function.flex_factor() * flex_fraction > track.base_size) {
-            track.base_size = track.max_track_sizing_function.flex_factor() * flex_fraction;
+        if (flex_fraction.scaled(track.max_track_sizing_function.flex_factor()) > track.base_size) {
+            track.base_size = flex_fraction.scaled(track.max_track_sizing_function.flex_factor());
         }
     }
 }
@@ -1226,7 +1269,7 @@ void GridFormattingContext::stretch_auto_tracks(AvailableSpace const& available_
             used_space += track.base_size;
     }
 
-    CSSPixels remaining_space = available_size.is_definite() ? available_size.to_px() - used_space : 0;
+    CSSPixels remaining_space = available_size.is_definite() ? available_size.to_px_or_zero() - used_space : 0;
     auto count_of_auto_max_sizing_tracks = 0;
     for (auto& track : tracks_and_gaps) {
         if (track.max_track_sizing_function.is_auto(available_size))
@@ -1314,10 +1357,19 @@ void GridFormattingContext::place_grid_items(AvailableSpace const& available_spa
     // flex items), which are then assigned to predefined areas in the grid. They can be explicitly
     // placed using coordinates through the grid-placement properties or implicitly placed into
     // empty areas using auto-placement.
+    HashMap<int, Vector<JS::NonnullGCPtr<Box const>>> order_item_bucket;
     grid_container().for_each_child_of_type<Box>([&](Box& child_box) {
         if (can_skip_is_anonymous_text_run(child_box))
             return IterationDecision::Continue;
-        m_boxes_to_place.append(child_box);
+
+        if (child_box.is_out_of_flow(*this))
+            return IterationDecision::Continue;
+
+        child_box.set_grid_item(true);
+
+        auto& order_bucket = order_item_bucket.ensure(child_box.computed_values().order());
+        order_bucket.append(child_box);
+
         return IterationDecision::Continue;
     });
 
@@ -1328,28 +1380,37 @@ void GridFormattingContext::place_grid_items(AvailableSpace const& available_spa
     // https://drafts.csswg.org/css-grid/#auto-placement-algo
     // 8.5. Grid Item Placement Algorithm
 
+    auto keys = order_item_bucket.keys();
+    quick_sort(keys, [](auto& a, auto& b) { return a < b; });
+
     // FIXME: 0. Generate anonymous grid items
 
     // 1. Position anything that's not auto-positioned.
-    for (size_t i = 0; i < m_boxes_to_place.size(); i++) {
-        auto const& child_box = m_boxes_to_place[i];
-        if (is_auto_positioned_row(child_box->computed_values().grid_row_start(), child_box->computed_values().grid_row_end())
-            || is_auto_positioned_column(child_box->computed_values().grid_column_start(), child_box->computed_values().grid_column_end()))
-            continue;
-        place_item_with_row_and_column_position(child_box);
-        m_boxes_to_place.remove(i);
-        i--;
+    for (auto key : keys) {
+        auto& boxes_to_place = order_item_bucket.get(key).value();
+        for (size_t i = 0; i < boxes_to_place.size(); i++) {
+            auto const& child_box = boxes_to_place[i];
+            if (is_auto_positioned_row(child_box->computed_values().grid_row_start(), child_box->computed_values().grid_row_end())
+                || is_auto_positioned_column(child_box->computed_values().grid_column_start(), child_box->computed_values().grid_column_end()))
+                continue;
+            place_item_with_row_and_column_position(child_box);
+            boxes_to_place.remove(i);
+            i--;
+        }
     }
 
     // 2. Process the items locked to a given row.
     // FIXME: Do "dense" packing
-    for (size_t i = 0; i < m_boxes_to_place.size(); i++) {
-        auto const& child_box = m_boxes_to_place[i];
-        if (is_auto_positioned_row(child_box->computed_values().grid_row_start(), child_box->computed_values().grid_row_end()))
-            continue;
-        place_item_with_row_position(child_box);
-        m_boxes_to_place.remove(i);
-        i--;
+    for (auto key : keys) {
+        auto& boxes_to_place = order_item_bucket.get(key).value();
+        for (size_t i = 0; i < boxes_to_place.size(); i++) {
+            auto const& child_box = boxes_to_place[i];
+            if (is_auto_positioned_row(child_box->computed_values().grid_row_start(), child_box->computed_values().grid_row_end()))
+                continue;
+            place_item_with_row_position(child_box);
+            boxes_to_place.remove(i);
+            i--;
+        }
     }
 
     // 3. Determine the columns in the implicit grid.
@@ -1368,15 +1429,21 @@ void GridFormattingContext::place_grid_items(AvailableSpace const& available_spa
     // 3.3. If the largest column span among all the items without a definite column position is larger
     // than the width of the implicit grid, add columns to the end of the implicit grid to accommodate
     // that column span.
-    for (auto const& child_box : m_boxes_to_place) {
-        int column_span = 1;
-        if (child_box->computed_values().grid_column_start().is_span())
-            column_span = child_box->computed_values().grid_column_start().raw_value();
-        else if (child_box->computed_values().grid_column_end().is_span())
-            column_span = child_box->computed_values().grid_column_end().raw_value();
+    for (auto key : keys) {
+        auto& boxes_to_place = order_item_bucket.get(key).value();
+        for (auto const& child_box : boxes_to_place) {
+            auto const& grid_column_start = child_box->computed_values().grid_column_start();
+            auto const& grid_column_end = child_box->computed_values().grid_column_end();
 
-        if (column_span - 1 > m_occupation_grid.max_column_index())
-            m_occupation_grid.set_max_column_index(column_span - 1);
+            int column_span = 1;
+            if (grid_column_start.is_span())
+                column_span = grid_column_start.span();
+            else if (grid_column_end.is_span())
+                column_span = grid_column_end.span();
+
+            if (column_span - 1 > m_occupation_grid.max_column_index())
+                m_occupation_grid.set_max_column_index(column_span - 1);
+        }
     }
 
     // 4. Position the remaining grid items.
@@ -1384,23 +1451,26 @@ void GridFormattingContext::place_grid_items(AvailableSpace const& available_spa
     // order:
     auto auto_placement_cursor_x = 0;
     auto auto_placement_cursor_y = 0;
-    for (size_t i = 0; i < m_boxes_to_place.size(); i++) {
-        auto const& child_box = m_boxes_to_place[i];
-        // 4.1. For sparse packing:
-        // FIXME: no distinction made. See #4.2
+    for (auto key : keys) {
+        auto& boxes_to_place = order_item_bucket.get(key).value();
+        for (size_t i = 0; i < boxes_to_place.size(); i++) {
+            auto const& child_box = boxes_to_place[i];
+            // 4.1. For sparse packing:
+            // FIXME: no distinction made. See #4.2
 
-        // 4.1.1. If the item has a definite column position:
-        if (!is_auto_positioned_column(child_box->computed_values().grid_column_start(), child_box->computed_values().grid_column_end()))
-            place_item_with_column_position(child_box, auto_placement_cursor_x, auto_placement_cursor_y);
+            // 4.1.1. If the item has a definite column position:
+            if (!is_auto_positioned_column(child_box->computed_values().grid_column_start(), child_box->computed_values().grid_column_end()))
+                place_item_with_column_position(child_box, auto_placement_cursor_x, auto_placement_cursor_y);
 
-        // 4.1.2. If the item has an automatic grid position in both axes:
-        else
-            place_item_with_no_declared_position(child_box, auto_placement_cursor_x, auto_placement_cursor_y);
+            // 4.1.2. If the item has an automatic grid position in both axes:
+            else
+                place_item_with_no_declared_position(child_box, auto_placement_cursor_x, auto_placement_cursor_y);
 
-        m_boxes_to_place.remove(i);
-        i--;
+            boxes_to_place.remove(i);
+            i--;
 
-        // FIXME: 4.2. For dense packing:
+            // FIXME: 4.2. For dense packing:
+        }
     }
 
     // NOTE: When final implicit grid sizes are known, we can offset their positions so leftmost grid track has 0 index.
@@ -1537,10 +1607,11 @@ void GridFormattingContext::resolve_grid_item_widths()
         };
 
         CSSPixels used_width;
+        AvailableSpace available_space { AvailableSize::make_definite(containing_block_width), AvailableSize::make_indefinite() };
         if (computed_width.is_auto()) {
-            used_width = try_compute_width(calculate_fit_content_width(item.box, get_available_space_for_item(item)));
+            used_width = try_compute_width(calculate_fit_content_width(item.box, available_space));
         } else if (computed_width.is_fit_content()) {
-            used_width = try_compute_width(calculate_fit_content_width(item.box, get_available_space_for_item(item)));
+            used_width = try_compute_width(calculate_fit_content_width(item.box, available_space));
         } else {
             used_width = try_compute_width(computed_width.to_px(grid_container(), containing_block_width));
         }
@@ -1780,6 +1851,18 @@ void GridFormattingContext::run(Box const& box, LayoutMode, AvailableSpace const
     }
 }
 
+void GridFormattingContext::parent_context_did_dimension_child_root_box()
+{
+    grid_container().for_each_child_of_type<Box>([&](Layout::Box& box) {
+        if (box.is_absolutely_positioned()) {
+            auto& cb_state = m_state.get(*box.containing_block());
+            auto available_width = AvailableSize::make_definite(cb_state.content_width() + cb_state.padding_left + cb_state.padding_right);
+            auto available_height = AvailableSize::make_definite(cb_state.content_height() + cb_state.padding_top + cb_state.padding_bottom);
+            layout_absolutely_positioned_element(box, AvailableSpace(available_width, available_height));
+        }
+    });
+}
+
 void GridFormattingContext::determine_intrinsic_size_of_grid_container(AvailableSpace const& available_space)
 {
     // https://www.w3.org/TR/css-grid-1/#intrinsic-sizes
@@ -1840,7 +1923,7 @@ AvailableSize GridFormattingContext::get_free_space(AvailableSpace const& availa
         CSSPixels sum_base_sizes = 0;
         for (auto& track : tracks)
             sum_base_sizes += track.base_size;
-        return AvailableSize::make_definite(max(CSSPixels(0), available_size.to_px() - sum_base_sizes));
+        return AvailableSize::make_definite(max(CSSPixels(0), available_size.to_px_or_zero() - sum_base_sizes));
     }
 
     return available_size;
@@ -1920,7 +2003,7 @@ CSSPixels GridFormattingContext::calculate_min_content_size(GridItem const& item
     if (dimension == GridDimension::Column) {
         return calculate_min_content_width(item.box);
     } else {
-        return calculate_min_content_height(item.box, get_available_space_for_item(item).width);
+        return calculate_min_content_height(item.box, get_available_space_for_item(item).width.to_px_or_zero());
     }
 }
 
@@ -1929,7 +2012,7 @@ CSSPixels GridFormattingContext::calculate_max_content_size(GridItem const& item
     if (dimension == GridDimension::Column) {
         return calculate_max_content_width(item.box);
     } else {
-        return calculate_max_content_height(item.box, get_available_space_for_item(item).width);
+        return calculate_max_content_height(item.box, get_available_space_for_item(item).width.to_px_or_zero());
     }
 }
 

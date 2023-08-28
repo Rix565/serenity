@@ -14,7 +14,7 @@ class CSSNamespaceRule final : public CSSRule {
     WEB_PLATFORM_OBJECT(CSSNamespaceRule, CSSRule);
 
 public:
-    static WebIDL::ExceptionOr<JS::NonnullGCPtr<CSSNamespaceRule>> create(JS::Realm&, Optional<StringView> prefix, StringView namespace_uri);
+    [[nodiscard]] static JS::NonnullGCPtr<CSSNamespaceRule> create(JS::Realm&, Optional<DeprecatedString> prefix, StringView namespace_uri);
 
     virtual ~CSSNamespaceRule() = default;
 
@@ -25,9 +25,9 @@ public:
     virtual Type type() const override { return Type::Namespace; }
 
 private:
-    CSSNamespaceRule(JS::Realm&, Optional<StringView> prefix, StringView namespace_uri);
+    CSSNamespaceRule(JS::Realm&, Optional<DeprecatedString> prefix, StringView namespace_uri);
 
-    virtual JS::ThrowCompletionOr<void> initialize(JS::Realm&) override;
+    virtual void initialize(JS::Realm&) override;
 
     virtual DeprecatedString serialized() const override;
     DeprecatedString m_namespace_uri;

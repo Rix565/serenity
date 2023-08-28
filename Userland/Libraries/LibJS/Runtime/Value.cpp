@@ -72,7 +72,7 @@ ALWAYS_INLINE bool both_bigint(Value const& lhs, Value const& rhs)
 
 // 6.1.6.1.20 Number::toString ( x ), https://tc39.es/ecma262/#sec-numeric-types-number-tostring
 // Implementation for radix = 10
-static ErrorOr<void> number_to_string_impl(StringBuilder& builder, double d, NumberToStringMode mode)
+static void number_to_string_impl(StringBuilder& builder, double d, NumberToStringMode mode)
 {
     auto convert_to_decimal_digits_array = [](auto x, auto& digits, auto& length) {
         for (; x; x /= 10)
@@ -83,25 +83,25 @@ static ErrorOr<void> number_to_string_impl(StringBuilder& builder, double d, Num
 
     // 1. If x is NaN, return "NaN".
     if (isnan(d)) {
-        TRY(builder.try_append("NaN"sv));
-        return {};
+        builder.append("NaN"sv);
+        return;
     }
 
     // 2. If x is +0𝔽 or -0𝔽, return "0".
     if (d == +0.0 || d == -0.0) {
-        TRY(builder.try_append("0"sv));
-        return {};
+        builder.append("0"sv);
+        return;
     }
 
     // 4. If x is +∞𝔽, return "Infinity".
     if (isinf(d)) {
         if (d > 0) {
-            TRY(builder.try_append("Infinity"sv));
-            return {};
+            builder.append("Infinity"sv);
+            return;
         }
 
-        TRY(builder.try_append("-Infinity"sv));
-        return {};
+        builder.append("-Infinity"sv);
+        return;
     }
 
     // 5. Let n, k, and s be integers such that k ≥ 1, radix ^ (k - 1) ≤ s < radix ^ k,
@@ -120,7 +120,7 @@ static ErrorOr<void> number_to_string_impl(StringBuilder& builder, double d, Num
 
     // 3. If x < -0𝔽, return the string-concatenation of "-" and Number::toString(-x, radix).
     if (sign)
-        TRY(builder.try_append('-'));
+        builder.append('-');
 
     // Non-standard: Intl needs number-to-string conversions for extremely large numbers without any
     // exponential formatting, as it will handle such formatting itself in a locale-aware way.
@@ -132,34 +132,34 @@ static ErrorOr<void> number_to_string_impl(StringBuilder& builder, double d, Num
         if (n >= k) {
             // i. Return the string-concatenation of:
             // the code units of the k digits of the representation of s using radix radix
-            TRY(builder.try_append(mantissa_digits.data(), k));
+            builder.append(mantissa_digits.data(), k);
             // n - k occurrences of the code unit 0x0030 (DIGIT ZERO)
-            TRY(builder.try_append_repeated('0', n - k));
+            builder.append_repeated('0', n - k);
             // b. Else if n > 0, then
         } else if (n > 0) {
             // i. Return the string-concatenation of:
             // the code units of the most significant n digits of the representation of s using radix radix
-            TRY(builder.try_append(mantissa_digits.data(), n));
+            builder.append(mantissa_digits.data(), n);
             // the code unit 0x002E (FULL STOP)
-            TRY(builder.try_append('.'));
+            builder.append('.');
             // the code units of the remaining k - n digits of the representation of s using radix radix
-            TRY(builder.try_append(mantissa_digits.data() + n, k - n));
+            builder.append(mantissa_digits.data() + n, k - n);
             // c. Else,
         } else {
             // i. Assert: n ≤ 0.
             VERIFY(n <= 0);
             // ii. Return the string-concatenation of:
             // the code unit 0x0030 (DIGIT ZERO)
-            TRY(builder.try_append('0'));
+            builder.append('0');
             // the code unit 0x002E (FULL STOP)
-            TRY(builder.try_append('.'));
+            builder.append('.');
             // -n occurrences of the code unit 0x0030 (DIGIT ZERO)
-            TRY(builder.try_append_repeated('0', -n));
+            builder.append_repeated('0', -n);
             // the code units of the k digits of the representation of s using radix radix
-            TRY(builder.try_append(mantissa_digits.data(), k));
+            builder.append(mantissa_digits.data(), k);
         }
 
-        return {};
+        return;
     }
 
     // 7. NOTE: In this case, the input will be represented using scientific E notation, such as 1.2e+3.
@@ -178,45 +178,43 @@ static ErrorOr<void> number_to_string_impl(StringBuilder& builder, double d, Num
     if (k == 1) {
         // a. Return the string-concatenation of:
         // the code unit of the single digit of s
-        TRY(builder.try_append(mantissa_digits[0]));
+        builder.append(mantissa_digits[0]);
         // the code unit 0x0065 (LATIN SMALL LETTER E)
-        TRY(builder.try_append('e'));
+        builder.append('e');
         // exponentSign
-        TRY(builder.try_append(exponent_sign));
+        builder.append(exponent_sign);
         // the code units of the decimal representation of abs(n - 1)
-        TRY(builder.try_append(exponent_digits.data(), exponent_length));
+        builder.append(exponent_digits.data(), exponent_length);
 
-        return {};
+        return;
     }
 
     // 12. Return the string-concatenation of:
     // the code unit of the most significant digit of the decimal representation of s
-    TRY(builder.try_append(mantissa_digits[0]));
+    builder.append(mantissa_digits[0]);
     // the code unit 0x002E (FULL STOP)
-    TRY(builder.try_append('.'));
+    builder.append('.');
     // the code units of the remaining k - 1 digits of the decimal representation of s
-    TRY(builder.try_append(mantissa_digits.data() + 1, k - 1));
+    builder.append(mantissa_digits.data() + 1, k - 1);
     // the code unit 0x0065 (LATIN SMALL LETTER E)
-    TRY(builder.try_append('e'));
+    builder.append('e');
     // exponentSign
-    TRY(builder.try_append(exponent_sign));
+    builder.append(exponent_sign);
     // the code units of the decimal representation of abs(n - 1)
-    TRY(builder.try_append(exponent_digits.data(), exponent_length));
-
-    return {};
+    builder.append(exponent_digits.data(), exponent_length);
 }
 
-ErrorOr<String> number_to_string(double d, NumberToStringMode mode)
+String number_to_string(double d, NumberToStringMode mode)
 {
     StringBuilder builder;
-    TRY(number_to_string_impl(builder, d, mode));
-    return builder.to_string();
+    number_to_string_impl(builder, d, mode);
+    return builder.to_string().release_value();
 }
 
 DeprecatedString number_to_deprecated_string(double d, NumberToStringMode mode)
 {
     StringBuilder builder;
-    MUST(number_to_string_impl(builder, d, mode));
+    number_to_string_impl(builder, d, mode);
     return builder.to_deprecated_string();
 }
 
@@ -355,7 +353,7 @@ StringView Value::typeof() const
     }
 }
 
-ErrorOr<String> Value::to_string_without_side_effects() const
+String Value::to_string_without_side_effects() const
 {
     if (is_double())
         return number_to_string(m_value.as_double);
@@ -368,26 +366,15 @@ ErrorOr<String> Value::to_string_without_side_effects() const
     case BOOLEAN_TAG:
         return as_bool() ? "true"_string : "false"_string;
     case INT32_TAG:
-        return String::number(as_i32());
+        return String::number(as_i32()).release_value();
     case STRING_TAG:
-        if (auto string = as_string().utf8_string(); string.is_throw_completion()) {
-            auto completion = string.release_error();
-
-            // We can't explicitly check for OOM because InternalError does not store the ErrorType
-            VERIFY(completion.value().has_value());
-            VERIFY(completion.value()->is_object());
-            VERIFY(is<InternalError>(completion.value()->as_object()));
-
-            return AK::Error::from_errno(ENOMEM);
-        } else {
-            return string.release_value();
-        }
+        return as_string().utf8_string();
     case SYMBOL_TAG:
-        return as_symbol().descriptive_string();
+        return as_symbol().descriptive_string().release_value();
     case BIGINT_TAG:
-        return as_bigint().to_string();
+        return as_bigint().to_string().release_value();
     case OBJECT_TAG:
-        return String::formatted("[object {}]", as_object().class_name());
+        return String::formatted("[object {}]", as_object().class_name()).release_value();
     case ACCESSOR_TAG:
         return "<accessor>"_string;
     case EMPTY_TAG:
@@ -409,25 +396,25 @@ ThrowCompletionOr<NonnullGCPtr<PrimitiveString>> Value::to_primitive_string(VM& 
 ThrowCompletionOr<String> Value::to_string(VM& vm) const
 {
     if (is_double())
-        return TRY_OR_THROW_OOM(vm, number_to_string(m_value.as_double));
+        return number_to_string(m_value.as_double);
 
     switch (m_value.tag) {
     // 1. If argument is a String, return argument.
     case STRING_TAG:
-        return TRY(as_string().utf8_string());
+        return as_string().utf8_string();
     // 2. If argument is a Symbol, throw a TypeError exception.
     case SYMBOL_TAG:
         return vm.throw_completion<TypeError>(ErrorType::Convert, "symbol", "string");
     // 3. If argument is undefined, return "undefined".
     case UNDEFINED_TAG:
-        return TRY_OR_THROW_OOM(vm, "undefined"_string);
+        return "undefined"_string;
     // 4. If argument is null, return "null".
     case NULL_TAG:
-        return TRY_OR_THROW_OOM(vm, "null"_string);
+        return "null"_string;
     // 5. If argument is true, return "true".
     // 6. If argument is false, return "false".
     case BOOLEAN_TAG:
-        return TRY_OR_THROW_OOM(vm, as_bool() ? "true"_string : "false"_string);
+        return as_bool() ? "true"_string : "false"_string;
     // 7. If argument is a Number, return Number::toString(argument, 10).
     case INT32_TAG:
         return TRY_OR_THROW_OOM(vm, String::number(as_i32()));
@@ -459,10 +446,10 @@ ThrowCompletionOr<DeprecatedString> Value::to_deprecated_string(VM& vm) const
 ThrowCompletionOr<Utf16String> Value::to_utf16_string(VM& vm) const
 {
     if (is_string())
-        return TRY(as_string().utf16_string());
+        return as_string().utf16_string();
 
     auto utf8_string = TRY(to_string(vm));
-    return Utf16String::create(vm, utf8_string.bytes_as_string_view());
+    return Utf16String::create(utf8_string.bytes_as_string_view());
 }
 
 // 7.1.2 ToBoolean ( argument ), https://tc39.es/ecma262/#sec-toboolean
@@ -538,7 +525,7 @@ ThrowCompletionOr<Value> Value::to_primitive(VM& vm, PreferredType preferred_typ
                 return result;
 
             // vi. Throw a TypeError exception.
-            return vm.throw_completion<TypeError>(ErrorType::ToPrimitiveReturnedObject, TRY_OR_THROW_OOM(vm, to_string_without_side_effects()), hint);
+            return vm.throw_completion<TypeError>(ErrorType::ToPrimitiveReturnedObject, to_string_without_side_effects(), hint);
         }
 
         // c. If preferredType is not present, let preferredType be number.
@@ -579,7 +566,7 @@ ThrowCompletionOr<NonnullGCPtr<Object>> Value::to_object(VM& vm) const
     // String
     case STRING_TAG:
         // Return a new String object whose [[StringData]] internal slot is set to argument. See 22.1 for a description of String objects.
-        return MUST_OR_THROW_OOM(StringObject::create(realm, const_cast<JS::PrimitiveString&>(as_string()), realm.intrinsics().string_prototype()));
+        return StringObject::create(realm, const_cast<JS::PrimitiveString&>(as_string()), realm.intrinsics().string_prototype());
     // Symbol
     case SYMBOL_TAG:
         // Return a new Symbol object whose [[SymbolData]] internal slot is set to argument. See 20.4 for a description of Symbol objects.
@@ -722,7 +709,7 @@ ThrowCompletionOr<Value> Value::to_number(VM& vm) const
         return Value(as_bool() ? 1 : 0);
     // 6. If argument is a String, return StringToNumber(argument).
     case STRING_TAG:
-        return string_to_number(TRY(as_string().deprecated_string()));
+        return string_to_number(as_string().deprecated_string());
     // 7. Assert: argument is an Object.
     case OBJECT_TAG: {
         // 8. Let primValue be ? ToPrimitive(argument, number).
@@ -776,7 +763,7 @@ ThrowCompletionOr<NonnullGCPtr<BigInt>> Value::to_bigint(VM& vm) const
         return primitive.as_bigint();
     case STRING_TAG: {
         // 1. Let n be ! StringToBigInt(prim).
-        auto bigint = string_to_bigint(vm, TRY(primitive.as_string().deprecated_string()));
+        auto bigint = string_to_bigint(vm, primitive.as_string().deprecated_string());
 
         // 2. If n is undefined, throw a SyntaxError exception.
         if (!bigint.has_value())
@@ -1242,7 +1229,7 @@ ThrowCompletionOr<GCPtr<FunctionObject>> Value::get_method(VM& vm, PropertyKey c
 
     // 4. If IsCallable(func) is false, throw a TypeError exception.
     if (!function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, function.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, function.to_string_without_side_effects());
 
     // 5. Return func.
     return function.as_function();
@@ -2083,7 +2070,7 @@ ThrowCompletionOr<Value> instance_of(VM& vm, Value value, Value target)
 {
     // 1. If target is not an Object, throw a TypeError exception.
     if (!target.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, TRY_OR_THROW_OOM(vm, target.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, target.to_string_without_side_effects());
 
     // 2. Let instOfHandler be ? GetMethod(target, @@hasInstance).
     auto instance_of_handler = TRY(target.get_method(vm, vm.well_known_symbol_has_instance()));
@@ -2096,7 +2083,7 @@ ThrowCompletionOr<Value> instance_of(VM& vm, Value value, Value target)
 
     // 4. If IsCallable(target) is false, throw a TypeError exception.
     if (!target.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, TRY_OR_THROW_OOM(vm, target.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, target.to_string_without_side_effects());
 
     // 5. Return ? OrdinaryHasInstance(target, V).
     return ordinary_has_instance(vm, target, value);
@@ -2131,7 +2118,7 @@ ThrowCompletionOr<Value> ordinary_has_instance(VM& vm, Value lhs, Value rhs)
 
     // 5. If P is not an Object, throw a TypeError exception.
     if (!rhs_prototype.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::InstanceOfOperatorBadPrototype, TRY_OR_THROW_OOM(vm, rhs.to_string_without_side_effects()));
+        return vm.throw_completion<TypeError>(ErrorType::InstanceOfOperatorBadPrototype, rhs.to_string_without_side_effects());
 
     // 6. Repeat,
     while (true) {
@@ -2216,8 +2203,7 @@ bool same_value_non_number(Value lhs, Value rhs)
     // 5. If x is a String, then
     if (lhs.is_string()) {
         // a. If x and y are exactly the same sequence of code units (same length and same code units at corresponding indices), return true; otherwise, return false.
-        // FIXME: Propagate this error.
-        return MUST(lhs.as_string().deprecated_string()) == MUST(rhs.as_string().deprecated_string());
+        return lhs.as_string().deprecated_string() == rhs.as_string().deprecated_string();
     }
 
     // 3. If x is undefined, return true.
@@ -2298,7 +2284,7 @@ ThrowCompletionOr<bool> is_loosely_equal(VM& vm, Value lhs, Value rhs)
     // 7. If Type(x) is BigInt and Type(y) is String, then
     if (lhs.is_bigint() && rhs.is_string()) {
         // a. Let n be StringToBigInt(y).
-        auto bigint = string_to_bigint(vm, TRY(rhs.as_string().deprecated_string()));
+        auto bigint = string_to_bigint(vm, rhs.as_string().deprecated_string());
 
         // b. If n is undefined, return false.
         if (!bigint.has_value())
@@ -2379,8 +2365,8 @@ ThrowCompletionOr<TriState> is_less_than(VM& vm, Value lhs, Value rhs, bool left
 
     // 3. If px is a String and py is a String, then
     if (x_primitive.is_string() && y_primitive.is_string()) {
-        auto x_string = TRY(x_primitive.as_string().deprecated_string());
-        auto y_string = TRY(y_primitive.as_string().deprecated_string());
+        auto x_string = x_primitive.as_string().deprecated_string();
+        auto y_string = y_primitive.as_string().deprecated_string();
 
         Utf8View x_code_points { x_string };
         Utf8View y_code_points { y_string };
@@ -2415,7 +2401,7 @@ ThrowCompletionOr<TriState> is_less_than(VM& vm, Value lhs, Value rhs, bool left
     // a. If px is a BigInt and py is a String, then
     if (x_primitive.is_bigint() && y_primitive.is_string()) {
         // i. Let ny be StringToBigInt(py).
-        auto y_bigint = string_to_bigint(vm, TRY(y_primitive.as_string().deprecated_string()));
+        auto y_bigint = string_to_bigint(vm, y_primitive.as_string().deprecated_string());
 
         // ii. If ny is undefined, return undefined.
         if (!y_bigint.has_value())
@@ -2430,7 +2416,7 @@ ThrowCompletionOr<TriState> is_less_than(VM& vm, Value lhs, Value rhs, bool left
     // b. If px is a String and py is a BigInt, then
     if (x_primitive.is_string() && y_primitive.is_bigint()) {
         // i. Let nx be StringToBigInt(px).
-        auto x_bigint = string_to_bigint(vm, TRY(x_primitive.as_string().deprecated_string()));
+        auto x_bigint = string_to_bigint(vm, x_primitive.as_string().deprecated_string());
 
         // ii. If nx is undefined, return undefined.
         if (!x_bigint.has_value())
