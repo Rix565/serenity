@@ -202,10 +202,7 @@ static void build_paint_tree(Node& node, Painting::Paintable* parent_paintable =
         return;
     auto& paintable = const_cast<Painting::Paintable&>(*node.paintable());
     if (parent_paintable) {
-        // In case this was a relayout of an existing tree, we need to remove the paintable from its old parent first.
-        if (auto* old_parent = paintable.parent()) {
-            old_parent->remove_child(paintable);
-        }
+        VERIFY(!paintable.parent());
         parent_paintable->append_child(paintable);
     }
     paintable.set_dom_node(node.dom_node());
@@ -220,6 +217,14 @@ void LayoutState::commit(Box& root)
 {
     // Only the top-level LayoutState should ever be committed.
     VERIFY(!m_parent);
+
+    // NOTE: In case this is a relayout of an existing tree, we start by detaching the old paint tree
+    //       from the layout tree. This is done to ensure that we don't end up with any old-tree pointers
+    //       when text paintables shift around in the tree.
+    root.for_each_in_inclusive_subtree_of_type<Layout::TextNode>([&](Layout::TextNode& text_node) {
+        text_node.set_paintable(nullptr);
+        return IterationDecision::Continue;
+    });
 
     HashTable<Layout::TextNode*> text_nodes;
 

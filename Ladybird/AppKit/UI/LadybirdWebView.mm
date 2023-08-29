@@ -9,6 +9,7 @@
 #include <AK/URL.h>
 #include <LibGfx/ImageFormats/PNGWriter.h>
 #include <LibGfx/ShareableBitmap.h>
+#include <LibWebView/SourceHighlighter.h>
 #include <UI/LadybirdWebViewBridge.h>
 
 #import <Application/ApplicationDelegate.h>
@@ -100,9 +101,14 @@ struct HideCursor {
 
 #pragma mark - Public methods
 
-- (void)load:(URL const&)url
+- (void)loadURL:(URL const&)url
 {
     m_web_view_bridge->load(url);
+}
+
+- (void)loadHTML:(StringView)html url:(URL const&)url
+{
+    m_web_view_bridge->load_html(html, url);
 }
 
 - (void)handleResize
@@ -125,6 +131,11 @@ struct HideCursor {
 - (void)setPreferredColorScheme:(Web::CSS::PreferredColorScheme)color_scheme
 {
     m_web_view_bridge->set_preferred_color_scheme(color_scheme);
+}
+
+- (void)viewSource
+{
+    m_web_view_bridge->get_source();
 }
 
 #pragma mark - Private methods
@@ -178,9 +189,12 @@ struct HideCursor {
         [self setNeedsDisplay:YES];
     };
 
-    m_web_view_bridge->on_new_tab = [](auto activate_tab) {
+    m_web_view_bridge->on_new_tab = [self](auto activate_tab) {
         auto* delegate = (ApplicationDelegate*)[NSApp delegate];
-        auto* controller = [delegate createNewTab:"about:blank"sv activateTab:activate_tab];
+
+        auto* controller = [delegate createNewTab:"about:blank"sv
+                                          fromTab:[self tab]
+                                      activateTab:activate_tab];
 
         auto* tab = (Tab*)[controller window];
         auto* web_view = [tab web_view];
@@ -353,17 +367,24 @@ struct HideCursor {
         auto* delegate = (ApplicationDelegate*)[NSApp delegate];
 
         if (modifiers == Mod_Super) {
-            [delegate createNewTab:url activateTab:Web::HTML::ActivateTab::No];
+            [delegate createNewTab:url
+                           fromTab:[self tab]
+                       activateTab:Web::HTML::ActivateTab::No];
         } else if (target == "_blank"sv) {
-            [delegate createNewTab:url activateTab:Web::HTML::ActivateTab::Yes];
+            [delegate createNewTab:url
+                           fromTab:[self tab]
+                       activateTab:Web::HTML::ActivateTab::Yes];
         } else {
-            [[self tabController] load:url];
+            [[self tabController] loadURL:url];
         }
     };
 
-    m_web_view_bridge->on_link_middle_click = [](auto url, auto, unsigned) {
+    m_web_view_bridge->on_link_middle_click = [self](auto url, auto, unsigned) {
         auto* delegate = (ApplicationDelegate*)[NSApp delegate];
-        [delegate createNewTab:url activateTab:Web::HTML::ActivateTab::No];
+
+        [delegate createNewTab:url
+                       fromTab:[self tab]
+                   activateTab:Web::HTML::ActivateTab::No];
     };
 
     m_web_view_bridge->on_context_menu_request = [self](auto position) {
@@ -572,6 +593,16 @@ struct HideCursor {
 
         return Ladybird::ns_rect_to_gfx_rect([[self window] frame]);
     };
+
+    m_web_view_bridge->on_received_source = [self](auto const& url, auto const& source) {
+        auto* delegate = (ApplicationDelegate*)[NSApp delegate];
+        auto html = WebView::highlight_source(url, source);
+
+        [delegate createNewTab:html
+                           url:url
+                       fromTab:[self tab]
+                   activateTab:Web::HTML::ActivateTab::Yes];
+    };
 }
 
 - (Tab*)tab
@@ -705,6 +736,11 @@ static void copy_text_to_clipboard(StringView text)
                                                         keyEquivalent:@""]];
         [_page_context_menu addItem:[[NSMenuItem alloc] initWithTitle:@"Take Full Screenshot"
                                                                action:@selector(takeFullScreenshot:)
+                                                        keyEquivalent:@""]];
+        [_page_context_menu addItem:[NSMenuItem separatorItem]];
+
+        [_page_context_menu addItem:[[NSMenuItem alloc] initWithTitle:@"View Source"
+                                                               action:@selector(viewSource:)
                                                         keyEquivalent:@""]];
     }
 

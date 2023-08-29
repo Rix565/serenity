@@ -32,7 +32,6 @@ enum class IsHistoryNavigation {
 
 @interface TabController () <NSToolbarDelegate, NSSearchFieldDelegate>
 {
-    URL m_url;
     DeprecatedString m_title;
 
     Browser::History m_history;
@@ -63,7 +62,7 @@ enum class IsHistoryNavigation {
 @synthesize new_tab_toolbar_item = _new_tab_toolbar_item;
 @synthesize tab_overview_toolbar_item = _tab_overview_toolbar_item;
 
-- (instancetype)init:(URL)url
+- (instancetype)init
 {
     if (self = [super init]) {
         self.toolbar = [[NSToolbar alloc] initWithIdentifier:TOOLBAR_IDENTIFIER];
@@ -72,7 +71,6 @@ enum class IsHistoryNavigation {
         [self.toolbar setAllowsUserCustomization:NO];
         [self.toolbar setSizeMode:NSToolbarSizeModeRegular];
 
-        m_url = move(url);
         m_is_history_navigation = IsHistoryNavigation::No;
     }
 
@@ -81,9 +79,14 @@ enum class IsHistoryNavigation {
 
 #pragma mark - Public methods
 
-- (void)load:(URL const&)url
+- (void)loadURL:(URL const&)url
 {
-    [[self tab].web_view load:url];
+    [[self tab].web_view loadURL:url];
+}
+
+- (void)loadHTML:(StringView)html url:(URL const&)url
+{
+    [[self tab].web_view loadHTML:html url:url];
 }
 
 - (void)onLoadStart:(URL const&)url isRedirect:(BOOL)isRedirect
@@ -121,7 +124,7 @@ enum class IsHistoryNavigation {
     m_history.go_back();
 
     auto url = m_history.current().url;
-    [self load:url];
+    [self loadURL:url];
 }
 
 - (void)navigateForward:(id)sender
@@ -134,21 +137,30 @@ enum class IsHistoryNavigation {
     m_history.go_forward();
 
     auto url = m_history.current().url;
-    [self load:url];
+    [self loadURL:url];
 }
 
 - (void)reload:(id)sender
 {
+    if (m_history.is_empty()) {
+        return;
+    }
+
     m_is_history_navigation = IsHistoryNavigation::Yes;
 
     auto url = m_history.current().url;
-    [self load:url];
+    [self loadURL:url];
 }
 
 - (void)clearHistory
 {
     m_history.clear();
     [self updateNavigationButtonStates];
+}
+
+- (void)viewSource:(id)sender
+{
+    [[[self tab] web_view] viewSource];
 }
 
 - (void)focusLocationToolbarItem
@@ -166,7 +178,10 @@ enum class IsHistoryNavigation {
 - (void)createNewTab:(id)sender
 {
     auto* delegate = (ApplicationDelegate*)[NSApp delegate];
-    [delegate createNewTab:OptionalNone {}];
+
+    [delegate createNewTab:OptionalNone {}
+                   fromTab:[self tab]
+               activateTab:Web::HTML::ActivateTab::Yes];
 }
 
 - (void)updateNavigationButtonStates
@@ -176,6 +191,9 @@ enum class IsHistoryNavigation {
 
     auto* navigate_forward_button = (NSButton*)[[self navigate_forward_toolbar_item] view];
     [navigate_forward_button setEnabled:m_history.can_go_forward()];
+
+    auto* reload_button = (NSButton*)[[self reload_toolbar_item] view];
+    [reload_button setEnabled:!m_history.is_empty()];
 }
 
 - (void)showTabOverview:(id)sender
@@ -229,6 +247,7 @@ enum class IsHistoryNavigation {
     if (!_reload_toolbar_item) {
         auto* button = [self create_button:NSImageNameRefreshTemplate
                                with_action:@selector(reload:)];
+        [button setEnabled:NO];
 
         _reload_toolbar_item = [[NSToolbarItem alloc] initWithItemIdentifier:TOOLBAR_RELOAD_IDENTIFIER];
         [_reload_toolbar_item setView:button];
@@ -301,8 +320,6 @@ enum class IsHistoryNavigation {
 - (IBAction)showWindow:(id)sender
 {
     self.window = [[Tab alloc] init];
-    [self load:m_url];
-
     [self.window setDelegate:self];
 
     [self.window setToolbar:self.toolbar];
@@ -386,7 +403,7 @@ enum class IsHistoryNavigation {
 
     auto* url_string = [[text_view textStorage] string];
     auto url = Ladybird::sanitize_url(url_string);
-    [self load:url];
+    [self loadURL:url];
 
     [self.window makeFirstResponder:nil];
     return YES;

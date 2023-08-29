@@ -13,12 +13,15 @@
 
 @interface LadybirdWebView : NSClipView
 
-- (void)load:(URL const&)url;
+- (void)loadURL:(URL const&)url;
+- (void)loadHTML:(StringView)html url:(URL const&)url;
 
 - (void)handleResize;
 - (void)handleScroll;
 - (void)handleVisibility:(BOOL)is_visible;
 
 - (void)setPreferredColorScheme:(Web::CSS::PreferredColorScheme)color_scheme;
+
+- (void)viewSource;
 
 @end

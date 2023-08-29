@@ -36,6 +36,7 @@
 - (NSMenuItem*)createEditMenu;
 - (NSMenuItem*)createViewMenu;
 - (NSMenuItem*)createHistoryMenu;
+- (NSMenuItem*)createInspectMenu;
 - (NSMenuItem*)createDebugMenu;
 - (NSMenuItem*)createWindowsMenu;
 - (NSMenuItem*)createHelpMenu;
@@ -56,6 +57,7 @@
         [[NSApp mainMenu] addItem:[self createEditMenu]];
         [[NSApp mainMenu] addItem:[self createViewMenu]];
         [[NSApp mainMenu] addItem:[self createHistoryMenu]];
+        [[NSApp mainMenu] addItem:[self createInspectMenu]];
         [[NSApp mainMenu] addItem:[self createDebugMenu]];
         [[NSApp mainMenu] addItem:[self createWindowsMenu]];
         [[NSApp mainMenu] addItem:[self createHelpMenu]];
@@ -83,29 +85,23 @@
 #pragma mark - Public methods
 
 - (TabController*)createNewTab:(Optional<URL> const&)url
-{
-    return [self createNewTab:url activateTab:Web::HTML::ActivateTab::Yes];
-}
-
-- (TabController*)createNewTab:(Optional<URL> const&)url
+                       fromTab:(Tab*)tab
                    activateTab:(Web::HTML::ActivateTab)activate_tab
 {
-    // This handle must be acquired before creating the new tab.
-    auto* current_tab = (Tab*)[NSApp keyWindow];
+    auto* controller = [self createNewTab:activate_tab fromTab:tab];
+    [controller loadURL:url.value_or(m_new_tab_page_url)];
 
-    auto* controller = [[TabController alloc] init:url.value_or(m_new_tab_page_url)];
-    [controller showWindow:nil];
+    return controller;
+}
 
-    if (current_tab) {
-        [[current_tab tabGroup] addWindow:controller.window];
+- (nonnull TabController*)createNewTab:(StringView)html
+                                   url:(URL const&)url
+                               fromTab:(nullable Tab*)tab
+                           activateTab:(Web::HTML::ActivateTab)activate_tab
+{
+    auto* controller = [self createNewTab:activate_tab fromTab:tab];
+    [controller loadHTML:html url:url];
 
-        // FIXME: Can we create the tabbed window above without it becoming active in the first place?
-        if (activate_tab == Web::HTML::ActivateTab::No) {
-            [current_tab orderFront:nil];
-        }
-    }
-
-    [self.managed_tabs addObject:controller];
     return controller;
 }
 
@@ -131,15 +127,39 @@
 
 #pragma mark - Private methods
 
+- (nonnull TabController*)createNewTab:(Web::HTML::ActivateTab)activate_tab
+                               fromTab:(nullable Tab*)tab
+{
+    auto* controller = [[TabController alloc] init];
+    [controller showWindow:nil];
+
+    if (tab) {
+        [[tab tabGroup] addWindow:controller.window];
+
+        // FIXME: Can we create the tabbed window above without it becoming active in the first place?
+        if (activate_tab == Web::HTML::ActivateTab::No) {
+            [tab orderFront:nil];
+        }
+    }
+
+    [self.managed_tabs addObject:controller];
+    return controller;
+}
+
 - (void)closeCurrentTab:(id)sender
 {
-    auto* current_tab = (Tab*)[NSApp keyWindow];
-    [current_tab close];
+    auto* current_window = [NSApp keyWindow];
+    [current_window close];
 }
 
 - (void)openLocation:(id)sender
 {
-    auto* current_tab = (Tab*)[NSApp keyWindow];
+    auto* current_tab = [NSApp keyWindow];
+
+    if (![current_tab isKindOfClass:[Tab class]]) {
+        return;
+    }
+
     auto* controller = (TabController*)[current_tab windowController];
     [controller focusLocationToolbarItem];
 }
@@ -314,6 +334,19 @@
     return menu;
 }
 
+- (NSMenuItem*)createInspectMenu
+{
+    auto* menu = [[NSMenuItem alloc] init];
+    auto* submenu = [[NSMenu alloc] initWithTitle:@"Inspect"];
+
+    [submenu addItem:[[NSMenuItem alloc] initWithTitle:@"View Source"
+                                                action:@selector(viewSource:)
+                                         keyEquivalent:@""]];
+
+    [menu setSubmenu:submenu];
+    return menu;
+}
+
 - (NSMenuItem*)createDebugMenu
 {
     auto* menu = [[NSMenuItem alloc] init];
@@ -353,7 +386,9 @@
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification
 {
-    [self createNewTab:m_initial_url];
+    [self createNewTab:m_initial_url
+               fromTab:nil
+           activateTab:Web::HTML::ActivateTab::Yes];
 }
 
 - (void)applicationWillTerminate:(NSNotification*)notification
