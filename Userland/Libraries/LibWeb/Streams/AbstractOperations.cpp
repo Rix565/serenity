@@ -425,13 +425,32 @@ WebIDL::ExceptionOr<void> readable_stream_reader_generic_release(ReadableStreamG
 void readable_stream_default_reader_error_read_requests(ReadableStreamDefaultReader& reader, JS::Value error)
 {
     // 1. Let readRequests be reader.[[readRequests]].
-    // 2. Set reader.[[readRequests]] to a new empty list.
     auto read_requests = move(reader.read_requests());
+
+    // 2. Set reader.[[readRequests]] to a new empty list.
+    reader.read_requests().clear();
 
     // 3. For each readRequest of readRequests,
     for (auto& read_request : read_requests) {
         // 1. Perform readRequest’s error steps, given e.
         read_request->on_error(error);
+    }
+}
+
+// https://streams.spec.whatwg.org/#abstract-opdef-readablestreambyobreadererrorreadintorequests
+void readable_stream_byob_reader_error_read_into_requests(ReadableStreamBYOBReader& reader, JS::Value error)
+{
+    // 1. Let readIntoRequests be reader.[[readIntoRequests]].
+    auto read_into_requests = move(reader.read_into_requests());
+
+    // 2. Set reader.[[readIntoRequests]] to a new empty list.
+    reader.read_into_requests().clear();
+
+    // 3. For each readIntoRequest of readIntoRequests,
+    for (auto& read_into_request : read_into_requests) {
+
+        // 1. Perform readIntoRequest’s error steps, given e.
+        read_into_request->on_error(error);
     }
 }
 
@@ -484,6 +503,21 @@ WebIDL::ExceptionOr<void> readable_stream_default_reader_release(ReadableStreamD
     readable_stream_default_reader_error_read_requests(reader, exception);
 
     return {};
+}
+
+// https://streams.spec.whatwg.org/#abstract-opdef-readablestreambyobreaderrelease
+void readable_stream_byob_reader_release(ReadableStreamBYOBReader& reader)
+{
+    auto& realm = reader.realm();
+
+    // 1. Perform ! ReadableStreamReaderGenericRelease(reader).
+    MUST(readable_stream_reader_generic_release(reader));
+
+    // 2. Let e be a new TypeError exception.
+    auto exception = MUST(JS::TypeError::create(realm, "Reader has been released"sv));
+
+    // 3. Perform ! ReadableStreamBYOBReaderErrorReadIntoRequests(reader, e).
+    readable_stream_byob_reader_error_read_into_requests(reader, exception);
 }
 
 // https://streams.spec.whatwg.org/#set-up-readable-stream-default-reader

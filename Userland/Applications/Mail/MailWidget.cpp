@@ -17,6 +17,7 @@
 #include <LibGUI/Menu.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/PasswordInputDialog.h>
+#include <LibGUI/SortingProxyModel.h>
 #include <LibGUI/Statusbar.h>
 #include <LibGUI/TableView.h>
 #include <LibGUI/TreeView.h>
@@ -32,12 +33,14 @@ MailWidget::MailWidget()
     m_web_view = *find_descendant_of_type_named<WebView::OutOfProcessWebView>("web_view");
     m_statusbar = *find_descendant_of_type_named<GUI::Statusbar>("statusbar");
 
-    m_mailbox_list->on_selection_change = [this] {
-        selected_mailbox();
+    m_mailbox_list->set_activates_on_selection(true);
+    m_mailbox_list->on_activation = [this](auto& index) {
+        selected_mailbox(index);
     };
 
-    m_individual_mailbox_view->on_selection_change = [this] {
-        selected_email_to_load();
+    m_individual_mailbox_view->set_activates_on_selection(true);
+    m_individual_mailbox_view->on_activation = [this](auto& index) {
+        selected_email_to_load(m_mailbox_sorting_model->map_to_source(index));
     };
 
     m_web_view->on_link_click = [this](auto& url, auto&, unsigned) {
@@ -137,7 +140,7 @@ ErrorOr<bool> MailWidget::connect_and_login()
 
     m_statusbar->set_text(String::formatted("Connected. Logging in as {}...", username).release_value_but_fixme_should_propagate_errors());
 
-    auto response = TRY(TRY(m_imap_client->login(username, password))->await()).release_value();
+    auto response = TRY(m_imap_client->login(username, password)->await());
 
     if (response.status() != IMAP::ResponseStatus::OK) {
         dbgln("Failed to login. The server says: '{}'", response.response_text());
@@ -147,7 +150,7 @@ ErrorOr<bool> MailWidget::connect_and_login()
     }
 
     m_statusbar->set_text("Logged in. Loading mailboxes..."_string);
-    response = TRY(TRY(m_imap_client->list(""sv, "*"sv))->await()).release_value();
+    response = TRY(m_imap_client->list(""sv, "*"sv)->await());
 
     if (response.status() != IMAP::ResponseStatus::OK) {
         dbgln("Failed to retrieve mailboxes. The server says: '{}'", response.response_text());
@@ -174,7 +177,7 @@ void MailWidget::on_window_close()
         // User closed main window before a connection was established
         return;
     }
-    auto response = move(MUST(MUST(m_imap_client->send_simple_command(IMAP::CommandType::Logout))->await()).release_value().get<IMAP::SolidResponse>());
+    auto response = move(MUST(m_imap_client->send_simple_command(IMAP::CommandType::Logout)->await()).get<IMAP::SolidResponse>());
     VERIFY(response.status() == IMAP::ResponseStatus::OK);
 
     m_imap_client->close();
@@ -241,12 +244,10 @@ bool MailWidget::is_supported_alternative(Alternative const& alternative) const
     return alternative.body_structure.type.equals_ignoring_ascii_case("text"sv) && (alternative.body_structure.subtype.equals_ignoring_ascii_case("plain"sv) || alternative.body_structure.subtype.equals_ignoring_ascii_case("html"sv));
 }
 
-void MailWidget::selected_mailbox()
+void MailWidget::selected_mailbox(GUI::ModelIndex const& index)
 {
-    m_individual_mailbox_model = InboxModel::create({});
-    m_individual_mailbox_view->set_model(m_individual_mailbox_model);
-
-    auto const& index = m_mailbox_list->selection().first();
+    m_mailbox_model = InboxModel::create({});
+    m_individual_mailbox_view->set_model(m_mailbox_model);
 
     if (!index.is_valid())
         return;
@@ -265,7 +266,7 @@ void MailWidget::selected_mailbox()
     if (mailbox.flags & (unsigned)IMAP::MailboxFlag::NoSelect)
         return;
 
-    auto response = MUST(MUST(m_imap_client->select(mailbox.name))->await()).release_value();
+    auto response = MUST(m_imap_client->select(mailbox.name)->await());
 
     if (response.status() != IMAP::ResponseStatus::OK) {
         dbgln("Failed to select mailbox. The server says: '{}'", response.response_text());
@@ -285,11 +286,10 @@ void MailWidget::selected_mailbox()
         .sequence_set = { { 1, (int)response.data().exists() } },
         .data_items = {
             IMAP::FetchCommand::DataItem {
-                .type = IMAP::FetchCommand::DataItemType::PeekBody,
-                .section = IMAP::FetchCommand::DataItem::Section {
-                    .type = IMAP::FetchCommand::DataItem::SectionType::HeaderFields,
-                    .headers = { { "Date", "Subject", "From" } },
-                },
+                .type = IMAP::FetchCommand::DataItemType::Envelope,
+            },
+            IMAP::FetchCommand::DataItem {
+                .type = IMAP::FetchCommand::DataItemType::InternalDate,
             },
             IMAP::FetchCommand::DataItem {
                 .type = IMAP::FetchCommand::DataItemType::Flags,
@@ -297,9 +297,8 @@ void MailWidget::selected_mailbox()
         },
     };
 
-    auto fetch_response = MUST(MUST(m_imap_client->fetch(fetch_command, false))->await()).release_value();
-
-    if (response.status() != IMAP::ResponseStatus::OK) {
+    auto fetch_response = MUST(m_imap_client->fetch(fetch_command, false)->await());
+    if (fetch_response.status() != IMAP::ResponseStatus::OK) {
         dbgln("Failed to retrieve subject/from for e-mails. The server says: '{}'", response.response_text());
         m_statusbar->set_text(String::formatted("[{}]: Failed to fetch messages :^(", mailbox.name).release_value_but_fixme_should_propagate_errors());
         GUI::MessageBox::show_error(window(), DeprecatedString::formatted("Failed to retrieve e-mails. The server says: '{}'", response.response_text()));
@@ -310,137 +309,66 @@ void MailWidget::selected_mailbox()
 
     int i = 0;
     for (auto& fetch_data : fetch_response.data().fetch_data()) {
+        auto sequence_number = fetch_data.get<unsigned>();
         auto& response_data = fetch_data.get<IMAP::FetchResponseData>();
-        auto& body_data = response_data.body_data();
+        auto const& envelope = response_data.envelope();
+        auto const& internal_date = response_data.internal_date();
 
         auto seen = !response_data.flags().find_if([](StringView value) { return value.equals_ignoring_ascii_case("\\Seen"sv); }).is_end();
 
-        auto data_item_has_header = [](IMAP::FetchCommand::DataItem const& data_item, DeprecatedString const& search_header) {
-            if (!data_item.section.has_value())
-                return false;
-            if (data_item.section->type != IMAP::FetchCommand::DataItem::SectionType::HeaderFields)
-                return false;
-            if (!data_item.section->headers.has_value())
-                return false;
-            auto header_iterator = data_item.section->headers->find_if([&search_header](auto& header) {
-                return header.equals_ignoring_ascii_case(search_header);
-            });
-            return header_iterator != data_item.section->headers->end();
-        };
-
-        auto date_iterator = body_data.find_if([&data_item_has_header](Tuple<IMAP::FetchCommand::DataItem, Optional<DeprecatedString>>& data) {
-            auto const data_item = data.get<0>();
-            return data_item_has_header(data_item, "Date");
-        });
-
-        VERIFY(date_iterator != body_data.end());
-
-        auto subject_iterator = body_data.find_if([&data_item_has_header](Tuple<IMAP::FetchCommand::DataItem, Optional<DeprecatedString>>& data) {
-            auto const data_item = data.get<0>();
-            return data_item_has_header(data_item, "Subject");
-        });
-
-        VERIFY(subject_iterator != body_data.end());
-
-        auto from_iterator = body_data.find_if([&data_item_has_header](Tuple<IMAP::FetchCommand::DataItem, Optional<DeprecatedString>>& data) {
-            auto const data_item = data.get<0>();
-            return data_item_has_header(data_item, "From");
-        });
-
-        VERIFY(from_iterator != body_data.end());
-
-        // FIXME: All of the following doesn't really follow RFC 2822: https://datatracker.ietf.org/doc/html/rfc2822
-
-        auto parse_and_unfold = [](DeprecatedString const& value) {
-            GenericLexer lexer(value);
-            StringBuilder builder;
-
-            // There will be a space at the start of the value, which should be ignored.
-            VERIFY(lexer.consume_specific(' '));
-
-            while (!lexer.is_eof()) {
-                auto current_line = lexer.consume_while([](char c) {
-                    return c != '\r';
-                });
-
-                builder.append(current_line);
-
-                bool consumed_end_of_line = lexer.consume_specific("\r\n");
-                VERIFY(consumed_end_of_line);
-
-                // If CRLF are immediately followed by WSP (which is either ' ' or '\t'), then it is not the end of the header and is instead just a wrap.
-                // If it's not followed by WSP, then it is the end of the header.
-                // https://datatracker.ietf.org/doc/html/rfc2822#section-2.2.3
-                if (lexer.is_eof() || (lexer.peek() != ' ' && lexer.peek() != '\t'))
-                    break;
-            }
-
-            return builder.to_deprecated_string();
-        };
-
-        auto& date_iterator_value = date_iterator->get<1>().value();
-        auto date_index = date_iterator_value.find("Date:"sv);
-        DeprecatedString date;
-        if (date_index.has_value()) {
-            auto potential_date = date_iterator_value.substring(date_index.value());
-            auto date_parts = potential_date.split_limit(':', 2);
-            date = parse_and_unfold(date_parts.last());
-        }
-
-        if (date.is_empty()) {
-            date = "(Unknown date)";
-        }
-
-        auto& subject_iterator_value = subject_iterator->get<1>().value();
-        auto subject_index = subject_iterator_value.find("Subject:"sv);
-        DeprecatedString subject;
-        if (subject_index.has_value()) {
-            auto potential_subject = subject_iterator_value.substring(subject_index.value());
-            auto subject_parts = potential_subject.split_limit(':', 2);
-            subject = parse_and_unfold(subject_parts.last());
-        }
-
-        if (subject.is_empty())
-            subject = "(No subject)";
-
+        DeprecatedString date = internal_date.to_deprecated_string();
+        DeprecatedString subject = envelope.subject.value_or("(No subject)");
         if (subject.contains("=?"sv) && subject.contains("?="sv)) {
             subject = MUST(IMAP::decode_rfc2047_encoded_words(subject));
         }
 
-        auto& from_iterator_value = from_iterator->get<1>().value();
-        auto from_index = from_iterator_value.find("From:"sv);
-        if (!from_index.has_value())
-            from_index = from_iterator_value.find("from:"sv);
-        DeprecatedString from;
-        if (from_index.has_value()) {
-            auto potential_from = from_iterator_value.substring(from_index.value());
-            auto from_parts = potential_from.split_limit(':', 2);
-            from = parse_and_unfold(from_parts.last());
+        StringBuilder sender_builder;
+        if (envelope.from.has_value()) {
+            bool first { true };
+            for (auto const& address : *envelope.from) {
+                if (!first)
+                    sender_builder.append(", "sv);
+
+                if (address.name.has_value()) {
+                    if (address.name->contains("=?"sv) && address.name->contains("?="sv))
+                        sender_builder.append(MUST(IMAP::decode_rfc2047_encoded_words(*address.name)));
+                    else
+                        sender_builder.append(*address.name);
+
+                    sender_builder.append(" <"sv);
+                    sender_builder.append(address.mailbox.value_or({}));
+                    sender_builder.append('@');
+                    sender_builder.append(address.host.value_or({}));
+                    sender_builder.append('>');
+                } else {
+                    sender_builder.append(address.mailbox.value_or({}));
+                    sender_builder.append('@');
+                    sender_builder.append(address.host.value_or({}));
+                }
+            }
         }
+        DeprecatedString from = sender_builder.to_deprecated_string();
 
-        if (from.is_empty())
-            from = "(Unknown sender)";
-
-        InboxEntry inbox_entry { from, subject, date, seen };
+        InboxEntry inbox_entry { sequence_number, date, from, subject, seen };
         m_statusbar->set_text(String::formatted("[{}]: Loading entry {}", mailbox.name, ++i).release_value_but_fixme_should_propagate_errors());
 
         active_inbox_entries.append(inbox_entry);
     }
 
     m_statusbar->set_text(String::formatted("[{}]: Loaded {} entries", mailbox.name, i).release_value_but_fixme_should_propagate_errors());
-    m_individual_mailbox_model = InboxModel::create(move(active_inbox_entries));
-    m_individual_mailbox_view->set_model(m_individual_mailbox_model);
+    m_mailbox_model = InboxModel::create(move(active_inbox_entries));
+    m_mailbox_sorting_model = MUST(GUI::SortingProxyModel::create(*m_mailbox_model));
+    m_mailbox_sorting_model->set_sort_role(GUI::ModelRole::Display);
+    m_individual_mailbox_view->set_model(m_mailbox_sorting_model);
+    m_individual_mailbox_view->set_key_column_and_sort_order(InboxModel::Date, GUI::SortOrder::Descending);
 }
 
-void MailWidget::selected_email_to_load()
+void MailWidget::selected_email_to_load(GUI::ModelIndex const& index)
 {
-    auto const& index = m_individual_mailbox_view->selection().first();
-
     if (!index.is_valid())
         return;
 
-    // IMAP is 1-based.
-    int id_of_email_to_load = index.row() + 1;
+    int id_of_email_to_load = index.data(static_cast<GUI::ModelRole>(InboxModelCustomRole::Sequence)).as_u32();
 
     m_statusbar->set_text("Fetching message..."_string);
 
@@ -453,7 +381,7 @@ void MailWidget::selected_email_to_load()
         },
     };
 
-    auto fetch_response = MUST(MUST(m_imap_client->fetch(fetch_command, false))->await()).release_value();
+    auto fetch_response = MUST(m_imap_client->fetch(fetch_command, false)->await());
 
     if (fetch_response.status() != IMAP::ResponseStatus::OK) {
         dbgln("Failed to retrieve the body structure of the selected e-mail. The server says: '{}'", fetch_response.response_text());
@@ -517,7 +445,7 @@ void MailWidget::selected_email_to_load()
         },
     };
 
-    fetch_response = MUST(MUST(m_imap_client->fetch(fetch_command, false))->await()).release_value();
+    fetch_response = MUST(m_imap_client->fetch(fetch_command, false)->await());
 
     if (fetch_response.status() != IMAP::ResponseStatus::OK) {
         dbgln("Failed to retrieve the body of the selected e-mail. The server says: '{}'", fetch_response.response_text());
@@ -538,7 +466,7 @@ void MailWidget::selected_email_to_load()
     auto& fetch_response_data = fetch_data.last().get<IMAP::FetchResponseData>();
 
     auto seen = !fetch_response_data.flags().find_if([](StringView value) { return value.equals_ignoring_ascii_case("\\Seen"sv); }).is_end();
-    m_individual_mailbox_model->set_seen(index.row(), seen);
+    m_mailbox_model->set_seen(index.row(), seen);
 
     if (!fetch_response_data.contains_response_type(IMAP::FetchResponseType::Body)) {
         GUI::MessageBox::show_error(window(), "The server sent no body."sv);

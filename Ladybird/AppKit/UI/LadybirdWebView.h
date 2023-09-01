@@ -7,14 +7,43 @@
 #pragma once
 
 #include <AK/Forward.h>
+#include <LibGfx/Forward.h>
 #include <LibWeb/CSS/PreferredColorScheme.h>
+#include <LibWeb/HTML/ActivateTab.h>
+#include <LibWebView/Forward.h>
 
 #import <System/Cocoa.h>
 
+@protocol LadybirdWebViewObserver <NSObject>
+
+- (String const&)onCreateNewTab:(URL const&)url
+                    activateTab:(Web::HTML::ActivateTab)activate_tab;
+
+- (String const&)onCreateNewTab:(StringView)html
+                            url:(URL const&)url
+                    activateTab:(Web::HTML::ActivateTab)activate_tab;
+
+- (void)loadURL:(URL const&)url;
+- (void)onLoadStart:(URL const&)url isRedirect:(BOOL)is_redirect;
+
+- (void)onTitleChange:(DeprecatedString const&)title;
+- (void)onFaviconChange:(Gfx::Bitmap const&)bitmap;
+
+- (void)onNavigateBack;
+- (void)onNavigateForward;
+- (void)onReload;
+
+@end
+
 @interface LadybirdWebView : NSClipView
+
+- (instancetype)init:(id<LadybirdWebViewObserver>)observer;
 
 - (void)loadURL:(URL const&)url;
 - (void)loadHTML:(StringView)html url:(URL const&)url;
+
+- (WebView::ViewImplementation&)view;
+- (String const&)handle;
 
 - (void)handleResize;
 - (void)handleScroll;

@@ -6,17 +6,16 @@
 
 #pragma once
 
-#include <AK/URL.h>
-
 #import <System/Cocoa.h>
 
 @class LadybirdWebView;
 
 @interface Tab : NSWindow
 
-- (void)onLoadStart:(URL const&)url;
-- (void)onTitleChange:(NSString*)title;
-- (void)onFaviconChange:(NSImage*)favicon;
+- (void)tabWillClose;
+
+- (void)openConsole:(id)sender;
+- (void)onConsoleClosed;
 
 @property (nonatomic, strong) LadybirdWebView* web_view;
 

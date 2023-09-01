@@ -71,6 +71,7 @@
 #include <LibWeb/HTML/MessageEvent.h>
 #include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/NavigationParams.h>
+#include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/HTML/Origin.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
@@ -996,7 +997,6 @@ void Document::update_layout()
             VERIFY(document_element->layout_node());
             auto& icb_state = layout_state.get_mutable(verify_cast<Layout::NodeWithStyleAndBoxModelMetrics>(*document_element->layout_node()));
             icb_state.set_content_width(viewport_rect.width());
-            icb_state.set_content_height(viewport_rect.height());
         }
 
         root_formatting_context.run(
@@ -3371,8 +3371,7 @@ void Document::shared_declarative_refresh_steps(StringView input, JS::GCPtr<HTML
     }
 
     // 7. Otherwise, set time to the result of parsing timeString using the rules for parsing non-negative integers.
-    // FIXME: Not sure if this exactly matches the spec's "rules for parsing non-negative integers".
-    auto maybe_time = time_string.to_uint<u32>();
+    auto maybe_time = Web::HTML::parse_non_negative_integer(time_string);
 
     // FIXME: Since we only collected ASCII digits, this can only fail because of overflow. What do we do when that happens? For now, default to 0.
     if (maybe_time.has_value() && maybe_time.value() < NumericLimits<int>::max() && !Checked<int>::multiplication_would_overflow(static_cast<int>(maybe_time.value()), 1000)) {

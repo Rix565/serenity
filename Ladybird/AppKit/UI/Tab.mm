@@ -4,12 +4,20 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/DeprecatedString.h>
+#include <AK/String.h>
+#include <AK/URL.h>
+#include <Ladybird/Utilities.h>
+#include <LibGfx/ImageFormats/PNGWriter.h>
+#include <LibGfx/ShareableBitmap.h>
+
+#import <Application/ApplicationDelegate.h>
+#import <UI/Console.h>
+#import <UI/ConsoleController.h>
 #import <UI/LadybirdWebView.h>
 #import <UI/Tab.h>
 #import <UI/TabController.h>
 #import <Utilities/Conversions.h>
-
-#include <Ladybird/Utilities.h>
 
 #if !__has_feature(objc_arc)
 #    error "This project requires ARC"
@@ -18,10 +26,12 @@
 static constexpr CGFloat const WINDOW_WIDTH = 1000;
 static constexpr CGFloat const WINDOW_HEIGHT = 800;
 
-@interface Tab ()
+@interface Tab () <LadybirdWebViewObserver>
 
 @property (nonatomic, strong) NSString* title;
 @property (nonatomic, strong) NSImage* favicon;
+
+@property (nonatomic, strong) ConsoleController* console_controller;
 
 @end
 
@@ -59,7 +69,7 @@ static constexpr CGFloat const WINDOW_HEIGHT = 800;
                                 defer:NO];
 
     if (self) {
-        self.web_view = [[LadybirdWebView alloc] init];
+        self.web_view = [[LadybirdWebView alloc] init:self];
         [self.web_view setPostsBoundsChangedNotifications:YES];
 
         self.favicon = [Tab defaultFavicon];
@@ -91,26 +101,35 @@ static constexpr CGFloat const WINDOW_HEIGHT = 800;
 
 #pragma mark - Public methods
 
-- (void)onLoadStart:(URL const&)url
+- (void)tabWillClose
 {
-    self.title = Ladybird::string_to_ns_string(url.serialize());
-    self.favicon = [Tab defaultFavicon];
-    [self updateTabTitleAndFavicon];
+    if (self.console_controller != nil) {
+        [self.console_controller.window close];
+    }
 }
 
-- (void)onTitleChange:(NSString*)title
+- (void)openConsole:(id)sender
 {
-    self.title = title;
-    [self updateTabTitleAndFavicon];
+    if (self.console_controller != nil) {
+        [self.console_controller.window makeKeyAndOrderFront:sender];
+        return;
+    }
+
+    self.console_controller = [[ConsoleController alloc] init:self];
+    [self.console_controller showWindow:nil];
 }
 
-- (void)onFaviconChange:(NSImage*)favicon
+- (void)onConsoleClosed
 {
-    self.favicon = favicon;
-    [self updateTabTitleAndFavicon];
+    self.console_controller = nil;
 }
 
 #pragma mark - Private methods
+
+- (TabController*)tabController
+{
+    return (TabController*)[self windowController];
+}
 
 - (void)updateTabTitleAndFavicon
 {
@@ -151,6 +170,98 @@ static constexpr CGFloat const WINDOW_HEIGHT = 800;
 - (void)onContentScroll:(NSNotification*)notification
 {
     [[self web_view] handleScroll];
+}
+
+#pragma mark - LadybirdWebViewObserver
+
+- (String const&)onCreateNewTab:(URL const&)url
+                    activateTab:(Web::HTML::ActivateTab)activate_tab
+{
+    auto* delegate = (ApplicationDelegate*)[NSApp delegate];
+
+    auto* controller = [delegate createNewTab:url
+                                      fromTab:self
+                                  activateTab:activate_tab];
+
+    auto* tab = (Tab*)[controller window];
+    return [[tab web_view] handle];
+}
+
+- (String const&)onCreateNewTab:(StringView)html
+                            url:(URL const&)url
+                    activateTab:(Web::HTML::ActivateTab)activate_tab
+{
+    auto* delegate = (ApplicationDelegate*)[NSApp delegate];
+
+    auto* controller = [delegate createNewTab:html
+                                          url:url
+                                      fromTab:self
+                                  activateTab:activate_tab];
+
+    auto* tab = (Tab*)[controller window];
+    return [[tab web_view] handle];
+}
+
+- (void)loadURL:(URL const&)url
+{
+    [[self tabController] loadURL:url];
+}
+
+- (void)onLoadStart:(URL const&)url isRedirect:(BOOL)is_redirect
+{
+    [[self tabController] onLoadStart:url isRedirect:is_redirect];
+
+    self.title = Ladybird::string_to_ns_string(url.serialize());
+    self.favicon = [Tab defaultFavicon];
+    [self updateTabTitleAndFavicon];
+
+    if (self.console_controller != nil) {
+        auto* console = (Console*)[self.console_controller window];
+        [console reset];
+    }
+}
+
+- (void)onTitleChange:(DeprecatedString const&)title
+{
+    [[self tabController] onTitleChange:title];
+
+    self.title = Ladybird::string_to_ns_string(title);
+    [self updateTabTitleAndFavicon];
+}
+
+- (void)onFaviconChange:(Gfx::Bitmap const&)bitmap
+{
+    static constexpr size_t FAVICON_SIZE = 16;
+
+    auto png = Gfx::PNGWriter::encode(bitmap);
+    if (png.is_error()) {
+        return;
+    }
+
+    auto* data = [NSData dataWithBytes:png.value().data()
+                                length:png.value().size()];
+
+    auto* favicon = [[NSImage alloc] initWithData:data];
+    [favicon setResizingMode:NSImageResizingModeStretch];
+    [favicon setSize:NSMakeSize(FAVICON_SIZE, FAVICON_SIZE)];
+
+    self.favicon = favicon;
+    [self updateTabTitleAndFavicon];
+}
+
+- (void)onNavigateBack
+{
+    [[self tabController] navigateBack:nil];
+}
+
+- (void)onNavigateForward
+{
+    [[self tabController] navigateForward:nil];
+}
+
+- (void)onReload
+{
+    [[self tabController] reload:nil];
 }
 
 #pragma mark - NSWindow

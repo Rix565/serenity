@@ -12,9 +12,13 @@
 #include <LibGfx/ImageFormats/PNGWriter.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/CSS/StyleComputer.h>
+#include <LibWeb/CSS/StyleValues/IdentifierStyleValue.h>
+#include <LibWeb/CSS/StyleValues/RatioStyleValue.h>
+#include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/CanvasRenderingContext2D.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
+#include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
 #include <LibWeb/Layout/CanvasBox.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
@@ -51,14 +55,44 @@ void HTMLCanvasElement::visit_edges(Cell::Visitor& visitor)
         });
 }
 
+void HTMLCanvasElement::apply_presentational_hints(CSS::StyleProperties& style) const
+{
+    // https://html.spec.whatwg.org/multipage/rendering.html#attributes-for-embedded-content-and-images
+    // The width and height attributes map to the aspect-ratio property on canvas elements.
+
+    // FIXME: Multiple elements have aspect-ratio presentational hints, make this into a helper function
+
+    // https://html.spec.whatwg.org/multipage/rendering.html#map-to-the-aspect-ratio-property
+    // if element has both attributes w and h, and parsing those attributes' values using the rules for parsing non-negative integers doesn't generate an error for either
+    auto w = parse_non_negative_integer(attribute(HTML::AttributeNames::width));
+    auto h = parse_non_negative_integer(attribute(HTML::AttributeNames::height));
+
+    if (w.has_value() && h.has_value())
+        // then the user agent is expected to use the parsed integers as a presentational hint for the 'aspect-ratio' property of the form auto w / h.
+        style.set_property(CSS::PropertyID::AspectRatio,
+            CSS::StyleValueList::create(CSS::StyleValueVector {
+                                            CSS::IdentifierStyleValue::create(CSS::ValueID::Auto),
+                                            CSS::RatioStyleValue::create(CSS::Ratio { static_cast<double>(w.value()), static_cast<double>(h.value()) }) },
+
+                CSS::StyleValueList::Separator::Space));
+}
+
 unsigned HTMLCanvasElement::width() const
 {
-    return attribute(HTML::AttributeNames::width).to_uint().value_or(300);
+    // https://html.spec.whatwg.org/multipage/canvas.html#obtain-numeric-values
+    // The rules for parsing non-negative integers must be used to obtain their numeric values.
+    // If an attribute is missing, or if parsing its value returns an error, then the default value must be used instead.
+    // The width attribute defaults to 300
+    return parse_non_negative_integer(attribute(HTML::AttributeNames::width)).value_or(300);
 }
 
 unsigned HTMLCanvasElement::height() const
 {
-    return attribute(HTML::AttributeNames::height).to_uint().value_or(150);
+    // https://html.spec.whatwg.org/multipage/canvas.html#obtain-numeric-values
+    // The rules for parsing non-negative integers must be used to obtain their numeric values.
+    // If an attribute is missing, or if parsing its value returns an error, then the default value must be used instead.
+    // the height attribute defaults to 150
+    return parse_non_negative_integer(attribute(HTML::AttributeNames::height)).value_or(150);
 }
 
 void HTMLCanvasElement::reset_context_to_default_state()

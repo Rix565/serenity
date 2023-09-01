@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2022-2023, Tim Flynn <trflynn89@serenityos.org>
  * Copyright (c) 2023, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -20,7 +20,7 @@
 #include <LibSQL/Type.h>
 #include <LibSQL/Value.h>
 
-namespace Browser {
+namespace WebView {
 
 class Database : public RefCounted<Database> {
     using OnResult = Function<void(ReadonlySpan<SQL::Value>)>;
@@ -29,7 +29,9 @@ class Database : public RefCounted<Database> {
 
 public:
     static ErrorOr<NonnullRefPtr<Database>> create();
-    static ErrorOr<NonnullRefPtr<Database>> create(NonnullRefPtr<SQL::SQLClient>);
+#if !defined(AK_OS_SERENITY)
+    static ErrorOr<NonnullRefPtr<Database>> create(Vector<String> candidate_sql_server_paths);
+#endif
 
     ErrorOr<SQL::StatementID> prepare_statement(StringView statement);
 
@@ -57,6 +59,8 @@ public:
     }
 
 private:
+    static ErrorOr<NonnullRefPtr<Database>> create(NonnullRefPtr<SQL::SQLClient>);
+
     struct ExecutionKey {
         constexpr bool operator==(ExecutionKey const&) const = default;
 
@@ -81,9 +85,9 @@ private:
     void execute_statement(SQL::StatementID statement_id, Vector<SQL::Value> placeholder_values, PendingExecution pending_execution);
 
     template<typename ResultData>
-    auto find_pending_execution(ResultData const& result_data)
+    auto take_pending_execution(ResultData const& result_data)
     {
-        return m_pending_executions.find({ result_data.statement_id, result_data.execution_id });
+        return m_pending_executions.take({ result_data.statement_id, result_data.execution_id });
     }
 
     NonnullRefPtr<SQL::SQLClient> m_sql_client;

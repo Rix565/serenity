@@ -85,19 +85,9 @@ elseif (APPLE)
     find_library(COCOA_LIBRARY Cocoa)
 endif()
 
-set(BROWSER_SOURCE_DIR ${SERENITY_SOURCE_DIR}/Userland/Applications/Browser/)
-
 set(SOURCES
-    ${BROWSER_SOURCE_DIR}/CookieJar.cpp
-    ${BROWSER_SOURCE_DIR}/Database.cpp
-    ${BROWSER_SOURCE_DIR}/History.cpp
     HelperProcess.cpp
     Utilities.cpp
-)
-set(BROWSER_HEADERS
-    ${BROWSER_SOURCE_DIR}/CookieJar.h
-    ${BROWSER_SOURCE_DIR}/Database.h
-    ${BROWSER_SOURCE_DIR}/History.h
 )
 set(LADYBIRD_HEADERS
     HelperProcess.h
@@ -133,6 +123,8 @@ elseif (APPLE)
         AppKit/Application/Application.mm
         AppKit/Application/ApplicationDelegate.mm
         AppKit/Application/EventLoopImplementation.mm
+        AppKit/UI/Console.mm
+        AppKit/UI/ConsoleController.mm
         AppKit/UI/Event.mm
         AppKit/UI/LadybirdWebView.mm
         AppKit/UI/LadybirdWebViewBridge.cpp
@@ -154,15 +146,11 @@ else()
     add_library(ladybird STATIC ${SOURCES})
 endif()
 
-target_sources(ladybird PUBLIC FILE_SET browser TYPE HEADERS
-    BASE_DIRS ${SERENITY_SOURCE_DIR}/Userland/Applications
-    FILES ${BROWSER_HEADERS}
-)
 target_sources(ladybird PUBLIC FILE_SET ladybird TYPE HEADERS
     BASE_DIRS ${SERENITY_SOURCE_DIR}
     FILES ${LADYBIRD_HEADERS}
 )
-target_link_libraries(ladybird PRIVATE LibCore LibFileSystem LibGfx LibGUI LibIPC LibJS LibMain LibPublicSuffix LibWeb LibWebView LibSQL LibProtocol)
+target_link_libraries(ladybird PRIVATE LibCore LibFileSystem LibGfx LibGUI LibIPC LibJS LibMain LibPublicSuffix LibWeb LibWebView LibProtocol)
 
 target_include_directories(ladybird PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(ladybird PRIVATE ${SERENITY_SOURCE_DIR}/Userland/)

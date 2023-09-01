@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <Browser/History.h>
+#include <LibWebView/History.h>
 
 #import <Application/ApplicationDelegate.h>
 #import <UI/LadybirdWebView.h>
@@ -34,7 +34,7 @@ enum class IsHistoryNavigation {
 {
     DeprecatedString m_title;
 
-    Browser::History m_history;
+    WebView::History m_history;
     IsHistoryNavigation m_is_history_navigation;
 }
 
@@ -334,6 +334,8 @@ enum class IsHistoryNavigation {
 
 - (void)windowWillClose:(NSNotification*)notification
 {
+    [[self tab] tabWillClose];
+
     auto* delegate = (ApplicationDelegate*)[NSApp delegate];
     [delegate removeTab:self];
 }
