@@ -81,6 +81,8 @@ public:
     bool indeterminate() const { return m_indeterminate; }
     void set_indeterminate(bool);
 
+    bool is_mutable() const { return m_is_mutable; }
+
     void did_edit_text_node(Badge<BrowsingContext>);
 
     JS::GCPtr<FileAPI::FileList> files();
@@ -162,6 +164,8 @@ private:
     WebIDL::ExceptionOr<void> run_input_activation_behavior();
     void set_checked_within_group();
 
+    void handle_readonly_attribute(DeprecatedFlyString const& value);
+
     // https://html.spec.whatwg.org/multipage/input.html#value-sanitization-algorithm
     DeprecatedString value_sanitization_algorithm(DeprecatedString) const;
 
@@ -181,6 +185,9 @@ private:
 
     // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-fe-dirty
     bool m_dirty_value { false };
+
+    // https://html.spec.whatwg.org/multipage/input.html#the-input-element:concept-fe-mutable
+    bool m_is_mutable { true };
 
     // https://html.spec.whatwg.org/multipage/input.html#the-input-element:legacy-pre-activation-behavior
     bool m_before_legacy_pre_activation_behavior_checked { false };

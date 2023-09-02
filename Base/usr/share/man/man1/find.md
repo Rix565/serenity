@@ -46,12 +46,26 @@ space rounded up to the nearest whole unit.
 
 * `-name pattern`: Checks if the file name matches the given global-style
   pattern (case sensitive).
+* `-empty`: File is either an empty regular file or a directory containing no
+  files.
 * `-iname pattern`: Checks if the file name matches the given global-style
   pattern (case insensitive).
 * `-readable`: Checks if the file is readable by the current user.
 * `-writable`: Checks if the file is writable by the current user.
 * `-executable`: Checks if the file is executable, or directory is searchable,
 by the current user.
+* `-newer file`: Checks if the file last modification time is greater than that
+  of the specified reference file. If `file` is a symbolic link and the `-L`
+  option is in use, then the last modification time of the file pointed to by
+  the symbolic link is used.
+* `-anewer file`: Checks if the file last access time is greater than that of
+  the specified reference file. If `file` is a symbolic link and the `-L`
+  option is in use, then the last access time of the file pointed to by the
+  symbolic link is used.
+* `-cnewer file`: Checks if the file creation time is greater than that of
+  the specified reference file. If `file` is a symbolic link and the `-L`
+  option is in use, then the creation time of the file pointed to by the
+  symbolic link is used.
 * `-print`: Outputs the file path, followed by a newline. Always evaluates to
   true.
 * `-print0`: Outputs the file path, followed by a zero byte. Always evaluates to
